@@ -1,0 +1,45 @@
+This is a follow on from PR #4211. There is still something that we need to redefine after the release (not before I will go in an approve this pr that I have read it 50 times @Cryoris). Also your PR is good.
+We have made lots of progress with the difference of circuits and circuit libraries but to me PR #4211 goes too far and is not a library anymore.
+circuit vs circuit libraries vs circuit blueprints (I dont like blueprints but i can't think of a better name)
+circuit: concrete instance
+circuit libraries: a family of circuits that takes as inputs parameters that make well-defined circuits that we can say something strong about them. - QFT,  IQP,  Adder
+circuit blueprints or generator  -  uses human inputs like, use this property, Twolocal is this. I think this is when we need the circuit blueprint whereas the libraries are more closer to a circuit with an additional build (or define) method which tells it which lower library component to use for lazy evaluation.
+Basically I think I want the libraries not to be mutable but have well define components (immutable).  I think of this really as generalized or composite gate that we keep nesting up to shor (gates->MCX->Adder->Multiple->Mod->QFT) to make our objects that can be composed into circuits, whereas the circuit blueprints or generator is more a tool that I use in my algorithm (VQE) that helps me build the circuit for that application and it can be changed later.
+I cant change iqp_3 later and then use it and expect it to be the iqp_3 circuit when I run it on my backend. This should not be allowed. But it is still lazy evaluated. By this I mean iqp_3 i cannot change the object, but synthesis is done lazily.
+I can use it to build bigger circuits with
+and change my_circuit all i want (this is mutable) but that IQP in it is not much like i cant change the meaning of a H.
+I can go and use
+and this is a new circuit. It can be lazy evaluated (to some extent) but not as much as the lib as if I change a property i may need to change the  visualization or something even before I synthesize it.
+I can use any  in Aqua with VQE(IQP(parms)), VQE(my_circuit(params)), and VQE(two_local) are all valid.
+I propose that
+qiskit.circuit.library holds all the immutable including standard and generalized gates (i know @ajavadia will want the standard to be up one level - I surrender and he can choose on that one) and that we make a new module qiskit.circuit.blueprint and this is where mutable libraries go. In the future, we can have some hand-optimized in qiskit.circuit.templates.iqp_params  or  qiskit.circuit.instances.iqp_params  are concrete examples of the libraries that have optimized that are also immutable but can be used as equivalent etc.
+Anyway its late but this is where im standing on this PR and the difference and limitations on what is a library and what is circuit and what is a blueprint.
+Also not for this release but I would add that a library built from a define method that is exponential should not be in libraries (for example unitary, stateprep, diagonal, and Isometry  are quantum info objects that i can insert into circuits) are really synthesis methods that can be called by the compiler when an object of these types is inserted into my circuit. -- Need to make an issue on this separately but since this is an issue i expect will be broken down into many i just list it here. it relates as we use diagonal in hidden-shift etc which we really should not and after this release we need to fix this.
+(i know @ajavadia will want the standard to be up one level - I surrender and he can choose on that one)
+actually we went with standard gates living next to generalized gates now and all accessible from qiskit.circuit.library:
+circuit vs circuit libraries vs circuit blueprints (I dont like blueprints but i can't think of a better name)
+circuit factory? It has some similarities to the factory pattern.
+i like this very much -> so we could call the blueprintcircuit factorycircuit and then make a folder that has patterns - so the factorycircuit would live in the main circuits module and then we can have circuit.pattern.blah for these pattern libraries.
+so than
+library -> immutable circuit families
+pattern -> mutable circuit families
+thinking about this more and more I like it.
+https://stackoverflow.com/questions/19256753/what-is-the-difference-between-design-patterns-and-libraries
+A software library is a suite of data and programming code that is used to develop software programs and applications. It is designed to assist both the programmer and the programming language compiler in building and executing software - From Techopedia
+A design pattern is a general reusable solution to a commonly occurring problem within a given context in software design
+So in our context.
+A circuit/pulse library is a suite of circuits/pulses that can be used to develop bigger circuits/pulses.
+A circuit/pulse pattern is a general reusable solution to a commonly occurring problem within a given context in circuit/pulse design
+lib - eg QFT, Gaussian
+pattern TwoLocal, or pi_pulse that i can change if it uses decoupling or drag for leakage reduction.
+Isn't a pattern more meta-code than code? I.e. a pattern in our context could be QuantumCircuit, PatternCircuit/BlueprintCircuit and LibraryCircuit. Because TwoLocal or RYAnsatz are also used to develop larger circuits, just like QFT. Also, both have mutable options, I think these need to go to the same place (because you mentioned QFT as example above).
+I agree to separating qiskit.circuit.library and qiskit.circuit.patterns -- currently both are in the library but they behave differently. But what goes where has restrictions from Aqua, where we need mutability of some objects, e.g.
+About the factory pattern:
+Agreed that RY/QFT are factory patterns. In fact that's how the NLocal/TwoLocal/FeatureMap structures were implemented in Aqua.
+So the textbook factory is something like
+which would mean we have to make case distinctions in Aqua whether the input is a circuit or a factory. If we could find a solution that we could still do
+I think that would be great. This is less objects to learn for the user and less distinction in other parts of Qiskit. Under the hood we could have the factory pattern, which is pretty much what the BlueprintCircuit does.
+I dont see QFT as a pattern. Maybe there is meta QFT for different versions but to start i would put it in the lib. We can have both and aqua calls the mutable version which depending on the method flag it calls the library where it is defined. Same with adder.
+I also agree to do it under the hood. I was thinking only option 2 for two_local.
+I think the discussion in #5811 might include this one. Therefore, closing.
+Feel free to reopen it otherwise.

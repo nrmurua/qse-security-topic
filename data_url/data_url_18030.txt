@@ -1,0 +1,41 @@
+Using circuit simulator instructions (such as snapshot) cause those instructions to be added to the basis of the DAG, which in turn cause the circuit drawer to raise:
+Also for the experiment.
+@ajavadia can you provide the steps to reproduce and the expected behavior, please?
+Since is in my bug I will. But it is pretty clear from the description.
+@jaygambetta this is the output I'm getting, since I and other contributors could not be used to quantum circuits representation, what's the expected behaviour?
+
+hmm no, it crashes. but I think I know why. In your corrections to my code could you add
+and it should give you the error. I think your code is just ignoring the snapshot.
+QasmError: "Cannot find gate definition for 'snapshot', line 6 file "
+Thank you, Jay, for fixing the steps to reproduce. With all the information in place, I'm completing the summary and assigning to myself.
+@ajavadia what's the expected behaviour? It is "not crashing and displaying the circuit" or should the snapshot be displayed in some way?
+@delapuente the expected behavior is that it should not crash. The reason for the crash seems to be that these simulator instructions get added to the basis of DAGCircuit, but not recognized by the drawer or the device experiment.
+Displaying the snapshot/barrier/etc. is tracked in a separate PR #731.
+What happens is that the QASM DAG parser cannot verify that snapshot is a gate because it is not in the global symbol table. The QASM the parser is trying to parse is:
+Which is, indeed, incorrect since snapshot is not defined. The correct one would be:
+Notice the opaque definition.
+A quick workaround is to make the qasm() method for snapshot to emit a comment like #snapshot(0) q0[0]; but this would cause the DAG not to include the snapshot node.
+A more elaborated solution is adding support for the extensions to add their own definitions so the simulator extension can include the corresponding opaque.
+Another solution could be to hardcode the opaque definition of snapshot in the qelib1.inc and in the basis.
+For some reason, even if adding the opaque definition, the JSON unroller complains if the opaque is not in the basis.
+@ajavadia @jaygambetta any preference?
+@delapuente let's not change qelib1.inc.
+I don't quite understand how the first solution would work. Why is this a qasm problem. There should be no qasm text generated, just circuit and dag.
+Any gate not in the standard qelib1.inc should be dynamically added to the dag basis when the dag is created. The source of error here is that it is not found in the dag basis. Then I think we should teach the visualizer to plot snapshot the same way as it does barrier.
+The source of error here is that it is not found in the dag basis.
+I think there is a misunderstanding on how circuit visualization run right now. DAGs are never used in the current implementation of visualizations. They use the JSON representation of the circuits but, instead of getting here through the DAG, they use the QASM AST:
+https://github.com/Qiskit/qiskit-terra/blob/9fb88b035a47eee2ad8e57ddf184049c35e31933/qiskit/tools/visualization/_circuit_visualization.py#L349-L355
+Anyway @ajavadia, you gave me a clue!
+Any gate not in the standard qelib1.inc should be dynamically added to the dag basis when the dag is created.
+And I'm going to modify the JSON generation making it to use the DagUnroller instead of the QASM one.
+Yeah that's a bad code, it's dumping qasm text, then reparsing it. Should use the DagUnroller.
+This is not solved as pointed out in #1019. Re-opening.
+What is happening is that dag_circuit = DAGCircuit.fromCircuit(...) in line 353 adds the unknown gates used in the original circuit to the basis without extending them, which is the desired behaviour when you want the drawer to depict your circuit with accuracy (i.e, not expanding custom gates).
+But, just after, the instruction json_circuit = transpile(...) in line 354 passes the basis passed as parameter which defaults in "id,u0,u1,u2,u3,x,y,z,h,s,sdg,t,tdg,rx,ry,rz,cx,cy,cz,ch,crz,cu1,cu3,swap,ccx,cswap", provided in the lines 338 and 339 and not including the simulator instructions.
+https://github.com/Qiskit/qiskit-terra/blob/596fec0aa58bdda524472d4a749b227fe7ff7a39/qiskit/tools/visualization/_circuit_visualization.py#L337-L354
+If the code is changed to use the basis from the dag_circuit, functionality works but the basis parameter is ignored.
+Ideally, in my opinion, we should drop the basis parameter for the circuit drawer should be limited to draw the circuit without doing any further transformation. As noted in #885 (comment), if the user wants to compile for a different basis, they should convert their circuit into a different basis, then draw the new circuit.
+Unfortunately, the DAG is already coupled with the simulator instructions and treat them in a special way:
+https://github.com/Qiskit/qiskit-terra/blob/596fec0aa58bdda524472d4a749b227fe7ff7a39/qiskit/dagcircuit/_dagcircuit.py#L1382-L1388
+In order to not introduce more coupling, my proposal would be to add the simulator instructions to the basis before calling transpile(...). This introduces non-breaking changes and it is similar to the proposed solution without embedding the DAG instructions into the DAG unroller.
+I would not hardcode the simulator instructions into the DAG unroller (nor in the DAG, to be honest) since they are not built-ins (but extensions, indeed). What should be done is to provide a proper extension mechanism for the DAG.

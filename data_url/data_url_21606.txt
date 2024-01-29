@@ -1,0 +1,92 @@
+The wide interface for Fastino shows several unexpected behaviors that make it unusable when combined with DMA.
+Edit: These issues appear to arise from combining the wide interface and DMA
+The 32 channel wide API for Fastino is broken.
+Operating System: Windows
+Version of the gateware and runtime loaded in the core device:
+
+Hardware involved: Kasli 1.1 (speed grade 3) and Fastino 1.1
+Let's dial it down a bit. You are making a few assumptions that are not true and others need to be checked first.
+The wide interface should allow 2.55 MS updates
+That would be nice but I guess you are aware of the limitations and uncertainties of DMA, wide RTIO, and DRTIO.
+Does it work without DMA for a few (let's say 16 each channel) samples?
+If yes, then there is no evidence that the Fastino interface is in fact broken as you claim and you need to look at DMA/DRTIO.
+Also the core analyzer may be very helpful here (unless you turned it off).
+There should be no dependence on DMA length (barring memory size/speed)
+It's likely that that has got nothing to do with Fastino.
+The written waveform should be returned
+That depends on the other assumptions being true.
+RTIO failures should always be reported!
+RTIODestinationUnreachable
+You may well be two different issues that have little to do with Fastino: DMA and DRTIO for wide events.
+I'd recommend isolating the three.
+Also double check your code and wnsure that it's consistent and clean. The git hash on your master that you appear to be using (816a6f2) is early 2018. Other things indicate newer code. Might also be a build system issue.
+The problem persists with out using DMA. In fact, without DMA, I can't seem to get any continuous playback. My code is below. Please let me know if I misunderstand how to use the API.
+With the update interval below, the code underflows. Increasing the delay by a factor 2, results in no errors and no hardware updates. Edit: This works fine, there was a silly mistake with mutable copies.
+The gateware was built based of our local artiq variant. I will rebuild based off the latest version here (with the nessecary modification to gateware.eem.Fastino). Edit: the behavior is unchanged with the new build
+Yes. Without DMA the sustained rate is limited by the CPU speed.
+Just test bursts (the ~16 samples I mentioned or whatever fits into an RTIO SED buffer, maybe up to 512?) with plenty of slack (i.e. add 100 ms of slack, then push the samples, then loop) to verify the Fastino interface.
+Removing the loop and using 10 updates gives the following error: https://pastebin.pl/view/79e186da
+In this scenario the hardware doesn't update at all. Edit: this was run with gate-ware derived from the most recent commit.
+You've probably neglected to update ARTIQ on the master as well – the RPC protocol recently changed.
+That was indeed the cause of the error. With the host updated, the error no-longer occurs. There are now no errors and still no correct hardware playback.
+doesn't do what you think it does.
+Indeed, it does not 😅 Fixed by converting to a list comprehension. The wide interface operates fine at 1.3 MS/s with up-to 500 updates (no DMA).
+And 2.55 MS/s as well, right?
+And also the wide interface is not special to fastino. I don't know whether wide rtio was really tested with dma. This is either an intrinsic limitation or bug in dma/drtio.
+writing a single burst at 2.55 MS/s using the wide interface and DMA, does update the DAC. However, it does not play back the correct waveform. If I write a 100 sample ramp, the ramp appears to be down sampled to a ~20 sample ramp.
+Please elaborate and be thorough and precise. Give yourself some time.
+I'd have to guess what you mean by "appears to" and "down sampled".
+To be precise, the code below produces the output shown in the table.
+The ramp exhibits 19 distinct voltage levels. These are similarly, but not equally spaced. This is not the 100 sample ramp that was specified in the code, nor do the updates occur at 2.5 MS/s.
+Running the code above with n=10 results in the experiment not terminating.
+I thought we agreed to test without dma.
+writing a single burst at 2.55 MS/s using the wide interface and DMA
+I clearly stated I was using DMA. Given the issue name, testing without DMA does seem a bit stange.
+@pathfinder49 there is clearly an issue here. The question is where. Is it in the fastino wide interface, or the rtio/dma infrastructure when using the wide interface.
+A good way of narrowing down the problem is taking a variable out of the equation — in this case by eliminating DMA. So the question is: do you see similar behaviour if you don’t use DMA (to the extent you can reproduce this given the finite sustained event rate/fifo size).
+There is clearly a DMA issue. DMA does not work correctly at 1.3 MS/s. Non-DMA writes work correctly at 1.3 MS/s. I can attempt 2.55 MS without DMA. However, this is a different issue to the DMA incompatibility.
+@pathfinder49 can you post the output traces for a linear ramp with and without DMA at 1.3 MS/s, so we can directly illustrate this?
+Below are 100 update, 2.55 MS/s, linear full scale ramps with and without DMA
+What’s the conclusion then? DMA is currently broken with wide RTIO in general?
+@pathfinder49 ignoring the breakage, can you summarise what we can achieve in terms of event rates for wide/narrow interfaces with / without DMA?
+Please verify that you can reproduce working max rate bursts with Fastino (again, without DMA and DRTIO). That's the first checkpoint I'm looking for and its a requirement for everything else to work.
+After that you can look at DMA and DRTIO in any order but individually first.
+As I mentioned explicitly before, you should dramatically reduce your problem size. Please take the advice, otherwise this will be painful. As a small example: A DRTIO link can currently at best sustain 1 Gb/s. The Fastino data at 32 channels and 2.55 MS/s is already more than 1.3 Gb/s and that's still without any overhead or round trips. I don't know even what the max practical throughput is for DRTIO and what it is for wide RTIO events. And I don't know what it is for DMA.
+No data in this issue uses DRTIO. Please explain what further verification of the max burst rate performace you want. The plot above shows it working correctly at 2.55 MS/s without DMA.
+@pathfinder49 ignoring the breakage, can you summarise what we can achieve in terms of event rates for wide/narrow interfaces with / without DMA?
+Your screenshot above shows DRTIO being used and @dnadlinger 's comment about the master version points to it as well. You haven't given much information about your setup (we have the issue templates requesting that) so I have to speculate.
+Yes, the plot shows that it apparently works for you and it probably takes Fastino out of the problem. But it took three requests.
+For DMA with wide RTIO or overall DMA throughput maybe @sbourdeauducq can shed some light, or @cjbe
+Not to add to the confusion (I certainly don't have to add anything to the debugging effort), but I was referring to master as in the artiq_master process, not as in the DRTIO node.
+Summary of discussion on IRC today: the tests we've already done seem to exclude this being an issue that's directly related to Fastino. Instead, it seems to be Fastino uncovering a bug in ARTIQ DMA, wide RTIO, etc (or some combination thereof).
+The Fastino "narrow" interface does seem to work as expected, but the sustained event rate is rather low due to #946
+Summarizing a long thread...
+@pathfinder49 with reference to #1521 (comment)
+With sufficent slack, wide interface events can be scheduled in bursts at 2.55 MS/s. The maximum burst length in my configuration appears to be a few 100s of events.
+So, this is consistent with the claim that you can fill up the RTIO output FIFOs and drain them without issue, but the rate at which the CPU can generate wide events is much lower than 2.55MSPs.
+Am I right in thinking that in this case you're updating all 32 channels with each sample?
+Out of curiosity, do you have any idea what the maximum sustained event rate is for updating all 32 channels (using the _mu commands)? I'd assume that the rate in terms of samples/channel/second is still much higher than the narrow interface.
+The wide interface results in bad output if combined with DMA
+AFAICT you tested this at both 2.55MSPs and 1.3MSPs and found that in both cases there was what looked like missing samples (this is what "bad" means, right?). c.f. #1521 (comment)
+This was tested with 100sample DMA records.
+This could possibly be related to throughput (we haven't tested it with very low sample rates)? It's hard to tell without seeing screen shots of the behavior at different sample rates (I didn't see anything posted at 1.3MHz).
+The narrow interface allows continuous updating with a maximum event rate of 1.3 MHz without using DMA
+For reference/comparison with the above, this is updating only one channel at a time, and includes the CPU overhead for generating a sample (which is, unsurprisingly, much less than with the wide interface). It's not a direct comparison with the wide RTIO interface data above since that was for bursts.
+The narrow interface allows sustained event rates of 2.55 MHz when using DMA (barring DMA improvements in the meantime)
+I think that what you mean by this is 2.55MS/(channel*s), right? i.e. you can saturate a single channel (maybe even ~1.5 channels), but not two channels simultaneously.
+But, importantly there were no glitches observed with the narrow interface.
+Bursts with the narrow interface will need to be shorter than with the wide interface due to the RTIO buffer size limitation
+You didn't mention the number of channels in your post, but I assume that here you mean that the number of (samples*channels) will be lower for narrow than wide interface due to the FIFO size.
+tl;dr the narrow interface works about as well as expected from the DMA performance. The wide interface seems to hit a bug somewhere in ARTIQ when used with DMA. The wide interface may still be useful (e.g. if you want a few hundred updates on multiple channels, that's currently possible with the current wide interface, but not with the narrow interface), but long term someone needs to look at this.
+@jbqubit FYI...if this is an issue with wide RTIO and DMA (which is a possibility given the above) it may also affect Sayma. As far as I'm aware there has been no testing of wide RTIO and DMA (but correct me if I'm wrong @sbourdeauducq ).
+For reference: the Zynq DMA is about a factor of 5-10 better than Kasli right now, presumably this is similar to the performance we could get with the current hardware by implementing #946 (comment).
+See cf #946 for details.
+Any chance this will be tackled soon? Or a point where to start in the ARTIQ codebase?
+The wide interface seems to hit a bug somewhere in ARTIQ when used with DMA.
+is not enough info to start unfortunately.
+Any chance this will be tackled soon? Or a point where to start in the ARTIQ codebase?
+Other than locating it in the DMA/RTIO code area there has not been any further pinpointing that I know of.
+The wide interface seems to hit a bug somewhere in ARTIQ when used with DMA.
+is not enough info to start unfortunately.
+It is where we start debugging it.
+Likely fixed by ea9fe9b

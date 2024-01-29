@@ -1,0 +1,30 @@
+Things should keep working
+Notebook fails with socket related connection issues from Tornado and ZMQ.
+Regular internet (browsing etc) is flaky too
+We suspect that sockets are leaked and not cleaned up. This may be in the VISA driver of
+network instruments such as ZNMB20 VNA
+operating system
+Windows
+qcodes branch
+master
+qcodes commit
+?
+One way of reproducing this it to use both PYQTGraph and matplotlib using the qt5 backend.
+This is probably because two different qt event loops are started.
+Doing:
+Seems to be sufficient to get
+Not sure why it is needed to create a Mock Model?
+A bit more investigation. This can be shortened to
+The Mock model starts a server process so using the multiprocessing so thats probably where the issue is
+The output from netstat -tnl contains a number of localhost sockets that I believe
+are coming from the Jupyter ZMQ internal communications.
+Shutting down the notebook after a crash ends up in something like:
+These sockets never seems to be fully closed
+This is probably caused by a combination of the fork and the fact that the qt eventloop sets up additional sockets
+https://github.com/ipython/ipykernel/blob/master/ipykernel/eventloops.py#L24
+So I suggest, Rewrite mock instruments to not depend on Model. This has the added benefit of making the tutorial simpler.
+Add a warning to the QCodes process to ensure that we catch any unintended use of multiprocessing remaining (there shouldn't be any thats not behind the config option)
+It's also possible to reproduce the issue without qcodes or QT.
+Simply start a long running background process and try restarting the notebook before joining it.
+@jenshnielsen  closing this as we at least removed multiprocessing.
+Agreed. For the record there may still be issues with the pyqtgraph remote proxy thread. So if we see something like this again, that would be where I would look

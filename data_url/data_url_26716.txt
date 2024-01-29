@@ -1,0 +1,161 @@
+Running the 256 H2O benchmark input on 2 Cray XC40 nodes (72 CPU cores or MPI processes) using various CP2K versions for an orthorhombic and non-orthorhombic cell gave the following timings listed as
+Total time (Self time for calculate_rho_elec)
+in seconds (single run, no statistics):
+The current trunk version 8.0 shows a pronounced performance degradation for non-orthorhombic cells.
+@mkrack, thanks for the detailed analysis! This is indeed much worse that what I (apparently inadequately) measured.
+When I ported the general collocate to C, I simplified the implementation somewhat. The slowdown is probably because I replaced the lenghty recursion for the exp function with this single line.
+I think, the best way to fix this would be to merge the new cpu backend from @mtaillefumier.
+@mkrack, the current implementation of the dgemm backend is still slower than the original fotran code but faster than the reference one. It is not coming from the backend since the dgemm backend was faster than the cp2k original code back in May (22s for 6 iterations for dgemm while I get 34 s for the original Fortran code the test case is H2O-32 OMP_NUM_THREADS=1). Something else is slowing things done.
+To be noticed, I did not change any of the fortran code (except adding one parameter to collocate function). I am not going to make any PR until the root cause is found.
+I've replaced the exp function in the inner loop with multiplications (#1098). This should give a significant speedup.
+@mkrack, can you confirm?
+@oschuett Good job!
+Here is the updated table with the total times in seconds (single run, no statistics):
+Sweet! Then I'll now move ahead with migrating also integrate onto the new implementation.
+Btw, there seems to be a performance regression now with integrate. A quick check (based on a GNU binary) unveils integrate_v_rspace_low is about 1.9x slower, and integrate_v_core_rspace is about 1.4x slower (self time).
+This is also observed in the performance regtest on Daint:
+https://dashboard.cp2k.org/archive/cray-xc50-daint-gpu-psmp_perf/index.html
+The overall performance degradation for the 256 H2O benchmark input is roughly 10% and consistent for different cell types. Here is the updated table from yesterday using 2 daint-mc nodes:
+Thanks for the analysis!
+The slowdown within integrate_v_rspace_low is probably due to the ALLOCATEs that I introduced in 2ab8ed7. I'll fix those today.
+The slowdown within integrate_v_core_rspace is caused by grid_ref_integrate_vab. Since this is a new implementation, it's not easy to tell where the performance got lost. For the ortho kernel it might be the loop bounds, which used to be pre-computed.
+I can do some real analysis if you can tell me the most representative input for the stand-alone driver.
+I'm afraid none of the sample tasks is really representative, because they all use a very small grid to keep the file size down.
+Furthermore, a realistic mini-benchmark should use multiple tasks to represent a distribution. I'm planing to write a separate tool for that, but I'll probably not get to it until the end of October.
+So, maybe you could do a tentative analysis on the full CP2K binary in the meantime?
+Thank you!  Yes, I will analyze the full binary with H2O-32 or H2O-64 (Intel VTune and/or Intel Advisor). For the latter, I got an overall impact of ~15% (GNU binary) and aforementioned slowdowns for integrate_v_rspace_low and integrate_v_core_rspace.
+For the record, I ran the following command for an initial analysis:
+One could have specified a duration to not wait until execution finishes (-duration=72), however, the amount of collected data was very acceptable without that limit.
+Top hotspots turn out to be:
+Please note, the rest towards 100% are non-hotspots including application termination. Also, the profiling started just when entering the OT DIIS steps (everything before is out of scope). In essence, the above table if mostly focused on OT DIIS steps. Further, I ran some input file received from Mathieu (I can attach if needed).
+Regarding general_ci_to_grid, time is spent in the loop at grid_ref_collint.h:450. Regarding general_cij_to_ci, time is spent in the loop at grid_ref_collint.h:475. The code lines indicate collocate rather than integrate. There can be more details including advise on what to do with this code (vectorization, etc.). However, I will wait for your first change regarding ALLOCATEs and also see if code remains as is. If so, I will run Advisor to check to vectorization and perhaps also do some manual pass wrt optimizations.
+Regarding grid_ref_collint.h:450, I am currently test this simple change:
+... which accumulates into grid_val and writes it back after this inner loop. Though, write accesses to arrays (in C) are normally treated as impure which can be counter-intuitive when compared to Fortran. Using grid_val makes this for sure an operation that happens in register rather than a memory operation.
+Using grid_val makes this for sure an operation that happens in register rather than a memory operation.
+I actually made the same observation in the ortho kernel, which lead to 64163b4. Somehow, I didn't think about applying the same to the general kernel. I'll will prepare a PR. Thanks!
+I'll will prepare a PR. Thanks!
+Here are some changes that I made, feel free to take or drop. Regarding the omp simd, just to be warned - it is currently not taken by GNU Compiler or LLVM/Clang unless -fopenmp-simd is given (it is not enabled by the means of -fopenmp). In contrast to OpenMP multicore parallelization, OpenMP SIMD is also not guarded by _OPENMP or any similar preprocessor symbol/variable.
+Thanks for the proposed changes. I'll definitely include the casts and the grid_val accumulator.
+I'm surprised that you looked into cab_to_cxyz. Did it actually show up in your benchmarks? There used to be a more efficient implementation, but I simplified it because I deemed the routine not performance critical.
+Regarding the omp simd I'm not sure if we can use it, because there is a loop carried dependency. This dependency could be eliminated by computing exp(-zetp * ((a * i + b) * i + c)) in every iteration, which I did before ad0d9e6.
+I think this change helps a bit more: it is about hoisting alloca (loop-local arrays of runtime-dynamic [small] size) out of loops when locality of code/variables does not suffer, a few variables moved out of loops when constant, trading some divisions for multiplication with inverse, and avoiding some mixed type-ops like converting integer to double-precision (DP) scalars when multiple times involved into DP-ops.
+@oschuett I really want to avoid screwing up the reference source code with minor optimizations; so I let you "review" / take or drop this code. My "feeling" is that combining some scalar data into small/fixed arrays is not a good idea wrt performance (I have not done any such code change yet). For example, an array like double xyz[3] (passed as double*) and then involved into expressions like xyz[0], xyz[1], and xyz[2] may harm performance when compared to struct { double x, y, z; } because the compiler is perhaps restricted with keeping thing in register (we then settle on intra-CPU goodness to do load/store forwarding and avoid actual mem ops). However, I cannot proof this without changing the code perhaps with no positive effect...
+I am done with micro-opts inspired by VTune's source-line correlation. I think Advisor can help a bit more to resolve potential blockers for SIMD in a few loops. However, most things are taken and we have a lot of gather/scatter due to layout conversions, etc.
+@hfp, thanks for the changes!
+I really want to avoid screwing up the reference source code with minor optimizations;
+Don't worry. While it's called the reference kernel, right now it's the only one we have. So, please continue with your optimizations.
+Knowing the headroom of the current kernel will also help us decide whether we should switch to the dgemm approach or not.
+When the dust has settled, then we can still pick a simpler version as reference for future generations.
+help us decide whether we should switch to the dgemm approach or not.
+I think the there is one last thing to try, which hopefully restores the performance we had with the Fortran code. If turning small arrays into structs plays out, we know a new anti-pattern wrt C code. Unfortunately this change can not be confirmed by profiling the code upfront. I will try this change locally and report back (it may take until EOW).
+Meanwhile, I encouraged Mathieu to send the PR if it at least yields the original (Fortran)performance.
+The latest PR is definitely going to the right direction:
+https://dashboard.cp2k.org/archive/cray-xc50-daint-mc-psmp_perf/index.html
+Another thing I could try is to reintroduce the precomputation of the loop bounds for the ortho case.
+Meanwhile, I encouraged Mathieu to send the PR if it at least yields the original (Fortran)performance
+Apparently, the dgemm approach does not yet outperform the original Fortran kernel in all cases. Nevertheless, I totally agree that we should have a healthy competition of backends.
+does not yet outperform the original Fortran kernel in all cases
+Not to make work, but we can consider toggling dynamically if we know why it will be slower with the gemm-path, i.e., call the reference backend in such case.
+I will now look at the struct thing over the course of the next two days (as time permits).
+I wish to clarify few small things because I wrongly reported some results to  @oschuett  in a private communication. So I did a little experiment to provide some hard numbers. These numbers are for collocate only (although the twin sister integrate is also implemented) between two points in time, the version 7.1.0 of cp2k (tag from github) and the version of Ole (from few weeks ago) with inclusion of the dgemm backend for both collocate and integrate.
+Several configurations are chosen (the same initial input file H2O-32), orthorhombic and non orthorhombic cases, different pseudos etc to give a overview (probably not very representative) of the performance aspect of the dgemm backend compared to the fortran implementation (which uses a cut-off).
+the results are the following  (platform Intel(R) Xeon(R) Gold 6154 CPU @ 3.00GHz)
+Orthorhombic case (MAX_SCF 5)
+H2O-32 (GTH_BASIS_SETS, TZV2P-GTH)
+H2O-32 (HFX-basis, cc-QZV3P-GTH)
+-- generic case
+H2O-32 (BASIS_MOLOPT, DZVP-MOLOPT-SR-GTH)
+conclusions :
+@mtaillefumier I think you mean that the results depend highly on the type of the basis set and not on the pseudo-potential, i.e. whether a highly segmented (like cc-QZV3P) or a family basis set (e.g. MOLOPT) is employed. The latter one involves much larger matrix blocks on average in the collocation and integration steps.
+The last PR slowdowns the execution on Daint:
+https://dashboard.cp2k.org/archive/cray-xc50-daint-mc-psmp_perf/index.html
+At this point, I would say Fortran rocks...
+I start to think the original version should have been kept as reference. All timings are compared to this reference but I am positive that the C version (the non-dgemm) can reach this as well. it is just trickier.
+I think, we should now focus on vectorization. Essentially, the code does the following:
+The challenge here is the spherical cutoff. While it reduces the flops by 47%, it also hinders vectorization.
+The if statement kills vectorization although using mask can restore some of it. But more importantly what kill the vectorization is the access pol_z and pol_y within the last for loop. Just doing this
+would reduce the number of reads (there arrays might be in cache true but still). Moreover this bit of code calls this within_spherical cutoff(i, j, k) (lp + 1) ^ 3 * mz *my * mx while doing this
+then
+the gain is non negigleable since the  within_spherical cutoff(i, j, k) is called only nx * ny * nz times.
+The point I want to make actually is not about micro optimizations but algorithmic. These loops are dgemms (as soon as lp >= 1), so applying dgemms and then the cut-off will almost always be faster than this naive implementation. I know it is not implemented that way in the code though. The Fortran code (and the ref C implementation) also add the results back directly to the grid and it is the only advantage the Fortran code has over the dgemm approach (the dgemm approach does this separately). Flops are reduced by 1/2 but the Fortran code has partial vectorization and the final addition to the grid although not vectorized from an operation standpoint is mitigated by the partial vectorization appearing earlier because it is integrated directly in it. Nobody would implement these loops the way they are written anyway.
+The two extremes are the current code (least amount of flops) and the dgemm approach (ignores the cutoff entirely).
+Looking at the timings for the ortho case and a single thread, it seems that the dgemm approach is only advantageous when lp is large. The speedup for more threads is probably a red herring, because the old implementation was not able to utilize many threads due to its parallelization over atom pairs instead of tasks.
+So, it seems the optimal solution lays somewhere between the current code and the dgemm approach.
+The final solution goes towards the dgemm approach, not the Fortran implementation (we can discuss this point for the GPU approach though, where it is the opposite). Timings give you the impression that the fortran implementation (we could also do dgemm version in Fortran) is faster but it is marginal (at least with this example) and more of a corner case since you have to run with OMP_NUM_THREADS=1 and a specific basis set which if I understand correctly from my discussions with many experts around me is not the most used basis set.
+Moreover as soon as the grids are non-orthogonal the generic dgemm approach works better than anything else, is portable (not depending on the compiler), easy to understand so that many other aspects become marginal. The same approach works even better for integrate (it is a collocate after all where instead of summing over the lzp,lyp,lzp we sum over ijk) because we do not have the issue of adding results back to a larger grid.
+Collocate-dgemm is limited by the very last operation which is adding results back to the density grid (it account for 15 % of the run time on a single thread). Remove this and nothing can beat the dgemm approach (it is a tensor reduction after all) provided that dgemm is of course optimized. Applying the cut-off also costs some performance I admit it.
+lp = 0 is a special case and can be implemented directly with the spherical cut-off
+...is not the most used basis set.
+It really depends. CP2K supports a wide range of methods. For example, semiempiricals use minimal basis sets and should therefore have a high fraction of lp = 0. I'll add lp as a dimension to the grid statistics. Then we'll get a clear picture of the distribution.
+lp = 0 is a special case and can be implemented directly with the spherical cut-off
+Yes, at this point I'd expect that we need both implementations and branch here.
+...is not the most used basis set.
+It really depends. CP2K supports a wide range of methods. For example, semiempiricals use minimal basis sets and should therefore have a high fraction of lp = 0. I'll add lp as a dimension to the grid statistics. Then we'll get a clear picture of the distribution.
+lp = 0 is a special case and can be implemented directly with the spherical cut-off
+Yes, at this point I'd expect that we need both implementations and branch here.
+it is already in the dgemm backend. No need to branch it. lp = 0 is simply
+cblas_dger(CblasRowMajor, cube->size[1], cube->size[2], alpha, py, 1, px, 1,
+scratch, cube->ld_);
+cblas_dger(CblasRowMajor, cube->size[0], cube->size[1] * cube->ld_, 1.0, pz,
+1, scratch, 1, &idx3(cube[0], 0, 0, 0), cube->size[1] * cube->ld_);
+then the cut-off and adding the results back to the grid (or do both at the same time).
+I've added more counters. For H2O-32.inp the stats looks this:
+I've added the dgemm kernel to the reference backend. Now we can switch between the different approaches and compare apples to apples. Unfortunately, my implementation seems to be 2x slower. So, maybe I'm doing it wrong?
+@mkrack could you please run the benchmarks once more. I've made several small improvements since Oct 5th.
+For the record, CP2K performance tests on the dashboard are still showing a performance degradation (even if the last changes are making a bit better situation).
+@mkrack could you please run the benchmarks once more. I've made several small improvements since Oct 5th.
+Here is the updated table using 2 daint-mc nodes:
+@oschuett Good job!
+Main driver of CPU time is related to calling the exponential function: https://github.com/cp2k/cp2k/blob/master/src/grid/ref/grid_ref_collint.h#L461. I have tested this with GCC-optimized build of CP2K (about 1/3 or the total CPU time is spent in exp as of this command). An obvious change would be calling expf, but that is probably not good enough. Another exercise is to check the input values for the exponential function and check if the input is in range with fast-path-exp (we all know exp goes quickly out of range even for DP, hence upfront filtering can help).
+The test input looks like:
+That's why I reported much better timings for the generic case some weeks ago.
+Yes, those results are impressive!
+My current understanding is that you decomposed the exponential into 6 terms that can be tabulated and thereby turned an O(N**3) into an O(3 N**2) problem:
+I'm going to add this trick to the reference backend shortly.
+Thanks @mkrack for the new numbers! So, it seems for GGA we have recovered at least 95% of the old performance.
+@alazzaro, you are right, the H2O-32 RI-MP2/RI-RPA benchmark is still about 12% slower. Maybe Mathieu's trick will help. Otherwise, I'll have to do a more in-depth analysis of that use case, but I'd like to first focus on the Cuda kernel.
+Exp... would it be useful to have a fast exp? It remembers me the library I used at CERN (https://github.com/dpiparo/vdt/blob/master/include/exp.h)
+Exp... would it be useful to have a fast exp?
+I think GNU scalar math is good enough, and fast-exp implementations tend to trade accuracy. Even expf is almost twice as fast since it (deterministically) does less/half as many iterations to get to DP-accuracy. Regarding degenerated input, for instance exp(700) already produces close to Infinity wrt DP and there are somewhat more weird cases.
+Does somebody know if expf (single-precision) would be sufficient?
+@hfp Well, VDT is not only fast exp, it also provides vectorized versions...
+Does somebody know if expf (single-precision) would be sufficient?
+That's a very a interesting questions. Unfortunately, it's probably not easy to answer. For example, I could image that additional noise in collocate / integrate would hurt the SCF convergence.
+Regarding degenerated input, for instance exp(700) already produces close to Infinity...
+We are always calling exp with a negative argument. And since we are using a cutoff radius, the results should not be too close to zero either. It might be worth revisiting once we decide to switch from a spherical cutoff to a bounding box.
+it also provides vectorized versions...
+Yes, vectorization is indeed were we should put our focus. Currently, we use the cutoff and the lx+ly+lz < lp condition to reduce the flops. Since these conditions also hinder vectorization there are tradeoff decisions to make.
+Vectorization is for that loop indeed hindered. It is not so much about "condition inside of a loop", but rather that there is a loop-carried dependency, i.e., exp_is_invalid is manipulated by one loop iteration but affects other/subsequent loop iterations. Note, exp_is_invalid is not simply a loop-local variable, an early exit, or skip-condition.
+Exp... would it be useful to have a fast exp?
+I think GNU scalar math is good enough, and fast-exp implementations tend to trade accuracy. Even expf is almost twice as fast since it (deterministically) does less/half as many iterations to get to DP-accuracy. Regarding degenerated input, for instance exp(700) already produces close to Infinity wrt DP and there are somewhat more weird cases.
+Does somebody know if expf (single-precision) would be sufficient?
+@hfp recent version glibc have vectorized version exp.
+Going to lower precision for evaluating is a good idea but there is more to it. The optimization @oschuett is refeering to goes one steps further. And if I push the idea to integrate + dgemm everywhere I get this report from perf (generic case, both integrate and collocate use dgemm in the background)
+9.75%  cp2k.psmp  cp2k.psmp                       [.] add_sub_grid
+9.16%  cp2k.psmp  cp2k.psmp                       [.] extract_sub_grid
+8.91%  cp2k.psmp  cp2k.psmp                       [.] apply_non_orthorombic_corrections
+7.98%  cp2k.psmp  cp2k.psmp                       [.] exp_ij
+6.88%  cp2k.psmp  cp2k.psmp                       [.] apply_non_orthorombic_corrections_xz_blocked
+5.70%  cp2k.psmp  cp2k.psmp                       [.] apply_non_orthorombic_corrections_yz_blocked
+5.39%  cp2k.psmp  libc-2.31.so                    [.] __memset_avx2_erms
+3.65%  cp2k.psmp  libc-2.31.so                    [.] __mcount_internal
+1.83%  cp2k.psmp  libmkl_avx512.so                [.] mkl_blas_avx512_xdaxpy
+1.80%  cp2k.psmp  cp2k.psmp                       [.] grid_transform_coef_xzy_to_ikj
+1.60%  cp2k.psmp  libmkl_avx512.so                [.] mkl_blas_avx512_xdger
+1.57%  cp2k.psmp  cp2k.psmp                       [.] grid_transform_coef_jik_to_yxz
+1.46%  cp2k.psmp  cp2k.psmp                       [.] __qs_integrate_potential_product_MOD_integrate_v_rspace_low._omp_fn.0
+1.15%  cp2k.psmp  libc-2.31.so                    [.] _int_malloc
+1.09%  cp2k.psmp  libc-2.31.so                    [.] _int_free
+add_sub_grid : just add subblocks of the cube to the grid.
+add_sub_grid : extract subblocks of the cube to the grid.
+apply_non_orthorombic_corrections : explicit enough (used in integrate)
+exp_ij : just compute some of the corrections (can be optimized further) no evaluations of the exponentials
+all evaluations of exponentials are below 1% of runtime. Moreover they can also be tabulated for the one depending on the atoms positions at the prize of more memory consumption.
+These estimates from perf are with a old version I have personnally. So put dgemm in collocate and integrate plus this trick and you can cut the timers of collocate and integrate by 2 almost for free. This is of course without applying the cutoff. Applying the cutoff will always kill the performance in the end.
+NB : this trick is worthless on GPU.
+@mtaillefumier Thank you, Mathieu!  The profile looks very promising!
+To conclude the vectorization thing (I know GNU vectorizes math function too and can also bind with Intel's SVML as per flag), Intel Compiler (at least good with FP code) gets some reasonable speedup for the code "as is". However, it is far away from a speedup which is gained with full vectorization. The current code seems to be only vectorizable with relatively sophisticated instruction flow and the gain remains low because of a lot of gathers. There are only a few loops that vectorize nicely (but they have low impact). In fact, if GCC decided to stay scalar it is not too bad for this code. As a side-note, I guess one can download VTune (if support is no concern and even support you can get ;-)
+We can also see that I compiled the code with the -pg option. so it is a bit slower from it should be.
+dgemm in the profile I gave, contributes to 8% of the total runtime but we can not see it without better instrumentation of the code or if we switch from libxsmm to mkl. The profile was obtained with H2O-32 (just ten iterations of the solver). I also  agree with @hfp that vectorization is close to impossible for the reference implementation but it was already the case with the legacy implementation that why we have to think out of the box here.
+After fd98e12 the REF backend is now about 50% faster than cp2k 7.1 for non-orthorhombic cells.
+The Intel compiler might not yet deliver that speedup because of #1434.

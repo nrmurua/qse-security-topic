@@ -1,0 +1,46 @@
+Python version | 3.8.17
+Python compiler | GCC 11.2.0
+Python build | default, Jul  5 2023 21:04:15
+OS | Linux
+CPUs | 8
+Memory (Gb) | 31.04869842529297
+:
+Running the VQE algorithm with or without the Estimator primitive leads to significantly different runtimes. It may be related to the form of the supplied Hamiltonian, but regardless there still remains an order of magnitude speed difference between the "old" VQE usage and when using the Estimator based VQE.
+from qiskit.opflow import Z, I, X, Y, PauliSumOp
+from qiskit.quantum_info.operators import SparsePauliOp, Operator
+import timeit
+from qiskit.circuit.library import RealAmplitudes
+import numpy as np
+from qiskit.algorithms.optimizers import L_BFGS_B
+from qiskit.algorithms import VQE
+from qiskit_algorithms.minimum_eigensolvers import VQE as Primitive_VQE
+from qiskit.primitives import Estimator
+from qiskit.utils import QuantumInstance
+from qiskit import Aer
+num_qubits = 4
+op = Operator(np.random.rand(16, 16),
+input_dims=(2, 2, 2, 2), output_dims=(2, 2, 2, 2))
+sp_hamiltonian = SparsePauliOp.from_operator(op)
+hamiltonian = PauliSumOp.from_list(sp_hamiltonian.to_list())
+ansatz = RealAmplitudes(num_qubits, reps=1)
+optimizer = L_BFGS_B()
+np.random.seed(10)
+initial_point = np.random.random(ansatz.num_parameters)
+qi = QuantumInstance(backend=Aer.get_backend('statevector_simulator'))
+est = Estimator(options={'method':'statevector'})
+old_vqe = VQE(ansatz,
+optimizer,
+initial_point=initial_point,
+quantum_instance=qi)
+prim_vqe = Primitive_VQE(est,ansatz,optimizer,initial_point=initial_point)
+%timeit old_vqe.compute_minimum_eigenvalue(hamiltonian)
+%timeit prim_vqe.compute_minimum_eigenvalue(hamiltonian)
+%timeit prim_vqe.compute_minimum_eigenvalue(op)
+%timeit prim_vqe.compute_minimum_eigenvalue(sp_hamiltonian)
+One would expect negligible speed difference between similar executions of the "new" and "old" VQE algorithm.  The gap between speeds also seems to grow with problem size, leading to very slow performance at even modest problem sizes with the primitive based VQE.
+It does seem to be paired somehow with my choice of a dense operator Hamiltonian to measure, as there is neglible speed difference when using a simpler Hamiltonian such as a single 4 qubit Pauli string. Granted that forming an operator from a matrix is very inefficient, I still wouldn't expect a performance difference between the two versions of VQE.
+You're using a reference implementation of Estimator in your new code, but the full Aer simulator in the old approach.  If you want to use the Aer in the primitives approach, you need to use qiskit_aer.primitives.Estimator (https://qiskit.org/ecosystem/aer/stubs/qiskit_aer.primitives.Estimator.html).
+Thanks for the reply, but changing the call to from qiskit_aer.primitives import Estimator and using the estimator options Estimator(backend_options={'method':'statevector'}) actually makes the slowdown worse by another factor of 10 or so for the example 4 qubit problem.
+Try this (for the AER Estimator)
+Yep! I just tried this as well and it seems this is the issue. I also had to make sure the supplied Hamiltonian is hermitian (which I naively didn't enforce initially).
+So it appears that it allows the measurement of general Hamiltonians (non-Hermitian) but at some significant performance hit that isn't obvious (to me).

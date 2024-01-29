@@ -1,0 +1,56 @@
+I would like to discuss how the converters of QuadraticProgram should behave in the next version.
+There are some issues related the converters of QuadraticProgram, #1032 and #982.
+#1043 addresses the penalty factor
+If converters does not support the input QuadraticProgram, the error message should suggest which converter to apply beforehand.
+Or, it would be an option that QuadraticProgramToIsing applies necessary converters automatically.
+Some thoughts....
+I made a comment in #1043 around convertor re-use. I imagine given I setup a convertor I would be able to use it more than once to do a conversion of some input to the output format. As such whatever parameters are setup for the convertor, via the constructor, care should be taken to preserve these instance vars storing them, and not alter them, so each conversion is as expected.
+Also I wonder if it would be better not to store src and dst in these convertors as instance vars, if the convertor instances are expected to be reused. Rather keep src/dst just as local vars in the encode and any supporting functions so they exist only during the conversion.
+I see. You prefer a pure function like converter to reuse it in other places once instantiated.
+I designed to store src and dst and associate the converter with a QP in order to implement decode as well as encode. Given a result, decode is supposed to transform it into a result corresponding to the original QP. If we keep the information QP somewhere else, we make converters like pure functions.
+By the way, I discussed this topic with @stefan-woerner. We agree the followings:
+We also discussed to distinguish "converter" (QP <=> QP) and "translator" (QP <=> other, e.g., Operator). It might be intuitive to make QPtoIsing translator from QP to Operator. I want to discuss more about converter re-use in the context.
+I see. You prefer a pure function like converter to reuse it in other places once instantiated.
+My comment was more around an end-user expectation of what they might intuitively expect of a converter. If all the config for a convertor is in the constructor and encode takes the object I want to convert and gives me a converted object back, then to me it does not seem unreasonable to believe an end user would expect to be able to reuse the convertor under the same configuration as was passed in. This came about as I noticed in #1043 that the input penalty would end up being overidden in auto case by the computed penalty - any re-use would then use this first computed penalty. Perhaps this is a some use case to convert a set under the same auto penalty as the first value.
+In terms of src and dst and storing it so it can be decoded. In the latter it seems that the original object is modified rather than a new converted instance being returned. Perhaps the convertors should all be consistent in returning a new object and not modifying the original in place (or all modifying the original). I think having different behaviors among the convertors will cause users to end up with unexpected problems around this.
+So for me it is more to be consistent and do intuitively what you might expect. If there is some behavior that seems it would not be so then we should make a Note: in the documentation, though sometimes these are not read so much so intuitive behavior of what you might expect does seem preferable.
+If converters keep src and dst, it is easy to convert the result of dst to the result of src. But, I agree that it might not be so intuitive to users. Especially, users may pass wrong result to decode by reusing converters. In such a situation, they will receive a wrong result, and it is hard to debug it. Ideally, converters should decode result without information of src. If we append some information to the encoded problem, we may be able to decode the result. Perhaps, it might be possible with no extra information. I would like to think of the idea.
+Feel free to write your idea about the converter design. @adekusar-drl
+It is necessary to keep some metadata about the original problem to realize decode of results, e.g., ignore slack variables and combining binary variables into an integer variable.
+The current design keeps the metadata in the converters. The other options are: to keep the metadata in the problems after conversion, and to keep the metadata as a separate data.
+I don't think it's a good idea to expect users to manage metadata correctly. So, they may combine wrong metadata and result when decoding.
+So, I think of a following flow.
+I will think of ideas about treating parameters of converter as property.
+If encode provided a new object back, that was encoded version of the original which is left untouched, rather than doing the encode in-place, there would be no real need for decode of the last encoded object, i.e. the in-place altered one, since you could keep the original too should it be needed. Maybe I am missing an understanding of exactly the use case for decoding the last encoded object that the convertors look like they do.
+@t-imamichi Thanks for adding me to this discussion. I explored the classes from the converters package and here are a few my findings/suggestions:
+Feel free to criticize.
+@woodsp-ibm encode is a conversion from QuadraticProgram to QuadraticProgram. On the other hand, decode is a conversion from OptimizationResult to OptimizationResult. So, just keeping the original QuadraticProgram is not sufficient to decode OptimizationResult. Let me think more about the data flow...
+@adekusar-drl Thank you for your feedback.
+I will soon make a PoC code to discuss more details.
+@t-imamichi
+There may be any code (e.g. user code) after a converter has been applied that modifies the problem in any way you can't predict. If you append metadata to QP, then you rely on the code you can't control and this is error prone.
+We have the same issue when embedding the metadata in converters as Steve mentioned. Users may reuse converters embedded with some metadata to different QP in the current design. It causes wrong decoding results.
+I know, I think converters should be expendable. Anyway, if encode is being called for the second time without a call to decode you may prevent this and raise an exception.
+As a summary, we have to make converters more intuitive and fail safe.
+Thanks, I agree on most of the points above!
+Regarding accessing converter parameters from an algorithm, I think it is very important, but I am fine exposing the parameters instead of the converters, just needs to be done consistent.
+In addition, we might want to allow users to provide their own (list of) converter(s) that are used instead of the default ones.
+On the meta data discussion for converters, I think in most cases we have the use case that we encode/decode within an algorithm. Thus, just raising a warning if decode has been skipped sounds like a good and pragmatic idea.
+encode is a conversion from QuadraticProgram to QuadraticProgram. On the other hand, decode is a conversion from OptimizationResult to OptimizationResult.
+'encode' and 'decode' seem more like some symmetric behavior according to the naming. Let me say what these objects do then in a different way - they 'translate' the problem from one form into another, and then you need a method to 'interpret' the result of solving the problem in the context of the translated problem so it can be expressed in the form of the original one. I think the fact that one half of the convertor acts on the problem and the other half acts on a result object could be made clearer perhaps with better naming.
+Maybe 'encode' is fine - 'convert', 'translate', even 'encode_problem' would be possible here too I think. For the other 'interpret', 'interpret_result', 'process_result' or whatever. Maybe I looked at the object too casually and did not pay enough attention to datatypes - but I feel that something other than what looks like it does symmetric, and potentially reversible operation, like having encode and decode as names may help to dispel such potential confusion.
+One other thought may be to have the convertor just have the encode method and then another class, maybe in that same convertor be (also) returned from the 'encode'. This new instance would store whatever it needed to interpret the final result so you would call a method on this to do so. This now makes the original convertor re-usable since it does not store any data itself for any result interpretation down the line rather that's in an object that is passed back which the caller stores and uses of course.
+@woodsp-ibm Yes, I agree. decode does not sound as intuitive as encode and the asymmetric functionality of encode and decode might be confusing. Separating them would be a better option. Maybe it would be good to have only one-way converters, i.e., QP->QP, QP->Operator, Operator->Result, and Result->Result.
+@t-imamichi Different classes occured to me too since these conversions are acting on different types. But since it was indicated that the decode function, to process a result from a given problem conversion, depended on data/info from that original problem conversion, it was how I came up with the above thought. I.e. that the problem convertor class, could contain another class for result conversion in that same module, that the problem convertor knows how to create when it does the problem conversion and passes an instance back, complete with whatever data/info it needs, so that instance later it can be called upon to do a result conversion.
+I'm working on this issue in PR #1061. About the name of the argument for QuadraticProgram in encode method, I feel problem sounds more intuitive for the converter instead of prog. What do you guys think? (It's no big deal. I just felt so. Since the class name is QuadraticProgram, prog might be better).
+I'm ok with this. I use problem as well.
+@woodsp-ibm pointed out that Aqua chemistry deal with conversion of problems in Hamiltonian class and results as follows.
+I come up with the following base class of converters between QuadraticProgram. What do you think?
+Translations between different classes such as QP to Ising are not target.
+@t-imamichi I like your suggestion!
+@t-imamichi Imamichi-san, looks nice.
+Thank you for your responses. I will make a PR based on my idea.
+I think we should move the QuadraticProgramToNegativeValueOracle into a algorithms / grover_optimizer folder together with the GroverOptimizer as we also do for other algorithms in aqua. Eventually, this should go to the circuit library as a quantum arithmetic circuit to evaluate quadratic functions, but that requires the refactoring of the base Grover algorithm first.
+I changed the following things based on the above discussion and Imamichi-san's document in #1061 (I haven't changed anything of QuadraticProgramToNegativeValueOracle).
+A few things (interpret of QuadraticProgramToQubo needs interpret of LinearEqualityToPenalty) are left which has dependency on #1043, but basically it's done. If you need any other things, please tell me or add to PR's code.
+I will work on the change of converters with @a-matsuo on branch #1061

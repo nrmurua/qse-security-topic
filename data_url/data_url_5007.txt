@@ -1,0 +1,58 @@
+ComplexMatrix2 has always been unwieldy:
+The new two-qubit unitary and two-qubit Kraus map functions required creation of a ComplexMatrix4, which has so-far mimicked the unwieldy design of ComplexMatrix2:
+This isn't just unbearable for users (who may have to specify up to 16 of these in a general two-qubit Kraus map), but has required a lot of hideous non-iterative code. Here's one of several horrible examples between QuEST_common and QuEST_validation:
+@BalintKoczor's original Kraus code used a much friendly design of
+which allows for compact user specification:
+This still allows compact declaration of e.g. real matrices
+Internal code would then become significantly nicer:
+This would make ComplexMatrix2 and ComplexMatrix4 accessed in the same way as the necessarily array-based ComplexMatrixN (a new multi-qubit type on new_gates).
+Though ComplexMatrix* now wouldn't contain the Complex type, it would actually more so mimic the structure (having real and imag fields).
+This is a semi-big refactor, but I think a really important one to make the API even usable. Users will naturally have their own functions for populating matrices and it's an unnecessary burden they can't access the struct elements "iteratively". What do you think?
+This would be part of the proposed API change for QuEST v3.
+I've put a lot of thought into this refactor, and it's somewhat difficult to support operations on both multi-dimensional arrays (for ComplexMatrix2 and ComplexMatrix4) and pointer-to-pointers (ComplexMatrixN) without code duplication. It's further very difficult to allow for a ComplexMatrixN to be kept in-stack (as opposed to malloc'd into the heap), and be conveniently initialised (e.g. like a multi-dimensional array)
+I believe the best design decision is a refactor which does away with the ComplexMatrix struct and uses qcomp[n][n] 2D arrays (where qcomp is the native complex primitive, defined in QuEST_complex.h). I will motivate that decision by instead proposing the best designs which keep the ComplexMatrix structs.
+I'll split my thesis into 3 posts, which will look at
+Here are just some annoying C99 limitations to keep in mind that constrain the design
+Here is the most natural definiton of the matrices which offer consistent interfaces, iterable access to elements, allow easy/elegant initialisation of ComplexMatrix2/4, and allow any-sized ComplexMatrixN.
+(already defined):
+(new interface):
+Every type now has .real and .imag fields, just like Complex and ComplexArray.
+The most commonly used types by users (ComplexMatrix2 and ComplexMatrix4) have elegant initialisations, are iterable, are kept in the stack, and are"returnable" (array is copy-by-value inside the struct):
+ComplexMatrixN can be any size, though must* be malloc'd into the heap...
+and later freed by the user (with a call to QuEST's destroyComplexMatrixN).
+We can at least provide convenient setters for the matrix, i.e.
+For internal purposes though, we can hackily keep ComplexMatrixN in the stack. E.g. here's a 4 qubit ComplexMatrixN with .real and .imag pointers to local stack-space.
+If the user really wanted to create a ComplexMatrixN in the stack, they could do so with a somewhat awkward function like this, where they pass in all the 'storage' arrays.
+Of course, this means that particular ComplexMatrixN instance cannot be "returned" to a caller (since those arrays are in local stack space), unlike all previous instances.
+Note this code could be further shortened, without polluting the user's namespace, using a macro!
+This is quite nice; this creates un-referenced arrays in the calling stack.
+Let's assume so far that we're happy with this design - I am extremely eager to hear of a better design which allows for both convenient initialisation of ComplexMatrix2/4 and any-sized ComplexMatrixN, but I'm not sure one exists.
+Consider this "inner code" which determines, given a list of operators (seperated into their iterable real and imag components), whether they form a completely positive map.
+This code is substantial enough that we don't want to duplicate it, so we should put it in some function signature where it can accept both lists of ComplexMatrix2, ComplexMatrix4 and ComplexMatrixN.
+I can see five ways to do this, each with some aesthetic tradeoffs - my personal preference is using macros. Note that generally copying ComplexMatrixN to the stack is safe; sensible use-cases are of too few qubits to choke up the stack.
+This really makes inner code unreadable.
+This has a lot of memory-management code; everyone (validateOps*) has to pack their arguments, which is annoying.
+Again, everyone (validateOps*) has to pack their arguments, which is inelegant and tedious.
+Using macros is significantly more elegant than the above solutions, because:
+However, there are drawbacks:
+I think this relatively minor use of macros is ok though, and a significantly smaller evil than the alternatives.
+The whole mess is caused by ComplexMatrix2.real (a 2D array, i.e. a contiguous memory block) and ComplexMatrixN.real (a pointer to a sequence of pointers) being fundamentally different, and needing different function signatures. Using any of the above designs, there are still some design problems:
+That ComplexMatrixN has pointers, rather than multi-dimensional arrays, despite still being quite a small object, is the problem. Unfortunately we cannot have variable-sized arrays in a struct.
+Although being able to return multi-dimensional arrays by value when packed in a struct is quite nice, we really only use the struct to pack the .real and .imag components together.
+Here is how we do a Fredkin gate.
+If we forewent keeping the real and imag components 'together' (i.e. we don't use structs), then these design problems disappear:
+Now there is no need for code duplication, or for worrying about converting types or using macros. Now user's can specify any-size unitaries, initialise them elegantly, keep them in the stack, create them in-line and iterate them. There are just two problems;
+I think the best solution, which retains a single u argument, is to pass a multidimensional array of a complex primitive! E.g. the precision-agnostic C-vs-C++-agnostic qcomp defined in QuEST_complex.h
+We simply replace ComplexMatrixN with qcomp[][]:
+We gain a whole bunch of other good stuff, like complex arithmetic! I.e. we wouldn't need to force the user to seperate into real and imag components!
+The complex 2D array interface is trivially adapted into two 2D arrays, if (for some justified reason) we don't want the complex type to be present in the backend.
+@aniabrown @drijbush @oxonian123 please share your thoughts on this!
+Here is my current plan:
+Finish my refactor of ComplexMatrix* into the above data structures (where ComplexMatrix2 and ComplexMatrix4 are multidimensional arrays, and ComplexMatrixN is dynamic), and use [Option 5] (macros). This is the solution which has the minimum amount of code change, and which is most easily adapted to a qcomp[][] solution in the future.
+I will finish this ASAP so that a new release can be made with the new features (Kraus ops, multi-qubit-unitaries) which have become outstanding. However, I would still like to upgrade the interface to use qcomp[][] in the near future - it is a seriously enormous usability improvement, and may outweigh objections about the agnostic complex type (which can probably be resolved by, e.g. not using the type in the backend).
+Variable-length 2D arrays are not supported directly in C++. Ergo, QuEST could only adopt an elegant
+interface in C, and would become C++ incompatible.
+I don't believe it's possible to circumvent this with void and casting, since VLA isn't supported in C++ at all (and templating cannot be performed with struct fields).
+Hence the design above (implemented in pull req #169) is my current strongest proposal.
+A demonstration of the new interface is provided in pull req #169
+Merged into develop

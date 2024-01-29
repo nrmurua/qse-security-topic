@@ -1,0 +1,17 @@
+When swap is the only operation in the circuit, with no measures, the OptimizeSwapBeforeMeasure transpiler pass removes the swap changing the behavior of the circuit.
+from qiskit import QuantumCircuit, BasicAer
+simulator = BasicAer.get_backend('unitary_simulator')
+circ = QuantumCircuit(2)
+circ.swap(0, 1)
+print(execute(circ, simulator, optimization_level=2).result().get_unitary())
+print(execute(circ, simulator, optimization_level=3).result().get_unitary())
+I think the most appropriate way to handle this issue is to skip the OptimizeSwapBeforeMeasure transpiler pass if the circuit does not contain any measurements. After all, the name of the pass suggests that there should be a measurement. It's a simple check and , if you agree, i can add this.
+With @kdk are thinking in introducing a preserve_statevector=<bool> (final name to be defined) option to the transpiler to support this cases. This option will skip passes that do not preserve the statevector of the input circuit, including OptimizeSwapBeforeMeasure.
+Would this be a reasonable solution to this issue?
+@ajavadia says in #4608 (comment):
+Also not sure a preserve_statevector flag is the right approach. I think we should always preserve statevector. Just need a pass to clean up extra swaps if they appear before measurements (absorb them into the measurements and retarget them).
+Probably the preserve_statevector=<bool> name is too confusing. Maybe preserve_unitary=<bool> is better?
+The "always preserve statevector/unitary" approach has some negatives aspects:
+Point 1: I would assume that doing/undoing swaps is pretty fast. Likewise cleaning up of swaps that are immediately followed by measurements (we should do this always anyway).
+Point 3: If you add a preserve_unitary=True  flag, then I don't know how mapping can be done in general. When you embed the circuit onto some larger coupling map, the unitary is different (bigger).
+I agree with Point 2, but not sure yet another compiler flag is needed to deal with this. Since we are moving towards making the initial state explicit (i.e. explicit reset), we could just allow such passes that assume an initial state (such as Hoare) to run when there is an initial state, not on general circuits.

@@ -1,0 +1,15 @@
+A question in the google group (https://groups.google.com/g/cp2k/c/dfuWp6UaIOY) sparked an investigation into the behaviour of the wavelet Poisson solver. Running a calculation with a 50A x 50A x 50A cell and 36 OMP threads lead to non-physical energies and warnings by the wavelet solver. It turns out that all Poisson solvers yield wrong result in such conditions.
+I tested the input below with the ssmp and psmp  (1 MPI rank) executables, with 16 and 32 OMP threads, for all Poisson solvers (making sure to change the periodicity when needed). Runs with 16 threads were all successful, and runs with 32 threads all failed. Reducing the box size to 40A x 40A x 40A and using 32 threads works as well.
+In the end it seems that the problem is independent the Poisson solver, contrary to the initial assumptions. I currently have no idea of what goes wrong.
+I found which file produces the error. If I comment out all the #pragma omp directives from src/grid/ref/grid_ref_task_list.c, the above example runs fine with 32 threads. @oschuett I think you wrote this, maybe you can have a look into it ?
+Note that the issue seems related to the number of grid points, as increasing the plane wave cutoff may also lead to the same behaviour.
+By any chance, could you try to increase the stack size?
+A stack overflow would have also been my first guess. It could also be an integer overflow.
+See also #1775, which seems related.
+Perhaps this issue shows the desire to lower the stacksize (despite of the ability to increase it). The grid code uses C99 which allows to have stack-based arrays with sizes only known at runtime. However, it can be wise to allocate from the heap or to introduce some scratch memory buffer.
+I agree, that the grid code's stack usage might be a bit excessive. Unfortunately. just calling malloc is too slow. For DBM I therefore added a memory pool.
+We should probably try to have a shared pool for all of CP2K, assuming we can come up with a good algorithm for managing it.
+By any chance, could you try to increase the stack size?
+ulimit -s 256000
+export OMP_STACKSIZE=256M
+I tried it with no success, the SCF cycle still goes crazy.

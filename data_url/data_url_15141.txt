@@ -1,0 +1,39 @@
+Scheduling quantum circuit with V2 backend will fail. This is caused by the complicated mechanism I describe in the following. Current Qiskit scheduler is designed based off of the old IBM devices, where the measurement instruction trigger must be synchronized among all channels. Thus there must be a special instruction measure(q_0, q_1, q_2, ..., q_N) for an N qubit device. This (old) IBM specific behavior is hard-coded in this function.
+https://github.com/Qiskit/qiskit-terra/blob/a3b359b899d5d963272a7b424c8a283bc6bd4c0d/qiskit/pulse/macros.py#L22-L29
+In current IBM device meas_map is somewhat outdated, because we can measure arbitrary combination of qubits simultaneously and at arbitrary time (but they are scheduled at the same t0 in current architecture). So this function can be simplified.
+On the other hand, we are now migrating from transpile arguments to a backend.target (which is a collection of transpile arguments) and the InstructionScheduleMap that provides above measure instruction is absorbed in the target. This is a nested dictionary keyed on instruction name and qubits, and a pulse schedule is stored as a part of InstructionProperties class. Target can dump an instruction schedule map by consuming itself for backward compatibility, and the generated instruction schedule map contains all entries in the Target.
+However, Target.add_instructions method validates qubit number agains instruction num_qubits. In case of Measure, this is single qubit instruction by definition, and thus special pulse schedule measure(q_0, q_1, q_2, ..., q_N) is not accepted by the Target while it is still provided by IBM backends.
+https://github.com/Qiskit/qiskit-terra/blob/a3b359b899d5d963272a7b424c8a283bc6bd4c0d/qiskit/transpiler/target.py#L374-L377
+In current implementation, the all qubit measure schedule is missing in the Target.
+This results in
+PulseError: "We could not find a default measurement schedule called 'measure'. Please provide another name using the 'measure_name' keyword argument. For assistance, the instructions which are defined are: ['rz', 'cx', 'id', 'x', 'measure', 'sx']"
+Circuit scheduling must work with V2 backend.
+There are several approaches.
+[1] We can relax target validation to accept the all qubit measure instruction. But this means we need to accept an instruction that doesn't fit in with Qiskit object representation. Thus this approach is sort of hard-coding IBM specific behavior in Qiskit and I don't prefer this approach.
+[2] We can update the behavior of pulse measure macro instead. Since measure map is no longer practical, I think this is reasonable approach. However, this might be a breaking API change.
+I had offline discussion with @taalexander @wshanks .
+It doesn't even reflect multiplexing, maybe that was the intention but right now the constraint that all measurements need to be together is a result of the software layer. That's why I always advocated for the need for a multiple-qubit measurement (similar to reset)
+(@taalexander)
+This makes me think current Qiskit transpiler underestimates the importance of lowering of measurement instruction, and it just ignores backend.meas_map.
+For example,
+this implies all qubit measurement must be synchronized together. For this circuit
+one may expect measure for q_0 is delayed by 160 dt from one for q_1 (indeed current circuit scheduler returns such schedule). However, this is the consequence of careless consideration of the backend meas_map. In fact, q_0 and q_1 are measured synchronously, and X gate on q_1 is scheduled in ALAP fashion (in the actual backend compiler as long as they report meas_map).
+Note that this introduces a critical timing error in the dynamical decoupling pass (especially in the context of mid-circuit measurement) and IBM prover implements own scheduler.
+To avoid this issue and respect meas_map that backend reports, Qiskit should implement variable width measure instruction, and transpiler must implement measure aggregation pass. In this way user can still use conventional single qubit measurement instruction, while we can perform more accurate scheduling for dynamical decoupling by considering the backend meas_map.
+This also fixes the issue of missing multi-qubit measurement in the Target.
+After discussion with @mtreinish we came up with following conclusion.
+According to @mtreinish
+Well that's the nice thing about the target, is it's decoupled from the backend's returned data structure. So we just need to be able to go from what the backend gives us to the data model we build for the target
+This indicates we should be able to generate parallel measurement calibration on the fly on the front end. If backend applies some alignment constraints (e.g. some trigger buffer for each acquire channel), this request must come with more rich meas_map data structure.
+We can assume when the meas_map is conventional List[List[int]] then we can naively parallelize measurement instruction of each qubit. This means pulse measure scheduler must dispatch the scheduling logic based off of the meas_map data structure, which might be represented by a subclass.
+This makes me think:
+The new pulse measure scheduler would look like
+then we can fix scheduling failure with V2 backend without modifying any of target / provider / measure class.
+(Note)
+Incorrect circuit scheduling is another issue. Having grouped measurement class still makes implementation of alignment logic easier. However, this can be a compiler directive and no need to be exposed to users.
+Target must provide backend.target.meas_map, which must return one of MeasMap subclasses according to what the backend provides for the meas_map.
+I would relax this a bit because Target.meas_map will need to be optional (both from a backwards compatibility PoV but also because most other providers don't have the same level of information available.
+Also, is there a better name than meas_map that we can use here since we're adding a new field to the Target class? I just don't think it's super descriptive for people and won't be obvious to others what the intended purpose of it is (I know I've had to explain it to people before because they didn't know what it was for).
+That's fair point. I think we can return individual measurement configuration if backend doesn't provide any setting.
+Regarding the naming, (I think I suck at naming) something like MeasureGrouping or ParallelMeasure? I think meas_map is somewhat aligned with coupling_map (I guess the word "map" indicates topological map of concurrent measurement on the device graph, rather than dictionary mapping).
+(edit) In this sense I prefer something like DeviceCouplingGraph for coupling_map.

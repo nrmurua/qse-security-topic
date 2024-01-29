@@ -1,0 +1,21 @@
+CP2K builds fine with GCC 13.1.0 and MPICH 4.1.2. The following regression test is clean except for the following FE_DIVBYZERO error in grid_unittest
+The build is also successful with DO_CHECKS=yes (see here for the details concerning the additional compiler flags), but any run launched with mpiexec requesting more than one MPI ranks fails immediately
+Obviously, the thread initialisation causes already a SIGFPE with debug flags.
+See also issue #1030
+Sorry for the late reply. I don't know what it could be. I cannot reproduce this issue with the old MPI interface+MPICH+gfortran13. What arch file did you use for compilation? Did you explicitly turn on the support for the mpi_f08 module in the arch file? I turned it off in case of MPICH in the toolchain due to some compiler bug in gfortran 11/12. I am currently recompiling and testing with MPICH.
+Yes, I added -D__MPI_F08 in the arch file Linux-gnu-x86_64.psmp. So, I understand that this flag is not (yet) working with MPICH and GNU v11 to v13 because of compiler bugs.
+I do not know the current state regarding GCC13+MPICH. I am currently trying it myself for the first time. Eventually, we have to open a ticket on MPICH's github repository. I just know that there is a compiler bug in GCC12 preventing the use of MPICH's .mpi_f08
+I just know that there is a compiler bug in GCC12
+One should avoid GCC 12.1 and question any distribution deploying it under "LTS".
+I can run the unittests with GCC13 and MPICH 4.0.3 (toolchain) and -D__MPI_F08 set in the arch file. Because of my notebook, I have to configure MPICH with --with-pm=gforker and --with-device=ch3:sock.
+Yes, MPICH 4.0.3 is working fine. The issue is about MPICH 4.1+ which requires obviously mpi_f08 for compilation. We will need mpi_f08 as default in the future to have CP2K working (compiling) with recent MPICH releases. It seems that MPICH has eventually dropped the transitional support (interfaces) for older MPI versions.
+This is a replica of what we did in DBCSR (cp2k/dbcsr#661) and @mkrack is definitely right (unless you want to use Cray pointers and support the old interface). You need F08 as default with MPICH 4.1.
+Cray pointers are not standard compliant which is do not want to use them. Still, older versions of gcc are still around even at supercomputing centers. As such, Daint and potentially also other older supercomputers do not support mpi_f08 which is why I would not drop the support for the old interface yet which does not mean that I would keep that support forever. Related to the MPI interface is also support for later standards (F2008+TS or F2018) which we could push forward. I suggest to discuss this issue at the developers' meeting.
+Still, we should consult the MPICH developers what to do about the issue @mkrack found with their library.
+We could make mpi_f08 the default for MPICH > v4.0.
+Still, older versions of gcc are still around even at supercomputing centers.
+Very true, in particular with RHEL's disruptive change, many small clusters are not only stuck with RHEL 7.x (or 8.x) but cannot decide where to go. This software base is actually aging rapidly and becomes an increasing issue for maintaining the "status quo" like "works".
+We could make mpi_f08 the default for MPICH > v4.0.
+Sounds like best effort and the right way to go. If any infrastructure is missing to detect this case at source-level (not just toolchain), it sounds like worth doing it.
+Let me clarify @fstein93 . As we did in DBCSR, MPI F08 is only needed for MPICH 4.1 (and again, I agree with @mkrack 's suggestion). Never said to remove the old interface, neither to use Cray pointers (it was under parenthesis as something that I will not do, we never did it in the past). Please note that MPICH is now fully compliant with the standard, but it is something you can ask.
+For instance, on the same lines: pmodels/mpich#2659

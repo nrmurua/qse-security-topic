@@ -1,0 +1,34 @@
+Some of the dependencies in pyproject.toml need to be pinned.
+Related to this comment in #197.
+If an editable version of Toqito is installed by using pip install -e., the latest version of one of the installed packages leads to test_state_metrics/test_matsumoto_fidelity.py::test_matsumoto_fidelity_default failure.
+The same failure does not happen if all packages and their versions are installed by using the code block in the previously linked comment.
+probably an issue related to poetry and jsonschema?
+Hmm, is this perhaps an issue with the version of poetry being used? That is, should poetry be updated here?
+poetry 1.6.1 is the latest version.
+poetry does not have jsonschema as an official dependency but one of the dependencies must depend on it.
+https://github.com/python-poetry/poetry/blob/master/pyproject.toml
+Ah gotcha. So maybe we should pin jsonschema<4.18.0? What do you think?
+yep! Tried it just now. jasonschema is not the issue, apparently. The test discussed in the issue description is still failing.
+https://github.com/vprusso/toqito/blob/master/toqito/state_metrics/matsumoto_fidelity.py#L6
+matsumoto_fidelity can't import is_density due to some ImportError.
+This is because is_density can't import is_positive_semidefinite due to another ImportError.
+https://github.com/vprusso/toqito/blob/master/toqito/matrix_props/is_density.py#L4
+I will dig deep into what's causing this then attempt to pin the dependencies.
+Hmm, interesting. Out of curiosity, what is the ImportError with the is_density function?
+For return is_positive_semidefinite(mat) and np.isclose(np.trace(mat), 1) in is_density:
+Interestingly enough, if I run all the tests in toqito/tests, only Matsumoto fidelity fails as an AssertionError.
+But if I run all the tests in toqito/tests/test_state_metrics, more tests fail for the same reason. This makes me think there might be a bug with pytest-cov also.
+Edit- UPDATE: I checked this in a working environment (of Python 3.11.5) where all tests pass. Similar behavior as above.
+For the above code block, all tests pass (identical to all github workflows). But if I do the following, I see the tests fail due to the same TypeError.
+I think it might be better to verify the tests in all folders.
+Seems like the issue could be in is_positive_semidefnitie, is_hermitian and/or is_density.
+pytest should have caught these failures when all the tests were run at once. But it didn't.
+Occasional Error Failure
+Figure out why test_matsumoto_fidelity_default will fail in a brand new virtual environment created for toqito.
+The test fails because the calculated value for the test is 0.89 when it should be 0.99.
+Output of pip list for the testvenv
+Installed versions of another venv where all the tests pass. It should be noted that this environment also has jupyter notebook installed. working_env_dep.txt
+Tried adding cvx  = "0.1.3" to pyproject.toml. Still the same AssertionError failure mentioned at the beginning of this comment.
+On the bright side, this assertion failure is a different issue. Before it was due to module not found error.
+In addition to cvx, an editable installation by pip also does not install scikit-image. The newest version of cvxpy is also not the issue. Github runners install it and the test passes.
+maybe pip is a bad dependency resolver.

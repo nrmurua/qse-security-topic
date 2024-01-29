@@ -1,0 +1,38 @@
+The following code
+raises for f(43), f(44), f(45)
+I don't understand how there can be any duration issue there.
+Hi @Slimane33.
+I'm investigating on this one and will let you know ASAP.
+Let's test the case when x=45.
+The second pulse on ch0 occurs from t=1824 to t=2004.
+The previous pulse on ch1 occured from t=1772 to t=1824, which brings us to t=1992 with the 220ns retargeting time.
+Target #0 being used by both channels, the next pulse on ch1 has to be delayed to t=2004, hence a need for a 12ns delay.
+This is where the error happens, because 12ns is smaller than the minimal delay of 16ns.
+@HGSilveri: I think we should not check against Channel.min_delay when we just want to add some delay. What do you think ?
+Here's the sequence when disabling this check (we can notice the 12ns delay on ch1):
+
+@HGSilveri: I think there's another bug on ch1 since the first two pulses should be separated by the retargeting time, shouldn't they?
+@Slimane33 thanks for spotting this and thanks @LaurentAjdnik for the detailed report.
+@HGSilveri: I think we should not check against Channel.min_delay when we just want to add some delay. What do you think ?
+In fact, the delay that is actually programmed in hardware, so it has to obey that condition. Instead of disabling the check, we should use np.clip() to round it up to at least the chosen channel's min_duration before validating it.
+@HGSilveri: I think there's another bug on ch1 since the first two pulses should be separated by the retargeting time, shouldn't they?
+The retarget_time is actually the minimum time that has to occur between two target instructions on a channel. You don't have it on the first retarget because the last "target" instruction happened all the way back at t=0, so more than 220 ns have since elapsed.
+In fact, the delay that is actually programmed in hardware, so it has to obey that condition. Instead of disabling the check, we should use np.clip() to round it up to at least the chosen channel's min_duration before validating it.
+Thanks for you feedback, @HGSilveri.
+A few more questions before I PR something.
+Why np.clip()? duration being an int, there seems to be no array involved.
+Plus, is there an upper bound we should check for? Or is checking against Channel.min_duration sufficient?
+Why np.clip()? duration being an int, there seems to be no array involved.
+Just out of convenience, to avoid an if statement. It works for single values just as well.
+Plus, is there an upper bound we should check for? Or is checking against Channel.min_duration sufficient?
+No, no upper bound to worry about here. If you're using np.clip, set the upper bound to np.inf
+Why np.clip()? duration being an int, there seems to be no array involved.
+Just out of convenience, to avoid an if statement. It works for single values just as well.
+Plus, is there an upper bound we should check for? Or is checking against Channel.min_duration sufficient?
+No, no upper bound to worry about here. If you're using np.clip, set the upper bound to np.inf
+I benchmarked (with timeit for 100 000 loops) three options:
+The if statement was 180 times faster than np.clip().
+Plus, I consider that using straightforward statements always makes code more readable and maintainable.
+If you don't mind, I'll PR with this option.
+I don't mind of course, go ahead!
+Hi @Slimane33. An update has been merged (see #205). Can you check again and let us know if it works now? Thanks!

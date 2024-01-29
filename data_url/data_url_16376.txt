@@ -1,0 +1,13 @@
+Consider the following program, where circuit_in is optimized by HoareOptimizer pass as circuit_out :
+The optimization fully removes the H-CZ-H sequence wrongly, breaking the semantics equivalence of the transformation.
+I'm not fully sure if the original paper deals with phase (maybe the root of the problem). From what I remember, it seems to me that the qubit q_1 falls into a "trivial condition" and the CZ should be replaced by a Z gate in q_0.
+Notice that circuit_in.cz(1, 0) (instead of circuit_in.cz(0, 1) does not break the counting, since HoareOptimizer does not detect any optimization, which is also unexpected. Maybe the problem is related to #4980?
+Same issue is caused if you use CRZ or CU1.
+What's happening is that HoareOptimizer thinks these gates act trivially and removes them. Rephrasing lines 127-133, one of the above gates is considered to act trivially if whenever the control qubits are in |1> state, the target qubit is in a definite state, meaning always in |0> or |1> but not in a superposition. But the problem is that
+
+which is not actually a trivial action, unless only measurements follow, (neither i think it's considered trivial in the original paper, see Def 5.3) and so CZ should not be removed.
+I think the correct statement would be that these controlled gates act indeed trivially if:
+Furthermore, as you are suggesting an other optimization step could be to replace a Controlled-Unitary gate with the Unitary if the control qubits are always in |1> state. But as far as i understand, this wasn't the initial intention of HoareOptimizer.
+If you think this seems right, i will try to implement it.
+Hmm.. you are right that this case is not the paper's trivial case. So the original papers removes gates only but cannot replace gates? Probably @ajavadia has an opinion here.
+the H-CZ-H part is a CNOT (with control on the bottom). So the correct optimization would be to replace it with an X, meaning the whole circuit becomes 2 X gates (one top, one bottom). If the Hoare optimizer considers gates one-by-one then it might not detect that, but that would be the best optimization.

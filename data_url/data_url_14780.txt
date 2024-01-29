@@ -1,0 +1,47 @@
+Running tests using either tox or pytest fail.
+I created a container to reproduce the issue (see the Containerfile below). To build the image in the container file, save the code to a file called Containerfile. You will need either docker or podman installed to create it. I use podman so I will assume that is installed and use podman commands. Podman maps almost 1-to-1 to docker, so replace podman with docker if you have docker installed. To create the image, run the following command in the same directory where you saved the Containerfile.
+After the image is built you can run either tox or pytest in different containers to see the errors that occur. To run tox in a container, use the following command.
+You can run pytest simultaneously in a different terminal with the following command.
+The errors from running pytest are mostly from images being off by small amounts. They are small, but they do not fall within the acceptable errors within the tests.
+The tests when using tox do complete, but the tox environment does not install matplotlib, and other dependencies which causes some tests to get skipped. The tests pass as they should, but tox will fail because of linting errors and dependencies.
+My expectation would be that one of these methods would not fail.
+The containerfile can be modified so that a develop environment is "standardized" within the container. I was going to use it to start working on issues as I learn more about the code base, so I can make one for the project that is better for shared development. I will note that a plus to using a container is that people that use VSCode and Dev Containers can use it to make a dev environment easily if they are on Windows and WSL2. It might make the hurdle of getting a dev env up and running easier for some, but can be ignored if a dev doesn't want to use it.
+As for the tests, the pytest output is more familiar to me so I can look at which tests are failing and why, and report them here. Some of the tests require some circuit visuals to be 0.9999 similar. Let me know if this is an absolute requirement for the output images and I'll work around it while updating the tests.
+@amaloney , Hi :)
+yes, I also encountered this yesterday,
+Looks like we cannot do much
+Just, set
+pylint==2.16.2
+astroid==2.14.2
+and, symengine==0.9.2 ( this will also create problem if you don't do so )
+Thanks for the suggestion @MozammilQ. I've updated the containerfile above to reflect your suggested pinning, and fixing a mistake with downloading asteroid and not astroid. See below for the updated file. Unfortunately I still end with tox errors
+
+and pytest errors
+
+I'm going to assume these errors are known, and that the maintainers are working through them. I do not see a ticket to fix them, however, I won't make one unless the community says to.
+If the community would like a cleaner [Docker|Container]file, I can make a PR with one similar in this thread. If not, then we can see if the maintainers will want to turn this ticket into a discussion to talk about container use for devs.
+Thanks for your interest!  I think the best place to start with a container file is in a community-managed repository.  If, after some real-world use, there's a lot of interest from the community, we can consider merging it to the main repository.
+Some notes on the container file:
+For the other issues raised:
+The non-matplotlib visualisation tests are unfortunately a bit dependent on the exact fonts your system has installed, so we typically don't expect most people to run the graphviz tests.  You can see from our configuration that we run the entire test suite in CI, including those graphical tests, and they pass under the assumed conditions for them.  We could configure these better, such that graphviz tests only run when requested, as opposed to the current state of running whenever graphviz is installed (for most users it isn't, so they don't run).
+Only test/python is a unit-test suite, and we do not supply a pytest configuration and don't suggest it as a test runner.  You might want to look at the "testing" section in the contributing guide (although admittedly, some of that discussion, especially around visual tests, looks a little out of date right now).  You can see how precisely how all the various test commands are invoked by looking in our CI files (azure-pipelines.yml and the .azure and .github/workflows directories), but note that most developers will only need to run tox -e py and tox -e lint.
+For lint errors: it's possible that there are a couple of lint errors that appear when all optionals are installed and pylint is run manually, but the tox -e lint test should pass.  You may well not be invoking lint correctly if it does not.  It is imperative that you use the particular versions of pylint and astroid that requirements-dev.txt prescribes; they're hard-pinned because pylint fairly frequently introduces new lints, or changes the behaviour of old ones.
+Thanks @jakelishman I appreciate the help and explanations you gave. I'll make my own repo with the containerfile and documentation about it. If people like it, super. If not, then in the very least it won't clutter this repo up.
+use of mamba seems a bit unnecessary...
+You are correct, it's the tool I use a lot for both creating packages and data analysis projects, so I reverted to using it. I'll rewrite the Containerfile to not use it.
+...where you're getting that list of dependencies from...
+This came about when running tests using pytest, which as you state is not the correct tool to use. So this was my fault, and came about because I was trying to get pytest to run without errors.
+many of your dependencies are optional extensions/accelerators to Qiskit...
+Correct, and they came about because of the errors I was getting when running pytest, which is the wrong tool to use.
+python setup.py build_rust --inplace --release is not recommended...
+Understood, my process for building the tool was obviously flawed so I was trying a lot of things out and this one worked in my bad build process.
+The non-matplotlib visualisation tests are unfortunately a bit dependent on the exact fonts your system has installed
+Thanks for this clarification. These errors where coming about because I was using pytest, which I won't do in the future.
+Only test/python is a unit-test suite, and we do not supply a pytest configuration and don't suggest it as a test runner.
+This was definitely my oversight. Both for using the wrong tool, and for not reading the Azure pipelines. I tried my hand at a "good first issue" PR #11506 to see how CI differed from my install, and there are errors that I need to figure out. With this guidance, I will be able to create a proper install so I can update the PR so tests pass locally before I make another commit.
+For lint errors...You may well not be invoking lint correctly
+I don't doubt it, seeing how badly I flubbed the install.
+I'm going to close out this issue, thanks again for the response.
+I'm sorry, please don't think you flubbed anything, and I'm really happy you're interested in contributing.  It's mostly our fault - as you pointed out in the other issue, a lot of our dev-environment setup seems to have got lost (or at least harder to find and more scattered) in the recent documentation move, so it's not at all surprising it was hard to find the right tools.
+pytest should for the most part run the tests, provided you limit it to running on `test/python.  It should report that quite a few tests get skipped, but that's fine - the skipped tests will be for things like other operating systems, or for specific components dependent on optionals.  If you're not using such a component, its very unlikely it'll have been broken by a change that wasn't caught by other parts of the suite, so we don't need to run everything all of the time.
+Let's work together to get the dev-environment description clearer, then hopefully it'll be more straightforward to show a container file that follows our generally expected setup.

@@ -1,0 +1,46 @@
+This question is motivated by using staq to map a small circuit to Tokyo. That results in this in the output QASM:
+qreg q[20];
+The small circuit (for educational purposes) only needs first 4 qubits, so I discard() the rest of the qubits (q[4]...q[19]). That drastically reduces the size of the ket returned by the QEngine.get_psi(). That is very good.
+The trouble is that the time to run QEngine.execute() is almost same with or without the discard().
+The 16 qubits do not involve any quantum operations. I should expect a huge performance boost after discarding them, shouldn't I?
+Can you please post a small example? It should indeed improve the performance, as the dimension of the state vector is being reduced after each discard (and assuming you first do discard, then some operations on a smaller-sized ket).
+Here are the two test cases performance.zip.
+The source files with_discard.cpp and without_discard.cpp differ on a single line, the former having the discard() and the latter lacking it. The QASM test file is basically one of the qpp shipped examples - teleport_minimal.qasm, whose qubits are increased to qreg q[20] just for testing.
+On Linux, I time the two cases like this:
+time ./with_discard
+time ./without_discard
+They are almost same.
+@DevelopDaily Thanks! The problem here is that you discard the qubits at the end. The engine runs the circuit sequentially, so it first uses 20 qubits to do the full teleportation, and only after that discards the rest (so basically it performs a measurement at the end), but then nothing else happens. The main computation is done before, that's why you don't get a speedup. Had you performed other stuff AFTER discard, you'll see the performance gain.
+On the other hand, this is an interesting problem. One can indeed "discard" the qubits (provided they were not "touched" during the computation), and run the engine on the "effective" qubits. I will provide an additional function for this soon, something like "QCircuit::compress()". I cannot use "discard()" as is because one needs to check first if the qubits were "touched" before attempting to "remove" them from the engine. So in a sense this "compress" function should just remove the qubits from the circuit if they were not used at all. (Again, if a qubit was used, then one cannot "discard" it at the beginning). Or, thinking more, I can modify discard(), so if the qubit was "clean" (not touched), one can simply remove it from the circuit altogether.
+So I'll leave this open for now, although the current behaviour is to be expected.
+@DevelopDaily I implemented some functions (see https://github.com/softwareQinc/qpp/blob/master/CHANGES). Try now qc.compress() instead of the last discard and see how it works.
+The performance has been improved exponentially, as expected. Thank you.
+I particularly appreciate that you also introduced the remove_clean(), which suits our workflow very well. Our workflow starts with staq, and needs a full tree traversal of the QASM anyway. As a result, it knows which qudits are clean. So, it can simply call remove_clean() on the qpp, hopefully saving a little bit of resources for the qpp.
+On the other hand, we do need the convenient compress() in other use cases. I am happy about getting the best of both worlds.
+@DevelopDaily Do you mind letting us know your name/affiliation? (via a private email if you prefer) We'd like to acknowledge your useful comments in future publications. Thanks!
+Thanks. I will send it by email later.
+I did more testing and identified another issue. As I said, the API design is great, this is perhaps an implementation issue. Here is the test case.
+The source:
+QASM file test.qasm :
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg a[1];
+qreg notused[2];
+qreg q[3];
+qreg wasted[1];
+creg c0[1];
+creg c1[1];
+h a;
+h q[0];
+h q[1];
+cx q[1],q[2];
+cx q[0],q[1];
+if(c1==1) x q[2];
+The printout by the source will be:
+But, I expect 3 qudits to be clean.
+@DevelopDaily Oh yeah, thanks, it's a small bug, I'll fix it asap.
+@DevelopDaily Done. BTW, you can use disp to display a whole vector, so you can replace the last for loop with: std::cout << disp(qc.get_clean(), ", ") << '\n';
+Works like a charm now.  Thanks.
+@DevelopDaily Do you mind letting us know your name/affiliation? (via a private email if you prefer) We'd like to acknowledge your useful comments in future publications. Thanks!
+It turns out the Github.com does not allow users to send private emails to a project owner. But, don't worry about the acknowledgement stuff. Compared with the heavy lifting you accomplished, my little "useful" comments are too trivial to be mentioned.
+I just like to work hard, as a private citizen, to promote education and research on quantum computing across Canada. Well, if I find an algorithm to identify a cancer therapy or vaccine in the future, please feel free to acknowledge me:-)

@@ -1,0 +1,25 @@
+Converting a circuit with a subcircuit to qasm fails, when this subcircuit contains also classical registers.
+Run this:
+Output:
+Convert to qasm:
+Output:
+Now, if we want to reuse this qasm and load it:
+We get the following error:
+I would have expected the exported qasm to be a valid qasm (aka to be read again) and also give me back the original exported circuit if I decide to store my circuit on a file as qasm and pass it to someone else.
+I would have expected the following QASM:
+But this is also inaccurate, since in the original subcircuit might as well use the classical registers to perform some measurement, whereas with this qasm representation it is not possible to express this.
+Thus, I am not sure on how we should proceed and I very curious to listen to your feedback on this.
+Thanks in advance
+There is no possible valid OpenQASM 2 programme for the circuit you're describing; there's no subroutine-like construct that can take classical parameters.  The error message could be better, but there is no way to produce valid OpenQASM 2 in this situation, because the object has no way of being represented.  The bug here is that the QASM 2 exporter should have rejected the circuit out-of-hand.
+I haven't looked at the QASM 2 exporter code for a while, but I think it tries to export all Instruction instances currently, whereas it should fail on anything other than a special case or a gate, due to limitations in the QASM 2 language.  Probably the fix involves modifying the exporter step that tries to find the definition of each object in a circuit so that it goes through the following steps:
+The way you have added the subcircuit to your circuit, it's as an Instruction not a Gate, so even if it had no classical registers, in my new scheme it would still be rejected as non-unitary (that's the difference between Instruction and Gate).  You should call QuantumCircuit.to_gate to avoid that.  This is an important note for API stability in the bug fix, though - people may be relying on the QASM 2 exporter working in similar situations, so we should take care to check that we don't break anybody's workflow.
+OpenQASM 3 can represent non-unitary subroutines, but at the moment Terra's QASM 3 exporter is quite limited in what it can support, since that language spec is still evolving and so is Terra's capability to represent dynamic circuits.
+I attach this bug report here, since closely related (instead of opening a new one)
+Exporting a circuit with a sub-circuit via append() and that uses measure() leads to an invalid qasm file, generating error when imported again.
+Run this python script:
+Produces this output and error:
+The qasm contains also a second error leading to an error, thus the fact that circuit_115 is defined with 2 qubits, but then it is used with 4 arguments (see: #7750 (comment))
+I would expect a valid qasm since the circuit is theoretically representable in qasm.
+What about expanding the definition and injecting the basic instructions directly in the main code, without a separate definition, thus avoiding the problem with the measure and number of arguments?
+This would clearly lead to a bigger qasm file, but it would be valid.
+Thanks for the bug report - the second one is a duplicate of #8048.  The first one was fixed already by #10438, so I'll close this issue now.

@@ -1,0 +1,23 @@
+I have used Cachix from my old overlay to provide caching for the open source parts of the overlay. This is very convenient, especially for the larger packages, with very long build times (libint, CP2K, BAGEL, ...). By mounting the nix-store into the GitLab runner docker containers, as described in the NixOS wiki, I can also build and test non-free packages, if I have the required files in the store on our own servers. Unfortunately the same thing does not work with the GitHub actions, even if I would install the GitHub runners.
+Could we maybe install a GitHub action, that mirrors this repo to my workgroup's GitLab namespace, where I can run CI and enable caching? Something like this, for example?
+The best option here would be a publicly accessible Hydra, which builds all free/redistributable packages (and serves as a cache). The nix store on my local Hydra takes up ~190 GB (optimized), which would not be fully covered by a free Cachix account anymore.
+The GitHub actions would certainly be good for test PRs. I will look into this. I have never worked with GitHub actions or GitLab runners.
+While setting up my own Hydra, I ran into an issue with Molpro. This line triggers a Molpro test when allowUnfree && srcurl != null, even if molpro = null. Therefore my evaluations of other unfree packages fail. Can we possibly change this to include this check?
+EDIT: see #42
+The  = null solution is not complete yet. I overlooked a lot of cases. I am working on it to clean it up.
+Got most of the stuff working with my Hydra setup after #44 was merged. What is not yet working is the srcurl mechanism, if i point it to a file url. They all fail with something like
+while interestingly nix-prefetch-url file:///tmp/test/vmd-1.9.3.src.tar.gz works perfectly. sandboxPaths in configuration.nix does not change the behaviour.
+nix-prefetch-url is not subject to sandbox restrictions. I am not sure how Hydra handles sandboxPaths (maybe overrides/filters it?).
+An easy workaround for your problem could be to just run a local web server. This is all you need:
+@sheepforce Do you build on your Hydra machine or on an external builder?
+Do you build on your Hydra machine or on an external builder?
+I am building on external build machines. The hydra server is not powerful enough to build on its own. /mnt/sol is an NFS share to all machines, but accessible on all build machines and also in the sandbox path on all build machines (and of course the same path on all machines ...).
+I will try with the HTTP server soon 🙂
+Ok, then I am out of quick ideas why the file:/// URL does not work.
+I am one step further with the GitHub integration: my (private) Hydra can now build GitHub PRs, making it easier to check pull requests. I haven't managed to report the results back to GitHub yet (i.e. in form of a simple status report).
+The next step will be to setup a publicly accessible hydra.
+@markuskowa Would you mind sharing how to set this up (hydra building PRs and Git integration) when you succeed? In principle this would be very nice to have (also for the software repos in our group). Is it then possible to use a private Hydra and still report back the results of PRs to GitHub? If so, we can also think about adding my Hydra for Turbomole, CFour, MRCC, ... checks.
+I will share it later on GitHub. Building PRs with a private Hydra is no problem. Your Hydra will just pull the information from the GitHub API and generate jobsets. This part does not require any special permissions for public GH repository. Reporting the results back from a private Hydra is still possible but requires special write permissions for the repository.
+I am giving Cachix a try (https://github.com/markuskowa/NixOS-QChem#binary-cache). It looks like it is good for several evaluations. I did not factor in that Cachix only stores outputs that are not already on cache.nixos.org.
+For reference: unstable-noavx, unstable-haswell, release-21.05-noavx, and release-21.05-haswell take up ~3.5 GB of space in Cachix.
+Closing this, since there is a solution available with Cachix.

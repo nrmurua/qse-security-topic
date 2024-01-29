@@ -1,0 +1,11 @@
+When working on the type-checker (on branch f.9.init-starargs) I tried the experiment of simply removing the type-checker associated with each function call, just to see how much the speed benchmark would change (because the type-checker adds overhead).  The results were very different than what I expected: whether or not we do type checking appears to interact with the way that runtime barriers are created, and this should not be the case.  It is probably a symptom of a deep bug somewhere in the evaluator or inliner.
+My guess is that the type-checker correctly annotates the changes it makes to the parse tree with qbit reference info, but some other part of the code doesn't get the annotations exactly right.  Later the code generator builds a union of all the qbit annotations in order to create the barriers, and so having better annotations helps.  (this is my guess, not based on actually finding a smoking gun in the code...)
+The unit tests that test whether the type-checking is working failed, which was exactly what I expected.  But a bunch of the other unit tests also failed because the emitted code was different.  This shouldn't happen, because the type-checking is done prior to QGL code generation and should, at at least by design, have no impact on the output (unless the code fails the type-check).
+The failures look like:
+or
+The expected output is the second line: a WAIT or a BARRIER on multiple Qubits.  For the first example, instead of seeing
+We get
+These might turn out to be functionally identical (for this particular program) but there's no obvious reason for the difference, and that's troubling.
+Note: this problem is both on master and on my branch, so it's not something broken by the new error-checking.
+There's a comment about annotation inlined calls with barrier info, but this doesn't seem to happen in the current inlining code.
+If I add diagnostics to the inlining code to print out which parameters it thinks are qbits, it gets different results for some cases with/without the type-checking.  The wrapping of the call in the type-checking preamble clearly modifies something later, and even though the inliner doesn't seem to care about this, if the barrier code uses the same logic as the inliner, it will have the same problem.

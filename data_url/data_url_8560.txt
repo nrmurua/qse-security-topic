@@ -1,0 +1,27 @@
+As far as I am aware only the Monte Carlo solver supports any kind of parallelization. Many of the other solvers require sequential processing. However, there may be some operations that allow parallel processing.
+It is well known for instance that GPUs are widely used for matrix operations. Although Numpy and Sympy do not currently directly support GPU, there are other libraries that could be investigated. Of course not everyone has access to GPU, and potentially the could be CPU parallel possibilities here too.
+The optimal control modules could certainly be parallelised.  In most cases the calculation of the propagators and / or the fidelity gradients are the most costly operations, and can be computed in parallel. So this would be a fairly easy implementation.
+I have investigated using the parallel spmv from the MKL in the solvers. One needs quite a big Hilbert space before any advantage kicks in. Also it seems that memory bandwidth issues kick in before one can exploit more than two processors. At least for the models I played with. I have already coded this up to use the MKL from Anaconda 2.5 that is now on all platforms. I am actually talking with the intel people on Monday about what we do and thier intel python distro. Will let you know about that next week.
+Note also that the stochastic solver is also already parallel
+Perhaps relevant, but I have also played around with using Numba to export some parts of QuTiP to GPUs, but it hasn't turned out to really offer much advantage as of yet.
+I finally got a chance to test the intel MKL on my workstation with 12 cores.  For larger systems I ma getting about a 6x speed-up.  On the previous system it was 4 cores, but showed only a ~2x speed up.  So for many core systems, I do see noticeable improvement when the Hilbert space becomes large.
+Is it ok if sneak in parallelisation of the HEOM stuff into this issue?  A bunch of groups have done it already, and it apparently gives some advantages, but only Tanimura himself has released code and details showing their approach http://pubs.acs.org/doi/abs/10.1021/acs.jctc.5b00488?journalCode=jctcce
+I was talking to alex about importing their code with cython  (assuming they allow it, they haven't specified a licence that I noticed).  Otherwise, their approach seems to be to do a taylor series expansion of the propagator, and do all the resulting matrix multiplication stuff on a GPU.  Though I guess there's something tricky involving memory in that last step.
+@nonhermitian could you give me some pointers of how to employ this spmv?
+We also now have a 12 core machine here to play with. I didn't see any improvements when playing around with dense numpy.exp. From what I read numpy does not exploit multiple cores. Did you use some other math libraries?
+Assuming you have Anaconda 2.5 installed (so that you can use the Intel MKL on all platforms), the default number of threads is one.  Therefore, you don't get much benefit.  To change the number of threads used you can do:
+or in QuTiP it is easy to set using:
+One can not access the spare MKL routines directly as there is no support in the scipy.sparse library.  However, you can get to all of the functions using ctypes.  An example of complex SpMV is here:
+https://gist.github.com/nonhermitian/74c3ddbbd006b2f8d306
+The only issue with the attached method, is that finding the MKL runtime library is platform dependent (maybe should file an issue with the Anaconda people?).  Therefore, it is a bit cumbersome to work with.  Moreover, it is not possible to access these routines via Cython as they do not have any of the development stuff available. That may not really be an issue at the end of the day though as one needs quite a large system to get any benefit, and at large Hilbert dimensions, the overhead from calling Python funcs. directly is not an issue.
+I will be chatting with the Intel Python people tomorrow to give them some suggestions and talk about our project.  Hopefully we can hash out some plan to make our life a bit easier, and take advantage of the MKL tools.  Their parallel direct sparse solver may also be of interest.
+I have written a parallel spmv that performs quite well. Sadly, only compiles on linux since it uses openmp. Will create a pull tonight
+I have an updated version of this using our new spmv code.  Should be coming in the next couple of days.  Lots of underlying stuff needs to be done for this to be integrated, and turned on automatically.  Checked on Win using mingwpy and it works as well.  Since the clang with OSX does not have openmp support, that is the only platform where some work needs to be done.
+Here is the method for getting OPENMP on OSX using homebrew:
+brew install gcc --without-multilib (takes a couple of hours to build)
+after which you can install QuTiP using:
+CC=gcc-6 python setup.py install
+The tests run without any ABI incompatibilities so, with this method, all platforms should be able to use OPENMP and parallel tools.
+@Ericgig Should we add this issue to things to look at for QuTiP 5? Perhaps this issue should be closed and we should create a couple of new ones?
+We have openmp in v4 but removed it in v5, see #1904.
+I think we can close this issue.

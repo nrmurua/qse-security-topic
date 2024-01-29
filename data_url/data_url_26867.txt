@@ -1,0 +1,46 @@
+When I compile the current cp2k version with the Intel compiler version 18.0.5.274 (Build 20180823) using libxsmm 1.10, some (18) regression tests fail with the runtime error "too many open files" (ulimit -n 1024). The same setup gives a clean regression test with libxsmm 1.9. Did somebody observe a similar issue?
+The top part of the traceback looks always like
+forrtl: severe (603): too many open files
+Image              PC                Routine            Line        Source
+cp2k.popt          000000000F2DB59E  for__io_return        Unknown  Unknown
+cp2k.popt          000000000F2F8145  for_open              Unknown  Unknown
+cp2k.popt          000000000344B96B  dbcsr_machine_int     Unknown  Unknown
+cp2k.popt          000000000342C4E1  dbcsr_mm_cannon_m     Unknown  Unknown
+cp2k.popt          00000000033FE2A3  dbcsr_mm_mp_dbcsr     Unknown  Unknown
+cp2k.popt          000000000351538F  dbcsr_multiply_ap     Unknown  Unknown
+cp2k.popt          0000000000CCD49D  cp_dbcsr_operatio     Unknown  Unknown
+cp2k.popt          00000000011EA9A4  qs_mo_methods_mp_     Unknown  Unknown
+...
+Your traceback suggest that the file opening happens somewhere in dbcsr_mm_cannon(), which would be odd. Maybe you can trace that down? I don't think libxsmm writes any files, unless $LIBXSMM_VERBOSE < 0.
+I will also look into this. Looks like the reproducer is to ulimit the number of file handles.
+The crash probably happens during the call to m_memory() which legitimately opens /proc/self/statm.
+LIBXSMM generates code in memory. One can right-away type-cast (reinterpret) such a buffer as a function-pointer and execute it. However, making a memory buffer executable such that the OS security measures are satisfied has a more complicated flow. Our mechanism works even in security-hardened environments such as SE-Linux. Anyhow, depending on the environment memory is mapped eventually based on temporary files. However, LIBXSMM does not perform explicit file I/O or is known to leak resources such as file-handles.
+Here are some more observations from my tests:
+@mkrack are you running the tests in a normal environment i.e., not security hardened or under hypervisor?  Can you try, LIBXSMM_SE=0 environment variable?
+@hfp Do I need to recompile libxsmm?
+No.
+I remember I had this problem and it turned out it was due to dynamic linking of the library...
+I use:
+LIBS       += $(LIBXSMM_LIB)/libxsmmf.a $(LIBXSMM_LIB)/libxsmm.a
+@hfp Great, the runtime failure disappear with LIBXSMM_SE=0 for libxsmm 1.10 and they appear again after LIBXSMM_SE=1
+@mkrack Thank you! This helps me to fix the problem in our next release. I will still try to setup a reproducer relying on ulimit.
+@mkrack Can you perhaps check the following on your system: $ cat /sys/fs/selinux/enforce?
+Returns "1"
+Ok, it runs in a security-hardened environment and that's correctly detected aka LIBXSMM_SE=1. However, setting LIBXSMM_SE=0 should not work then since you run with enforced SELinux. I wonder if LIBXSMM_SE=0 in your case simply does not produce any JIT-kernel because of code-buffer allocation always fails. One could proof this with LIBXSMM_VERBOSE=2. This output is created at program-termination and should yield a small table of registered kernels (stderr).
+Would you be willing to run one of the cases/tests with LIBXSMM_VERBOSE=2 and capture stderr?
+I mean the issue is fixed in LIBXSMM/master, but it would be good to have the complete picture.
+The Linux-x86-64-intel-regtest-popt regression test is clean using the current libxsmm trunk version. Do you still need then the verbose error output when using 1.10?
+No thank you, I am good now. I have a test system at hand with SELinux enforced.
+@hfp regarding LIBXSMM_SE: did I understand the logic correctly in src/libxsmm_malloc.c that when /sys/fs/selinux/enforce can't be opened (for example on AppArmor-enabled kernels like the one from SUSE where SELinux is not compiled in) that it is assumed that you're running under SELinux?
+What are the implications of the file workaround?
+Just to give some detail about the issue:
+did I understand the logic correctly in src/libxsmm_malloc.c that when /sys/fs/selinux/enforce can't be opened [...] that it is assumed that you're running under SELinux?
+No, that is not the logic. It is assumed to run under enforced SELinux if the file exists but an error occured when reading it. If it can be read, the actual state of SELinux is taken. In any case, LIBXSMM_SE=1 never harms but only takes some extra effort to get an executable buffer (which is necessary for enforced SELinux).
+SELinux seem to be not widely used anymore (in favour of Apparmor), and I was close to removing the support in LIBXSMM. Anyhow, I am glad we have this feature as you can see how it cranks down for instance an "ordinary" web-browser under enforced SELinux (due to JIT used without being able to get an executable buffer).
+Apparmor does not require the extra effort of getting an executable buffer. Perhaps it misses this point of security but I am not sure about this.
+What are the implications of the file workaround?
+This is not a workaround, but fixing my mistake (see point No.2 above).
+No, that is not the logic. It is assumed to run under enforced SELinux if the file exists but an error occured when reading it. If it can be read, the actual state of SELinux is taken. In any case, LIBXSMM_SE=1 never harms but only takes some extra effort to get an executable buffer (which is necessary for enforced SELinux).
+Ah, but you end up in this codepath anyway iff if the normal allocation failed, got it. Thanks!
+Let's close this issue. It is resolved in LIBXSMM/master and it will be released with v1.11.
+This bug is fixed in https://github.com/hfp/libxsmm/releases/tag/1.11. No workaround (earlier suggested envionment variable) is needed even not in SELinux environment.

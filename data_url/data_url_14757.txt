@@ -1,0 +1,17 @@
+If there is a ZZ pauli exponential with a small angle, Qiskit will remove the CXs and leave the small angle. (It will also do this if the Xs are not controlled)
+Create a QuantumCircuit with an Rz nested between the targets of two CX gates. See this qasm:
+Then load the qasm into qiskit and run an optimisation pass:
+Either the circuit should be left unchanged or, if the angle is considered to be too small to be worth leaving in and it should be approximated away, then remove the entire phase-gadget. I'm not sure whether this was a design choice or a bug, as I don't really understand how it is possible to write this behaviour by accident.
+See above.
+Good catch, this looks like an issue in the CommutationAnalysis pass ( https://github.com/Qiskit/qiskit-terra/blob/0e332a9/qiskit/transpiler/passes/commutation_analysis.py#L121 ).
+(In #2442 , the CommutationAnalysis pass was refactored to use qiskit.quantum_info.Operator to determine if two instructions commuted, which in turn reduced its atol from 1e-10 to 1e-8. The check for this circuit still would've failed though, due to the default rtol=1e-5.)
+Reducing the rtol on the operator comparison would be one way to fix this (the current comparison passes because of the rtol on np.isclose(1, 1+1.25e-6j)) but maybe there's a more numerically robust way to determine commutativity than np.allclose. @DanPuzzuoli @chriseclectic ?
+I think just lowering the tolerance makes sense... it seems efficient, and entry-wise comparison is the most stringent distance measure I think you can get for distances between matrices.
+Only other consideration is if you want to allow for unitaries that are the same up to global phase to pass the test.
+I think the desired behavior is to have the CXs cancelled and the Rz removed.
+CX.RZ(theta).CX is equal to RZZ(theta) which for tiny angles should just be identity.
+So I would say the commutation detection is correct, we just do not have a mechanism to remove tiny rotations from the circuit yet. I can work on this as part of #3658
+✅ Issue reproducible! Removes CX's and keeps the small angle when optimized with level 2 or 3 as mentioned by OP. Optimization level 1 has expected behavior and does not change the circuit significantly. PR #3658 has a few checks to be passed which proposes a fix for this.
+Will update comment/add more comments if cause is found/fixed!
+Python version 3.9.7
+qiskit-terra version: 0.19.1

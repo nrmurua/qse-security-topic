@@ -1,0 +1,23 @@
+I have several complaints about the interaction with mpi4py. It could be worth splitting into separate issues.
+Regarding SLURM and srun, the variable to check is SLURM_NTASKS.
+I think these are generally pretty valid comments, this stuff worked well for my simple use case but could definitely be improved. Having said that, I'm not sure 'get rid of it' is super useful without some kind of vision of an alternative!
+Possibly improvements with regard to your points:
+In general, this functionality is aimed at conveniently using slepc at small scale, rather than targeting big distributed MPI calculations. Obviously it would be good not to interfere with those (i.e. point .5)! but I guess the assumption is at this point one has to take a more hands-on approach in any case. For example you can call eigs_slepc with your own comm= if you want.
+If you have some ideas/API of how this could look let me know.
+I thought a little bit about it: I think the first step is to get rid of quimb-mpi-python and to make the desirable setup through python -m quimb.mpi_launcher. It will address the most annoying p.5, remove bash scripting (possibly, making it a bit more compatible with windows) and accumulate all mpi setup stuff in a single place.
+I'd see the next step to be a careful description of how slepc should be run with MPI but without mpi_launcher.
+Then, I'd prefer to unmount mpi_launcher.py part by part.
+The first part is determining the mpi setup strictly through mpi4py interface: no psutil (because it is not user-controlled and not cross-platform) and no OMP_NUM_THREADS. FYI, the latter is typically a lower-end part of a parallel cluster setup: a lot of stuff run on hpc is parallelized with both MPI and OpenMP. It probably corresponds to num_workers and num_threads arguments but it looks like you break this correspondence. I also do not quite see how custom environment variables QUIMB_* provide new functionality.
+The second part is to make comm to be the argument to SyncroMPIPool: no need to import inside the body and all that.
+The third part is to, probably, get rid of spawning code. As far as I understand, you make a syncro gateway to, potentially, non-syncro MPI setup. The non-synchro setup looks like a legacy code that you started with and do not need any more. Unless there are solid performance reasons for the non-synchro setup, I suggest to firmly nail quimb to SynchroMPIPool which requires a minimal maintenance. From my personal experience, non-synchro setups are very rare because they require new API, code overhead, testing from hpc teams and some magic in python. Finally, quimb competes here with loads of infrastructure code that also does the same thing: spawns MPI processes in the most correct way.
+I thought a little bit about it: I think the first step is to get rid of quimb-mpi-python and to make the desirable setup through python -m quimb.mpi_launcher. It will address the most annoying p.5, remove bash scripting (possibly, making it a bit more compatible with windows) and accumulate all mpi setup stuff in a single place.
+Yes this seems like a sensible thing to do. And in general I agree that it would be worthwhile to have a more explicit way to control various aspects of the MPI stuff. Are you wanting just more control over n_procs and n_threads or also managing computations with various different COMMs as well?
+Just to explain the current way things work:
+This would be good to keep for ease of use in e.g. notebooks. No thinking about HPC, mpiexec, communicators etc.
+I think it would be good to keep this design if possible (i.e. the script here which doesn't need to be modified when moving to MPI.
+At least initially, some steps might be:
+Are you wanting just more control over n_procs and n_threads or also managing computations with various different COMMs as well?
+I think these are two independent worthy changes.
+This would be good to keep for ease of use in e.g. notebooks. No thinking about HPC, mpiexec, communicators etc.
+Unfortunately, this does not really work: a number of things may break down along the way. I think it is better to run it in serial by default, until a certain explicit import or a setting. At least, the user will already know the entry point for MPI (which is currently not be the case until some sort of exception is raised) and will be able to debug it.
+I think you do a reasonable job regarding the choice of linear algebra solvers to "just make it work with what is available", however, I am afraid, MPI is a bit too fragile for this approach.

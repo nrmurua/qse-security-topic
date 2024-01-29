@@ -1,0 +1,14 @@
+Based on a hint from @alazzaro and the CCE compiler developers:
+In semp_empirical_int_utils we are passing the functions charg_int_3 and dcharg_int_3 as functions pointers to ijkl_low_3:
+
+The function ijkl_low_3 captures the function pointers as eval and executes them like this:
+
+But the function declaration of both charg_int_3 and dchar_int_3 has 4 dummy arguments:
+
+The reason why the compiler is unable to catch this mistake is the missing INTENT on the function declaration of ijkl_low_3 for the eval dummy, which in fact declares the function pointer as a legacy REAL dummy argument:
+
+This triggers the compiler to deduce automatically that eval(l1, l2, add) should be a function call (but if you'd happen to pass 3 INTEGER you would end up with an array subscript!), but doesn't allow to check the compatibility of the function signature.
+Whether or not the function call works depends on the underlying function cell semantics, but given that we end up with an INTEGER bitwise-interpreted as a REAL and vice-versa, that call is definitely wrong. Future CCE versions will also yield a compiler error.
+@tlaino fyi
+The simple solution is probably to pass r to ijkl_low_3 which should always forward it to the functions it calls and change coeff_int_3 to also take a dummy argument r and simply ignore it. To avoid such an error in the future we should declare a proper INTERFACE and declare the dummy arguments as PROCEDUREs of that interface.
+The cleaner but more involved solution would be to define function objects instead which can bind arbitrary arguments, making it transparent for the ijkl_low_3 function that the eval function needs to know the distance.

@@ -1,0 +1,39 @@
+Describe the bug
+I build liboqs-0.8.0-dev with and without OQS_USE_SHA3_OPENSSL=ON. With OQS_USE_SHA3_OPENSSL=ON I see 9 minutes for running tests and without - just 2 min. Fedora 37, OpenSSL 3.0.x
+To Reproduce
+cmake -GNinja -DBUILD_SHARED_LIBS=ON -DOQS_ALGS_ENABLED=STD -DOQS_USE_SHA3_OPENSSL=ON -DCMAKE_BUILD_TYPE=Debug -DOQS_USE_AVX2_INSTRUCTIONS=OFF -DOQS_USE_AVX512_INSTRUCTIONS=OFF
+make
+time make test
+Repeat the same without  -DOQS_USE_SHA3_OPENSSL=ON
+(I do it as a part of RPM build, so pure difference should be in the testing)
+Expected behavior
+More or less equal time.
+Screenshots
+If applicable, add screenshots to help explain your problem.
+Environment (please complete the following information):
+Additional context
+We want to avoid multiple implementations of low-level algorithms (AES, SHA2, SHA3) in Fedora and want to heavily rely on OpenSSL implementation. We would like to narrow down the problem - is it the performance of low-level primitives or, say, digest fetching from openssl, or smth else.
+User time is even worse: 27 mins vs 4
+With OQS_USE_SHA3_OPENSSL=ON I see 9 minutes for running tests and without - just 2 min. Fedora 37, OpenSSL 3.0.x
+Expected behavior
+More or less equal time.
+Why do you expect this? "OQS_USE_SHA3_OPENSSL=OFF" activates a local XKCP version, so entirely different code from OpenSSL's. What SHA3 code base does OpenSSL use? The same? Then indeed I'd understand your surprise.
+We would like to narrow down the problem - is it the performance of low-level primitives or, say, digest fetching from openssl, or smth else.
+FWIW, the speed differential is clearly visible even in the built-in artificial speed tests -- but not a factor of 6:
+So you have just a better implementation of SHA3, right? Is it yours implementation? (All my OpenSSL-related hats on) Could it be brought to OpenSSL? (All my OpenSSL-related hats off)
+I'm aware of the following antipattern - in 3.0. using old methods like EVP_sha3_256() instead of fetching a digest object via EVP_MD_fetch and using a fetched object gives a performance penalty. See https://github.com/openssl/openssl/pull/20354/files#diff-86fbd44f96c9f78b9c4a27d8b5fb9d83aa787b9a7d92c6774d9172c5952b791f for example. If it is the case (and looks like it is), it's worth fixing
+So you have just a better implementation of SHA3, right?
+Define "better". "Faster": Probably. "More secure": Not sure.
+Is it yours implementation?
+Nope: This is basically https://github.com/XKCP/XKCP, right @jschanck ?
+Sure, I mean "faster". I still think that the antipattern I mentioned is worth fixing, both for SHA3 and SHA2.
+OpenSSL doesn't expose a streaming API for XOF output, which several PQ schemes require. The slowdown you're seeing is due to the XXX in our code here: https://github.com/open-quantum-safe/liboqs/blob/main/src/common/sha3/ossl_sha3.c#L146.
+I agree, but it's a different problem.
+it's a different problem.
+Agreed -- but it's a rather significant one. There are several things, then:
+Someone needs to "re-activate" the 2018 OpenSSL issue openssl/openssl#7894 then, right @beldmit ? My hunch is it explains a larger part of the speed differential (could be validated by using OpenSSL111, right?).
+For the OpenSSL3 liboqs integration, just created #1427.
+I'd thus suggest to close this issue then (and work on the two above).
+I'm OK to reactivate openssl/openssl#7894, though it shouldn't be a new API (if possible). How do we reactivate it?
+How do we reactivate it?
+See openssl/openssl#7921 (comment).

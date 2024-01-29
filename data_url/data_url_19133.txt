@@ -1,0 +1,32 @@
+Add an example notebook that performs an ensemble optimization of a Rydberg gate, as in Phys. Rev. A 90, 032329 (2014)
+This will be easier with #10
+Prerequisite for #13
+With #10 being closed, I think everything is now in place for this example.
+@MatthiKrauss How are you doing on this?
+I already had the model defined, but I had some trouble using the collapse operators which can be assigned in the gate_objectives routine. The optimization gives me a 'NotImplementedError: Liouville exponentiation not implemented'. So am I doing something wrong there or is it not yet implemented and should circumvent this?
+Can you make a branch and push the notebook in its current state? See https://krotov.readthedocs.io/en/latest/02_contributing.html#how-to-commit-failing-tests-or-example-notebooks and https://krotov.readthedocs.io/en/latest/02_contributing.html#how-to-work-on-a-topic-branch. I'll have a look.
+Indeed, expm is not implemented for c_ops. Generally, it is much better to use qutip.liouvillian to convert the combination of H and c_ops into a Liouvillian and store that in Objective.H. Keeping the c_ops explicitly would only be useful for a MCWF propagation, I think. The only reason I haven't removed c_ops from Objective is that I don't want to cut off that possibility, as an "advanced" use case.
+I also wasn't anticipating that this example would have Lindblad operators... But as I said, I'll have a look.
+Sorry for the late reply, I pushed now a first version. However, I added a "liouvillianize" function which converts the Hamiltonian to a Liouvillian, such as in notebook 04 from Daniel.
+I also had some trouble with the optimize_pulses routine, since the kernel was shutting down when calling it. However, Daniel B. told me how to fix it (reinstall QuTIP from source).
+@Basilewitsch Can you open an issue on qutip about these crashes? Maybe more reports will motivate them to look their long-standing Cython problems
+I also wasn't anticipating that this example would have Lindblad operators
+I totally forgot we actually used density matrices in that paper, so you're fine.
+@Basilewitsch Can you open an issue on qutip about these crashes? Maybe more reports will motivate them to look their long-standing Cython problems
+I haven't done this so far, since I'm not sure which steps produce/reproduce the problem and I don't want to raise an issue with insufficient information.
+I pushed an annotated version of the notebook with some suggestion back to the branch. It looks like it's on the right track to me, except for one thing: It's not valid to do the optimization using the pure-state density matrices corresponding to the canonical two-qubit basis states. You would either have to use 16 states, which is total overkill, or do what we did in the paper, and use 2 specially chosen states (a special case of the "3 states" from New J. Phys. 16, 055012 (2014) for diagonal gates), see the discussion above Eq (14) in the robustness paper.
+This means you'd have to wait for me to finish the implementation of the "3 states" initialization (#12), which might take a little bit more time. The alternative would be not to use density matrices, but a non-Hermitian Hamiltonian to penalize the population in the |i⟩ state, as in #9.
+Until I reviewed your notebook, I actually thought that's what we did in the paper (hence I didn't anticipate having to use density matrices). It might be numerically challenging to do the exact same thing as in the paper for the example notebook. Even in Fortran, the full calculations for the paper with a few thousand iterations took multiple days on a cluster using 64 cores, and we need the example notebook (with at least one OCT iteration) to run through on a basic two-core Travis node in at most 5-10 minutes. For density matrices, I think using expm will be much too slow. So we'd need to extract the relevant Cython-implemented parts from mesolve into a suitable propagate routine for this example (which I will probably also have to do myself for #9). In principle, we could also use the Newton propagator (https://github.com/qucontrol/newtonprop). However, while the "reference" implementation in pure Python is finished, I think it will also be too slow (one or two orders of magnitude slower than mesolve), and I'll have to add a Cython-implementation specific to qutip objects to make it really practicable (which also won't be finished very soon).
+Thus, I'm leaning towards focusing the example notebook on the "ensemble optimization" aspect only and use a non-Hermitian Hamiltonian, going around these problems. @christianekoch, what do you think?
+Hey Michael, thanks for the annotations! I will have a closer look on my implementations in the upcoming week(s) and fix some of the notations and the workflow. I think then the problem with the two instead of four independent pulses should resolve. I just forgot to copy them in the routines!
+According to the problems with the gate_objectives, I thought, that the function krotov.gate_objective is exactly doing this (taking the threes states from the NJP paper).... However, I have not really had a closer look, since I wanted to see, whether everything works and then I encountered the problems with the optimize_pulse routine. (By the way, this is resolved for me after manually installing qutip!)
+Regarding the next steps, what do you think of a skype meeting in the new year?
+And finally, Merry Christmas to all of you :)
+I should be available for Skype on most days. You can also reach me anytime on Gitter, especially through the "Chat Privately" button that you'll see when hovering over my avatar.
+Merry Christmas to you and everyone!
+According to the problems with the gate_objectives, I thought, that the function krotov.gate_objective is exactly doing this (taking the threes states from the NJP paper)
+You're right that the gate_objectives routine should automatically handle this when it detects that the system is dissipative. This is planned for the very near future.
+Hi Michael,
+I just talked with Matthias about the dissipative dynamics causing problems, and I completely agree with your suggested work around of using a non-Hermitian Hamiltonian. That should be perfectly sufficient, and it will allow us to focus on the ensemble part.
+After this is merged into master, please
+@MatthiKrauss Can you push your most current version of this notebook as soon as possible?

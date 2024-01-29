@@ -1,0 +1,20 @@
+Since #4181 we're raising a lot of deprecation warnings from terra code itself. Every time we create a controlled UnitaryGate is created a depercation warning like:
+is raised. Not only should we not be raising warnings from internal operations in terra, but this warning isn't helpful since it doesn't actually identify which line is using deprecated behavior (although in this case it's not actually actionable)
+No warning
+Either fix the issue causing the warning to be raised or revert #4181 again
+What's actually the reason for numpy arrays being deprecated?
+What's actually the reason for numpy arrays being deprecated?
+They're not actually deprecated (hence the title of this issue, well one of them anyway) from my reading of #4181 the issue is that it's not explicitly defining a method for valid parameter type in the leaf class, so when we create a controlled unitary gate it goes to the base gate class where it's an unknown type which raises the deprecation warning.
+Honestly, I think reverting might be the correct path #4181 adds a lot of complexity to this code path and I'm not sure what benefit it provides. All it does is try to bring type checking to the child gate classes which there was never anything stopping it from being there before if needed, but this hierarchical checking causes nothing but confusion and issues like this.
+Let me have a look, I think is easy to fix. Otherwise, we can reverse #4181
+The root problem here is because the inverse of Isometry is a Gate. I think that's a bug:
+That gate is created with a matrix parameter and that's, indeed, deprecated. The solution is to have a proper Isometry.inverse method.
+I'm not sure this is fixed for real yet: https://github.com/Qiskit/qiskit-aer/pull/945/checks?check_run_id=1162125597#step:9:191 its happening a lot in the aer tests logs
+These might be correct messages.
+Aer seems to use Gate incorrectly sometimes. Capture these situations was the point of #4181. For example:
+https://github.com/Qiskit/qiskit-aer/blob/3c5a6a299f538d95f9f007a1f76bbc1c76e9e3b6/test/terra/utils/multiplexer.py#L9
+This line should (probably) use UCGate instead.
+Ok, well where is this change documented, with instructions on how to update it? I don't see any release notes from #4181 it was clear to myself or @chriseclectic on what changed or how we were supposed to update aer to fix this. For something like this where we're changing an api that results in new deprecation warnings we need a release note that documents the change, why it was made, and how users should update their code to adapt to the new api.
+Also the deprecation message doesn't seem to have the correct stacklevel set because it is identifying self.params = params as the line using the deprecated behavior. Even though that's not a user actionable line, it's in the __init__ for Gate.
+@mtreinish @1ucian0 Can we clarify what's left to be done here? I wasn't able to replicate the warning on the examples in the issue. Is there is documentation that still needs to be updated?
+I think we can close this now all the relevant code should have been updated now with Qiskit/qiskit-aer@dcff5b2#diff-9a9cc2c245d017f19553aee7c265ca0eb4514a8c3321977be74e37ee16cdfeb5 in aer I don't think anything is emitting a deprecation warning anymore. That being said I'm still not thrilled with the inverse inheritance for parameter type validation that #4181 added since it's quite confusing for users, but being >1 year since that was introduced it's unlikely to change now (we probably can remove the deprecated ndarray param type from Gate now too).  Hopefully #7087 will move us to a better place on this eventually.

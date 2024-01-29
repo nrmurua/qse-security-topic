@@ -1,0 +1,30 @@
+As noted in this Slack conversation there is a desire to be able to reduce all PulseChannels in a Schedule/ScheduleBlock into a single waveform. This means compressing all Play/ShiftPhase/SetPhase/ShiftFrequency/SetFrequency instructions into a single Waveform and also recursively unrolling internally Calls.
+It should be noted that there is likely relevant routines in the plotter which does similar transformations.
+This could be added as a new transform module here.
+I traced back from Schedule.draw and found that the function gen_filled_waveform_stepwise in this script generates the waveform for a channel.
+I tried the following code which plots the real and imaginary parts of all the pulses on a certain channel
+Basically the waveform sample values are stored in line_data.yvals. One slight problem is that the generated waveforms are stepwise as was implemented here, which can be resolved by simply not including those two lines for developing the current feature.
+One thing I'm not sure is how ShiftFrequency and SetFrequency affect the waveforms. As far as I understand they won't affect the waveform sample values.
+This is what the plotter calls
+https://github.com/Qiskit/qiskit-terra/blob/75e06dc915f764ea4e5c1a57097e980e9d01b119/qiskit/pulse/transforms/base_transforms.py#L25-L28
+(flattening Call and other high-level transformations are done by this pass)
+The target_qobj_transform is called here
+https://github.com/Qiskit/qiskit-terra/blob/75e06dc915f764ea4e5c1a57097e980e9d01b119/qiskit/visualization/pulse_v2/core.py#L254
+Actually, ShiftFrequency and SetFrequency do affect the waveform. Indeed, a waveform needs to get phase factor (exp(i f_d t)) associated with its frame to be played. The frame is rotating at the frequency f which is defined by the backend.defaults().qubit_freq_est, otherwise updated by the SetFrequency and ShiftFrequency. This phase factor is usually computed by the backend control electronics (either by a software or hardware), but the pulse plotter is missing to emulate this behavior. I guess @taalexander needs this option also on the front end.
+Usually we don't need to compute the frame on front end, however, if we need a custom frame such as qudit, we need to compute it. This is the relevant WIP PR: #5977. Apart from this, such frame computation might be necessary for the pulse simulator (it usually uses a rotating frame Hamiltonian to avoid fine dt step, and waveform in the lab frame is not necessary), or necessary for pulse plotter to understand how the waveform look like on the actual hardware.
+Here, you need to add multiple transform passes that
+Then you can create new transform that generates low-level waveform data.
+If you add such transform pass, you can deprecate the pulse program loader tied to the plotter. Then, the plotter will become much simpler.
+https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/visualization/pulse_v2/events.py
+Hi @nkanazawa1989, thank you for your detailed explanation. Now I can see that target_qobj_transform flattens a Schedule so that it can be used for later processing.
+At the end should the function look roughly like this? sched and chan are the input variables.
+I find that get_waveforms already calculates the the frequency and phase values of each pulse (the frame attribute), so they can just be used when applying the frequency and phase shift factors. The some_factor variable should depend on the unit conversions of ns and GHz. but I'll work out the exact expression later. If the above implementation looks about right I'll go on to write it into a script.
+Hi @snsunx, are you still working on this? I noticed you have been working on a branch that was never PRed. Let me know if I can help you!
+Hi @1ucian0, sorry I got busy with some other stuff and haven't been working on this. I unassigned myself and please feel free to assign this issue to others.
+Hello everyone,
+This is really the first issue for me in Qiskit.
+I think that @snsunx did 99% of solving this issue. I would like to finish it.
+Can I be assigned to the issue?
+I already have some code, built upon @snsunx 's work, I'd like to be reviewed in case it solves the issue. If not - any comments will be appreciated.
+Hi @landamax , please feel free to continue. Note that we are trying to refactor (and deprecate) the pulse transform module to promote it to the proper lowering operation in modern compiler. If you need merged waveform data, you can also use InstructionToSignal converter in qiskit dynamics.
+Hi @landamax, some of the work I did can be found on this branch in my forked Qiskit repository. Please let me know if there is anything I can help with

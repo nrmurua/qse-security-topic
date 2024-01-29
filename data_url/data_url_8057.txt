@@ -1,0 +1,39 @@
+I'm having issues with running a quantum circuit that consists of 4-level qudits. I want to define my custom 2-qudit gate.
+I have written a gate function that returns the following object:
+return Qobj(mat, dims=[[4,4],[4,4]], shape = [16, 16], type='oper')
+Since this is a gate acting on two 4-level qudits, I think that these dims are correct.
+I then create an initial ket state for my circuit, let's say with three qudits, and create the circuit object:
+the dims are: [[4, 4, 4], [1, 1, 1]]
+when I try to add a gate between qudits 0 and 1:
+qc.add_gate("Ucomm", targets=[0,1])
+I get the following error:
+ValueError: The operator dims [4, 4] do not match the target dims [[4, 4, 4], [1, 1, 1]].
+If I instead try to add a gate between qudits 1 and 2:
+qc.add_gate("Ucomm", targets=[1,2])
+I get:
+Do I understand correctly how dims work in Qutip? Or is this an error? The above example works perfectly fine for qubits, replacing 4->2 in the above.
+@ALasek If I pass dims=[4, 4, 4] I can add the gates successfully. The documentation does indicate that the dims should be a list of integers, rather than exactly the dims of an associated ket, but I can also see that it might be confusing.
+@BoxiLi Should qutip.qip perhaps raise an exception if the dims are something other than a list of integers? Or is having dimensions like [[2, 2], [2,2], [2, 2]] something that might be useful / correct for someone to do? If so, maybe it is fine as it is.
+@hodgestar Thanks for you help!
+However, If I set dims=[4, 4, 4], an issue with the initial state arises.
+I'm setting an initial state by converting from a regular array to a Qobj:
+psi_zero=Qobj(psi_initial,dims=[4,4,4],type='ket')
+If I set dims=[4, 4, 4] instead of   [[4, 4, 4], [1, 1, 1]], I will get an error for the ket:
+It seems that qutip requires dims to be a list of two lists, giving two dimensions for each particle.
+Hi @ALasek, have you tried
+Indeed there is some confusion in the names. The parameter dims in QubitCircuit represents the dimension of the Hilbert space, hence [2, 2, 2] for three qubits and [4, 4, 4] for 3 qudits. The dims in Qobj represents the dimension of the operator, a linear map from one Hilbert space to another. Hence it is [[4, 4, 4], [1, 1, 1]] for a qudits ket and [[4, 4, 4], [4, 4, 4]] for a qudits gate.
+Hi @BoxiLi
+If I mix dimensions like that, I can add the gates, but I get an error about wrong dimensions when trying to run the circuit:
+psi_final_Q=qc.run(state=psi_zero)
+PS This all works fine when state dimension is 2 instead of 4.
+PPS I can sidestep this error by manually constructing my 2-qudit gate as a 3-qudit (N-qudit in general) operator by tensoring it with the appropriate identity, and then applying this operator on my initial ket, but I'm afraid I'm losing a lot of efficiency by not using the quantum circuit functionality.
+Hi @ALasek
+You are right, there is a bug in the error handling.
+This check is wrong. It assumes that the state is a qubits state. Our test didn't cover the run method with multi-level systems.
+Here are the ways around:
+to compute the unitary representation of the circuit first and then apply it to the input state.
+I'll make a bug fix soon. But the next release may still take a while.
+Using QubitCirucuit for qutrits and qudits should be fine, it is rarely used though. So there might be bugs that are uncovered by our test. If you encounter any further questions, feel free to ask!
+@BoxiLi
+Thanks, I've commented this error check  out of circuit.py, and am able to run my program now!
+PS feel free to close this issue if you consider it resolved on you side.

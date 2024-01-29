@@ -1,0 +1,26 @@
+Related to #313. In order for users to have access to the instruction set their machine supports, we need to allow qsimcirq to dynamically choose between the different simulator implementations present in C++. Currently this is handled by the use of simmux.h in the pybind layer, but to enable the use of wheels additional handling may be required.
+One can add a template parameter to SimulatorHelper and modify functions like qsim_simulate_expectation_values. That is, for instance,
+can be modified as follows
+We need to implement DetectInstructions that detects the SIMD instruction set. Also some additional changes are needed because not every case is covered by SimulatorHelper.
+I think we can fulfill #334 with this by allowing users to pass in instruction_set to these methods (defaulting to DetectInstructions if not specified).
+@sergeisakov, do you have the bandwidth to take this item? Otherwise we can check if @laurynasas would be interested in implementing the fix.
+@95-martin-orion I'd be happy to work on this it's just that it would take me some time to set up and get started, but if that's ok sign me up!
+@laurynasas, thank you! I can help you with DetectInstructions.
+I had some time to look at this, do we want to have something like this?
+While this compiles and produces the Python wheel, I get the following error Fatal Python error: Illegal instruction  when trying to run qsimcirq_tests on Github Actions VMs with the following CPUs (potentially without AVX512F support?):
+For MacOS:
+Intel(R) Xeon(R) CPU E5-1650 v2 @ 3.50GHz
+For Linux:
+Intel(R) Xeon(R) CPU E5-2673 v3 @ 2.40GHz
+The tests succeed on:
+For Linux:
+ Intel(R) Xeon(R) Platinum 8171M CPU @ 2.60GHz
+For Windows:
+Intel(R) Xeon(R) CPU E5-2673 v3 @ 2.40GHz
+Intel(R) Xeon(R) Platinum 8171M CPU @ 2.60GHz
+I'm not sure why the same tests pass on the same CPU on Win but fails on Linux. Looking at the full stack trace seems like the
+Illegal instruction failure occures at the very beginning on import qsimcirq:
+Could this be due to the flags (-fopenmp -march=knl -mavx512f) that the C++ extension is compiled with?
+Or upon the import the entire extension is read and the unsupported by CPU instructions are found (even though not used during runtime) hence the failure?
+Why do you use -march=knl? This flag is for the Knights Landing architecture (Intel Xeon Phi processors). Anyway, it seems this approach is not going to work. Sorry about that. The compiler can use AVX512 instructions even for SimulatorBasic if -mavx512f is specified. Probably we need four separate compilation units.
+This is resolved. It may also be interesting to expose the choice of SIMD modes to the user in qsimcirq, but that is a separate concern.

@@ -1,0 +1,24 @@
+Memory leak when adding Dense Qobj() together in dev.major
+To Reproduce
+The easiest example I came up with was to keep adding an e.g. 10 qubit density matrix to itself with Dense data format, and check the memory
+After completing this loop it is using over 1.5GB.
+Expected behavior
+I'm not sure if there is a preferred way to do this type of calculation using the Dense data format, but the result was certainly unexpected to me; doing the same thing with the CSR data will not result in this memory increase.
+Your Environment
+QuTiP Version:      5.0.0b1.dev0+1f697105
+Numpy Version:      1.19.2
+Scipy Version:      1.5.2
+Cython Version:     0.29.21
+Matplotlib Version: 3.3.2
+Python Version:     3.8.5
+Number of CPUs:     4
+BLAS Info:          INTEL MKL
+INTEL MKL Ext:      True
+Platform Info:      Darwin (x86_64)
+Additional context
+-- Obviously the above is a stupid example and you can compute it by multiplication, but there are other scenarios in which one really does need to add multiple Qobj() (for example evaluating a quantum map -- this was how I noticed this behaviour).
+-- Doing some light profiling shows the memory is increasing each loop by a similar amount each time.
+-- Forcing garbage collection does not seem to help.
+Yeah, that's a memory leak.  It doesn't really matter how "silly" the method is that causes it to appear, the fact is that it shouldn't exist.
+It's actually not to do with add_dense but Dense.copy - I didn't set the Dense._deallocate flag in that routine, so when the Python object goes out of scope, the C destructor ignores the pointer and it goes stale.  You can probably achieve very similar behaviour with for _ in [None]*1_000_000: rho.copy(), even if you force gc.collect() after every iteration.
+Great, thanks @jakelishman ! Over the next couple days i'll be working some more on the code where I had this issue, but looks like it was an easy fix in the end, so hopefully the problem will vanish when I merge this :)

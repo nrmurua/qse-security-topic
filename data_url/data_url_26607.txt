@@ -1,0 +1,201 @@
+Dear All
+When I used cp2k 8.1 with GPU (NVIDIA K80), it always report error.
+other information
+computer system: Ubuntu
+GNU: 10.2
+cuda version: 11.2
+driver version: 460.27.04
+cp2k make test result:
+The FAIL tests reported RUNTIME FAIL
+Could you please help me to check the error
+Thanks in advance and regards,
+Yanyan
+Hi Yanyan,
+I see that the COSMA version is v2.2.0, which is quite outdated (the current version is v2.4.0), but let's check first one thing:
+can you check if the same happens if you set the environment variable export CUDA_LAUNCH_BLOCKING=1?
+Cheers,
+Marko
+export CUDA_LAUNCH_BLOCKING=1
+Hi Marko
+Thanks for you reply.
+I have added export CUDA_LAUNCH_BLOCKING=1 to the environment variable, it also happens.
+And if I use mpirun -n  4 cp2k.psmp  -i  cp2k.inp -o cp2k_gpu4.out, the error :
+If I use mpirun -n  8 cp2k.psmp  -i  cp2k.inp -o cp2k_gpu8.out, the error :
+If I use mpirun -n  1 cp2k.psmp  -i  cp2k.inp -o cp2k_gpu1.out,   it work successfully.
+Thanks in advance and regards,
+Yanyan
+Great, thanks for checking! You can now remove it, I just wanted to check if there are any synchronization issues among the GPU streams but it seems it's not a problem, which is good.
+Can you now also try to set the following and rerun:
+Great, thanks for checking! You can now remove it, I just wanted to check if there are any synchronization issues among the GPU streams but it seems it's not a problem, which is good.
+Can you now also try to set the following and rerun:
+Hi Marko
+Thanks for you reply.
+I have added them to the environment variable, but it still happens.
+And the error information that I showed you is not full, now I show all the information
+If I use mpirun -n 8 cp2k.psmp -i cp2k.inp -o cp2k_gpu8.out, the error :
+Thanks in advance and regards,
+Yanyan
+Hi Yanyan,
+Thanks for checking, we now eliminated one more source of a problem, so you can now remove those variables.
+The next thing to test would be if setting: export COSMA_GPU_MEMORY_PINNING=OFF resolves the issue.
+I cannot reproduce this problem on NVIDIA's P100 and I don't have access to K80, but let's hope we can resolve it together.
+Cheers,
+Marko
+Hi Yanyan,
+Thanks for checking, we now eliminated one more source of a problem, so you can now remove those variables.
+The next thing to test would be if setting: export COSMA_GPU_MEMORY_PINNING=OFF resolves the issue.
+I cannot reproduce this problem on NVIDIA's P100 and I don't have access to K80, but let's hope we can resolve it together.
+Cheers,
+Marko
+Hi Marko
+Thank you very much.
+It doesn't work, the error information is the same.
+You are so kind to help me check this issue. I'm not good at the code, so I will follow your advice to solve the problem.
+Hoping you can give me more advice.
+Yanyan
+Hi Yanyan,
+Thank you too! Allright, so far, so good, you can remove all those variables.
+What might be a problem here is the following: if multiple MPI ranks are using the same GPU, then the MPS has to be turned on (see https://docs.nvidia.com/deploy/mps/index.html#topic_6_1).
+On Piz Daint Supercomputer, the MPS is enabled simply by setting export CRAY_CUDA_MPS=1, but this is cray-specific.
+Can you try to follow the link I have sent you to enable the MPS and try again?
+Hi Yanyan,
+Thank you too! Allright, so far, so good, you can remove all those variables.
+What might be a problem here is the following: if multiple MPI ranks are using the same GPU, then the MPS has to be turned on (see https://docs.nvidia.com/deploy/mps/index.html#topic_6_1).
+On Piz Daint Supercomputer, the MPS is enabled simply by setting export CRAY_CUDA_MPS=1, but this is cray-specific.
+Can you try to follow the link I have sent you to enable the MPS and try again?
+Hi Marko
+Thanks very much
+I follow the link to start MPS, and I try it again,
+I use mpirun -n 8 cp2k.psmp -i cp2k.inp -o cp2k_gpu8.out, the error :
+And then I Shut Down MPS, and test again, the error(too long, not entire error information ):
+And I am using the cp2k code to simulate, I don't know if this may have some influence.
+The MPS's log is attached
+Thanks
+Yanyan
+control.log
+server.log
+Hi Yanyan,
+From the logs that you sent it seems that, for some reason, the MPS didn't start successfully.
+Can you tell me what you get when you do nvidia-smi on your system?
+Also, when running the commands from the link to enable the MPS, did you do it with root privilege (sudo)? As mentioned, e.g. here: https://forums.developer.nvidia.com/t/fail-to-launch-cuda-mps/39916/2, this would have to be done with root privileges.
+Hi Yanyan,
+From the logs that you sent it seems that, for some reason, the MPS didn't start successfully.
+Can you tell me what you get when you do nvidia-smi on your system?
+Also, when running the commands from the link to enable the MPS, did you do it with root privilege (sudo)? As mentioned, e.g. here: https://forums.developer.nvidia.com/t/fail-to-launch-cuda-mps/39916/2, this would have to be done with root privileges.
+Hi Marko
+Thanks very much.
+Your advice is very effective. I restart MPS with root privilege, and I use mpirun -n 8 cp2k.psmp -i cp2k.inp -o cp2k_gpu8.out, there is no error, but it seem that only GPU0 is working..
+How could I solve the next problem?
+nvidia-smi information is attached
+
+Thanks
+Yanyan
+Hi Yanyan,
+Great, this means that there are no bugs and that this is only a problem of a miscofigured evironment.
+Since you have multiple GPUs, the MPS would have to be enabled for each GPU and CUDA_VISIBLE_DEVICES would have to be properly set. I never did this manually (since on our system it's a matter of setting a single env. var.), but I have found this link, which might be outdated, but I hope it still helps.
+Just to be on the safe side, I would invite some of the cp2k experts to help us out here: @oschuett, @dev-zero, @alazzaro.
+Could you post the output of your job? check that CPU recognizes 4 GPUs.
+Please, also check here for more advice:
+https://groups.google.com/g/cp2k/c/WjIPQ4KWkpE/m/Ij3MhLDYAQAJ
+Since this is not a problem of the code itself, rather a problem on how to run it, I will close the issue here. Please move the discussion to the google forum.
+I'm seeing a similar issue with COSMA 2.4 (traceback below). The problem originates from Tiled-MM/device_stream.hpp#L61, which calls event_record. So, my gues would be that the stream and the event are not on the same device, which they must.
+Grepping through the COSMA source I only found this single call to set_device. While this obviously does not utilize multiple GPUs it could also explain the crash because CP2K assigns the GPUs round-robin to MPI ranks.
+Thanks for spotting this @oschuett. I was falsely thinking that we have removed all setDevice calls from COSMA at some point. Should I fix it and make it 2.4.1?
+Yes, it would be great if you could patch this. I also found a minor cmake issue. So, I'd say let's collect those and once we're certain that we found everything then you can make another release.
+Btw, because we're using ScaLAPACK for small matrices none of our regtests actually calls COSMA. I'm not sure what to do about that yet.
+Great, you are right, I will fix that cmake issue as well.
+Regarding the small matrices switch, I can do this switch between COSMA and scalapack within cosma_prefixed_pxgemm without problems, since prefixed_pxgemm and scalapack have different function names there, so it's not a problem. And the exact threshold will be controllable by the env var COSMA_DIM_THRESHOLD as it is now in the cosma_pxgemm.
+Thanks for spotting this @oschuett. I was falsely thinking that we have removed all setDevice calls from COSMA at some point. Should I fix it and make it 2.4.1?
+Please, keep the set_device in COSMA. Actually, you have to make sure that you call set_device for each GPU call that requires it (streams, memory copies, kernel runs...). Cosma can use any rank to GPU mapping, independently by CP2K. Actually, we can assume that CP2K was compiled without GPU support at all, so Cosma has to make its own mapping...
+Alternatively, if we want to go for COSMA to use the current set device by CP2K, we have to make sure we always set the device in CP2K (Grid or DBCSR)....
+Alternatively, if we want to go for COSMA to use the current set device by CP2K, we have to make sure we always set the device in CP2K (Grid or DBCSR)....
+Yes, think we can go with this option. It should be legit for a library to rely on the host application and never set the device itself.
+In CP2K there will be a single call site for cosma_pdgemm and I was planing to call setDevice there.
+Alternatively, if we want to go for COSMA to use the current set device by CP2K, we have to make sure we always set the device in CP2K (Grid or DBCSR)....
+Yes, think we can go with this option. It should be legit for a library to rely on the host application and never set the device itself.
+In CP2K there will be a single call site for cosma_pdgemm and I was planing to call setDevice there.
+The problem is that you can really compile CP2K without CUDA_GRID or CUDA_DBCSR, so this solution will not work...
+Maybe we should reuse __ACC and enforce it for whatever library uses CUDA...
+The problem is that you can really compile CP2K without CUDA_GRID or CUDA_DBCSR, so this solution will not work...
+Well, it will work, but it won't utilize multiple GPUs ;-)
+Still, I think it's ok when a library chooses to not to touch the active device at all. In fact, for CP2K this is actually advantageous, e.g. if in the future we want to hand over device buffer.
+Maybe we should reuse __ACC and enforce it for whatever library uses CUDA...
+To avoid confusion I'd like to leave ACC to DBCSR and introduce new OFFLOAD_* flags to CP2K.
+After the release I want to refactor the flags like this:
+The problem is that you can really compile CP2K without CUDA_GRID or CUDA_DBCSR, so this solution will not work...
+Well, it will work, but it won't utilize multiple GPUs ;-)
+I don't think so. If you don't set a device, then likely it will crash. Nvidia recommends to set a device before any call (and thread).
+Still, I think it's ok when a library chooses to not to touch the active device at all. In fact, for CP2K this is actually advantageous, e.g. if in the future we want to hand over device buffer.
+I tend to disagree. Libraries must be independent unless they specifically provide an init which takes the GPU divide id to use (just like in DBCSR). For instance, CP2K can take advantage of some mapping (round-robin), while libraries can use a different one...
+Maybe we should reuse __ACC and enforce it for whatever library uses CUDA...
+To avoid confusion I'd like to leave ACC to DBCSR and introduce new OFFLOAD_* flags to CP2K.
+This flag is not used in DBCSR... Indeed, we (I) removed it. DBCSR has __DBCSR_ACC.
+After the release I want to refactor the flags like this:
+So I understand correctly that GRID and PW will be enabled by default unless you specify the macro? This is OK for me, even I would prefer to have flags to enable stuff...
+BTW, what's the reason to have "OFFLOAD" for CUDA and HIP? They are offload for sure :)
+One more point: in DBCSR the flags are automatically set whenever people set the NVCC variable.
+Actually, I did a ACC variable and based on its value (nvcc or hipcc) we enable CUDA or HIP (see
+https://github.com/cp2k/dbcsr/blob/d535e5ab98788a18118b2453c001bfee6094a3f2/.cp2k/Makefile#L132
+) Let's discuss this part in a different issue...
+Perhaps one can take a look at https://github.com/hfp/xconfigure/blob/master/config/cp2k/multirun.sh, which can be prepended/prefixed to CP2K's executable (even with mpirun). This script controls upfront the devices visible to CUDA and thereby avoids this whole mess about setting an active device on a global basis (only one device will be visible per rank). The script could be made even smarter (changes welcome), e.g., awareness for which device belongs to which socket/process (currently, this is round robin only based on global rank-ID). Though, it works for OpenMPI and MPICH (the latter includes CRAY's and Intel's MPI). As a side-note, OpenCL or SYCL/DPC++ both avoid an active device which can change across streams. For the latter programming models, a stream is associated to a device or a context.
+Syntax is:
+The 4 in above command line denotes 4 devices per node like 2 GPU cards per socket in a dual-socket system. Of course, the "4" has to be replaced by the actual number of devices per each of your cluster nodes.
+If you don't set a device, then likely it will crash. Nvidia recommends to set a device before any call (and thread).
+It depends. AFAIK, Cuda will simply use the first device until cudaSetDevice is called. So, I think it's acceptable for a library to leave this responsibility up to the host application. However, it gets tricky when the library calls Cuda from within newly spawned threads, because then cudaSetDevice has to be called for each thread.
+This script controls upfront the devices visible to CUDA and thereby avoids this whole mess
+Yes, CUDA_VISIBLE_DEVICES is very useful for providing the mapping externally. Nevertheless, we can't expect every user to do so and therefore need a good builtin mapping as well.
+From COSMA's perspective, on each call to cosma_pxgemm, we can do the following:
+Since there are no device pointers that are being transfered to/from COSMA, this should be fine.
+Dear Yanyan (@zyy-qy),
+This problem should be fixed in the latest CP2K and COSMA releases. Can you check if it works for you now?
+Thanks and sorry for waiting so long.
+Cheers,
+Marko
+Dear Yanyan (@zyy-qy),
+This problem should be fixed in the latest CP2K and COSMA releases. Can you check if it works for you now?
+Thanks and sorry for waiting so long.
+Cheers,
+Marko
+Dear Marko
+Thank you very much.
+I am going to try it.
+Yanyan
+Dear Yanyan (@zyy-qy),
+This problem should be fixed in the latest CP2K and COSMA releases. Can you check if it works for you now?
+Thanks and sorry for waiting so long.
+Cheers,
+Marko
+Dear Marko
+I am in trouble when I generate cp2k.psmp(cp2k-8.2). Could you give me some advices?
+I show you the detail that I have done
+At first, the arch files have been generated.
+Then I have done that
+Then I modify the file "cp2k-8.2/arch/local_cuda.psmp"
+Then I do
+make -j 88 ARCH=local_cuda VERSION="psmp"
+At last there is a failed error, the error information is attached.
+error.txt
+Thanks
+Yanyan
+Dear Yanyan,
+I would have to ask some of the cp2k experts to help you here: @dev-zero @mkrack @alazzaro @oschuett (I am only a COSMA developer).
+However, by googling the error from your output libblas.so.3: undefined reference to `gotoblas', I found this link which might be helpful.
+Hope the cp2k guys can help you out!
+Cheers,
+Marko
+Dear Yanyan,
+I would have to ask some of the cp2k experts to help you here: @dev-zero @mkrack @alazzaro @oschuett (I am only a COSMA developer).
+However, by googling the error from your output libblas.so.3: undefined reference to `gotoblas', I found this link which might be helpful.
+Hope the cp2k guys can help you out!
+Cheers,
+Marko
+Dear Marko
+Thanks for your perfect advice, it works. The cp2k.psmp is generated successfully.
+And I am testing it. the 4 GPUs can work.
+
+Thanks for you help
+Yanyan
+Dear Yanyan,
+Great, I am glad to hear that! Can this issue now be closed?
+Cheers,
+Marko

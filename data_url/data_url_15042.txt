@@ -1,0 +1,14 @@
+When running transpile() with a target backend that has edges in the coupling map with a single direction the transpile() function is mutating the CouplingMap object so that the output has bidirectional edges after transpile().
+When running the snippet above the visualization before transpile() is:
+
+and after it is:
+
+These 2 images shouldn't be any different as the coupling map shouldn't change because of a transpile().
+I expect this is a bug in SabreLayout as a requirement of the pass is all edges need to be bidirectional in the coupling graph. I suspect this was introduced in #9927 here: https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/transpiler/passes/layout/sabre_layout.py#L220-L225 or as part of #9263 which added support to use a target with SabreLayout.
+At its core this looks like an issue with the Target class caching the CouplingMap and that shared reference to target._coupling_map is getting mutated by accident somewhere in transpile(). We should either copy() the CouplingMap more aggressively in transpile() when its used, or stop caching it in Target and just reconstruct it on each call to build_coupling_map() (it's not that expensive to construct).
+a requirement of the pass is all edges need to be bidirectional in the coupling graph.
+Why not avoid adding edges altogether? Instead check if the edges are bidirectional and error or otherwise signal failure if they are not? Eg then try a different layout engine.
+Right now, it's just an implementation detail of how the algorithm was written. I agree it'd be better to just do it in inline and not have to modify the input graph at all if possible. However, we shouldn't error for this because because routing isn't required to return gates in the correct direction, just ensure the connectivity constraints of the device on weak edges are met. It's easy to reverse the direction of a gate if it's needed and there is a pass GateDirection that does that after routing. Sabre is our heuristic algorithm that is the one we run if other methods don't work.
+If sabre doesn't use  the notion of directed edges, then maybe it shouldnt use a digraph. I wonder if petgraph can reinterpret the data in a digraph as a normal graph. Or maybe thats too complicated.
+Yeah, build_coupling_map currently drops out a CouplingMap that contains a shared reference to the cached PyDiGraph that backs the coupling graph, which can later be mutated by make_symmetric.  SabreLayout does that right now if given a Target in the run method.
+To me, build_coupling_map looks like its return value should be owned by the caller, not by the instance - it's surprising to me that it can mutate a cached inner.  As a half-way step between full caching and full building, I think we ought to have build_coupling_map return a copy of its cached object in all circumstances, so the result is always safe to mutate.

@@ -1,0 +1,51 @@
+Hello, I have installed all the prerequisites and tried using docker as well but cannot get past this step. I'm using Ubuntu 20.04.
+CMake Error at utils/benchmark/src/CMakeLists.txt:19 (add_library): No SOURCES given to target: benchmark CMake Generate step failed.  Build files cannot be regenerated correctly.
+output.txt
+I got the same error again now on Mac 10.12.6
+Are you running build.sh from the root of the repository?  What version of CMake are you using?
+The docker container is not yet up to date unfortunately.
+Yes I am running build.sh from the root of the repo. CMake 3.21.2.
+Are there any files in llvm/utils/benchmark/src besides CMakeLists.txt?  And can you put that file in the thread? I haven't been able to replicate this bug.
+Yes, there are more files. I zipped what was contained in llvm/utils/benchmark/src
+src_zip.zip
+I'm not sure what the problem is, but a potential workaround, add this to the end of the command line invocation at line 58 of build.sh:
+-DLLVM_INCLUDE_BENCHMARKS=OFF
+A simple test added into CMakeList.txt
+returns empty when running ./build.sh. The error is that FILE(GLOB) is never returning anything thus the error "no sources given to the target" on the call to add_library because SOURCE_FILES is empty.
+I think this is the error here documented here but I haven't dug into it yet. https://gitlab.kitware.com/cmake/cmake/-/issues/20568
+Edit: I think this error is for 32-bit machines, but my computer is x86_64, also this looks like an issue that was already fixed and merged into new versions of cmake.
+You're right that I think something is up with FILE(GLOB ...) but that's unfortunately not really something we can control, and that aspect of the build system is in the LLVM build set-up, which makes the error a bit more opaque.  However, this part of the build system hasn't been updated since we started using it in the main LLVM repository either.  You might try to add ${CMAKE_CURRENT_SOURCE_DIR} in front of the *.cc sources if you want to try to get it to run.  If there's an issue under the hood with relative and absolute paths that might clear it up.
+But, I suspect this aspect of the project isn't super related to what you're working on and would recommend also trying the workaround to just disable this part of the build.
+Including the flag to turn benchmarks off, I now have a new flurry of error messages. I appreciate the help!
+The errors look like
+CMake Error at cmake/modules/AddLLVM.cmake:1566 (add_dependencies): The dependency target "llc" of target "check-all" does not exist. Call Stack (most recent call first): CMakeLists.txt:957 (add_lit_target)
+output2.txt
+Same results on both Ubuntu and Mac
+I can't quite figure out why the build system isn't finding these items but add this in the same place you added the last flag: -DLLVM_INCLUDE_TESTS=OFF
+It'll just ignore the path that's triggering those warnings for now. Scaffold doesn't use the llvm-lit for anything right now so you should be fine.
+If I had to guess, something is different between the readdir system call on your systems.  Scaffold has only been thoroughly tested on Ubuntu 16.04 and macOS 10.14+ right now.
+Sorry to keep getting stuck.
+ninja opt clang LLVMScaffold returns ninja: error: unknown target 'opt'
+I'm just excluding 'opt' and will see if that lets me pass the regression test suite.
+I'm not sure what's happening in this case. I think CMake is not able to find the directories it needs to be able to create these as sources.
+Could you try to follow the directions here: https://llvm.org/docs/GettingStarted.html, and try to run the CMake step? That might help see where the issue is if it fails.
+You could also try to add "add_llvm_tool_subdirectory(opt)" to llvm/tools/CMakeLists.txt.
+Could you try to follow the directions here: https://llvm.org/docs/GettingStarted.html, and try to run the CMake step?
+This runs fine.
+You could also try to add "add_llvm_tool_subdirectory(opt)" to llvm/tools/CMakeLists.txt.
+This allowed me to run the command ninja opt clang LLVMScaffold however I still run into errors! :(
+Andrew,
+I've build the tool flow on various flavors of Mac, including from 10.13 to 11.5...I used homebrew/macports in different cases to build the supplementary tools like ninja.  Interestingly I'm running into different issues than Evan.
+I tried to build it on a fresh ubuntu 20.04 server installation and had problems with the linking stage when running the "ninja llvm-headers" command.  I suspect it is related to using gold rather than ld.  ubuntu bundles gold and ld in the same package.   Is there a way to specify in your build flow to use /usr/bin/gold instead of /usr/bin/ld for the linker?
+I've build the tool flow on various flavors of Mac, including from 10.13 to 11.5...I used homebrew/macports in different cases to build the supplementary tools like ninja. Interestingly I'm running into different issues than Evan.
+But was it able to correctly build still?
+I tried to build it on a fresh ubuntu 20.04 server installation and had problems with the linking stage when running the "ninja llvm-headers" command. I suspect it is related to using gold rather than ld.
+I tried doing this on a fresh 20.04 installation as well without installing the goldutils, and this step was able to work.  I believe that this is a requirement that has carried over from the and old version of llvm, and is no longer necessary.  The GNU included ld should work anyway. What errors are you getting?
+ubuntu bundles gold and ld in the same package. Is there a way to specify in your build flow to use /usr/bin/gold instead of /usr/bin/ld for the linker?
+The build script actually already has a flag for this if you're using linux:
+This allowed me to run the command ninja opt clang LLVMScaffold however I still run into errors! :(
+I believe this error has something to do with the fact that CMake globbing for whatever reasons doesn't seem to be working for you, and so it's not grabbing all the include files, I created an Ubunutu 20.04 instance, and installed: clang-10.0.0, python3, CMake 3.21.2, and ninja 1.10.0 only and was able to run ./build.sh without issue.
+Something I've noticed is the [dir] in your messages. Are you putting that there? Or is that there automatically? If it's the first second, could you please figure out what the directories are getting passed to CMake in the build script.  You could also try to run it manually with:
+cmake -G Ninja -DLLVM_ENABLE_PROJECTS="clang" /path/to/llvm
+Correct, I was able to build on all of those MacOS flavors.
+Actually your answer to Evan gave me an idea.  I was using gcc/g++ in my environment and hadn't installed clang...I switched to clang and got past the linker problem.  I guess that stage was bootstrapping and mixing compilers...Its now building...

@@ -1,0 +1,23 @@
+There is a bug in the BasePauli/PauliList/Pauli classes where the phase vector is sometimes set as dtype uint8 instead of int64 leading to errors when calling the evolve function for circuits containing gates that modify the pauli phase vector.
+Whether this happens or not seems to depend on how the Pauli is initialized (sometimes it will be initialized with uint8 phase vector, other times with int64 phase vector).
+Minimal example
+Give the exception:
+The dtype of the phase vector should always be the same, so that evolution and other methods that attempt to inplace modify the vector don't cause exceptions for mismatched dtypes.
+One fix would be to explicitly cast the phase vector when initializing base pauli
+I suspect the bug might be due to this line in the _count_y function: https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/quantum_info/operators/symplectic/base_pauli.py#L692
+I tried :
+if dtype is None:
+dtype = np.int64(x.shape[axis])
+No errors with this solution, print(pauli.evolve(qc)) shows ZY. So this solution works but casting could also create bug in itself. In any case I will start an PR and run all the tests to be sure.
+@chriseclectic: I think the phase vector should always be representable in a u8 right?  It's only 2 bits of data.  The _count_y dtype handling there looks correct for what the function does, so I suspect the more correct solution is to ensure that whatever's calling that is passing np.uint8 as the dtype when it's going to bind the result to a uint8 context, or it manually casts after the function is called.  uint arithmetic is guaranteed to wraparound on overflow, so there shouldn't be any issues, since the phase is just about to take the result mod 4 anyway.
+@BramDo: np.int64(val) produces a value of type np.int64, whereas the dtype argument should be a dtype instance (e.g. the class np.int64 itself).  I'm surprised Numpy doesn't error out on that call, but I suppose it must be trying to match the type.  Either way, I don't think this is the correct solution here - I think it's missing the real issue.
+I did not realize that the phase vector is only 2 bits of data. In c programming you could manipulate these bits with shift and other operations. But we don't need that because the problem is not in the _count_y handling. It seems that there might be a mismatch with the calling software or even it could be there is not a problem at all. However if you run the realistic example you get the error, and with the (not correct modification ) the pauli.evolve gives you the right answer.  Maybe the real problem could be found by debugging in vscode and set some variables and breakpoints?
+Each element of the phase vector is two bits of data, but Paulis on multiple qubits use a vector of these values. The issue with your PR wasn't that the output result wasn't mathematically correct, it's that it changed the data type of the phase vector from what it logically should be (u8) to something much wider (i64). That means more data is used all the time, and it was masking the real bug, which is that something somewhere else in the code was trying to do in place mutation between two values whose types it wasn't properly controlling.
+As already discussed it is not necessary to modify the _count_y because dtype handling there looks correct for what the function does. The more correct solution is to ensure that whatever's calling that is passing np.uint8 as the dtype when it's going to bind the result to a uint8 context, or it manually cast. The caller can be found in the exception handling of the example:
+In the example we use an evolve over the phase. This is done by the evolve_cz function. In line 663 the phase vector is set by:
+base_pauli._phase += 2 * np.logical_and(x1, x2).T
+To cast the phase vector to a uint8 we can do:
+base_pauli._phase += np.uint8(2 * (np.logical_and(x1, x2).T))
+Summary
+No change in the  _count_y function but modification of the result of the  _evolve_cz function. This works, I got the mathematically correct answer as before and we don't have to change the phase vector from what it logically should be (u8) to something much wider (i64) with the problem of using to much data all the time.
+I'll be happy to go further with this PR if this is the way to go.

@@ -1,0 +1,29 @@
+The joining of the measurements in pull #154 breaks at least two things:
+This seems like a not so useful addition.
+I'd propose the station to have a loop / measurement container, where a measurement is added, and then the station could start the next one in the list.
+In that case we could also view and modify the list of enqueued measurements.
+Can we revert that merge until it is fixed?
+That PR doesn't cause this problem, it just changes how it manifests itself.
+Previously, you could either use Loop.run(enqueue=True) in which case you'd get the behavior we have now; or you could leave it enqueue=False in which case it raises an error to start a new loop while one is already running.
+Now the enqueue keyword is gone, and if you start a loop while another is running it just prints a message and blocks (which stops live plotting) until the previous one finishes. All the PR did was simplify the API.
+So I agree this would be nice, but it's a new feature (a real measurement queue), not a bug.
+I'm confused,
+Previously when a loop was running, and I run another one I get an error, and I was free to do whatever I wanted in the notebook.
+Now If I run a loop while another is running I'm totally out of business.
+And note that if you didn't want to add a new measurement to the queue, you can KeyboardInterrupt to stop it. At the moment this behavior is mainly useful for overnight sweeps and such, where you're not intending to watch them run anyway.
+And when I have a loop running (without anything in the background) and press the stop button (several times) in the notebook (KeyboardInterrupt) I have a hanging notebook as well as a broken measurement.
+And when I have a loop running (without anything in the background) and press the stop button (several times) in the notebook (KeyboardInterrupt) I have a hanging notebook as well as a broken measurement.
+You mean if you run the loop in the foreground and you cancel it with a KeyboardInterrupt? Weird, that would be a (different) bug. I can look into it if you provide some detail in a new issue.
+No, just if I jun the standard qcodes example, in the background
+Or any other standard loop example from that notebook.
+the anything in the background was only referring to 'no queued loops'...
+I would be very much in favor of adding a flexible queueing system.
+I would understand if adding this enhancement has no immediate priority, but I think it would be a very good addition in the future.
+Alright, I played with this a bit - @MerlinSmiles is right that everything breaks if you generate a real KeyboardInterrupt (ctrl-c or the stop button / interrupt kernel if in Jupyter), the issue is that this signal gets passed to all processes, not just the main one. What I plan to do short term:
+The measurement queue idea is a good one, but it will take a bit more work so I'm going to defer it for a while. We need to make sure there's a good way to manage items already in the queue if you change your mind later, we need to figure out where this lives (yet another process? every queued loop starts a process and sits idle it until its turn?) so that it will work across Jupyter, Spyder, bare terminal...
+Thanks for looking into this!
+I agree, put the queue aside for now, its not the most important.
+For the halting of a measurement, I guess a timeout is needed as get and set calls can take forever now without the timeout there.
+On top of that, the halt signal will not be received from the loop when it is in delay mode, or when a wait taks is running. Here it might be worthwhile to change
+to something like
+where freq could be something like 3 seconds or so.

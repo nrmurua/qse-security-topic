@@ -1,0 +1,39 @@
+Hi QuTiP users,
+I am not quite sure how I should introduce the issue that I have, but basically it comes down to the fact that my Hamiltonian and a particular function seems to require >500 GB of RAM for some parameters used. For the desired parameters, this can even become Terabytes which is hard to implement.
+The main parameters by the way is N, which is the dimension of the Hilbert Space. The maximum is N=111 when running the program on the 500 GB node. The memory usage fits very good to a RAM (MB) = 0.0008804*N^4 dependence.
+A strange thing is that Slurm's MaxRSS command says that only 133,690 MB was needed to run the program, which is not close to the 500 GB. The memory profiler said that one function required 145,766.2 MiB (152,846.9 MB) at some point, and 327,769.4 MiB (343,691.1 MB) was freed. Together this comes close to the 500 GB, although I don't understand the numbers.
+I have no profound knowledge of the memory allocation in Python and QuTiP, but I would like to check if this can be improved. I went to two IT consultants who are in charge of the National Supercomputer in the Netherlands, and they also found no errors in my code. One of their suggestions was to ask you for advice on this topic.
+Of course, I can provide you with more details (the whole code, the outcome of the memory profiler, the meaning of the parameters and the infrastructure), but I don't want to overwhelm you.
+I look forward to hearing from you.
+Best regards,
+Xavier
+Is there anyone who could comment on this? A useful link or contact person is very welcome too!
+Thanks for your quick reply. I am using multiple profilers at the moment, but albeit large, the RAM usage may not be the main problem. I am running the program on a 2 TB VM as well, and it looks like the maximum of N before the program crashes is the same. (N=115 crashes, but there should be enough RAM available for this parameter. Now running for N=112.)
+EDIT: N=112 indeed raises a segmentation fault as well.
+The specific error I get is the following one:
+Traceback (most recent call last):
+File "SPI_V5.py", line 197, in 
+H_BS1=-BS_1/(2.Dt_BS1)(a_UPs.dag()a_LOWs+a_UPsa_LOWs.dag()+a_UPi.dag()a_LOWi+a_UPia_LOWi.dag())
+File "/usr/local/lib/python3.5/dist-packages/qutip/qobj.py", line 414, in add
+out.data = self.data + other.data
+File "/usr/local/lib/python3.5/dist-packages/scipy/sparse/base.py", line 375, in add
+return self._add_sparse(other)
+File "/usr/local/lib/python3.5/dist-packages/scipy/sparse/compressed.py", line 342, in _add_sparse
+return self._binopt(other, 'plus')
+File "/usr/local/lib/python3.5/dist-packages/qutip/fastsparse.py", line 115, in _binopt
+A = fast_csr_matrix((data, indices, indptr), dtype=data.dtype, shape=self.shape)
+File "/usr/local/lib/python3.5/dist-packages/qutip/fastsparse.py", line 60, in init
+raise TypeError('fast_csr_matrix allows only int32 indices.')
+TypeError: fast_csr_matrix allows only int32 indices.
+To me, it seems that it is due to a bad type of integer passed to a QuTiP function. Do you agree?
+I admit that it is hard to solve a problem without having the code available, but perhaps you know more of this specific TypeError in QuTiP.
+Best regards,
+Xavier
+Is there something I can do to support 64 ints? Or should QuTiP be updated?
+About the multiple copies of the density matrix in dense form: should I accept that my program requires hundreds of GB's for particular parameters, or is there a way to work around this?
+Supporting both int32 and int64 requires modifying much of the QuTiP internals.  Not difficult, but will requires a lot of work.
+What your willing to accept depends on you.  I would look at what the output density matrices look like.  If they are mainly non-zeros, then there is not much to do.  One could write a lower-order ODE at makes fewer copies.  If the density matrices are mostly sparse, then there might be some benefit of having a ODE solver with sparse vector.  That would not be as general, and would need to be written by hand.
+Without seeing the code it is difficult to be sure exactly what this problem was.  Python's garbage collection should have been aggressively pruning the stored objects once they were no longer referenced, and I'm not aware of any other people reporting memory usage problems in mesolve, but it's possible there was a reference being kept to a dense Liouvillian at every time step at some point in the past (the Liouvillian would explain the N^4 usage, as opposed to a dm which should be just N^2).  I'm fairly sure this isn't a problem any more at least; I was able to run the test script
+on a fairly non-descript Macbook without issue as of a master shortly (hopefully) before the 4.6 release, without ever exceeding 3GB of RAM used.
+Just for approximate calculations for N=115: a 100% dense DM stored in CSR format takes ~257kB of memory, while a 100% dense Liouvillian would be ~3.26GB.
+Closing now due to lack of activity.

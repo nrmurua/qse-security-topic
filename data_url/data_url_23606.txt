@@ -1,0 +1,51 @@
+Currently all parameters are dynamically added to instruments. This means that the autodoc documentation of the paramters does not contain the parameters. It would be great if we can find a way to include these docstrings in the autodoc generated documentation
+Hi, @jenshnielsen
+Is there any solution to this problem so far? And perhaps to as well #32 that is somewhat related when, e.g.,  documenting subclasses of Instrument s
+Not at the moment. There does not seem to be a general solution to this in Sphinx. I think the best option would be to replace the use of add_parameter with an actual class instantiated as a member of the class. We are not actively working on this
+With regards to #32 there was a suggestion in #2816 unfortunately that hit some design issues
+@jenshnielsen thank you for the reply and information!
+After several hours of prototyping I came up with a solution that solves #32 (and  probably #2816 as well).
+Could you have a look?
+At high level it involves:
+
+At the end of the file we add:
+Let me know if the approach and/or the sphinx/python magic is not clear.
+Pros:
+Cons:
+If yes:
+Looking forward to your feedback, we (at Quantify) would be happy to contribute with this feature.
+Hi!
+@jenshnielsen, any advice on this?
+In case you do not have time, is there some maintainer that could give some feedback?
+Cheers
+@caenrigen pardon for the delay.
+Thank you so much for such a comprehensive and clear description of the suggestion!
+There is a sense of hackiness in the solution, both in qcodes and in sphinx, however the implementation is short and is readable (which is very important). Another important aspect is that the solution does not break the existing way of specifying a parameter, and can live next to it -- that is important because I can't see InstrumentBase.add_parameter going away anytime soon.
+I think we should try to see how it works in a PR to qcodes, and once integrated let's how it works for the quantify project :)
+It's important to include the documentation of this "feature". it could be a separate example notebook, or could be just a section in the "writing drivers" notebook. I also think that splitting the feature into two would be beneficial for readers - one is "a new way of defining parameters" and two is "..that gives the benefit of addings parameters to autodoc in sphinx" - would you agree?
+there were also specific questions:
+Should this become the recommended way of writing drivers?
+unlikely. there are many cases where arguments to InstrumentBase.add_parameter are not "literally" known and need to be pre-calculated (perhaps even based on arguments to __init__), and the "dummy private method with the add_parameter decorator" will not cover those.
+now that i wrote this, perhaps, an adjustment to the solution which makes things better is that InstrumentBase.add_parameter defines the dummy private method with correct arguments, docstring, and NotImplementedError?
+Where should the _add_params_from_decorated_methods be places (and executed)?
+in the init of InstrumentBase.
+where should the add_parameter decorator utility be placed?
+in qcodes.instrument.base module should be fine.
+@astafan8 thank you for the reply, we will follow up with a PR with this feature, might take a bit of time, but we certainly want this functionality.
+It's important to include the documentation of this "feature". it could be a separate example notebook, or could be just a section in the "writing drivers" notebook. I also think that splitting the feature into two would be beneficial for readers - one is "a new way of defining parameters" and two is "..that gives the benefit of addings parameters to autodoc in sphinx" - would you agree?
+agreed, there are at least two distinct functionalities in there
+there are many cases where arguments to InstrumentBase.add_parameter are not "literally" known and need to be pre-calculated (perhaps even based on arguments to init), and the "dummy private method with the add_parameter decorator" will not cover those.
+I realized this myself as well after the proposal. Considering that the parameters are added only during __init__() I think it is possible to improve this a bit so that any argument to add_paramter (except the parameter name) can be a member of the (partially) initialized object. In the code above it is already being done to specify, e.g., the set_cmd.
+now that i wrote this, perhaps, an adjustment to the solution which makes things better is that InstrumentBase.add_parameter defines the dummy private method with correct arguments, docstring, and NotImplementedError?
+I did not follow this part.
+Perhaps related note: InstrumentBase.add_parameter currently is called from an instance object while the @add_parameter is executed when the module of MyInstrumentDriver is imported. In order to be able to document parameters in sphinx the information needs to be available when the MyInstrumentDriver is imported (sphinx imports all modules and then inspect the imported objects). Maybe this helps to understand some of the nuances.
+Where should the _add_params_from_decorated_methods be places (and executed)?
+in the init of InstrumentBase.
+now that we mention the parameters that require information that is available only after calling __init__ I think it might be better to give users (driver writers) the responsibility of calling add_params_from_decorated_methods, so that some necessary information can be passed to __init__. (Some code snippets should make this more clear later).
+we will follow up with a PR with this feature, might take a bit of time, but we certainly want this functionality
+no worries! looking forward to it!
+Perhaps related note: InstrumentBase.add_parameter currently is called from an instance object while the @add_parameter is executed when the module of MyInstrumentDriver is imported. In order to be able to document parameters in sphinx the information needs to be available when the MyInstrumentDriver is imported (sphinx imports all modules and then inspect the imported objects). Maybe this helps to understand some of the nuances.
+ah, indeed! sorry, then please ignore that "now that i wrote this, perhaps, an adjustment to the solution" part.
+I think it might be better to give users (driver writers) the responsibility of calling add_params_from_decorated_methods, so that some necessary information can be passed to init. (Some code snippets should make this more clear later).
+For the first PR I'd suggest to start with a private _add_params_from_decorated_methods, as it can always be made public in the future (while vice versa requires deprecation procedure). But let's also have some examples of how this responsibility would work.
+Fixed by #3224 parameters should be rewritten using self.parameter_name = Parameter(...) for this to take effect

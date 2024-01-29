@@ -1,0 +1,26 @@
+Hi all,
+as we talked yesterday, I write some facts about noisy circuits.
+Google's cirq uses three different methods for simulating wavefunctions:
+I think if we want to implement noisy circuits, the optimal general approach should be 3) Density matrix. mixtures could become intractable if many errors happen.
+I was playing around with this kind of tensors, an einsum strategy could work in this setting. For controlled gates, einsum would work with proper indices. On the contrary, an slicing strategy like the one in QCGPU should be done in different steps.
+This can stay here until QIBO is ready to implement noisy circuits.
+Cheers
+I tried to think a bit how to implement some noise models in order to conclude the basic quality of life improvements and I would like to share some thoughts before starting the implementation.
+First, if I understand correctly, in the most general case, mixtures and density matrix are equivalent in terms of computational cost: they both require keeping track of a 2^n x 2^n object. I agree with Adrian that the best approach is the density matrix, since it is easier to formalize.
+The way I would implement the basic noise model with this approach is the following:
+All this is relatively simple to code and I think relatively clean from the user perspective. My main concern is that the density matrix doubles the number of qubits, which means that we can simulate up to 13 qubits with noise on a single GPU. In that sense, would this approach be useful at all?
+As always, there is a cheaper in memory / expensive in computation alternative. This would be to stick to the state vector simulator and add probabilistic gates (for bitflip would apply X with probability p, etc). Then we just re-run the simulation several times and the probabilistic gates act differently (randomly) in each run. We can also cache the configurations so that we do not repeat calculations and if we run the circuit 2^n times we get the whole thing (up to some strong assumptions). This would allow us to go up to 27 qubits on GPU with the cost of having to run many more times (not necessarily bad if GPU is fast).
+@scarrazza, which approach sounds more useful?
+Thanks for the comment. The GPU multi-shot procedure is a clever workaround to memory limitations.
+I suggest to focus on the GPU first, and then eventually test a full density matrix with CPU fallback.
+Hi all,
+I think that is a clever approach, it could take into account previous knowledge on the errors to minimize the number of circuits ran.
+With regard to the fact that mixtures and density are computationally equivalent. I do not think they are. The number of objects carried for the mixtures grow as errors happen (or do not happen). After a given number of errors ~ number of qubits, there are more objects for a mixture than for a density matrix. This is because the number of different possibilities grows exponentially.
+With regard to the fact that mixtures and density are computationally equivalent. I do not think they are. The number of objects carried for the mixtures grow as errors happen (or do not happen). After a given number of errors ~ number of qubits, there are more objects for a mixture than for a density matrix. This is because the number of different possibilities grows exponentially.
+Many thanks for the comment!
+Indeed, what I wrote above is correct only if number of errors = number of qubits. If we need to introduce more than one error per qubit (which is more likely the case, as errors can happen between any of the gates that we apply), then the complexity of the density matrix will remain at 2^(2n) while the mixtures will be exponentially many more. This can be a problem with the multi-shot approach too, because running the circuit only 2^n times may not be sufficient to give a good statistics for the errors...
+Indeed, I had not thought it like that. In principle, it could be added a previous study in terms of probability to occur a given set of errors. That is nothing but combinatorics and multiplying probabilities, but the number of calculations could become absurdly huge, and at the end of the day most of them will never happen.
+Hi there,
+I bring you here documents on "channels", just to give examples on what I told this morning
+https://cirq.readthedocs.io/en/stable/noise.html
+http://www.theory.caltech.edu/people/preskill/ph219/chap3_15.pdf

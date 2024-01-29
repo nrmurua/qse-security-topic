@@ -1,0 +1,14 @@
+Running Grover's algorithm fails with the latest version of qiskit (with "aer_simulator_statevector" backend):
+The following minimal example is adapted from:
+https://github.com/Qiskit/qiskit-terra/blob/a2b9a9b13ab76974cd5509ff6f693c5dec9cc351/test/python/algorithms/test_grover.py#L258-L265
+The main change is in setting the backend to "aer_simulator_statevector".
+The code should work as in the previous versions (qiskit 0.33.0, qiskit-terra 0.19.0).
+The problem is in the Grover.amplify method:
+https://github.com/Qiskit/qiskit-terra/blob/a2b9a9b13ab76974cd5509ff6f693c5dec9cc351/qiskit/algorithms/amplitude_amplifiers/grover.py#L228
+circuit_results is sometimes a numpy.ndarray object (as in the tests) and sometimes a qiskit's Statevector object, but the code doesn't differentiate between these cases, and when it is a Statevector it fails here:
+https://github.com/Qiskit/qiskit-terra/blob/a2b9a9b13ab76974cd5509ff6f693c5dec9cc351/qiskit/algorithms/amplitude_amplifiers/grover.py#L241-L242
+I cannot reproduce this error with Terra 0.19.1 and Aer 0.9.0. What version of Qiskit Aer do you have installed?
+My qiskit-aer version is 0.10.2 (the latest release)
+It's caused by Aer 0.10 - that changed the type saved by save_statevector etc to the qiskit.quantum_info classes, with a compatibility layer that mostly should have meant that they behaved like Numpy arrays.  In this case, though, the Statevector.__eq__ method returns a single Boolean, rather than broadcasting like general Numpy arrays.  It's a simple fix - we just need to cast the output of get_statevector to a Numpy array if we want to use it with guaranteed Numpy semantics within this class.
+I believe #7560 sorted this. In any case QuantumInstance usage by Grover is now deprecated and soon to be removed in favor of using a Sampler primitive. Since I believe this is well outdated I am going to close it.
+Seems I got distracted and ended up not closing this despite saying I was! 🤦‍♂️

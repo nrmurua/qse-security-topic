@@ -1,0 +1,50 @@
+Currently you have to use the CompositeGate in one of two ways:
+1- Create a class for your gate that inherits from CompositeGate. This will be quite a few lines of code, but then you are flexible in how/where to use that custom gate. An example of this is: qiskit/extensions/standard/cswap.py
+2- Just instantiate a CompositeGate object and add primitive gates to it. This will be easier, but your gate will be tied to a specific quantum register with less flexibility at the point of use. An example of this is: examples/python/basic_optimize.py
+Change the interface so you have the ease of use in (1) and the ease of declaration in (2).
+@ajavadia  I wonder if we can have tutorials on the use of composite gates. I wanted to use them, but I gave up because I did not really understand.
+@rraymondhp Yes, once we fix it we will definitely write a tutorial.
+We had a little discussion on the Slack but moving the contents to Github now. Some of the main concerns:
+On 1) we have that currently each Gate patches into the QuantumCircuit object a method to add itself to the circuit. Same thing for CompositeGate. Plus there is some code to see if a gate is being added to an InstructionSet. I was considering we should rather use mixins to inject the gate adding code through multiple inheritance. This will also define the type of self properly. Plus a user may do the same: They may define a custom gate MyGate and a mixin MyGateMixin and subclass with MyQCircuit(QuantumCircuit, MyGateMixin) to mixin their gate with the normal circuit definitions.
+I think on 2) I had some suggestions to consider Gates as a subclass of Circuits since each gate is just a tiny Circuit. But it seems there are some additional assumptions involved in the Circuit class that may be incompatible. Plus Gates need to have an inverse.
+The unitarity requirement irks me a bit because one could imagine a custom gate definition that includes measurements. For example a Grover search subroutine could have classical inputs and outputs but will include measurements.
+Here is a quick demo of how I see the Gate hierarchy. Code was not tested (and probably don't run), but it's just for the idea.
+About your idea @eddieschoute, if I understand clearly your idea,
+is a correct definition for a custom gate? If I did not understand then forget about the 2 next points, else here they are:
+How do you provide information on the quantum registers? Imagine in the example before that I want to apply my HGate on q[0] and my CNOTGate on q[10], q[3], how do I write that?
+More important: how do you define a CompositeGate with 2 HGates?
+To sum up the 2 previous points, using your idea how would you produce the QASM code below?
+About the unitary requirement, I agree that we should not take it into account when implementing. From what I understood, IBM's chips (and only the real chips?) don't allow operations on a qubit after its measurement. But
+It's only the case for IBM's chips and should (?) be fixed in a near future? (<- not sure about the last part)
+In quantum computing theory, measurement can be used to fix the state of the qubit to a known state (ex: we know that our qubit should be in the state |1> at this stage of the computations, then we can measure it to ensure it is in the state |1>).
+That is why I made the distinction between a reversible composite gate and non-reversible one in my gist.
+On further inspection, OpenQASM 2 restricts custom gate definitions to quantum unitaries, which presumably drove the decision to restrict gates to only be reversible. I'm not sure if there are plans to change that in a new revision of OpenQASM, since I don't know the reason why OpenQASM is constrained as such.
+The class hierarchy is slightly different from what you're imagining. I imagined an interface like https://gist.github.com/eddieschoute/9586c4a4734764e35492602cf1c3f030
+Hopefully that clarifies my suggestion a little bit.
+Not to sure about your item 2 unless you're assuming postselection (Post-BQP).
+I was wondering if a design has already been proposed for this since it would be useful for a project that I'm working on.
+How can one define something akin to a subroutine in qiskit?
+Yes, this is a good time to pick up this discussion again, after the recent updates in qiskit.
+On the two points that @eddieschoute and @nelimeee have raised:
+1- I agree monkey-patching (dynamic extension of class methods) is bad. It has been raised many times before and we need to do something about it.
+In order to keep this thread about CompositeGate, though, I will open a new issue about this. Sounds like mixins may be a solution, so let's hash out the details.
+2- We do really want to keep a philosophical separation between unitary subroutines (Gate/CompositeGate) and general circuits (QuantumCircuit). This will be helpful in multiple places. For example, simulation of subroutines that have measure/reset is slower. Majority of near-term hardware do not implement reset. And some compiler optimizations may want to isolate unitary subroutines and work on them. Lastly, a CompositeGate as such can implement all the methods associated with Gates: inverse(), q_if()(control), etc.
+My questions are:
+1- Do we really need CompositeGate? what does that offer over Gate? Some of the standard "Gates" (ccx, swap, etc) are already implemented as a sequence of other gates, so why have this distinction?
+2- Do we need another class that encompasses non-unitary subroutines, maybe CompositeInstruction? Or can we just use QuantumCircuit for that? My preference is to not add extra classes, but to design a small flexible set. For example, after #389, it is now quite easy to combine and extend circuits themselves.
+I think CompositeGate is a bit of a misnomer, since some gates are already composite. But in general I think we need something that represents a subroutine, like that is present in OpenQASM (where it is a custom gate def). Because I want to represent some subcircuit that I execute x many times as a subroutine/gate. Think for example of the QFT that is expressed as a singular gate for a given size. Currently the definition is e.g. https://github.com/QISKit/qiskit-core/blob/6bbc764534dab1c164fc73c8d825d7fb69cd5d19/examples/python/qft.py#L79-L85, which imperatively applies gates to the circuit directly. But it is much more intuitive to specify a circuit/gate and add that wherever necessary.
+I just realized that #389 does something very close to what I'd need to define subroutines. The only thing missing is to be able to wire registers manually. E.g. q4 gets wired to q0 and q5 gets wired to q1, where the second is a register in the subroutine. Currently, this is implicit in the combine and extend code (q0 gets wired to q0).
+It strikes me as odd that this is not possible yet. I know that DAGCircuit has compose_back which has a wire_map argument for this specific purpose. Do you think it possible to add this to QuantumCircuit?
+Yeah I think composing circuits themselves is the way to emulate "subroutines".
+As for wire remapping, how would this work, for example if you were writing QASM code?
+From the OpenQASM spec:
+If you were to write q[x] and q[y] for some x and y, you'd have to compose the wires in some way.
+You could imagine trying to define a unitary and using it on some subset of the wires.
+@atilag @diego-plan9 can you take a look at this issue and throw your thoughts from an architectural perspective?
+How this discussion is evolving? On a user side, it looks like CompositeGates are the qiskit ways allowing the users to control big unitaries and have automatically the inverse of "subroutines" without coding the whole algorithm in reverse..
+My use case is very simple: imagine you are writing a quantum oracle and you have to perform phase estimation on it. You need to control and inverse many unitaries and CompositeGates seems the way to go. So why should it be removed?
+I think this can be closed via #1816. Feel free to reopen if that's not the case.
+CompositeGate is deprecated and will be removed in v0.9.
+Any Instruction can now be composed of other sub-instructions.
+To build them, you construct a circuit then use
+circuit.to_instruction().

@@ -1,0 +1,17 @@
+Description of the issue
+It seems like by including just one extra parameter to resolve, the time it takes increases dramatically.
+How to reproduce the issue
+This takes ~14 seconds on my machine. However, if I exclude wait_moment from the circuit such that there is one less parameter, then it only takes ~2 seconds. Note that the length of the sweep is the same in both cases. I have attached cProfiles below in the details.
+Fast version
+Slow version
+Cirq version
+'1.3.0.dev20230828214840'
+I tried the initial profiling on the two cases, the one with wait_moment and the one without wait_moment. Indeed the time difference is huge.
+The one with
+The one without
+Looks like the problem is located under assumptions.py and some unnecessary randomness generation for shuffling?
+Resolve parameters is definitely slow, but in this case the problem seems to be with resolving cirq.Duration specifically, because it combines the various fields picos, nanos, micros, and millis into a single picos value which is stored internally. If one of those is symbolic (as here), then you end up with a sympy expression which has to be resolved, as opposed to just a single sympy symbol. Resolving sympy arithmetic expressions is known to be especially slow. I previously attempted to fix this generically by pre-compiling sympy expressions (see #5047), but we ended up not doing that because it could allow for arbitrary code execution in certain circumstances. I think we'll have to refactor Duration to do something more sensible here. (One thing to note is we allow multiple fields to be set, like Duration(nanos=10, picos=10), by adding them with appropriate coefficients; but the intent of having multiple keyword args was more to have a way of expressing units, rather than adding multiple values with different units.)
+@maffoo One easy fix for Duration could be that instead of storing the self._picos as the only value, we convert it to a dataclass where we just store a float / sympy.Symbol for each of the 4 picos/nanos/micros/millis at the time of construction and resolve it to appropriate units at the time of access. This makes sure that the parameter resolution path simply resolves (at-most) 4 floats, instead or resolving a sympy expression. The former should be much faster since we will not go via the sympy parameter resolution path and break early instead.
+As suggested above, I've sent a fix to speedup the parameter resolution for cirq.Duration in #6270
+On my machine, after this change, the original code snippet takes ~700ms, which is basically the same time it takes without the wait_moment.
+

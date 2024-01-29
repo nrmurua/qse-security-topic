@@ -1,0 +1,20 @@
+Hello, I meet a problem:cp2k@9.1  test failed on centos8_aarch64.
+Can you help me?This seems to have something to do with the tolerance.
+This is a known issue for aarch64 as shown by the Linux-arm64-gnu.psmp (11.2.0) and Linux-armv7l-gnu.psmp (8.3.0) regression testers on the CP2K dashboard since a while. It could not be resolved before the v9.1 release.
+@mkrack Thank you. Will there be any patch after the next version is released?
+The reason for the numerical deviations on aarch64 is not understood yet. It affects, however, only a few (2-3 out of 3000+) tests related to features implemented quite recently.
+Update: The following tests are still failing with GNU aarch64
+I found that all regtests pass on ARM64 when I comment out the following two lines:
+
+@JWilhelm @abussy
+Great that you found this, @oschuett. I also have issues with "dbt_batched_contract_init" and "dbt_batched_contract_finalize" in periodic GW either producing wrong numbers or enormous memory overhead. It is currently unclear to me, whether commenting line 317 and line 491 in rpa_im_time.F will affect the performance or the memory consumption in low-scaling RPA/SOS-MP2/GW. So, I'm not sure whether we can just comment these two lines to fix the ARM64 regtests.
+@abussy Do you have any recommondation on this issue? Or should we try to ask Patrick Seewald?
+It's interesting that this particular call to "dbt_batched_contract_init" and "dbt_batched_contract_finalize" causes the ARM regtest to fail. This pattern of initialization and finalization of the batched contraction is used throughout the code, wherever there are sparse tensor contractions.
+There is one notable difference though: I generally do not see "dbt_batched_contract_finalized" used with more than 1 argument. I wonder if passing a unit_nr may be the culprit there. A quick grep confirms that this is the only instance in the code. I would try that.
+Unfortunately, just removing the unit_nr does not help.
+Or should we try to ask Patrick Seewald?
+Yes, we could try that. However, he hasn't worked on CP2K for over two years. So probably somebody has to spend a week of focus time to read the code and his thesis to re-learn how dbt_contract actually works.
+Are the failing regtests only those involving K-points? Because I also see in the same file rpa_im_time.F, that the init and finalize routines are called on the t_dm_occ and t_dm_virt tensors only in case of Gamma point calculation. Maybe there is a link?
+We've got our first ARM64 regtest run that passed.
+@oschuett yes,I have passed.
+

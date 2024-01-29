@@ -1,0 +1,36 @@
+The idea of having a circuit library is to build up larger circuits and have simple visualizations that we can recognize when using them. I am fine having a non default option to unroll circuit when you compose it but by default the combined circuit should look like building blocks of the libraries.
+As an example see this figure
+
+It should make output (by default)
+
+@ajavadia I know we talked about this but just making issue so we remember.
+The problem is that QFT returns the decomposition, not the "box".
+QFT constructs a circuit, not an instruction. The real solution to this issues is to merge the notions of instructions and circuits as they are not fundamentally different, imo.
+Work around:
+For example:
+
+I think this is a fairly easy change to compose, if compose knew which QuantumCircuit's are from the library. One simple idea is to just add an attribute, say library, to each library class that produces a QuantumCircuit (or to every library class). Then maybe add a kwarg to compose that gives the user the option to unroll or not. For example,
+
+The library attribute might also help in the drawers, since we might want to display internally created gates differently than user-generated ones in some cases.
+@1ucian0 I dont want to use the to_gate long term that needs to be removed in my opinion.
+@enavarro51 im good have a kwargs to unroll if the user wants to, but by default it should not.
+@1ucian0 I agree it just a box to implement it :-)
+@enavarro51 I would still draw a box (maybe just an outline) for use defined circuits that are not part of the library so that the use can see where they are putting things. I am thinking in the future phase estimation I may have a U and I want to see control of powers of u so I can see what it is doing without seeing how U is done.
+Agreed on default not to unroll. So the remaining question is, how does compose identify library circuits?
+1 - Add library attribute on all library classes
+2 - Import all library classes into quantumcircuit.py and see if other is instance of library class
+3 - Create list of library names and see if other.name or other.base_gate.name in list.
+For me, '1' seems the cleanest and easiest to maintain. Or maybe there's another one I'm missing.
+In my understanding, append is the way to do this. e.g. from @1ucian0 's example
+
+As defined now, append is loosely "add this object as a boxed instruction within my circuit" and compose is "add all the instructions from this object to my circuit".
+Append works but my view is we don’t need both.  And I would rather have compose work the way we expect. Long term I don’t see why we need append.
+I agree it's a bit weird to have two methods to do almost the same. So how about removing append in favor of
+We could keep most of the code as is I think but just add a proxy do decide how to append.
+I'm good with this. We should only have one and this should be compose as we use it in the operators etc.
+I am good having keyword, but I would use decompose=false as it is only going one level when it unrolls anyway.
+It looks like compose and append are roughly the same, but differ (at least) in details. For example one offers an option to operate in place, the other is only in place. They also apparently share no code! My intuition is that it would be beneficial to do refactoring in conjunction with reconsidering the API. For example, for backward compatibility, one might be a light wrapper on the other.
+@jaygambetta we discussed this internally again and came to the conclusion that instead of wrapping upon composition we should wrap all library circuits directly. The reason being: If we want to be able to choose the implementation of a library circuit at compile-time, the library circuits must be opaque blocks from the beginning. And if we wrap the library circuits per default, compose doesn't need to wrap on top of that.
+E.g. say we have several QFT implementations, then we could think that
+With that we also fix the behavior described in this issue.
+We can still add an option that let's compose wrap the circuits, but it probably shouldn't wrap per default to avoid unnecessary "double-wrapping".

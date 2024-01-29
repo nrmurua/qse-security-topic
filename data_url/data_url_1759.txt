@@ -1,0 +1,25 @@
+Description of the issue
+mypy encounters errors.
+How to reproduce the issue
+In a fresh virtual environment, install Cirq and the dev tools (mypy version 0.782). Then execute
+This gives the following errors:
+Cirq version
+f08b344
+Probably a Python 3.9 issue.
+I just started seeing this and was wondering whether it's only my machine. I'm on python 3.8 but I've seen it on python 3.7. I wonder why the CI is not catching it.
+This is because of the release of numpy 1.20, which added type annotations
+This isn't picked up by the CI since we don't install cirq or its requirements during the mypy check
+silences it
+Thanks for the research on this and silencing tip @mpharrigan! I believe that we should slowly chip away at this though - there is a reason why we have mypy - thus if we believe in the usefulness of type checking, we are behooved to follow through with fixing these issues and then turn it on on CI (by installing the correct requirements).
+What's the plan for this? I'm getting agita from having my uncomitted mypy.ini change hanging out on all my branches so I can actually run mypy locally without being drowned by numpy errors.
+FWIW we've internally used the follow_imports_for_stubs = true config that you mentioned above to allow us to update to numpy 1.20 and then incrementally fix type annotations. We have a "mypy-next" CI job that runs mypy with a different configuration where we do follow stub imports; errors in that job do not fail the build but we can look at them in the log so we can see what's left to do. We've also used this mypy-next scheme to incrementally fix the code base as we change various mypy flags.
++1 to that approach - @mpharrigan do you want to implement it?
+Do you have a failing check and have github ignore the result or do you put || true in the check, i.e. always have it report success and rely on manually inspecting the log to see what's really going on?
+#3995 updates the CI. Of course: there is still the issue of fixing all the numpy problems
+Changing to kind/health instead of kind/bug-report since nothing is currently broken
+I'm pretty sure there are a ton of (num+my)py bugs left. check/mypy --next assumes you have numpy >= 1.20 or it won't do the new numpy checks.
+In any event, if it is fixed, we'd need to modify the CI to only do the check/mypy --next behavior (and remove the flag, probably)
+Having said that, I see that check/mypy --next doesn't find anything on my machine.
+broken here: fd257e6#diff-8cceb31ef3d58deea4a1c9df3e3177ce3aa6a18be536905e60d4b14e230e3150
+What is the goal for before-1.0 here? I made progress on fixing the numpy errors in check/mypy --next in #5227, but if we want to fix all the remaining ~100 errors it's going to be quite a bit of work. This seems like something that could reasonably be postponed until after 1.0, though I do think it'd be good to continue to push on this so we can enable mypy checking of numpy calls eventually.
+Discussion from cirq cync:  this is a nice to have for cirq 1.0, since typing changes could theoretically change the API interface, but these would likely be small changes and may not materialize.  We will keep it on before 1.0 for now, but if we run out of time, this is a good candidate to cut.

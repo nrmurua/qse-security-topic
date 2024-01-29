@@ -1,0 +1,17 @@
+After running qct = transpile(qc) the operator Operator(qc) for the original circuit qc is not equal/equivalent to the operator Operator.from_circuit(qct) for the transpiled circuit. I suspect it's not a problem in Operator.from_circuit (that in particular deals with applying initial and final layouts) but somewhere in the transpiler flow (I am not sure, but I believe the problem is caused by SabreSwap).
+The assert above fails. A weaker assert Operator(qc).equiv(Operator.from_circuit(qct)) also fails. I believe (and please correct me if wrong) that this is the correct way to check equivalence between the original and the transpiled circuits, as Operator.from_circuit takes layouts into the account. Also note that in this example both initial layout and final layout appear to be non-trivial.
+We should understand which of the transpiler passes does not preserve the layouts.
+One can analyze what happens by running transpile with callback that prints the circuit and the property set after each pass. If O denotes the current operator, 'P' denotes the permutation corresponding to the current initial layout and Q denotes the permutation corresponding to the current final layout, I expect P * O * P^{-1} * Q to be invariant.
+For example, here is what happens after SabreLayout:
+We can modify the circuit above by including layouts and checking if it's equivalent to the original circuit. Specifically,
+outputs True. (The last two lines use the fact that all the corresponding circuits are linear and allow a simper representation as 3x3 linear matrices). Hence, I believe that after SabreLayout everything is fine.
+Here is what happens after SabreSwap:
+Replacing the code for qc2 above by the following
+yeilds False, meaning that the operators are no longer equivalent. Viewed as linear transformations, the two circuits correspond to
+(x_0 + x_1 + x_2, x_0 + x_1, x_1 + x_2) and (x_1 + x_2, x_0 + x_1, x_0 + x_1 + x_2), with the outputs being the same but not in the right order, so I believe it's probably the final layout that does not get updated.
+The problem might be solved by #10835, I did not check.
+Very minor and I can reproduce problems with the top code block even though TranspileLayout comes out looking correct to me, but when you say:
+I expect P * O * P^{-1} * Q to be invariant.
+I agree with this except that if I'm interpreting * as matrix multiplication, it should be the other way round: $Q P^\dagger O P$.  That doesn't affect the meaning of anything you said, and you've constructed the circuits correctly, but I just wanted to clarify since we're talking about matrices here.
+From offline discussion:
+The text in the top comment about SabreLayout being "ok" and SabreSwap being "wrong" is a incorrect because the Rust/Python environment was out-of-sync when Sasha was investigating.  The bug in Operator.from_circuit does appear to manifest itself on main, but the transpile call will actually only call SabreLayout and that does (to my eye) seem to be setting the TranspileLayout correctly.

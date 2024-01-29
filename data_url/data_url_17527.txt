@@ -1,0 +1,58 @@
+During Qiskit Camp, there were a small discussion about how the high level API should look for a better workflow.
+Chris made a case for changing the run_config header in the Qobj without running assemble via, for example, an update_qobj(qobj, run_config) function.
+Jay and I discussed some more over the weekend, and we started to converge to something like this. Feel free to comment. PR #1856 is a start of this, but needs a couple follow-ups.
+Couple notes:
+1a) transpile circuits and see new circuits, using some high-level transpilation goals
+1b) customize pass manager: for those who want to specify exactly which transpiler passes to run
+(either a openqasm-type qobj or openpulse-type qobj).
+These methods are not smart, they just serialize the experiments and write some config/headers.
+for the high-level user who doesn't care what transformations are done, just wants result.
+execute() wraps steps 1, 2, 3 above.
+Question: is there value in another wrapper compile() that wraps only steps 1 and 2, as we have now? i.e. takes circuits to qobj.
+Sum changes a bit -- I still want to keep an execute as well that just takes lots of inputs so that this does not break old code. I dont think we should make people make the run_config and transpile_config by hand if they just want to change the shots.
+compile I just want to understand the use case. If it is the compile one run on different backends then I think we should encourage the user to give it a new run_config not just assume it will run on backend2.
+of course we could assemble it again but if all we are changing is the header we should have a function for this so that it goes from O(N) to O(1).
+Ok I agree with this. My only thing about compile is backward compat, but I guess calling the transpiler then assembler isn't horrible.
+Another fairly common use case is the high-level user who wants to run a circuit as-is. Now they would have to do the following. I don't have a problem with it, but some may think it's too much if they just want to skip the transpiler.
+It is one extra line I am fine with this.
+I was mostly interested in the value that having a PassManager adds. Specifically, it seems that the PassManager.run: DAG → DAG is function composition of the run: DAG → DAG functions of each individual Pass with some control code. The control code is left unspecified in the above, so could you clarify how that is going to work? E.g. when you want to iterate certain groups of passes or do conditionals.
+One can imagine an alternative approach where from each Pass a run: DAG→DAG is constructed through partial application of configuration parameters and those are then chained together. (One could even mandate that any Pass object implements the __call__ function with type DAG→DAG.) But now the user has exact control in Python (instead of perhaps a config language) of the control code and how the passes are chained together.
+E.g. (just some nonsensical example)
+for some magic local optimizer that may change things a little bit every pass.
+@eddieschoute I think your example does make things much simpler, and I do like simplicity, but consider the following cases that a pass manager has been used for:
+1- A way for passes to communicate information to each other:
+Examples:
+2- A way to compactly express a pass pipeline, so that we may provide several default ones (say defaul_pass_manager1 and default_pass_manager2 corresponding to optimization levels -O1 and -O2).
+3- A global orchestrator of passes (receives an initial schedule, but also dynamically making decisions about what pass to run next). e.g. has the circuit.depth() reached a fixed point, if not keep applying passes.
+@1ucian0 and I did discuss the fact that providing this control code statically to the PassManager (like a config language as you say) kind of seemed like we're reinventing Python, but it seemed good to be able to specify some schedules in a compact way (see 2).
+4- A way for passes to specify relationships to each other. This is mainly through saying they require another pass to be run before them.
+Examples:
+(^Here it is true that one pass can just call another pass, without relying on the pass manager. But the pass manager may be able to make some smart decisions based on knowing the full schedule (for example it knows that the Unroller was just ran, so it doesn't need to run it again).
+I agree that the full benefit of this one has not really emerged yet.)
+@jaygambetta
+another use case for the compiler is that it makes it much easier to debug a qobj.
+for example it has happened to me multiple times that I do:
+but my job fails. so then I make a tiny change (execute -> compile) and look inside the qobj.
+Right now we have removed compile, and the signature of execute is quite different from that of transpile and assemble, which makes it cumbersome to do this.
+@eddieschoute I think your example does make things much simpler, and I do like simplicity, but consider the following cases that a pass manager has been used for:
+1- A way for passes to communicate information to each other:
+Examples:
+I think this would fit nicely into my formalism as well.
+Now, admittedly, this is different from the DAG→DAG formalism. But I don't quite see how that would be nicely implemented in a pass either.
+And for the second example.
+2- A way to compactly express a pass pipeline, so that we may provide several default ones (say defaul_pass_manager1 and default_pass_manager2 corresponding to optimization levels -O1 and -O2).
+This can be defined as a function too. Any default_pass_manager equals the function default_pass_manager.pass. Therefore, it could be defined as function too. (Or perhaps as an argument optimize_level = 1)
+3- A global orchestrator of passes (receives an initial schedule, but also dynamically making decisions about what pass to run next). e.g. has the circuit.depth() reached a fixed point, if not keep applying passes.
+@1ucian0 and I did discuss the fact that providing this control code statically to the PassManager (like a config language as you say) kind of seemed like we're reinventing Python, but it seemed good to be able to specify some schedules in a compact way (see 2).
+Why can't you do this in Python?
+4- A way for passes to specify relationships to each other. This is mainly through saying they require another pass to be run before them.
+Examples:
+(^Here it is true that one pass can just call another pass, without relying on the pass manager. But the pass manager may be able to make some smart decisions based on knowing the full schedule (for example it knows that the Unroller was just ran, so it doesn't need to run it again).
+I agree that the full benefit of this one has not really emerged yet.)
+Would the pass manager automatically insert missing passes or throw an error at runtime? If the latter, then a simple assertion at the beginning of each pass would achieve the same thing. Moreover, (required) arguments flag more clearly to the user that there are prerequisites to a function than documentation describing it.
+I think it may be helpful to have some use cases to be able to more clearly see what the merits of each approach are.
+PassManager on the side (we can have another discussion issue about it) I think the original issue is solved.
+What was the original issue besides discussing the design of PassManager and the workflow?
+By high-level workflow API I meant the top level functions to generate a QObj.
+Let's keep this open since it contains important discussions that must be considered (probably after this upcoming release). I'll update the issue title.
+I'm going to close this as it is no longer relevant and we've built a lot of the interfaces being discussed here (some time ago). If I'm missing something or there is still more to discuss on this please feel free to reopen this.

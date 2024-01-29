@@ -1,0 +1,78 @@
+Add Aer support for an explicit initialize instruction to the Statevector State class for use in the StatevectorSimulator and QasmSimulator to work with the Terra PR 1896.
+The qobj instruction for initialize should be something like:
+And should act to reset all qubits in the "qubits" field to the zero state (to remove any entanglement with other qubits in the system), and then set the statevector for those qubits to the vector in "params".
+If the system is already in the zero-state or all qubits are being initialize the reset operations could be skipped and the state set directly.
+Consider a 2-qubit circuit, where I want to initialize qubit-0 to the |1> state, and qubit-3 to the |+> state:
+state is psi3 \otimes psi0
+state is psi0 \otimes psi3
+@chriseclectic Can you please assign @ShellyGarion to this and remove me?
+@chriseclectic : It seems that Qiskit/qiskit#1896 is an issue and not a PR.
+Is there a relevant PR in Terra? Could we develop the code in Aer independently of Terra?
+At least for testing we may need the code in Terra.
+@ajavadia Can you point shelly to your branch implementing this?
+The code in Aer can be developed independently of the terra piece. I've added parsing for the qobj instruction in PR #88, so if you manually create a qobj instruction you can test.
+In the Op class the initialize instruction is stored so that:
+To add it you can modify the statevector_state class to add a case for this new op type which can implement the reset on the necessary qubits, then you may need to add a method to the qubitvector class for updating the statevector. You can look at the lambda functions for applying n-qubit matrices to see how the indexing works.
+You will need a general N-qubit version of something that for the two qubit case does:
+Suppose are going to initalize qubit-0 (for example) to state [a, b] for a system in arbitrary two qubit state.
+@chriseclectic - regarding your 3 suggested steps:
+Basically, I think that the most complicated part here is to do the indexing properly, especially since the functions in qubitvector.hpp are written in an optimized/vectorized way.
+Hi @ShellyGarion So i think you can do something like this for the update
+Something like this:
+In order to be able to debug and add printouts to statevector_state.hpp code, I needed to comment the line:
+#validate_qobj_against_schema(self._qobj)
+in: aerjob.py - since Terra does not support yet reset of more than one qubit.
+Now I can see the printouts.
+@chriseclectic: A few questions:
+@ShellyGarion
+indexes returns the array of all bit values for the specified qubits (eg for previous example [int(b0a), int(b1a)], if it were two qubits inserted say at 1,3 it would be:
+If the qubits were passed in reverse order it would swap qubit position in the list:
+@chriseclectic - Thank you for the detailed explanation. I added some more explanatory comments to the code.
+Now the code compiles and running, and I need to verify that it does the correct calculation. I needed to make a few changes in your function above (define N, and change the types of qubits and inds):
+So, now the new function in the Statevector class is simply:
+If you check out the master branch of Terra, you can test this.
+This qobj contains 4 circuits, all of which should yield the same statevector.
+Indeed, here is the output of @ajavadia code above:
+statevector of circ1: [0.+0.j 0.+0.j 0.+0.j 1.+0.j]
+statevector of circ2: [0.+0.j 0.+0.j 0.+0.j 1.+0.j]
+statevector of circ3: [0.+0.j 0.+0.j 0.+0.j 1.+0.j]
+statevector of circ0: [0.+0.j 0.+0.j 0.+0.j 1.+0.j]
+It seems that the above API assumes that the initialization is only to a real state.
+Is it possible/required to initialize an unreal/imagionary state?
+I tried the following API:
+circ3.initialize([0, 0+1.j], [qr[0]])
+and got at error:
+TypeError: can't convert complex to float
+There is currently a difference between the API of initialize in Aer/C++ and in Terra/Pyhton.
+In Terra/Python qobj:
+QasmQobjInstruction(name='initialize', params=[0, 1.00000000000000], qubits=[0])
+Namely, params  is a list (vector) of complex numbers
+and in Aer/C++ qobj:
+QasmQobjInstruction(name='initialize', params=[[0, 0], [1, 0]], qubits=[0])
+params has type cvector_t which is a vector of pairs of doubles:
+using complex_t = std::complex<double>;
+using cvector_t = std::vector<complex_t>;
+The JSON parsing on the C++ side should be able to parse either a complex or real vector into a complex vector, so as long as it works for both cases I'm happy on our end (this true for Aer/C++ parsing of all complex vectors or complex matrices) . If you change Ali's examples to use dtype=complex in the states it should serialize as you expect, and you can test with an actual complex state too.
+However the real case might have some issues for schema validation on the Terra end so might be worth opening an issue on the Terra GitHub for that @ajavadia. In that case it's because on the Terra side the way it unrolls Numpy arrays doesnt assume anything about dtype. It just uses array.tolist() and then on a second pass if values are complex it unrolls to real pairs. So you can either make the schema allow real or complex vectors, or you would have to convert the input to a complex array as part of the instruction (using params = np.array(params, dtype=complex) or something along those lines)
+@chriseclectic - can you perhaps provide an example?
+For example, I use the following code:
+Then the output is:
+so the last statevector is wrong - it should have been:
+[0. +0.j 0.5+0.j 0. +0.j 0.5+0.j 0. +0.j 0.5+0.j 0. +0.j 0.5+0.j]
+However, when I generate the qobj and explicitly provide the following instruction:
+qobj.experiments[0].instructions.append(QasmQobjInstruction(name='initialize', qubits=[0], params=[[0,0],[1,0]]))
+then I get the correct statevector.
+@chriseclectic - I tried the following code as you suggested:
+But I still got the wrong statevector:
+statevector of circ6: [-0.35355339+0.j  0.35355339+0.j -0.35355339+0.j  0.35355339+0.j -0.35355339+0.j  0.35355339+0.j -0.35355339+0.j  0.35355339+0.j]
+@ShellyGarion complex should work. see the example here which runs successfully:
+https://github.com/Qiskit/qiskit-terra/blob/master/examples/python/initialize.py
+@chriseclectic i think terra puts the instruction name as "initialize" in the qobj, not "init". Let's keep it that way.
+The following code works OK:
+@chriseclectic can we close this one?
+@chriseclectic - where should we add the initialize gate to the aer tutorial?
+Should we add it to this notebook:
+https://github.com/Qiskit/qiskit-tutorials/blob/master/qiskit/aer/aer_provider.ipynb
+@ShellyGarion For the tutorial I would suggest rewriting the section Starting simulation with a custom initial state to for the QasmSimulator and StatevectorSimulator to use the initialize function instead of the backend_options={"initial_statevector': vec} (You can leave the starting the unitary simulator in a custom initial state alone since this case isn't handled by the initialize function).
+It is worth mentioning that the simulator supports this option directly for efficiency, but that it can also be unrolled to standard gates for execution on actual devices (unlike the old initial_statevector backend option).
+Closing this issue now since the instruction is supported in Aer.

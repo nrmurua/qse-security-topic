@@ -1,0 +1,81 @@
+Apple Silicon (M2) MacBook Pro, MacOS Ventura 13.2.1, Xcode-14.2, Python-3.11.2.
+Freshly-cloned repo.
+Installed what's listed in the requirements.txt.
+Basically, pytest gets to
+and hangs up. The only way to move from that state is "Ctrl-C" (several times).
+I'm passing on the stack trace from the "kill", perhaps it could help you figure what's wrong:
+I'm afraid that I can't debug that, as I do not have access to a mac with M1 or M2. The stack trace is not super helpful as it just lists that it was waiting on a lock to clear in the main process, because you started up pytest-xdist via -n=1. It also hangs when you are not specifying -n=1?
+I'm afraid that I can't debug that, as I do not have access to a mac with M1 or M2
+I can try things, if you tell me what to try. ;-)
+it just lists that it was waiting on a lock to clear in the main process, because you started up pytest-xdist via -n=1
+It does exactly the same with -n=auto, which was my normal way to start it, until tests started to hang.
+It also hangs when you are not specifying -n=1?
+Naturally!
+Stuck at
+And after my friendly "Ctrl-C":
+Based on your observation, I'd say that the tests somehow screw up or hit a bug in Python synchro or process management. Or, perhaps, something changed in Python standard library internals/API between v3.8 and 3.11...?
+This is a sample of pytest -v:
+Attempt to try tests under Python-3.10:
+and hanging there. After a few "Ctrl-C":
+Whatever it is that Python is trying to wait for, doesn't seem to be happening here, ever. If it's possible to determine what it is - perhaps, that piece could be reworked, to make the tests run on ARM (aka, Apple Silicon)?
+It seems cpuinfo is not supported on Apple ARM CPUs.
+OK, nice! I mean - ugly! ;-)
+What are our options then? Enhancing cpuinfo would be great, but probably beyond our reach? Can the tests run without it?
+Checking , https://stackoverflow.com/questions/73294267/py-cpuinfo-module-not-working-correctly-when-compiling-using-pyinstaller-or-cx-f I found:
+And here is a proposed workaround - perhaps, it could work in our case as well?
+Tried this patch, did not work:
+Maybe it works only when in the main...?
+"Kill" report:
+Okay, so because of bugs in the operating system calls (I think on MacOS or Windows) our helper call to cpuinfo loops until it finds the CPU flags.  Turns out, the way MacOS sysctl reports CPU features has changed and thus cpuinfo does not ever return flags on Apple Silicon.
+Could you please run in the shell and post the output of:
+Could you please run in the shell and post the output of: sysctl -a
+You asked for it. 1613 lines of output. ;-)
+sysctl.a.txt
+Are you sure the problem is in cpuinfo? When I'm invoking it from Python, it seems to return useful stuff immediately (see Update to #483 (comment)), with or without freeze_support().
+Ping?
+Ah, this was causing me problems yesterday. I would also like to see if solved but can't look at it for a few days.
+Are you sure the problem is in cpuinfo? When I'm invoking it from Python, it seems to return useful stuff immediately
+The important thing is that it still doesn't return the CPU extensions, like NEON, AES or SHA3 support. We will need to manually handle the M-series chips.
+The important thing is that it still doesn't return the CPU extensions, like NEON, AES or SHA3 support.
+Yes, you're correct. I checked it myself too. :-(
+We will need to manually handle the M-series chips
+A pity. Here's what M2 Max got:
+Though not all of those seem to be working with C (or Rust) compiler - I was getting complains for ECV and a few others...
+A better and more portable way of handling this might be to use compiler-based feature detection rather than using cpuinfo. But I don't really know where to start for ARM CPUs... and it's less of a quick-to-implement fix.
+Overall, I'd call #484 a good step towards success. But the code seems to attempt to use AVX2 implementations at least in some places - that can't work on AARCH64:
+Some of the examples of failures:
+And
+Most of the above tests should not have been even attempted (avx2, sse, etc.).
+What would happen if you try to force Mx chips (M1 and M2) as ARM64 or aarch64?
+None of the failures you are seeing are due to unsupported architectures. The tests that are being run should work on any architecture, as either they don't compile C code, or, in the case of metadata_sizes, only load the api.h file (which only contains definitions).
+The Merkle.c file complaint about ~0 in SPINCS+ should be fixed, but I need more info for the other errors.
+The Merkle.c file complaint about ~0 in SPINCS+ should be fixed, but I need more info for the other errors.
+Please let me know what info you'd like, and I'll provide.
+e.g.
+OK, first - let me get you the complete output of pytest -v -n-auto:
+pqclean-tests.out.txt
+pytest -k "test_metadata_sizes and falcon-512 and avx2"
+Are you sure you want avx2 output on M2 chip? Which, as I understand does not have AVX2 (Intel) instructions?
+Here's the output of
+pqclean-tests2.out.txt
+Yes, because as I wrote, this test does not run or compile the AVX2 code. It only includes the header file, which is portable.
+But I know enough now, printparams.c in our test triggers a warning.
+#487 solves that problem.
+#487 solves that problem.
+Sorry, not quite. I do confirm that it makes things better though:
+Here's the complete log:
+pqclean-tests.txt
+I mean, sure, #485, which is not included in #487, also triggers test failures.
+Both of those PRs have been merged and I rebased #484 on top of it. Could you please check out that version and see if it works for you?
+Current master, with #484 merged on top of it. Still failing:
+pqclean-tests.txt
+And I'm still observing a lot of C compiler errors, such as:
+Could you pull in #489 and test again, then we'll just address these incrementally. Thanks
+Current master with #489 applied:
+pqclean-tests.txt
+Thankfully, the current master stopped hanging on tests on Apple Silicon.
+However, 122 tests keep failing, with errors such as:
+and
+Complete log of pytest -v -n=auto:
+pqclean-tests.out.txt
+The fixes for SPHINCS+ should be tackled once #489 is merged: I now have an Arm machine (MacBook Pro 14") to test on

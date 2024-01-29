@@ -1,0 +1,38 @@
+I'm frequently getting final states where there is a phase multiplying the correct final state.
+e.g. X|+>=|+> except Cirq returns -i|+>.
+This can be seen by executing:
+This is because decompositions do not preserve global phase, and the gate is being automatically decomposed into the xmon gate set which (currently) has a different phase convention than the ones in common.
+On the one hand, it's annoying that optimizers don't keep track of this minor detail and make it transparently work. On the other hand, global phase is completely unobservable and so why would you preserve it? It's extra simulation work for no difference in measurement expectations. This is why we have methods like allclose_up_to_global_phase.
+I think I've gradually been moving from the latter camp (it doesn't matter and we should ignore it) to the former camp (users are bothered by it so we should bother).
+Really fixing this probably requires a way to represent a global phase operation (should it be an operation with no target qubits? An attribute on moment? A circuit attribute? An operation attribute?). Then we'd need to modify all the existing decomposition/optimization code to output a correct global phase modifier.
+Thanks for the prompt response. Although global phases don't matter for measurements, I was just making sure this was intended behavior.
+You're not the first person to complain, and I think it's important to fix these "not really a bug but it confuses new users so maybe that makes it a bug anyways" issues.
+I received an email from someone else who was confused about this:
+As expected, the square-Pauli-X operator has matrix like this:
+import cirq
+x_2 = cirq.X(0)**(1/2)
+x_2.matrix()
+array([[0.5+0.5j, 0.5-0.5j],
+[0.5-0.5j, 0.5+0.5j]])
+But, if I run in a simulator a simple circuit with only this operator:
+(0, 0): ───X^0.5───
+result.final_state: [0.7071+0.j     0.    -0.7071j]
+The result should be [<0|A|0>,<1|A|0>] = [A[0,0], A[1,0]]  = [0.5+0.5j,0.5-0.5j ], where A is matrix of the operator.
+Do the qubits in simulator start in |0> state?
+This result is shifted by -pi/4.
+As I observed, measuring results for X,Y,Z are shifted by -pi/2 (multiplied by -i).
+(The decomposition into Xmon gates shifted the global phase.)
+Hello, the above email was mine. Also I'd like to highlight one more thing that bothers me.
+The phase shifts seem to be different depending on the circuit. For X^0.5 it's -pi/4, for X it's -pi/2. That's reasonable as soon as (exp(-i*pi/4)*X^0.5)^2 = exp(-i*pi/2)*X.
+But for the calculations to be correct in general, the shift is required to be the same on every gate.
+Consider this circuit:
+For arbitrary U (4x4).
+The resulting amplitudes should be different from circuit computed without phase shifts, because inside U some amplitudes can be added with relative shift to each other (-pi/4) -- the interference will not be the same.
+@Danilozzz Yes, that is expected behavior. e^(iZt) differs from Z^t in global phase, and the phase depends on t.
+But wouldn't the different phase shifts result in different amplitude modules, ie probabilities, when interfered in some subsequent operation?
+Nope! Global phase error is completely unobservable.
+Relative phase errors are a problem. One way that a "global" phase error can turn into a problem is if you take gate U and iU and add a control. Controlled-U is different from controlled-iU, even though U is indistinguishable from iU.
+@Strilanc yes, that's exactly what I'm talking about. Now, if the global phase error on X is pi/2, and on X^0.5 is pi/4 - what will it be when you apply X to the first qubit and ✓X to the second? Mathematically, X⊗✓X|00>
+Or, graphically
+It will be 3pi/4, but still an unobservable global phase error.
+Obsoleted by #1161

@@ -1,0 +1,45 @@
+@airwoodix I'm looking into merging the new dataset db changes into our artiq fork at the moment.
+When I scan the repo I see a large number of errors related to self.get_dataset("foo") returning a dictionary. This is the first time I've looked at this part of artiq so I might be wrong, but I think roughly the following is happening...
+You've changed DatasetManager.get to return dataset["value"]. I guess this is the code path taken when experiments run normally?
+When the master inspects the code it looks like a different path is taken that goes via:
+I'm keen to unbreak master so we can continue testing the latest patches. How do we want to do that?
+Add a lambda in frontend.master to return the value from datasets rather than the whole structure?
+Tell the ExamineDatasetManager to return the value?
+Something else?
+Taking a step back, is this definitely the right way of serving the underlying use-case? As I understand it (from reading the discussion in the original PR) the motivation here is mainly around saving the occasional large dataset, like camera images. Questions:
+Putting it another way, is the goal with this PR really just giving the user a way of getting large compressed datasets into the run HD5 file? If so, is this really the right way of achieving that?
+Going back to @jordens comment on the original PR
+Alternatively, as you indicated, expose the hdf5/group handle to the user early in the experiment. That would enable #505 and give them full transparent access to all the hdf5 functionality (instead of having to wrap it through the dataset api).
+That feels like more the right approach to me.
+Anyway, I don't fully understand the use cases here, but I wonder if we should revert the PR merge to get upstream master back into a working state and discuss options a bit further? Otherwise, if we really feel that this PR is worth having, let's settle on a way of unbreaking things.
+When I scan the repo I see a large number of errors related to self.get_dataset("foo") returning a dictionary.
+Do you have a reproduction for this issue? I tried the following repository/exp.py on f58aa3b:
+Starting from an clean working directory (no dataset_db.pyon, no last_rid.pyon), running artiq_master and:
+does not produce errors.
+How does this case differ from your use case? (as said on the M-Labs chat, I don't use this code myself in production and it's been a while since I last used the ARTIQ management system).
+That said, I agree that squeezing this functionality (HDF5 dataset-level storage customization) into the dataset API is suboptimal. Nevertheless, it seems way too low-level to me to purposely expose the full h5py-group API directly (at least, it would require extra wrappers to not have to learn it). IIRC, early access to the hdf5 group also requires significant modifications to the code in worker_impl.py. The proposed implementation is intuitive and aims at being seamless to integrate with existing code bases (pending automatic porting of dataset_db.pyon e.g. in #1828).
+I'm happy to discuss better implementations (maybe in #1545?). While they surely pose some challenges, I don't think that images should be treated differently than other datasets (how does one decide what is large enough to get a dedicated controller for synchronization and something else than pyon as serializer?).
+@airwoodix I don't have a minimal reproduction I can post I'm afraid. From a quick skim, the main difference from what you have there is that I was calling self.get_dataset inside build. If we want breaking changes like this, someone needs to take charge of testing in a production system and I'm afraid I'm out of time to look at this feature  though for now.
+The proposed implementation is intuitive and aims at being seamless to integrate with existing code bases (pending automatic porting of dataset_db.pyon e.g. in #1828).
+I'm not sure the seamless integration is a good thing -- the use-case here is quite distinct from normal dataset usage, and the problems stem from trying to force different workflows into the same API. Repeating myself, but AFAICT:
+(how does one decide what is large enough to get a dedicated controller for synchronization and something else than pyon as serializer?).
+That's the kind of question which I think ARTIQ should explicitly not take a position on; ARTIQ should provide the basic tools to support a variety of workflows and leave decisions like that to the user.
+Camera images (like flat field or dark field) absolutely need to persist. The should also be in the dashboard and available to applets and hence need to be broadcast. It's not distinct from normal dataset usage.
+The should also be in the dashboard and available to applets and hence need to be broadcast
+Our preference has been to handle the broadcast of camera images to applets outside of the artiq datasets. Using a more efficient way of representing them and something to handle queues makes life much nicer (e.g. when using a slow VPN connection).
+What's the motivation for having the camera images visible in the dashboard?
+Camera images (like flat field or dark field) absolutely need to persist.
+Does every piece of calibration data need to live in the dataset db? It's not clear to me that this is obviously the right answer for large things like camera images compared.
+I can't comment on your choices and whether they are good or whether they work for others. If you want to run things over a slow VPN connection, then sure, some other data exchange mechanism might be required. ARTIQ datasets can be used for images and we have had several examples showcasing that since the early days, certainly with some caveats and limitations. The motivation for having images visible in the dashboard (through applets) should be clear. It's the same reason as for any other piece of data available to or generated by an experiment and hence the question is why one should not use ARTIQ datasets for it. Yes you can always use some other mechanism and nobody said that every piece of data needs to live in the dataset db.
+The motivation for having images visible in the dashboard (through applets) should be clear
+My language was imprecise here -- I was thinking specifically of the dataset explorer in the dashboard, not applets.
+I don't have a minimal reproduction I can post I'm afraid. From a quick skim, the main difference from what you have there is that I was calling self.get_dataset inside build.
+In Exp2 above, setattr_dataset() calls get_dataset(). Even explicitly, the following works on f58aa3b (of course triggers a KeyError upon artiq_master start if no data dataset is persisted, but that's also the case after #1838, and can be circumvented using the default argument):
+I agree that there are issues linked to #1544 (manual migration, unit tests on Windows) but I don't yet see how it's obviously broken.
+Conceptually, like @jordens, I also don't see a difference between images and smaller datasets (they can be primary or secondary data, can be re-used raw or processed by further experiments, are useful to be seen live by the persons operating the experiment, may or not end up in the HDF5 archive). I would therefore rather improve the overall performance of the dataset system than special-casing images.
+Can you print self.data in the build method and post the logs for artiq_master scanning the repo. Otherwise, can you point out which code path you expect to be taken when artiq examines the repo please? If it is the codepath I posted above then we would expect get_dataset to return a dictionary since the ExamineDatasetMgr accesses the dataset db get method directly
+When scanning the repository, get_dataset() called in build() indeed returns a dictionary:
+I believe that your analysis is correct. I was however not aware of this changing behavior and got confused because I only tested dataset manipulations in prepare(), run(), and analyze() where the value is returned correctly. Thanks and sorry for the extra round.
+The mistake is indeed in DatasetDB.get() that was not migrated consistently with the code prior to #1544 (diff). self.data.raw_view[key][1] should have read self.data.raw_view[key]["value"] and not self.data.raw_view[key].
+Looking at this, there's essentially no difference between storing the dataset as a dictionary vs. a tuple in the notifier and returning the value only (and not the persistence metadata). Already with only the two fields persist and value, the dictionary is much more readable than the tuple.
+As already said, I'm not against alternative implementations of the HDF5 storage customization but the short-notice reversion of #1544 is now practically a regression and it doesn't realistically look like the feature's going to be back soon (diverging interests, lack of time, etc.).

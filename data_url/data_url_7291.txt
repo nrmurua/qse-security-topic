@@ -1,0 +1,42 @@
+Imagine I have a vector |b⟩⊗|c⟩ that I know for a fact is factorizable like this. This can arise in a situation in which I have just projected by |b⟩⟨b|⊗Id. How do I now extract |c⟩? How do I drop the dimension corresponding to |b⟩.
+One way to do that would be to have a SingularBasis of dimension 1 so I can do project(b, basisstate(SingularBasis(),0)) and then some dropsingular function to remove subsystems of size 1.
+Or maybe there is something in embed that already does this.
+Any suggestions how to do it or whether it is already implemented?
+Here is an attempt at a rather ugly and inefficient solution
+Tested here:
+Is it important for you to get the state |c⟩ from |b⟩⊗|c⟩ or would it be sufficient to get the density matrix |c⟩⟨c|?
+Because then you could simply use the function ptrace().
+In principle you could also obtain the state |c⟩ from the density matrix, but it might be annoying to get the right phases.
+Sorry, it is also quite easy to get the state from the density matrix.
+You just need to calculate the eigenstates of ρ and there is only one with corresponding eigenvalue λ=1.
+Note that you get some inaccuracies due to the numerics.
+@ChristophHotter , using a density matrix for an otherwise vector-like operation is slow, especially given that you are adding matrix diagonalization to it. 500x slower and 100x more allocated memory in the following example.
+Yes, you are completely right. Using the density matrix doesn't make much sense.
+However, I think there is an easy solution for your problem.
+Product states are created with the kron() function, for the two states |a⟩ = [a1, a2] and |b⟩ = [b1, b2], we get  |a⟩⊗|b⟩ = [a1*b1, a2*b1, a1*b2, a2*b2]. To obtain |a⟩ from this product state we just need the first two elements of the vector ([a1*b1, a2*b1]) and normalize it. To get |b⟩ we need the elements 1 and 3 ([a1*b1, a1*b2]) and normalize it.
+Normalizing basically just divides out the common factor (b1 in the vector for |a⟩ and a1 in the vector for |b⟩).
+This means we just need to find the right elements of the state.
+I wrote a function productstate_kets() that gives you all Ket's from a product state:
+Is this what you need?
+This is similar to what I am trying to do, thanks! However, I want to remove only one of the subsystem, not split all the subsystems. Moreover, the assumption that the state is factorizable is not something I can afford. It becomes factorizable only after the projection on ⟨a|.
+I think you are doing |b⟩⊗|c⟩ → tuple |b⟩, |c⟩
+I want to do ⟨a|⊗Id . |b⟩⊗|c⟩ → ⟨a|b⟩  |c⟩. I want to project the b subsystem. Actually, c might not even be a single subsystem, rather be a non-factorizable state of multiple systems |c⟩=|d1⟩⊗|e1⟩+|d2⟩⊗|e2⟩.
+Even worse, I would need to perform this for explicitly non factorizable |BC⟩ = |b1⟩⊗|c1⟩+|b2⟩⊗|c2⟩. What is a good way now to obtain ⟨a|⊗Id . |BC⟩ → ⟨a|b1⟩  |c1⟩ + ⟨a|b2⟩  |c2⟩?
+It would be awesome if I can specify ⟨a| without having to create a matrix projector for it as I have done in my first solution above. That way the operations would be as fast as it gets.
+This type of subsystem projections is pretty common in (memory-efficient) Monte Carlo simulations of small quantum computing devices. E.g. we have 5 transmons, all of them entangled in a non-factorizable state, and we want to measure only one of them. Postselecting on the measurement result would give us 4-qubit kets. For qubits, that is a 2x memory savings, but even if we did not care about the memory savings, the speadup compared to creating (even sparse) projector matrices would be significant.
+At this point, I should also ask whether you would accept a PR providing a function called partial_project or something similar, which is the "postselection"/"ket" equivalent of partial trace, as discussed in the paragraph above?
+Just wanted to explain this in one more way: If a partial trace is ptrace(ρ) = ∑ᵢ ⟨bᵢ|ρ|bᵢ⟩ and ptrace(|ψ⟩) = ∑ᵢ ⟨bᵢ|ψ⟩⟨ψ|bᵢ⟩, then I simply want access to ⟨bᵢ|ρ|bᵢ⟩ and ⟨bᵢ|ψ⟩ for each i (where I specify the base vectors in which the trace is computed).
+I think a good solution would be to implement tensor products of kets with operators, and also bras with operators, such that you can create ⟨a|⊗Id. But I am not sure if this could bring some problems?
+@david-pl do you think this is a bad idea?
+@Krastanov Would this solve your issue?
+@ChristophHotter I'm not sure if that actually solves the problem. Also, I think this is basically the same as creating a 1D basis as @Krastanov did in his initial example. The proj variable that is created inside the project_and_drop function is a 1xN "matrix" (so really just the Bra), which allows building up tensor products anyway.
+@Krastanov If you use LazyTensors inside your project_and_drop function instead of embed you only really have to store this 1xN projector, so basically just your state. I guess that would be as memory efficient as it gets. If the state you project on doesn't change you might want to separate the functions so you can create the projector just once and apply the drop_singular function separately, which should be much cheaper.
+Here's a slightly optimized version of your code:
+@david-pl , thanks, this will be very useful (and I should probably look at the LazyTensor source code).
+@ChristophHotter , the general tensor object you suggest might be too much for QuantumOptics, but it would be certainly interesting if such helper functions exist for mixing QuantumOptics and the various tensor network libraries that are popping up.
+It would be nice to include a function like this in QO.jl. Perhaps call it partial_project()?
+I have some very simple code to handle tensor products of bras and kets with operators, for example:
+This allows us to do things like identity_operator(b1) ⊗ basisstate(b2), the result being an operator with left basis b1 and right basis b1 ⊗ b2. Happy to submit a PR.
+The SVD of the coefficient matrix (Schmidt decomposition), obtained by reshaping the state vector, will directly give us both the ket vectors corresponding to the singular value 1. This would not generate a density matrix. As we have only one nonzero singular value, there may be a more efficient way of doing this.
+State-operator tensor products now supported in QuantumOpticsBase: qojulia/QuantumOpticsBase.jl#61
+This is great! I would suggest keeping this issue still open though as the state-operator tensor product is not trivially supported by embed which would be needed to solve this issue completely.

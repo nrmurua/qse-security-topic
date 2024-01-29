@@ -1,0 +1,12 @@
+For a random circuit of equal width and depth the CalibrationBuilder pass scales like n_qubits^3 whereas one might expect scaling like n_qubits^2 if it was proportional to the number of gates. This slow down seems to be in retrieving the qubits associated with a dag node.
+This test was run without actual calibrations so only part of the pass code is actually profiled.
+
+
+This is qiskit-terra version 0.19.0.dev0+637acc0.
+The obvious culprit I assume are these lines:
+That looks pretty cubic to me - "for op in circuit: for qubit in op: for bit in dag: if qubit == bit: ...".  I don't know off the top of my head if DAGCircuit gained the benefits of #6621 - I assume probably not, because keeping it updated would be a bit gross.  The simplest solution is probably just to do a little bit of
+in the transpiler pass manually, which should drop it back down to quadratic complexity.
+There's also an easy win in Bit.__eq__:
+The if check is a bit inefficient here: if self._register is None and self._index is None should be faster, because it avoids creation of temporary tuples, and avoids a call to Register.__eq__.
+Yeah, it was a follow up for #6621 to add an equivalent method for DAGCircuit #6621 (comment) just adding the dict comprehension to get the indices is the best way to do this. That's what we've been doing in other transpiler passes while we wait for an equivalent to #6621 for DAGCircuit.
+The change to the pass is in #7187.  I changed my mind about the Bit speedups - in theory, the only times that _register won't be None (and hence not even have an __eq__ should) be rare, since it's deprecated behaviour, so it shouldn't matter.  I'll look again tomorrow to see if it actually does or not.

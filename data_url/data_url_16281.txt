@@ -1,0 +1,14 @@
+PauliTrotterEvolution exits with error when asked to convert operators of certain structure. Here is the error message
+The following code snippet will reproduce the error message above
+The code snippet above is expected to run without errors and produce result. Even though I am doing something weird (exponentiating the 2*CNOT operator (don't ask me why :D)), the operator being exponentiated is hermitian, and I believe it is ok to exponentiate it and expect a meaningful result.
+If I do the same thing using matrix operators
+the code runs without errors, and calculates the expected result. Indeed, the result is in line with scipy exponentiation:
+this prints True.
+It looks like something goes wrong in the recursive calls of _recursive_convert in PauliTrotterEvolution, but have not yet had a chance to investigate in detail.
+The immediate cause of the error is that in circuit_no_identities.primitive.global_phase = -sum(identity_phases) it is assumed that circuit_no_identities is a QuantumCircuit. But in the present case, it is not. This error can be avoided in some cases, such as the present one, by adjusting the phase only if it is non-zero. But, then the evolution does not return a circuit as promised in the doc string of EvolutionBase. It appears that the more fundamental problem is that the logic in PauliTrotterEvolution is unable to reduce the nested SummedOps (at least in this case) into a single sum that can be trotterized. The object returned is a ComposedOp, not a CircuitOp. I think the best solution in the short run is to identify where a CircuitOp should be returned, but is not, and raise an error rather than returning something that is not a CircuitOp.
+To further clarify the PR mentioned above: You can rewrite the operator  ((I + Z) ^ I) + ((I - Z) ^ X) as (I^I) + (Z^I) + (I^X) - (Z^ X). Using the latter, the PauliTrotterEvolution example above gives the same result as the MatrixEvolution example. Some logic in aqua operators may perform this rewriting. Or, if not, it could be added in principle. But, it is currently not done by PauliTrotterEvolution, which currently returns an incorrect "expression".
+I verify that this error still occurs in very recent terra master (179fdf5 Jan 12, 2021). This should be migrated to terra, or at least not lost somehow.
+As of at least 0c8bb3d, the example in the opening comment now results in a RecursionError. Note that this is probably a new bug that occurs before the bug in this issue, rather than a new manifestation of the same bug.
+I tested the example in the original comment above with recent master 302f60a. That is, the following
+I find that it no longer errors, and furthermore reproduces the same result as the matrix example above. This was very likely fixed by PR #6111 in response to issue #6099
+It looks like this issue is resolved and can be closed.

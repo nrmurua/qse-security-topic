@@ -1,0 +1,16 @@
+As I mentioned in #78 (comment), it turns out to be quite tedious to manually find all non-fixed-size integer types. Perhaps we should consider using something like pycparser to search the syntax tree. I played around a bit based on the code in #78, and it turns out to be fairly simple to produce AST fragments that find these issues, e.g.,
+for this for-loop, or e.g. this function declaration:
+This means we would really draw a hard line and make CI fail for any of these types.
+Is this something we want to implement (perhaps before explicitly opening up for submissions)?
+(Tangentially related to the discussion in #77)
+Will taking such a hard line prevent potential security flaws?  Or will it just annoy people trying to port their code to PQClean?
+Honestly, I think it'll mostly end up annoying people, but I'm already somewhat leaning towards that opinion on unsigned char vs uint8_t altogether. I find it hard to judge on an individual, manual code-review basis, though - in that sense having a hard failing CI test is a clear way of drawing the line.
+Did you feel mostly annoyed when doing those changes for Frodo, or did it seem sensible? For SPHINCS+, I feel like I'm mostly not looking forward to the long namespace strings, and not so much the changing to fixed-width types.
+For Frodo there were only a few places where I had to change it, and it wasn't that annoying.  I suppose it made the code more consistent, but it also didn't feel like it made the code quantifiably more secure, just that it might be easier for a human to read later because of the consistency.
+Do you think you could put together the test, and then we can see how much it's catching?  We could execute that test on only one of the Circle builds, and that way we can view the status of that check separately from the others.  If we find it's getting annoying, we could remove it.
+@joostrijneveld and I just discussed offline and now we're even more confused than before. What we conviced ourselves is that automatically checking for variables declared as "char", without specifying signedness is a good thing. Easy to do automatically and rules out actual bugs. The other class of bugs that we'd worry about is something like
+size_t n;
+for(unsigned int i=0;i<n;i++)...
+but that one is very hard to check automatically. Also, we won't manage to completely eliminate all uses of "int" anyway, because C propagates all kind of stuff to int. For example, when declaring two variables A and B as uint8_t and then computing A+B, the result is an int.
+After discussion:
+With the automatic check for char from #82, we caught the easy-to-automate case. The remaining cases seem hard or impossible to automate and have no reasonable expectation of catching actual bugs like the one @cryptojedi described in #79 (comment). Consequently, we allow variable-length integers (but encourage implementors to make sizes explicit where relevant).

@@ -1,0 +1,20 @@
+When using the function aer.noise.errors.quantum_error.compose to combine a depolarizing error with a thermal error, an error is raised:
+Run the following code:
+The compose function should combine the errors successfully, as is the case if you change the value of p_depol in the previous example to 1e-4.
+compose initialises a QuantumError object with the default threshold value of 1e-10. However, the noise circuits it creates have a combined probability further away from 1 than this default threshold. This causes an error to be raised.
+Possibilities and open questions:
+I think this should be fixed in master. The default absolute tolerance parameter was relaxed to 1e-8, and you can also change this value yourself with QuantumError.atol = val
+tldr: Figure 2 shows a whole range of possible p_depol and t1/t2 times where my initial error can be reproduced, even with QuantumError.atol = 1e-8. Below is just one example:
+Having relaxed the the absolute tolerance parameter to 1e-8 manually I still have a range of values where compose raises the same error.
+Below are two graphs showing the infidelity of the cnot gate based upon input parameters to a simple noise model consisting of thermal relaxation error and depolarizing errors. My noise model is based largely from this link https://github.com/Qiskit/qiskit-presentations/blob/master/2019-02-26_QiskitCamp/QiskitCamp_Simulation.ipynb.
+
+
+Figure 1 is for a QuantumError.atol = 1e-10 and Figure 2 is for a QuantumError.atol = 1e-8. The important feature in both figures is the light green band, where an error was thrown and so the infidelity was set to 1.
+It is only when I reduce the tolerance all the way to 1e-2 does this behaviour disappear:
+
+For purposes of reproducing my issue, here is the full noise model I used to construct these figures.
+Thanks @bjader, there might be something going on with an accumulation of rounding errors in the conversions from superoperators to Kraus matrices that needs to be regularized. I'll look into it. Could you post the code you used to make the plot?
+Hi @chriseclectic thanks for taking the time to read that above - that definitely sounds like something that could be going on. Here's the plotting code, which also uses the NoiseModelBuilder class I posted before:
+I think the problem was that the atol value was also used for truncating probabilities, which meant increasing the atol value could make the problem worse. I have fixed that in #175, and also added a renormalization of probabilities that pass a sum check against the atol value just to be safe. Running your code on that branch with default atol I get:
+
+Hi @chriseclectic that's fantastic, thanks for fixing this!

@@ -1,0 +1,58 @@
+Currently, the output from the qiskit transpile function for my random gate set (random gates) with the basis gate set 'rx', 'ry' and 'cx' is this circuit:
+
+I'm not sure, why the transpile function gives sometimes three single qubit rotations (Is it not possible to decompose every  single qubit rotation into one  rx( -pi <= theta<= pi)  and one ry( -pi <= theta <= pi) rotation ?).
+The second minor issue is that sometimes a rotation with an angle of 0 degree is still in the circuit and not removed (see image).
+The following code produces the circuit of the provided image.
+`
+qc = QuantumCircuit(3)
+qc.h(0)
+qc.h(1)
+qc.x(0)
+qc.h(0)
+qc.ry(np.pi/4, 0)
+qc.rx(np.pi/10, 0)
+qc.y(1)
+qc.rx(np.pi/10, 0)
+qc.rx(np.pi/10, 0)
+qc.h(2)
+qc.cx(2, 1)
+qc.x(0)
+qc.cx(0, 1)
+qc.y(2)
+qc.rx(np.pi/10, 0)
+qc.rx(np.pi/10, 0)
+qc.y(0)
+qc.x(2)
+qc.rx(np.pi/10, 0)
+qc.ry(np.pi/4, 2)
+qc.cx(0, 2)
+qc.h(2)
+qc.cx(2, 1)
+qc.x(0)
+qc.cx(0, 1)
+qc.rx(np.pi/10, 0)
+qc.rx(np.pi/10, 0)
+qc.x(2)
+qc.ry(np.pi/4, 2)
+qc.ry(np.pi/4, 2)
+qc.ry(np.pi/4, 2)
+qc.cx(0, 2)
+qc.h(2)
+qc.cx(2, 1)
+qc.measure_all()
+coupling_string = [[0, 1], [1, 0], [2, 0], [0,2], [1,2], [2, 1]]
+CM = CouplingMap(coupling_string)
+basis_gates = ['id', 'ry', 'rx', 'cx']
+transpiled_qc = transpile(qc, coupling_map=CM, basis_gates=basis_gates, optimization_level=3, seed_transpiler=1)
+Normally I would expect that the transpile function with the passed basis gate set would give me in my circuit only two consecutive applied single qubit roations and not three and that rotations with an angle of 0 would be removed.
+Am I wrong with my expectations ?
+...
+A general single-qubit gate requires 3 Pauli rotations, right? E.g. the ZYZ decomposition (see for instance this paper). But we're working on improving the compiler for these arbitrary gate sets, to e.g. remove things like RX(0).
+Or is there a special decomposition you had in mind?
+So I dug into the Rx(0) in the output circuit. The source of this is coming from the level 3 optimization pass CollectBlocks and then UnitarySynthesis. The two qubit decomposer is adding the rx(0) to the circuit when decomposing the unitary matrix, which happens before we run Optimize1qGatesDecomposition. This then gets skipped over inside Optimize1qGatesDecomposition because it skips single qubit gates already in the target basis since the eutler decomposition will often expand it to multiple gates: https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/transpiler/passes/optimization/optimize_1q_decomposition.py#L73-L75
+To optimize away the rx(0) case we'll probably have to modify that if statement to manually check for 0 degree rotations and either manually remove them or call the decomposer if the angles are 0 and let it's simplification do the removal.
+I just pushed up #5292 which should fix the rx(0) case mentioned above (I marked it as fixing the issue, but can change that if there is more to do here). I'm not able to reproduce the exact case anymore because of other changes made to the two qubit unitary decomposition on master since the last release (I was able to reproduce it on 0.16.0 though). So I can't really verify the stray rx(0) in the specific case above is fixed by that PR (short of backporting the change in isolation to 0.16.0).
+As for the decomposition @Cryoris is correct you need 3 rotation gates for general single qubit gates. The optimization pass (https://qiskit.org/documentation/stubs/qiskit.transpiler.passes.Optimize1qGatesDecomposition.html#qiskit.transpiler.passes.Optimize1qGatesDecomposition ) is just using https://qiskit.org/documentation/stubs/qiskit.quantum_info.OneQubitEulerDecomposer.html#qiskit.quantum_info.OneQubitEulerDecomposer under the covers to go from the unitary for the chain of single qubit gates to a smaller number of gates. We can look at adding different types of optimization passes if you had something in mind that performs better for your basis set.
+Hi,
+thanks for the quick fix of the rx(0) issue. With the single qubit decomposition into two rotations I was of course wrong. Thanks for the correction here.
+@mtreinish:  When it comes to optimization passes I have a lack of knowledge here and I don't know what suits best for our 'XYX' basis. For this I would need to dive deeper into the literature of optimizers. Can you recommend some papers?

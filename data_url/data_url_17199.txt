@@ -1,0 +1,29 @@
+Supposed I want to write a pass manager that can be used for any input circuit or backend, for example, and can be simply passed to transpile, e.g.
+transpile(qc, backend, pass_manager=my_pass_manager)
+I do not think that there is actually a way to do this without doing additional work in building TranpileConfig for initializing the PM, or just directly setting the properties upon construction.  Instead, it would be nice if pass_manager could take a function, for example, that uses the internally computed TranspileConfig to initialize a PM (just like the preset ones do).  Then a user defined pass_manager could be simply imported like any other function, and just passed to transpile with no additional work required.
+You dont need TranpileConfig to create a custom PassManager. You can just:
+You could import this PassManager as from file import my_pass_manager.
+Am I missing something?
+But now you need to define a pass manager in a different place than transpile, but still need to pass it to transpile.  Why not allow a function that works in the exact same way as the internal transpile passes to grab configuration from transpile itself.  It is much cleaner.
+but still need to pass it to transpile.
+You can also run pm.run(circuit). I'm not fully sure if I understand the connection between the test in #2685 and your use case. The test uses a preset pass manager.
+I agree we should come up with a simpler way to build pass managers without TranpileConfig. I also find that object unnecessary.
+What if you want to do thousands of circuits in parallel like is possible in transpile?
+The test is simply testing that I can pass a function, e.g our preset passmanagers.  If I make my own, and look for it to match a given answer then the reference may change, giving errors for no reason.  The test shows that imputing a function gives the same as a standard preset.
+I do not particularly mind the TranspileConfig as it is a mostly internal / advanced object.  It provides a single object from which one can basically do whatever you want for configuration.  Just needs  to be documented.
+But, if you create your own passmanager function, that function needs to understand TranspileConfig, right?
+Yep, which is why the config needs to be documented.
+Gotcha! You want to pass a passmanager "constructor" to the transpiler.. makes sense. I see the problem. The next question is.. why not having a different parameter for that?
+I do not care.  I just want the functionality.
+Actually I remember why I thought it was a bad idea.  We run into issues with implicit priority.  Namely, is the passmanager kwarg higher-priority than the hypothetical constructor or the other way?  It becomes a bit of a mess.
+This is the problem. The pass_manager kwarg to transpile() was only included for backwards compatibility (I was close to removing it). In the docstring I included this remark:
+So, in your example, the backend arg is actually being ignored.
+transpile(qc, backend, pass_manager=my_pass_manager)
+I think this behavior is confusing and we should remove the pass_manager kwarg. If you have a custom pass manager, just do pm.run(circuits). I also like this syntax because it resembles backend.run(qobj).
+I know that this will currently not parallelize over many circuits, but let's fix that. There was an open issue for this but got closed: #2156
+Does this make sense?
+I am fine with that, although it makes switching between internal and external pass managers a bit cumbersome
+I see @nonhermitian use case. I think it makes sense to have the possibility of passing it's own passmanager constructor to transpile. I also agree with @ajavadia that it should not be the pass_manager attribute (I'm okey with removing it).
+What if you want to do thousands of circuits in parallel like is possible in transpile?
+I implemented the @ajavadia 's approach in #3290
+That would close this issue?

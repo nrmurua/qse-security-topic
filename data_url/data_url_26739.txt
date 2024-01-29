@@ -1,0 +1,20 @@
+Input files benchmarks/QS_mp2_rpa/*/*.inp stopped working and cause program abort with:
+The complained basis set seems to be present in BASIS_H2O ("O    RI-cc-QZ").
+This is caused by a miscompiled binary. I was using GCC 8.3 and 9.3 with quite some optimization flags. I will check which flag(s) is(are) causing the issue.
+This is caused by NDEBUG applied to CP2K´s source code (which happened accidentally on my end). The problem with NDEBUG was discovered soon after its introduction but remained unspecific. However, this issue confirms/narrows a potential problem with eliding assertions (side effects). Side note: DBCSR´s source code is fine with eliding assertions (it is currently hard to apply NDEBUG separately to CP2K and DBCSR).
+Yes, it's unfortunate that some of our assertions have side-effects. Since there is no automatic way to detect side-effects, should we maybe just execute CPASSERT regardless of NDEBUG?
+I will review all assertions. I already grep´ed them into a file; just need the time to go through. If this is not unveiling any specific case(s), we can go for unconditional execution. Unrelated to this, I was planning to trigger debug breakpoint in CPASSERT´s implementation (rather than calling exit). Was the latter considered or is calling exit the way to go?
+It's certainly good to once review all assertions. However, unless we find an automatic way to detect side-effects, they will reappear. So, I think unconditional execution is our safest option.
+Was the latter considered or is calling exit the way to go?
+The EXIT statement is never actually executed, because we call cp_abort_handler before. The EXIT was merely meant as a compiler hint (not sure any compiler every picked up on it).
+I'm not familiar with breakpoints. Would we still get the same error message and stack trace when no debugger is attached?
+Sorry, I meant the C-exit (not F´s EXIT).  Ok, this tells me I can give it a try and test this wrt stacktrace, i.e., if no debugger is attached it should call exit (and thereby run the registered exit-handler and present the stacktrace).
+So, I think unconditional execution is our safest option.
+I think we have several tests failing if CP2K is built with NDEBUG. It is therefore save to keep the normal behavior (especially if it is not used/enabled by default). Let me also double-check that tests are failing and report the case here.
+Regarding automatic detection,  I cannot see a viable way to identify side-effects automatically based on static analysis. Running the tests is the best option.
+I think we have several tests failing if CP2K is built with NDEBUG.
+That's certainly comforting. However, currently none of our dashboard tests is using NDEBUG. And enabling it could hide other problems that CPASSERT would catch. So, I'm wondering what's the upside of supporting NDEBUG? Did you find any assertions in tight loops? That would be a misuse of CPASSERT, which we should refactor.
+Fixed by #957: -DNDEBUG can now be applied to the entire code base (CP2K and DBCSR) and all regtests are passing. Perhaps we want to implement a "release build" which defines -DNDEBUG.
+Perhaps we want to implement a "release build" which defines -DNDEBUG.
+While CPASSERT should not be used for user facing errors, they still catch a lot of corner case and unsupported feature combinations. Hence, I really think one should always have asserts enabled.
+I am regularly testing CP2K/master with -DNDEBUG and there was no such issue recently (or since the fixes under #922).

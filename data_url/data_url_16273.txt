@@ -1,0 +1,126 @@
+HI,
+i use minikube cluster :
+docker@ubuntu:~/Container/kubernates/dd-agent/dd-corso$ kubectl version Client Version: version.Info{Major:"1", Minor:"19", GitVersion:"v1.19.3", GitCommit:"1e11e4a2108024935ecfcb2912226cedeafd99df", GitTreeState:"clean", BuildDate:"2020-10-14T12:50:19Z", GoVersion:"go1.15.2", Compiler:"gc", Platform:"linux/amd64"} Server Version: version.Info{Major:"1", Minor:"19", GitVersion:"v1.19.2", GitCommit:"f5743093fd1c663cb0cbc89748f730662345d44d", GitTreeState:"clean", BuildDate:"2020-09-16T13:32:58Z", GoVersion:"go1.15", Compiler:"gc", Platform:"linux/amd64"}
+I have followed various topics for this problem but I can not solve the problem
+Status date: 2020-10-26 17:39:46.442372 UTC
+Agent start: 2020-10-26 17:39:22.287649 UTC
+Pid: 390
+Go Version: go1.14.7
+Python Version: 3.8.5
+Build arch: amd64
+Agent flavor: agent
+Check Runners: 4
+Log Level: info
+https://app.datadoghq.com - API Key ending with:
+- bc9de
+Status: Running
+Pid: 391
+Uptime: 24 seconds
+Mem alloc: 11,978,064 bytes
+Hostname: ubuntu
+Receiver: 0.0.0.0:8126
+Endpoints:
+https://trace.agent.datadoghq.com
+Checks Metric Sample: 728
+Dogstatsd Metric Sample: 120
+Event: 2
+Events Flushed: 1
+Number Of Flushes: 1
+Series Flushed: 228
+Service Check: 14
+Service Checks Flushed: 6
+Event Packets: 0
+Event Parse Errors: 0
+Metric Packets: 119
+Metric Parse Errors: 0
+Service Check Packets: 0
+Service Check Parse Errors: 0
+Udp Bytes: 8,818
+Udp Packet Reading Errors: 0
+Udp Packets: 14
+Uds Bytes: 0
+Uds Origin Detection Errors: 0
+Uds Packet Reading Errors: 0
+Uds Packets: 0`
+my datadog-agent.yaml:
+`apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+name: datadog-agent
+spec:
+updateStrategy:
+type: RollingUpdate
+rollingUpdate:
+maxUnavailable: 1
+selector:
+matchLabels:
+app: datadog-agent
+template:
+metadata:
+labels:
+app: datadog-agent
+name: datadog-agent
+spec:
+tolerations:
+- key: node-role.kubernetes.io/master
+effect: NoSchedule
+containers:
+- image: datadog/agent:latest
+imagePullPolicy: Always
+name: datadog-agent
+ports:
+- containerPort: 8125
+hostPort: 8125
+name: dogstatsdport
+protocol: UDP
+- containerPort: 8126
+hostPort: 8126
+name: traceport
+protocol: TCP
+env:
+- name: DD_API_KEY
+valueFrom:
+secretKeyRef:
+name: datadog-api
+key: token
+- name: KUBERNETES
+value: "true"
+- name: DD_KUBERNETES_KUBELET_HOST
+valueFrom:
+fieldRef:
+fieldPath: status.hostIP
+apiVersion: v1
+kind: Service
+metadata:
+name: datadog-agent
+labels:
+app: datadog-agent
+spec:
+ports:
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+name: dca
+rules:
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+name: dca
+roleRef:
+apiGroup: rbac.authorization.k8s.io
+kind: ClusterRole
+name: dca
+subjects:
+kind: Service
+apiVersion: v1
+metadata:
+name: datadog-custom-metrics-server
+spec:
+selector:
+app: datadog-agent
+ports:
+by log of datadog-agent pod:
+2020-10-26 17:39:42 UTC | CORE | ERROR | (pkg/collector/runner/runner.go:292 in work) | Error running check kube_controller_manager: [{"message": "HTTPConnectionPool(host='192.168.71.129', port=10252): Max retries exceeded with url: /metrics (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f3b3fce4d00>: Failed to establish a new connection: [Errno 111] Connection refused'))", "traceback": "Traceback (most recent call last):\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/urllib3/connection.py\", line 159, in _new_conn\n    conn = connection.create_connection(\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/urllib3/util/connection.py\", line 84, in create_connection\n    raise err\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/urllib3/util/connection.py\", line 74, in create_connection\n    sock.connect(sa)\nConnectionRefusedError: [Errno 111] Connection refused\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/urllib3/connectionpool.py\", line 670, in urlopen\n    httplib_response = self._make_request(\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/urllib3/connectionpool.py\", line 392, in _make_request\n    conn.request(method, url, **httplib_request_kw)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/http/client.py\", line 1255, in request\n    self._send_request(method, url, body, headers, encode_chunked)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/http/client.py\", line 1301, in _send_request\n    self.endheaders(body, encode_chunked=encode_chunked)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/http/client.py\", line 1250, in endheaders\n    self._send_output(message_body, encode_chunked=encode_chunked)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/http/client.py\", line 1010, in _send_output\n    self.send(msg)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/http/client.py\", line 950, in send\n    self.connect()\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/urllib3/connection.py\", line 187, in connect\n    conn = self._new_conn()\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/urllib3/connection.py\", line 171, in _new_conn\n    raise NewConnectionError(\nurllib3.exceptions.NewConnectionError: <urllib3.connection.HTTPConnection object at 0x7f3b3fce4d00>: Failed to establish a new connection: [Errno 111] Connection refused\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/requests/adapters.py\", line 439, in send\n    resp = conn.urlopen(\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/urllib3/connectionpool.py\", line 726, in urlopen\n    retries = retries.increment(\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/urllib3/util/retry.py\", line 446, in increment\n    raise MaxRetryError(_pool, url, error or ResponseError(cause))\nurllib3.exceptions.MaxRetryError: HTTPConnectionPool(host='192.168.71.129', port=10252): Max retries exceeded with url: /metrics (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f3b3fce4d00>: Failed to establish a new connection: [Errno 111] Connection refused'))\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/datadog_checks/base/checks/base.py\", line 828, in run\n    self.check(instance)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/datadog_checks/kube_controller_manager/kube_controller_manager.py\", line 148, in check\n    self.process(scraper_config, metric_transformers=transformers)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/datadog_checks/base/checks/openmetrics/mixins.py\", line 507, in process\n    for metric in self.scrape_metrics(scraper_config):\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/datadog_checks/base/checks/openmetrics/mixins.py\", line 447, in scrape_metrics\n    response = self.poll(scraper_config)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/datadog_checks/base/checks/openmetrics/mixins.py\", line 713, in poll\n    response = self.send_request(endpoint, scraper_config, headers)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/datadog_checks/base/checks/openmetrics/mixins.py\", line 739, in send_request\n    return http_handler.get(endpoint, stream=True, **kwargs)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/datadog_checks/base/utils/http.py\", line 283, in get\n    return self._request('get', url, options)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/datadog_checks/base/utils/http.py\", line 332, in _request\n    return getattr(requests, method)(url, **new_options)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/requests/api.py\", line 75, in get\n    return request('get', url, params=params, **kwargs)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/requests/api.py\", line 60, in request\n    return session.request(method=method, url=url, **kwargs)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/requests/sessions.py\", line 533, in request\n    resp = self.send(prep, **send_kwargs)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/requests/sessions.py\", line 646, in send\n    r = adapter.send(request, **kwargs)\n  File \"/opt/datadog-agent/embedded/lib/python3.8/site-packages/requests/adapters.py\", line 516, in send\n    raise ConnectionError(e, request=request)\nrequests.exceptions.ConnectionError: HTTPConnectionPool(host='192.168.71.129', port=10252): Max retries exceeded with url: /metrics (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f3b3fce4d00>: Failed to establish a new connection: [Errno 111] Connection refused'))\n"}]
+help please!
+thk
+This doesn't seem to be an issue related to qiskit-terra, I'm assuming this was a mistake and intended for a different repo. So I'm going to close this.

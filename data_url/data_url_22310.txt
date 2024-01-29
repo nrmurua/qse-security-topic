@@ -1,0 +1,33 @@
+We often want to start running an experiment without specifying how long the experiment should run at submission time.  For this scenario, it would be convenient to have an append_dataset function, so that we can keep tacking new results on to the ends of the datasets, without having to initialize them to some arbitrary large size.  I've written a fast and dirty method to do this, but it is inefficient and unable to keep the current values of the broadcast and save flags:
+Would it be possible to add an optimized version of this to the HasEnvironment class?
+I know that something like this is very desirable. But that general kind of implementation has problems. One is that you can not do in-place resizing of an array. That has a bunch of implications.
+Can you implement this by splitting the problem into a publisher experiment (that does not track its own old data) and a subscriber experiment (that listens to new datapoints and tracks everything)?
+Or can you use the logging database tools (which are very much intended for something like this)?
+I understand about the in-place resizing problem.  Certainly doing this efficiently would not be easy.  Perhaps doing it inefficiently might be OK in some cases (i.e., as long as the array doesn't get too big)?  Alternatively, the other way I've though about doing it would be to make the array quite large at initialization (larger than I'll ever need), then resize smaller at the end of the experiment.
+I don't see why splitting up the experiment would help?  Please elaborate.
+Certainly in some cases the logging database tools would be an appropriate solution, but I think they would be a little awkward in other cases.
+Let's check a couple of things. How do you want to treat the data while it is being accumulated? Do you need/want to use applets to continuously show that data? If there is no requirement to constantly publish the dataset while it is being accumulated, you can just use a plain (elastic) python list in your experiment and convert/publish the entire array on experiment completion/termination. This would work nicely when the experiment is of infinite duration and you handle TerminationRequested when it is stopped. Or if semi-realtime data is sufficient, you can implement some simple checkpointing and publish and resize the dataset in chunks.
+Or is a "just the last N values" plot/stripchart what you are looking for? Like "short term ion brightness history"? Then the rate is probably small enough that you can just have an experiment in another pipeline that tracks changes in "current_brightness" and publishes the history of the last N such values. Either with complete (and inefficient) updates or again with chunked updates.
+Also note that in the case of a stripchart e.g. the XY plotting applet should behave correctly if you use a fixed size array as a ringbuffer and replace/mutate the oldest (abcissa and ordinate) measurement each time you get a new one. It should look like a stripchart.
+Then how much data are we talking about here? What rate are you creating it at and how big would it conceivably grow?
+If the dataset you are growing is large and growing fast and if you constantly need to have all of it published for plotting/processing then we'll have to do seomthing like append_dataset. Maybe it would be easiest to reintroduce python lists as datasets for that...
+By splitting the experiment I meant having one experiment that only produces individual datapoints and another that listens for the individual measurements and processes/saves them and/or truncates them for plotting and/or chunks them.
+Another potential option is to have an experiment spawn (schedule) child experiments that each produce a fixed number of datapoints. Then the parent experiment could gather and handle them.
+I'd like to plot the last N points of the data as they're generated (which I could do with a ring buffer as you suggest), but I want to save all the data to the hdf5.  I suppose one way to go would be to have a ring buffer dataset plus a list on the FPGA, but the list on the FPGA makes me a bit nervous because it is lost if the FPGA crashes.
+I think for now I'll go with making a fixed size (very large) dataset, then at the end of the experiment I'll rewrite the dataset to be smaller.
+Ah. I had assumed you were not in kernel code constantly but only descending there to take each datapoint. It is a bit harder to grow an array in kernels.
+The only realistic way to do a constant-time allocation is to leave the existing array where it is and allocate a new one on top of the stack (this also means you cannot return from the current function without destroying it). However, we also have a heap on the core device, so if you can tolerate an unbounded amount of latency then you can have a realloc(). It would also survive past the end of the function.
+I would think that getting the datapoints out of the coredevice one-by-one in realtime and then gathering them on the host (as described above) is both more robust and can take care of the stripchart and growing-an-array use cases.
+@dleibrandt with the next contract we will have fire-and-forget RPC for mutate_dataset, which will allow the core device to update datasets on the master (to then be saved in the HDF5 file eventually) without incurring a delay time in the core device waiting for communications.  This is like @jordens most recent suggestion in the post above.
+Yes, although for solving the problem in this issue I think it would be ideal if we also had a fire-and-forget append_dataset.  Semi-related question: will we be able to write our own fire-and-forget RPCs?
+There is no inherent problem with fire-and-forget RPCs; in fact attribute writeback already works through these. They simply need to be exposed.
+I'd like to plot the last N points of the data as they're generated (which I could do with a ring buffer as you suggest), but I want to save all the data to the hdf5.
+You could have two datasets: one which is broadcast-only (with the N points), one which is save-only (with all the points). Can we close this issue?
+the list on the FPGA makes me a bit nervous because it is lost if the FPGA crashes.
+Does your FPGA crash? Please report issues when it does.
+Can we close this issue?
+Yup.
+Does your FPGA crash?
+Not yet, but our computer does on occasion.  I assume the list on the FPGA would be lost in this case also, or is there a way to get the list from the FPGA when the computer reconnects to the FPGA?
+You would have to store it in the core device cache.
+Though this may not be the best method for backing up partial data of long-running experiments...

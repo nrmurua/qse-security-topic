@@ -1,0 +1,21 @@
+summary
+This is not really a bug, instead, it is a problem with Python's multiprocess support.
+In short, the parallel compilation is usually slower than serial one.
+For instance, I compiled and ran 32 circuits (LiH molecule), the parallel one takes 3.5 seconds while the serial one takes 2.9 seconds. Given the run takes the same time, the difference lies in the compilation.
+I would suggest we do not enable the parallel compilation by default in favor of performance.
+The following is a more in-depth explanation.
+The main process sends the uncompiled circuits to the worker processes, lets them compile the circuits, and then receives the compiled circuits from them.
+Since different processes do not share memory, they have to send/receive data around.
+However, the data sent (circuits) is huge (in terms of bytes). Worse, the data sending/receiving is serialized by the write lock.  See the relevant code from python3.7/multiprocessing/queues.py:
+workaround
+To bypass this problem, one could adjust the parallel logic so that the processes send only very small data around (e.g., the parameter values of circuits, the final amplitude vector). In my case, I sent only the parameter values to the workers and let them build/compile the circuits from scratch. This reduces the execution time to 1.5 seconds from 2.9 seconds.  However, this workaround is not always feasible and may make other features (such as intra-process caching) unavailable.
+I am guessing that you are compiling / executing circuits for a simulator?
+Assuming that my guess is correct, and you are compiling / executing for the simulators, the main issue is not the copying of circuits.  Indeed, compiling large width an depth circuits for hardware shows the expected speedups.  However, when compiling circuits for a simulator, there is not much work to do, so the overhead from spawning processes and transferring the data can actually slow things down.  This is what you are seeing.
+If you look at what is actually being run in the transpiler underneath both compile and execute you will see that for a simulator the only things being in parallel done are a conversion to DAG, unroll to basis, and put a barrier before measurements (for correct sampling in simulators).  The number of basis gates is so large that in most cases where one does not define a custom operator this step is unnecessary.  Whats more, it should be possible to do this, if needed, without conversion to the DAG.  Finally the barrier before measurements can also be done in the circuit itself.  So in reality there is really nothing intensive that is done in parallel for circuits passed to simulators, so they should probably not trigger a call to parallel_map.
+The solution can take several forms: If coupling_map = None then explicitly write a for-loop over the number of circuits, abuse the 'QISKIT_IN_PARALLEL' env value to force parallel_map to run in serial, or finally add an extra option to parallel_map that forces serial execution, e.g. force_serial=True.
+Another possibility, if your gates are known to be in the correct basis, and you manually put a barrier before the measurements, is that you can directly convert from circuits to qobj using circuits_to_qobj, although there is currently a bug in this function (#1988) or the newerassemble_circuits.  This should be the fastest method.
+@nonhermitian yes, the speed is subject to (1) the gain of parallel compilation and (2) the overhead of the setup (e.g., creation/joining/data copying).
+I did it for simulator, where the compilation takes short time.  The gain of parallel compilation does not beat the setup overhead (e.g., copying circuits), so I observed no speedup. I am sure it is the copying that incurs the high overhead because I have tried to copy small data and then performed the same workload, which leads to 2X speedup. (I did abuse the QISKIT_IN_PARALLEL to force the serial compilation at the terra level and achieve the parallelism at the aqua level).
+I understand that the compilation for hardware takes long time so that the gain beats the overhead.
+Yes, so The solution is to not use parallel for circuits destined for simulators. So the solutions I mentioned previously will fix this issue.
+sure, thanks,

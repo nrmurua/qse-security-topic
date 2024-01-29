@@ -1,0 +1,132 @@
+Hello
+Is there a way to pass a tensor in a form that is usable by cirq when it is passed from an upstream layer during training?
+I have a tensor from a Dense layer. I want to run it through a custom layer and perform some tensor operations. This layer then outputs/returns a cirq circuit I designed.
+We can remove the functions in the layer or the layer entirely to make the problem more clear.
+Is there a way to pass a tensor into a cirq circuit using tfq/tf/cirq so that it can be trained?
+I was assuming that since tensorflow is graph based none of the values would be accessible for training (i.e. you cannot get_weights() or evaluate the network in the middle of training to produce a numpy array/float value to pass into the circuit. Is there any way to go about this from any of the packages inside of tfq/tf/cirq/keras? I have tried using an tfq.layers.Expectation() by passing the tensor as the initializer. I have tried to find a solution to this using cirq functions as well but have not had success. Was thinking of also posting this in the cirq issues but (at least right now) believe this is more related to tfq than cirq.
+Please let me know if there is anything below that is unclear or needs further explanation. Thanks in advance.
+I have tried to input a tensor into cirq and gotten this:
+place = tf.compat.v1.placeholder(tf.float32, shape=(4,1))
+placeholder = cirq.ry(place)(cirq.GridQubit(0,0))
+placeholder ## -> cirq.ry(np.pi*<tf.Tensor 'truediv_25:0' shape=(4, 1) dtype=float32>).on(cirq.GridQubit(0, 0))
+When it is embedded inside of a circuit and called like this it gives an error:
+circuit1 = cirq.Circuit()
+circuit1.append(cirq.ry(place)(cirq.GridQubit(0,0)))
+circuit1 ## ->TypeError: int() argument must be a string, a bytes-like object or a number, not 'Tensor'
+TypeError: can't pickle _thread.RLock objects
+The functions from the layer:
+GetAngles3(weights): creates tensors with shape=(4,)
+CreateCircuit2(x): creates a cirq circuit using tfq.convert_to_tensor ` following the documetation
+Here is the layer itself:
+Here is the output when the model runs:
+Train on 78 samples, validate on 26 samples
+Epoch 1/25
+****************inputs
+Tensor("model/dense/Sigmoid:0", shape=(None, 4), dtype=float32)
+****************GetAngles
+Tensor("model/dense/Sigmoid:0", shape=(None, 4), dtype=float32)
+[<tf.Tensor 'model/asd_f2/Asin:0' shape=(None, 4) dtype=float32>, <tf.Tensor 'model/asd_f2/mul:0' shape=(None, 4) dtype=float32>, <tf.Tensor 'model/asd_f2/mul_1:0' shape=(None, 4) dtype=float32>, <tf.Tensor 'model/asd_f2/mul_2:0' shape=(None, 4) dtype=float32>, <tf.Tensor 'model/asd_f2/mul_3:0' shape=(None, 4) dtype=float32>]
+****************createCircuit
+WARNING:tensorflow:Gradients do not exist for variables ['conv1d/kernel:0', 'conv1d/bias:0', 'dense/kernel:0', 'dense/bias:0', 'asd_f2/kernel:0'] when minimizing the loss.
+****************inputs
+Tensor("model/dense/Sigmoid:0", shape=(None, 4), dtype=float32)
+****************GetAngles
+Tensor("model/dense/Sigmoid:0", shape=(None, 4), dtype=float32)
+[<tf.Tensor 'model/asd_f2/Asin:0' shape=(None, 4) dtype=float32>, <tf.Tensor 'model/asd_f2/mul:0' shape=(None, 4) dtype=float32>, <tf.Tensor 'model/asd_f2/mul_1:0' shape=(None, 4) dtype=float32>, <tf.Tensor 'model/asd_f2/mul_2:0' shape=(None, 4) dtype=float32>, <tf.Tensor 'model/asd_f2/mul_3:0' shape=(None, 4) dtype=float32>]
+****************createCircuit
+WARNING:tensorflow:Gradients do not exist for variables ['conv1d/kernel:0', 'conv1d/bias:0', 'dense/kernel:0', 'dense/bias:0', 'asd_f2/kernel:0'] when minimizing the loss.
+Here is a plot of the model where ASDF2 is the layer I created:
+
+I'm having a hard time following exactly what's going on here. It looks like there might be several different issues at play. With regards to:
+I have tried to input a tensor into cirq and gotten this:
+place = tf.compat.v1.placeholder(tf.float32, shape=(4,1))
+placeholder = cirq.ry(place)(cirq.GridQubit(0,0))
+placeholder ## -> cirq.ry(np.pi*<tf.Tensor 'truediv_25:0' shape=(4, 1) dtype=float32>).on(cirq.GridQubit(0, 0))
+When it is embedded inside of a circuit and called like this it gives an error:
+circuit1 = cirq.Circuit()
+circuit1.append(cirq.ry(place)(cirq.GridQubit(0,0)))
+circuit1 ## ->TypeError: int() argument must be a string, a bytes-like object or a number, not 'Tensor'
+When it is called inside of the layer using tfq.convert_to_tensor  the error shows:
+TypeError: can't pickle _thread.RLock objects
+This is caused by misuse of TensorFlow and Cirq together. Cirq does not support using or operating on tf.Tensor objects (otherwise we wouldn't need TensorFlow Quantum). In order to understand how to create and evaluate parameterized circuits in TensorFlow Quantum I would recommend checking out: https://www.tensorflow.org/quantum/tutorials/hello_many_worlds
+This tutorial showcases some examples of how upstream tf.Tensors can be passed into the variables in quantum circuits that are downstream in the compute graph like you want to do with your ASDF2 layer.
+Does this help clear things up ?
+If I understand correctly this is the example you are directing me to from Hello Many Worlds:
+
+This is close to what I am trying to do.
+I am trying to compose my circuits with the data I have similar to the example from the MNIST Classification example where the circuits are the representative states of the data:
+x_train_circ[0]
+
+My main question is can I have a model that is DENSE > PQC > DENSE (where the PQC is created based on the output of the first DENSE)? If this cannot be done then is there a way to pass data (not a simple clustering state) to both the LHS and RHS in the first figure above? If I cannot do this with cirq is there another way to perform this with just TFQ/TF?
+Thanks for the response. Missed the email yesterday.
+Any update on this? Is it feasible? Just to reiterate. @MichaelBroughton the response you gave is not a solution to my question.
+Sorry for the slow response (I'm on vacation).
+I'm having a hard time following exactly what you want in your follow up question. When you say:
+My main question is can I have a model that is DENSE > PQC > DENSE (where the PQC is created based on the output of the first DENSE)?
+I'm pretty sure now you don't want something like this (Just in case this is what you want I've added code):
+Where Dense layer a controls the learnable parameters that go into the circuit which models the quantum datapoint circuits coming in from the circuit_input tensor.
+What I'm guessing you do want is: Be able to influence the quantum datapoint circuits themselves before they get fed into some kind of PQC / downstream quantum model things. For this you need to make use of tfq.layers.Expectation which requires a bit more bookkeeping compared to PQC:
+Here you can see that the gradients of alpha and beta will backprop through a whereas the gradients of gamma will backprop into tf_learnable_gamma which are the tf learnable parameters for your quantum_model_circuit. This lets a and any other modelling upstream from a have an influence over the structure of the quantum datapoint circuits going into the quantum model. Is this what you are after ?
+@MichaelBroughton Thank you for the response, hope your vacation is going well.
+You are correct that the first bit of code is not what I am after. I believe it is the second set of code that is correct. I have tried to use tfq.layers.Expectation already but the way that you show it above at least appears to be what I want (will implement and let you know). In the meantime I have a question about the two circuits quantum_model_circuit and datapoint_circuits . Is datapoint_circuits the dataset (like MNIST) that is already converted to quantum states, if so in the code above are you feeding both the classical and quantum versions of the data? If that is the case then I believe my only other questions would be (1) could you explain why/if its OK to pass both the classical and quantum versions of the data as the input (2) what exactly is tfq.layers.Expectation doing to the tensor? For (1) I initially rejected the idea of trying this because it did not make sense to me to give the model both versions of the data and (2) it appears tfq.layers.Expectation is much more powerful than just using a PQC/ControlledPQC.
+Thank you for coded-explanation its very helpful.
+Glad I was able to help clear things up :)
+could you explain why/if its OK to pass both the classical and quantum versions of the data as the input
+You can pass whatever you want into tensorflow compute graphs as inputs. It's OK to pass associated classical information to go along with your quantum circuits. I would just be careful to not accidentally do all the learning on a classical only model that just learns to ignore the harder to learn quantum parts.
+what exactly is tfq.layers.Expectation doing to the tensor?
+I would check out this: https://www.tensorflow.org/quantum/api_docs/python/tfq/layers/Expectation which goes over how tfq.layers.Expectation works and the types of tensor input formats it can accept. tfq.layers.Expectation is a little more low level than a PQC/ControlledPQC layer so in the case where you need a little more fine grained control it can help out a lot.
+@MichaelBroughton
+It appears this is the correct solution but I have an error when implementing this.
+Error:
+I got a very similar error when I had the wrong shape for learnable_gamma where the error is pretty much the same but the incompatible shapes are [4,1,32] vs. [16,1,32]. Not sure what shape is related to the shapes [1,16,8] vs. [1,16,47] in the error above. I noticed changing the batch size does influence the shapes shown in the error but it never fixes the issue. I found that if I changed the dense_in below to 43 units the model will train 1 epoch but then fail with the same error but with the shapes [16,1,32] vs. [14,1,32].
+The batch size I am using is 16
+Code:
+Architecture:
+This seems to be a good old fashioned shape error now. Your snippet doesn't contain enough code for me to diagnose what is happening (where does x come from in tf.keras.layers.Dense(4)(x) ? ). I would recommend slowly building up your model, printing out the shapes as you go, keeping a very close eye on how ops change behave with certain shape inputs, so that you get the expected shapes. We are moving pretty far from the original issue of upstream variable usage in quantum operations.
+If it manages to work for a whole epoch, but then not the next one, you might want to make sure that the data you are sending in for each epoch has the same batch size.
+Think we are good to close now :)
+@MichaelBroughton
+I've closed the issue but was not sure if I should ask this question here or open another issue..
+From above you can simplify the architecture so that x=tf.keras.Input(shape=(4,)) and that would be all of the relevant code. What I believe the issue may be is the lack of some kind of readout parameter for tfq.layers.Expecation in order for the shape to output from either the tfq.layers.AddCircuit() or tfq.layers.Expectation correctly. I do not see readouts for AddCircuit or Expectation in the documentation.
+I've narrowed the the issue to what I believe is the concatenation tf.concat([dense_in, learnable_gamma], axis=1), for the symbol_values... was hoping this might be of some help in explaining this. I spent the better part of yesterday and today fiddling with shapes of tensors already, changing/reshaping tensors does not really seem like the issue.
+Not sure what you meant by:
+make sure that the data you are sending in for each epoch has the same batch size
+Was under the impression sending data using Keras like below guaranteed that batches were uniform
+For completeness the whole code:
+@MichaelBroughton
+I am reopening the issue because the solution seems to either have a bug or be incomplete (I am following exactly what you have provided above). I don't believe this is a separate issue related to shapes. It appears the learnable parameters in the expectation layer are not able to be learned?
+add_circuit was passed non-serializable keyword arguments
+Error:
+This doesn't look like an issue with training, this looks like an issue with model saving (see the get_config call out at the end of the warning message.)  This is noted in issue #56 and #275.  Since what you added above are warnings and not errors, were there subsequent errors that caused the training not to proceed?
+@zaqqwerty I was trying to use tensorboard's graph to find where my shapes may have an issue. This error is shown above the previous error when trying to train:
+Previous/Current Error:
+InvalidArgumentError: 2 root error(s) found.
+(0) Invalid argument:  Incompatible shapes: [1,16,8] vs. [1,16,47]
+[[{{node PartitionedCall/map/while/body/_15/Add_1}}]]
+(1) Invalid argument:  Incompatible shapes: [1,16,8] vs. [1,16,47]
+[[{{node PartitionedCall/map/while/body/_15/Add_1}}]]
+[[PartitionedCall/Reshape_1/_82]]
+0 successful operations.
+0 derived errors ignored. [Op:__inference_distributed_function_1552]
+Function call stack:
+distributed_function -> distributed_function
+You are correct, this most recent snippet is related to saving. The real issue I am having is related to learnable_gama, AddCircuit() and the expectation layer. Tensorflow will not train this layer as per the example @MichaelBroughton provided. Fixing the shapes does not appear to be the solution. The shape values in the error changes with a change to batch_size, units in dense layers, the size of learnable_gamma. I can't seem to sort out a specific part of the network that has the wrong shape. When the shapes are "correct" the model trains the 0th epoch and comes back to the same error. When the shapes are "wrong" the model shows the same error with different shapes.
+@MichaelBroughton @zaqqwerty
+I have created a dummy notebook replicating my error using the implementation for tfq.layers.Expectation provided in this issue and the MNIST notebook (simplified) provided in your TFQ tutorials.
+Please take a look here:
+https://colab.research.google.com/drive/12x1ELFr5OKdL5sHq8Wea3cre_FzHvpN8?usp=sharing
+The dense layer before the expectation layer here can be changed to 30 units and the model will run for one epoch. This is a link to that cell.
+https://colab.research.google.com/drive/12x1ELFr5OKdL5sHq8Wea3cre_FzHvpN8?authuser=1#scrollTo=-Gmm0aA8TL5g&line=10&uniqifier=1
+Ok, turns out that the error was indeed a good old fashioned shape mismatch. I added a little snippet in the notebook to show where:
+Output of the above is (None, 34) and (8,12) (or something). The 2nd dim's need to line up so that every free symbol has exactly one value to be placed inside of it.
+Does this clear things up now ?
+@MichaelBroughton
+Did you change the units in the Dense layer to 30 like I mentioned?
+I knew the shapes were wrong when I sent it to you, I wanted you to see both errors. The second dimension will be correct if you use 30 units in dense_in
+The dense layer before the expectation layer here can be changed to 30 units and the model will run for one epoch. This is a link to that cell.
+https://colab.research.google.com/drive/12x1ELFr5OKdL5sHq8Wea3cre_FzHvpN8?authuser=1#scrollTo=-Gmm0aA8TL5g&line=10&uniqifier=1
+I changed dense_in 30 units for you so that the shapes of the second dimension are correct. The model only trained for one epoch again.
+Please take a look now
+Sorry if I wasn't clear in the first reply. You need to make sure the shapes line up in the 2nd dimension. On top of that you also need to make sure that you aren't using static sized shapes in your model. (None, 34) != (4, 34), even if one sets batch_size=4 this seeming equality should not be relied upon. The reason your code is not working is because you have something like 22 examples in your training data. With a batch size of 4 your model needs to work when batch_size = 4 and on the last datapoint in the batch where the batch_size= 2. I've gone ahead and made a working copy of the notebook that will train: https://colab.research.google.com/drive/1Ve5i6OuqJZxc6jAumEtPwUUZPe_va9Zx?usp=sharing . All I really did was set batch_size=2. The issue of fixing the static shaping problem so that you can make your batch_size something other than 2, I will leave to you.
+In order to make your model more robust I would recommend that you instead of introducing static sized variables at your batch size, tile them up appropriately so that you don't get things like (4 , X) and (None, X) which are bound to have shape problems.
+Thank you

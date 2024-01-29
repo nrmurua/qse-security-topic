@@ -1,0 +1,22 @@
+I have recently found a bug in the SymbolicHamiltonian class, whereby expectation values of certain observables are not calculated correctly when using the qibojit backend (version 0.0.10).
+In particular, here is an example where this behavior shows up. It is a 2-qubit circuit where I apply an RXX(theta) gate and then measure the Z(0) observable. The expected value is easy to compute, it should be cos(theta). However, qibo (version 0.1.14) returns a constant value of 1 for all values of theta.
+The code to reproduce this issue is:
+If we now change operator = SymbolicHamiltonian(Z(0)) by operator = SymbolicHamiltonian(Z(0)*I(1)), the code works as expected. Moreover, when using the numpy backend the snippet above doesn't work unless the I(1) is included.
+This shows that the problem is in the Z(0), not in the circuit. The code also works as expected if we decompose the RXX gate in terms of H, RZ and CNOT gates.
+Any clue about what is going on? I think this is an important issue, as people may be finding wrong results in their research projects.
+Also, this issue went through the tests, so I guess those should be updated as well.
+Good catch! I think the issue is not so much on Z(0), rather in the fact that you are trying to compute the expectation value of a 1 qubit Hamiltonian on a 2 qubit quantum state, and Qibo is getting confused on where in that state the expectation value should be computed in.
+You can easily check what I mean by simply changing the operator to:
+Now operator.nqubits will be 2 and you will recover the plot that you want.
+As for ways to fix this there are different paths.
+We can throw out an error when trying to compute an expectation value of a Hamiltonian if the given quantum state does not match the number of qubits of the Hamiltonian. Forcing the user to add the identities, or set the correct number of qubits.
+Or we can find rules to pad the Hamiltonian (or state if the other way around).
+Additionally, it seems like defining the operator as:
+gives the correct results with a Circuit of only 2 qubits and
+introduces the same problem Diego is pointing out. So it seems to happen only when the Hamiltonian object has less qubits than the quantum state given for the expectation.
+Let me know what you think would work best. Personally I think an error might be the clearest way to not hide things from the user.
+Hi @igres26, thanks for the answer!
+I'd say we could pass an nqubits argument to SymbolicHamiltonian instead of having it inferring this number. And then of course throwing an error if the number of qubits of the state and the Hamiltonian are different. This would avoid having to use identity symbols.
+As you say, I find this more transparent than padding.
+Also, maybe we could include examples in the documentation about how to use the expectation and expectation_from_samples methods of Hamiltonians (didn't seem to find any).
+Thanks @DiegoGM91, @stavros11 could you please have a look?

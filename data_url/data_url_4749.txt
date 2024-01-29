@@ -1,0 +1,57 @@
+If I attempt to compile a program, specifying only a portion of a the modes on an X8 chip, for anything other than an identity operation (for I understand SF will fill in unspecified modes with an identity operation) I expect a CircuitError.
+The program
+compiles as
+without raising an error.
+100% of the time
+Strawberry Fields: a Python library for continuous-variable quantum circuits.
+Copyright 2018-2020 Xanadu Quantum Technologies Inc.
+Python version:            3.7.6
+Platform info:             Linux-5.3.0-46-generic-x86_64-with-debian-buster-sid
+Installation path:         /home/heltluke/anaconda3/envs/sf_latest/lib/python3.7/site-packages/strawberryfields
+Strawberry Fields version: 0.13.0.rc0
+Numpy version:             1.18.1
+Scipy version:             1.4.1
+SymPy version:             1.5.1
+NetworkX version:          2.4
+The Walrus version:        0.12.0
+Blackbird version:         0.2.3
+TensorFlow version:        None
+This happened due to a bug in a script I wanted to use to generate a program using MZI gates from an array of phases. I thought I was creating an "anti-identity" operation on modes 0-4, instead I created the program above
+I note that even the compiled version of
+is not the same as the compiled version of
+@heltluke : I am not sure if I follow why is this a bug. All the programs you wrote are instructions for preparing vacuum in all the modes.
+All the programs you wrote are instructions for preparing vacuum in all the modes.
+This was just to reduce the number of lines copied and pasted above, as I'm concerned with how prog.compile("X8") works in terms of the interferometer phases that are set, and I don't need to specify
+for compilation to work.
+I guess it's a question of desired vs (my) expected behaviour. What happens is potentially intentional, it's just a surprise to me. I would have expected the default / unspecified / "identity" interferometer to be
+and seeing extra factors of pi is what's surprising to me (for if the above were the default, I think my first program would have failed with a CircuitError, as the interferometer for modes 0-3 would not match that for modes 4-7).
+I think the issue with the pis comes from the rectangular symmetric decomposition. Indeed if you
+sf.decompositions.rectangular_symmetric(np.identity(4))
+you get
+([[0, 1, 3.141592653589793, 0.0, 4],  [2, 3, 3.141592653589793, 0.0, 4], [1, 2, 3.141592653589793, 3.141592653589793, 4], [0, 1, 3.141592653589793, 3.1415926535897936, 4], [2, 3, 3.141592653589793, 0.0, 4], [1, 2, 3.141592653589793, 3.1415926535897927, 4]], array([-1.+5.6655389e-16j,  1.-4.8985872e-16j,  1.-2.4492936e-16j,  1.+0.0000000e+00j]), None)
+which seems to have all the pis that appear in your decompositions. Maybe @ishdhand or @shreyapkumar  can comment?
+Good catch @nquesada, perhaps this is fixed in #363?
+Right, so the default is
+?
+And I guess it's simply coincidence that my "swap and swap back" sequence of gates
+has the same "external" phases? What about the Rgates?
+perhaps this is fixed in #363
+That PR looks awesome!
+I am not so sure anymore. What is the unitary decomposition used by the X8 compiler?
+perhaps this is fixed in #363?
+This shouldn't be fixed there. What I wrote should (hopefully) give the same results as rectangular_symmetric
+Actually, reading @heltluke first post: #368 (comment) more carefully, this is the behaviour one would expect (except for some of the external phases which are pi), isn't it? The input was a series of swaps which all cancel one another, so the output is just "bars" in all the MZIs.
+Yeah, I've come to see that it's "bars"for modes 0, 1, and 2. My concern is about the second arguments of the MZgates and the arguments of the Rgates. If "identity" is
+was it just coincidence that
+comes out the same?
+If I understand correctly, all these input MZ gates are first complied by being multiplied together (in this case it would multiply to the identity). Then the decomposition sees no difference between these MZ gates and when you input the identity matrix.
+was it just coincidence that
+I mean, I guess it was, right? Two rotations of pi on q[0] and q[2] effectively cancel. But the point is that they require different settings on the hardware.
+It's the idea that if I ask for a specific set of phases and leave others unspecified, I don't quite understand how what I believed I specified (the second arguments to the MZgates as 0) is allowed to change instead of raising a CircuitError.
+It must be that things like "rotate and rotate back" (as well as "swap and swap back") are all viewed as the identity, and so will always be compiled the same way.
+Perhaps the clearest way of stating what I expected is that I expected the check of whether the circuit for modes 0-3 matches the circuit for modes 4-7 during compiling on X8 to verify that the circuit for modes 0-3 was "the" identity and not merely "an" identity (and also not for compilation to subsequently alter whatever identity operation I'd set up on modes 0-3).
+My understanding is that if you dont have access to the low level interface, SF compiles everything. So a series of "swap and swap back" would first get compiled and become the identity. Then the rectangular decomposition gives identical results for such a series of MZIs and the identity.
+When I tried to fix the identity decomposition, I was only able to fix the internal phases (now hopefully they are all pi), but the external phases are somewhat arbitrary.
+So unless you have access to the low level interface where the compilation does not happen, I think you can never get "the" identity.
+Thanks @shreyapkumar. I think it's OK to close this then, as it's more user error than a "bug". If one wants to specify phases, they must specify a complete sequence in the form of
+and if they accidentally specify a subset of the gates as ANY version of the identity, the result will always be

@@ -1,0 +1,56 @@
+Signal slot implementation of gui:
+Following our discussion from the other day, I think you are right that any gui updating should be done by signal-slot mechanisms. The main reason for that is that whenever pyrpl will be used inside a thread, we will run into problems because gui updating in Qt should always be done in the main thread (anything that is called by the event loop is in the main thread).
+Right now, since for mostly everything, gui updating is confined into the base attribute logic, we only need to replace the descriptor.update_gui(module) function of BaseAttribute to some signal emission. Those signals should be connected at widget creation to the attribute_widget update function. This will also give the possibility to have several widgets representing the same module (don't ask me what it would be useful for...). Several questions remaining:
+For practical implementation, the logic behind Qt signal slot mechanicsm, is that they connect object1 to object2 (that should both be QObjects). Do we want the module to be a QObject that implement(s) plenty of signals: input1_changed, duration_changed, average_changed, trigger_source_changed (one per relevant attribute). (?)
+Two other functionalities that are fully handled based on list of attributes at the module-level are
+As you saw the other day, there are some exceptions in the above-mentioned scheme. As far as I can tell, only the lockbox module should be concerned: Indeed, this module can also create or rename dynamically submodules (such as input, output, model, stage). That's why a few gui operations are not handled behind the scene by the BaseAttribute class --> I guess, the lockbox should simply emit custom signals such as input_created, output_created, stage_created, model_changed,..
+Of course, having the modules also inherit from Qt makes Pyrpl much more Qt based than it used to be. What do you think about that ?
+I am currently working on that on a new branch "signal_slot_gui"...
+Some parts in your above post did not gramatically make sense to me. I corrected it but am not sure whether I ended up with what you wanted to say. Please check whether it makes sense.
+My opinion:
+A good starting point is probably to have a look at the description of signal/slots in the Qt documentation http://doc.qt.io/qt-4.8/signalsandslots.html
+I am almost done with the generic case and cleaning up of the ScopeWidget where the acquisition logic was somehow entangled between the module and the widget. I guess the simplest is to describe what I did to illustrate the signal-slot mechanism.
+It was complicated to have the BaseModule class inherit from QtCore.QObject (because it is already using a metaclass), so the modules are not a QObject, but they have an attribute of type GuiUpdater which inherits from QObject. The class defintion is in modules.py:
+The very important point in the above code is the definition of the signal "attribute_changed" at the class level. This signal has to be an attribute of a class inheriting from QtCore.QObject.
+Then, whenever the user wants to instantiate a widget for a module, he will call module.create_widget(). This function returns a widget that has been connected to the gui_updater of the module by the function connect_widget. We see in the above code that the function widget.update_attribute_by_name is the one in charge of updating the widget to reflect the change of the module attribute. The definition of this function is in module_widget.ModuleWidget:
+This function is called a "slot" because it is used as the target of a connection. This function is called for every widget instance that has been connected to the signal some_module.attribute_changed when the signal is triggered. In fact, the signal is only triggered in one place in the code: in the BaseAttribute class of attributes.py:
+This way, we can completely remove any reference to the widgets inside the modules and attributes, they only need to be connected at widget creation time. For instance, we could decide for some reason to create several widget for a given module. Each time an attribute is changed, all the widget's update_attribute_by_name functions would be triggered, such that all widgets would stay in sync with the module...
+Regarding the API of the lockbox, the current status is summarized below, let me know if you would change something?
+p.lockbox.sweep() #launches a sweep with the default output (p.lockbox.default_sweep_output)
+p.lockbox.lock() #launches the full lock sequence
+p.lockbox.unlock() #unlocks
+p.lockbox.goto('stage_name') # directly goes to stage named 'stage_name'
+#I didn't add yet the start=some_stage, stop=some_other_stage, but it's straightforward
+p.lockbox.inputs # Returns a list of all inputs
+p.lockbox.outputs # Returns a  list of all outputs
+#inputs and outputs are also directly accessible by name (e.g. p.lockbox.pdh)
+p.lockbox.sequence # Returns the sequence object
+p.lockbox.sequence.stages #all stages in the sequence (also accessible by name)
+#adding/removing inputs/outputs/stages:
+p.lockbox.add_input/add_output/add_stage
+p.lockbox.remove_input/remove_output/remove_stage
+input, output, stage are all modules, such that they have a setup() function:
+Right now, the lockbox has a a model_name attribute. When changed, this changes a lot of things:
+Also, there are some coupling between the different submodules within the lockbox:
+Actually, having the lockbox (or its gui_updater) emit signals whenever model changes or output/input/stage is added/removed is probably a good idea also to implement these cross-couplings in the code without making things too entangled...
+Lots of bugs appear on my computer when the gui is loaded now:
+Traceback (most recent call last):
+File "C:\lneuhaus\gitHub\pyrpl\pyrpl\widgets\module_widgets.py", line 118, in
+update_attribute_by_name
+self.attribute_widgets[name].update_widget()
+KeyError: PyQt4.QtCore.QString(u'output_signal')
+Traceback (most recent call last):
+File "C:\lneuhaus\gitHub\pyrpl\pyrpl\widgets\module_widgets.py", line 118, in
+update_attribute_by_name
+self.attribute_widgets[name].update_widget()
+KeyError: PyQt4.QtCore.QString(u'gain')
+-----> fixed now
+i declare this done
+Mmmh, I would say to be entirely complete, it would be nice to completely remove any reference to the widgets inside of the module and attributes themselves.... in principle, if we have really done the job properly, this means simply commenting out the code self.widget =... in create_widget functions. Maybe we could also unit test creating 2 pyrpl widgets for the same instance...
+The separation is nearly okay for widgets.py, not so much for attributes.py where widgets are created at the instantiation of attributes. Since we will need to move quite a bit of code away, we should take advantage of this situation to clean up the instantiation of various modules, i.e. make it more readable and understandable what code is actually executed at startup (right now its a nightmare to figure that out if you are not "automagically" familiar with the code design - see lockbox.py for example).
+Furthermore, imho the base class 'attribute' should take care of saving and storing values, and that a derived class such as 'property' should deal with the introduction of the gui functionality, which is very different from how things are done now.
+Wait a second... Attribute widgets are definitely not created at attribute creation (or I wrote some code under the influence of a powerful psychoactive substance...)... They are created as they should, at line 159 of base_module_widget:
+And the pointer pointing to them in the attribute instance is in principle only there for historical and debugging reasons.
+Sorry the sentence above (that should appear crossed out now) is wrong! There is not even a pointer to the attribute_widget in the attribute itself (which would be impossible since attributes are defined at the class-level of modules...). The real place, and the only place where the pointer to the attribute_widget is stored is in the attribute_widgets dictionary of the module_widget.
+The biggest problems I foresee if we remove the "historical" pointer module.widget is that some unittests have been written using this shortcut... But apart from that it should be fine.
+Regarding the splitting of attributes in SaveableAttribute and SaveableAndDisplayableAttribute... The benefit doesn't look obvious to me as I don't see any use case right now where an attribute could be storable but not displayable, but I am happy to be proven wrong or to make the distinction if you see a potential use case in the future...

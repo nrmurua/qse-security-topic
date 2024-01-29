@@ -1,0 +1,43 @@
+I'm using 1.0 rc3 on windows. I was looking at storing pmt counts in the kernel and have written the following experiment,
+self.mutate_dataset seems to require a 10 ms delay between each detection which would be a little slow for us. One can work around this by just modifying elements of a list instead like in detect_list to reduce that delay to about 10 us. One can then feed that list into the dataset. Is there a better way of doing this? I'd imagine that many would like to store data in the kernel so maybe a function like mutate_dataset that doesn't have as long a delay could be useful to have.
+Fire-and-forget RPCs? They are currently used for attribute writeback but not exposed to user code in any way.
+That would just pile up.
+@r-srinivas it would be useful if you could elaborate what problem you are trying to solve here. "store data in the kernel" is not really what you are doing here. Why is detect_list() not what you want?
+detect_list is fine but then one would have to go through an additional step of sending it's elements to mutate_dataset for plotting it in an at applet or to store it. I was just wondering if there was a better way of doing this, and if mutate_dataset was meant to be used in the kernel in the first place.
+Do set_dataset() after sequence() from the kernel or from the host. Have you checked the examples, e.g. https://github.com/m-labs/artiq/blob/master/artiq/examples/master/repository/coredevice_examples/photon_histogram.py ?
+If you need to mutate a mutable dataset in-place without replacing it, then yes, use mutate_dataset(), from kernel or from host.
+@r-srinivas can we close this?
+if mutate_dataset was meant to be used in the kernel in the first place.
+Yes.
+Applets should also respond correctly to dataset replacements (set_dataset).
+You can create the output list in detect_list as a local variable, fill its elements, and then set_dataset it (you need to define a host function that will turn it into a numpy array right before calling set_dataset though).
+I had a look at photon_histogram.py. I guess my issue is not so much how to do it but the speed of the process. self.set_dataset and self.mutate_dataset involve delays of about 10ms to avoid RTIO underflows which make them a little hard to use within the kernel. It seems like we should stick to using it outside the kernel?
+Below is the experiment file I used just to look at the delays required to avoid underflow errors.
+@r-srinivas Yes. An RPC is a few ms. Both set_dataset() and mutate_dataset() are RPCs if done from kernels. If you use these at the end of your kernel or from the host, there won't be an RTIO underflow. Is that the question?
+It is still unclear to me what you actually want to achieve. Or what you want to know. Take a step back and look at the entire stack that these data travel through. Handling 100 updates per second will tax all components. For example, how do you expect your graphical user interface to behave if it can not replot a graph 100 times per second?
+You need to aggregate your data (gather in an array and update in bulk) and/or process it (build a histogram) if you want to be faster.
+Basically I'm trying to run the entire experiment without exiting the kernel between points or between repetitions to avoid long delays. It seems like using set_dataset() or mutate_dataset() also cause significant delays between points. It seems like just using a list is the way to go and to set the dataset once the experiment is done.
+However, that itself is problematic if we're using the dataset to plot out points while the experiment is running, just to see how it's doing. I'm wondering if there is a way to speed up  set_dataset() or mutate_dataset() to make it quicker in the kernel.
+Ok. There are a couple different things here:
+(1) Support scans on the core device (#118)
+(2) You need to reducing your data rate.
+(3) Some asynchronous RPC mechanism from kernels. But that can loose your data and you might not know or it will pile up and again backpressure the kernel and you are where you started.
+(4) Some pull-style mechanism where the host can actively collect/gather data that the kernel has prepared or is preparing.
+it will pile up and again backpressure the kernel and you are where you started.
+Not exactly, since the transmission could be done in parallel with the kernel execution then.
+For example, how do you expect your graphical user interface to behave if it can not replot a graph 100 times per second?
+For this particular case, the --update-delay option of applets will buffer several dataset modifications and refresh the plot once. But the scope of it is limited.
+Not exactly, since the transmission could be done in parallel with the kernel execution then.
+Yes. It will pile up at a different threshold. But for the experiment above it will pile up.
+@r-srinivas FYI and to understand what you trying to achieve here: currently, with hfgui, you are completely unable to see any of the data until all repetitions are done. And hfgui also has a significant (and variable) delay between scan points. I assume that you are aware that you are trying to do something new here.
+I'll need to measure what the delay on HFGUI is but I would have thought it was in the order of 100s of us. Any idea what delay this is for illuminizer @dleibrandt?
+@r-srinivas if you change anything on pdq/lda etc between points it is many 10s of ms with any hardware/software.  And there is still zero data until all repetitions are done.
+But are you certain that this is relevant and limiting? You will write experiments where a useful repetition count (e.g. 50) will make every point take longer than 10ms anyway (50*(100µs cooling + 100µs detection) = 10ms).
+I think we are all OK with the idea of aggregating data on the kernel and sending it back periodically, rather than every time a single iteration of the experiment is carried out.  The point is that it should be possible to do send back data periodically during the experiment (say every 100 ms or 200 ms) so that the user can see the data during the scan without having to wait for the end.
+The problem with the current design is that this RPC causes the kernel to wait (and do nothing) while it sends the data back.  There are two issues then: 1) the fractional amount of time spent waiting for data transmission vs. actually doing experiments, and 2) what happens to the ion cooling/experiment duty cycle management during the data transmission.
+If set_dataset() and mutate_dataset() were fire-and-forget, then neither of these issues would arise and we would be happy.  You would have some FIFO queue for the outputs of the fire-and-forget RPC to be sent back to the master, and you throw an error if this queue overflows.
+Sure. That is the solution that was outlined above. But contrary to how you let it appear this feature is not trivial. Depending on how this is implemented you may have to make sure the data doesn't change while it is being sent (the next point then can't use that array at all), and/or you may have to do the complete serialization in the kernel and then use DMA on a ringbuffer between the CPUs.
+Duty cycle management as an automatic feature is discussed somewhere else. You will need to push fixed slack or even complete dummy repetitions for now in any case.
+One relatively simple thing that can be done is allow mutate_dataset to modify several indices in a single call. Then the kernel can make a single RPC to send aggregated partial data, and pay some of the delays only once for multiple data items.
+If/when there is fire-and-forget, and the aggregation is efficient enough and contains data from a sufficient duration of the kernel's execution, then the data transmission will not slow down kernels much (except for serialization, memory management, etc.)
+In aluminizer, data is sent back to the PC to be plotted in a batched fashion.  Typically, about (10 scan points)*(100 experiments/scan point) are executed on the FPGA, then all of the data from those experiments is sent back to the PC in one batch and plotted, which takes 10-50 ms depending on what the PC is doing at the moment.

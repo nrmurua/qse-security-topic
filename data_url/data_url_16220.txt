@@ -1,0 +1,65 @@
+The simulator gets an segmentation fault during the statevector calculation with the Aer simulator. The ram consumption is around 7 GB out of 32 GB available (it doesn't run out of RAM). The virtual memory usage is around 15GB.
+It is necessary to execute the python code that I post below. This code has some configuration parameters. It is only necessary to modify the 'failure_parameter'. If I set the failure_parameter = 2 the code is ok (it prints statevector generated). However, if I set the failure_parameter = 3 (or greater), it gets a segmentation fault.
+It should calculate the statevector (as it does with failure_parameter = 2). The failure_parameter is a variable to create a circuit (greater value, larger circuit). The problem is the length of the circuit (the qc.size() returns around 800.000 with failure_parameter = 3).
+Important => With previous version of qiskit and aer there is no error.
+With these versions, the simulator DOESN'T get the error but it executes slower (like 3 times slower than current qiskit/Aer version). Monitored by htop, with 0.19.6/0.5.2 version consumes less RAM/virtual than the current version. So, it could be a memory management error.
+Python code:
+UPDATE
+I investigated the bug by myself and I got some answers.
+The segmentation fault appears in https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/transpiler/passes/analysis/depth.py#L23
+After generating a FencedDAGCircuit, it executes pass_.run(fenced_dag) in https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/transpiler/runningpassmanager.py#L177. It goes to depth.py (the above link) and it tries to get the attribute depth of the fenced dag but depth is not in the list of attributes, so it tries to access to a memory position out of the list, then segmentation fault.
+As I explained in my previous post, it only occurs when the circuit is very deep (if it is shorter, it finds the depth of the fenced dag without problem). I leave a trace that I generated with old school debugging (with prints because I can't access to the log file).
+-i- parallel.py:parallel_map() calling task...
+-i- parallel.py:parallel_map() calling task...
+-i- parallel.py:parallel_map() calling task...
+-i- execute.py:execute() transpiling...
+-i- transpile.py:transpile() calling parallel_map...
+-i- parallel.py:parallel_map() calling task...
+-i- transpile.py:_transpile_circuit calling pass_manager.run()
+-i- passmanager.py:run() calling self.run_single_circuit()
+-i- passmanager.py:_run_single_circuit() calling running_passmanger.run()
+-i- runningpassmanager.py:run() new passset
+-i- runningpassmanager.py:run() calling self._do_pass()
+-i- runningpassmanager.py:_do_pass calling _run_this_pass
+-i- runningpassmanager.py:_run_this_pass() executing transformation pass...
+-i- runningpassmanager.py:_run_this_pass() transformation pass EXECUTED!!
+-i- runningpassmanager.py:_do_pass dag calculated!
+-i- runningpassmanager.py:_do_pass calling _update_vaid_passes
+-i- runningpassmanager.py:_do_pass updated!
+-i- runningpassmanager.py:run() end self._do_pass()
+-i- runningpassmanager.py:run() calling self._do_pass()
+-i- runningpassmanager.py:_do_pass calling _run_this_pass
+-i- runningpassmanager.py:_run_this_pass() executing transformation pass...
+-i- runningpassmanager.py:_run_this_pass() transformation pass EXECUTED!!
+-i- runningpassmanager.py:_do_pass dag calculated!
+-i- runningpassmanager.py:_do_pass calling _update_vaid_passes
+-i- runningpassmanager.py:_do_pass updated!
+-i- runningpassmanager.py:run() end self._do_pass()
+-i- runningpassmanager.py:run() new passset
+-i- runningpassmanager.py:run() calling self._do_pass()
+-i- runningpassmanager.py:_do_pass calling _run_this_pass
+-i- runningpassmanager.py:_run_this_pass() executing transformation pass...
+-i- runningpassmanager.py:_run_this_pass() transformation pass EXECUTED!!
+-i- runningpassmanager.py:_do_pass dag calculated!
+-i- runningpassmanager.py:_do_pass calling _update_vaid_passes
+-i- runningpassmanager.py:_do_pass updated!
+-i- runningpassmanager.py:run() end self._do_pass()
+-i- runningpassmanager.py:run() new passset
+-i- runningpassmanager.py:run() calling self._do_pass()
+-i- runningpassmanager.py:_do_pass calling _run_this_pass
+-i- runningpassmanager.py:_run_this_pass() executing analysis pass...
+-i- runningpassmanager.py:_run_this_pass() generating fenced DAG circuit...
+-i- runningpassmanager.py:_run_this_pass() fenced DAG generated with 964559 nodes
+-i- runningpassmanager.py:_run_this_pass() running fenced DAG
+-i- depth.py:run() calculating dag depth...
+Segmentation fault (core dumped)
+Thanks for the additional information @roberCO. Since its happening during transpilation I'll transfer this issue to the terra repo so the relevant people can see it.
+The recreate script posted doesn't work because I don't have the input json. I was able to recreate the segfault locally with:
+It looks like the segfault is coming from retworkx because on my system the kernel log:
+My guess is it's a bug in the python binding lib that retworkx uses somewhere. When you were able to make it work on 0.19.6
+what version of retworkx were you using?
+I spent some time tracking this down. The segfault is originating in the upstream dependency of retworkx, petgraph. Specifically looking at the the back trace under gdb it's when retworkx calls is_cyclic_directed: https://github.com/Qiskit/retworkx/blob/0.7.1/src/lib.rs#L234 specifically inside the traversal code petgraph::visit::dfsvisit::dfs_visitor which is recursive and calling itself >70k times in my local backtrace. What it looks like to me is that there is a recursion bug (oddly not a stack overflow) in that function and for really large graphs it's causing it to segfault. There are some unsafe (meaning the normal memory protections the rust compiler provides are disabled) portions of code in the petgraph library that it uses for tracking which nodes it's visited during the graph traversal and I assume that is the underlying source of the bug.
+Regardless, in the short term I think there are 2 ways to fix this, one in terra and the other in retworkx, and we may want to do both. For the terra side fix we should remove the calls to  retworkx.is_directed_acyclic_graph()  from the DAGCircuit class, they shouldn't be necessary because the only way a cycle can be introduced is if something/someone is hand editing the inner private retworkx graph object outside of the DAGCircuit class's api. Without that call the petgraph bug that retworkx/terra are triggering should be avoided. On the retworkx side we should change the retworkx.is_directed_acyclic_graph() function to not use petgraph::algo::is_cyclic_directed anymore. In the short term we can use toposort which isn't recursive, or just do our own dfs traversal. Either should work fine and avoid the bug.
+@roberCO I've pushed up both fixes at #5505 and Qiskit/rustworkx#217 and confirmed both fix the segfault for me locally if you want to give either a try.
+Thank you very much @mtreinish !!
+I was testing with different configurations and it solves the problem. I will do other tests that take like a couple of days but it seems it solved.

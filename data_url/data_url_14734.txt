@@ -1,0 +1,27 @@
+The circuit as defined in ncx.qasm (below) produces different results after transpilation with the BasicSwap pass. Running the circuit without transpilation on the qasm_simulator backend produces an output of '100011111', and '110101011' with transpilation.
+transpiler_err.tar.gz
+The included transpiler_err.tar.gz has files transpiler_err.py and ncx.qasm, which demonstrate the outputs from the non-transplied and transpiled circuits. Run the example as:
+This will produce the outputs:
+{'100011111': 1000} {'110101011': 1000}
+For the above example, the output's should be
+{'100011111': 1000} {'100011111': 1000}
+Not currently sure. The work this example falls under is part of the QuantEx project, run by @nmoran who may add more details and suggestions.
+I will also list the explicit contents of the above files below:
+transpiler_err.py is defined as
+and ncx.qasm is defined as
+Hi @mlxd , thanks for reporting this.
+Can you try appending the measure to circ prior to running the pass manager? BasicSwap (and the other routing passes) will in general permute the final layout of qubits during routing. If measurements are present when the routing pass is run, they will be updated so the measurement values in the output counts will be consistent with the input circuit.
+H @kdk thanks for the suggestion. I can confirm that adding the measurement gates prior to the pass does fix the ordering. Though, the intended use for this circuit will be for feed into another stage, rather than a measurement at this point; the measurement here was more of a demonstration of the results we observed rather than full intended use.
+Do you think it possible to obtain and indicate this permuted ordering without the measurement? Or, if not, whether putting the measurement in and popping them from the circuit after the pass makes sense? Thanks again for all assistance with this.
+You are right that mapping sub-circuits is currently not supported. This is an open issue to permute the qubits back to where they were. We have code for doing this (TokenSwap #3762) but it has not been integrated in the default flow yet.
+Thanks for the update @ajavadia. For now we have implemented a workaround where we add measurements for each qubit, apply the transpilation pass (basic swap), read the final mapping of qubits from the measurement operations and finally remove the measurement operations. This is working well so far for the cases we have tried but will look into TokenSwap if we need something more robust.
+Should this issue be closed?
+Hi @1ucian0 If there is an existing task to follow the integration of the TokenSwap work to solve our above issue I can close this and follow that work instead.
+Though, happy to leave it at your discretion.
+I'm not sure there's another issue. This should be closed after this issue is fixed. It is simple:  just call the LayoutTransformation pass after routing is done. This will restore the original layout efficiently. I think this needs a transpile(restore_layout=True) option though, it should be opt-in.
+This problem is related to #4911
+The first step is to have a preserve_statevector (see #4911 (comment)) conflicting with coupling_map and initial_layout. Then we are going to introduce a pass to restore the layout to remove that conflict. We need to have a list of the swaps introduced to by the swappers in orden to undo them.
+I dont think we need to undo swaps. We should use the token swapper pass to take one layout to another. It can be much more efficient than undoing swaps (because the swaps were dictated by the pattern of gates).
+This is definitely a possible approach. Consider that the token swapper pass also needs to take a coupling map as an argument.
+Also not sure a preserve_statevector flag is the right approach. I think we should always preserve statevector. Just need a pass to clean up extra swaps if they appear before measurements (absorb them into the measurements and retarget them).
+Let's move this conversation about preserve_statevector to #4911

@@ -1,0 +1,22 @@
+Memoizing Cirq-to-qsim circuit translations in the QSimSimulator should reduce the overhead cost of circuit translation.
+A more complete solution requires Cirq-level redesign of the simulator API, including Cirq #4064 to prevent results from multiple repetitions from being stored in memory simultaneously.
+I'm happy to take a look at this.
+For my use case of running trajectory simulations with multiple repetitions, memoizing only the last circuit is sufficient. Are there other use cases where a larger data structure is necessary?
+In the near term, one possible use case for multiple-circuit memoization is "chunked circuits". Since qsim does not yet support intermediate state simulation, if a user wants to get the state partway through the circuit they must simulate the "chunk" before that point, get the result, then use that result as the input for the next "chunk".
+Repeated simulation of such a circuit would benefit from memoizing all "chunks", which may each be a distinct circuit.
+We could potentially add a new constructor parameter circuit_memoization_size to indicate how many chunks should be kept.
+Looks like Circuits are not hashable (presumably because it's mutable?). Are there other hashing strategies offered by Cirq, or do we have to resort to a linear search?
+There are a couple of options for hashing, with considerations for each:
+Does the FrozenCircuit happen to guarantee not having hash collisions for different circuits, i.e. can we bypass the equality check?
+Does the FrozenCircuit happen to guarantee not having hash collisions for different circuits, i.e. can we bypass the equality check?
+The larger issue here is that hash(FrozenCircuit) is not a constant-time operation - it's O(N) for an N-gate circuit.
+As far as hashing goes, I'm hesitant to provide a "no-collisions" guarantee as there was staunch opposition when I attempted to use a similar guarantee in FrozenCircuit serialization (see quantumlib/Cirq#3673, though most of the discussion was sadly offline).
+I was thinking the hashing time penalty can be mitigated by storing the hash as a circuit field since it's immutable. If the chance of collision is generally low, limiting to equality checks to hash hits would still improve performance, provided that hashing is reduced to O(1) as described above.
+edit: Actually saving the hash doesn't help much since hashes are computed only once or twice anyway for each circuit (once when checking if a given circuit has already been saved, and maybe one more time when saving the circuit).
+Although hashing is O(n), memoizing circuits in a set is still more time efficient than searching and performing equality checks through a list. So while the simplest solution is to use a list to memoize circuits, a more efficient implementation is to have a FIFO set with a size limit.
+How common is the chunking use case with huge circuits? Is the list solution sufficient?
+Synced offline. Since there are only a small number of use cases, some of which will be taken care of by a bigger change in the future (i.e. intermediate state simulation support for chunking), will implement the simplest solution with a list.
+Just to double check - since qsim isn't yet 1.0, we are free to change QsimSimulator's constructor parameters in the future right?
+Just to double check - since qsim isn't yet 1.0, we are free to change QsimSimulator's constructor parameters in the future right?
+Yes, these parameters are open to change, although for consistency with Cirq it would be ideal for QSimSimulator() to continue working (e.g. with some reasonable defaults for new parameters).
+For the record: we currently have no plans to release a 1.0 version of qsim, even after the 1.0 release of Cirq.

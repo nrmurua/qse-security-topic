@@ -1,0 +1,10 @@
+For the data with size 200x200x200x2 (order of magnitude) (for independent parameters and one dependent) from ~9GB database file, the loading time was ~5 minutes.
+The problem is presumably in DataSet.get_data (or it needs to be proven that the problem is not there). But an investigation is needed.
+Original piece of code:
+An investigation has been performed.
+DataSet.get_data calls get_data function from sqlite_base. get_data queries the data, and then calls many_many to "fetch" it and reshape list of rows into list of columns:
+It turns out that profiling shows that many_many takes 99% of the time of the DataSet.get_data call, and ~12% of that time is spent on the list comprehension, and ~40% of the time is spend in _convert_numeric function (that converts sqlite type into python floats or integers).
+Using cursor curr as iterator instead of curr.fetchall() does not provide any improvement.
+Using DataSet.get_data for multiple parameter names (columns names) at once, instead of calling get_data for each parameter separately, is faster. For example, calling get_data once with 4 parameter names as its arguments is ~40% faster than calling get_data 4 times for 4 parameters.
+I could not find any way for sqlite3 to return already columns of data instead of rows (yes, its highly efficient sqlite3.Row). Hence, reshaping the "list of sqlite3.Rows" seems unavoidable.
+At the moment, I do not have any smart ideas on how to improve this. (the new benchmark can be found in https://github.com/astafan8/Qcodes/tree/bug/get_data_speed branch)

@@ -1,0 +1,19 @@
+best implemented with
+-> max. 16k points
+-> proper windowing
+-> no fpga changes needed
+Hi Samuel,
+I've seen your SA skeleton. Thanks for starting. In the end, I was hoping more for a single function to call, similar to the function na_trace. The user might want to call a funtion
+r.scope.spectrum(center, span, rbw, avg, input="adc1", window="flattop", acbandwidth = 50.0, iq='iq2'). In the simplest approach I would link rbw and span, i.e. prioritize span if both are defined and issue a warning in that case. For more advanced approaches one can either glue several spectra together (ugly but should work) or use the continuous acquisition feature to come. I don't think the user should have the freedom to select the scope channel, as I would take both quadratures at the same time for faster and more reliable spectrum information. Thats why I'd add the spectrum function to the scope, since it occupies all of the scope.
+btw you should use this function for the window i think:
+http://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.get_window.html#scipy.signal.get_window
+another ting: i thought about your FPGA change Samuel: I believe you can just instantiate a copy of the redpitaya_iq_block.v, i.e. redpitaya_scope_iq_block.v in the scope. All you have to do is erase the modulation part, and leave the sin and cos signal of fgen unconnected. That way vivado will understand that only 2 look-up-tables (LUTs) are needed and not waste resources on them. For writing the registers, I would pick an address space and forward it through to the customized iq module.
+Addresses 20'h00???, 20'h1????, 20'h2???? are used by the scope. So I would devote and forward simply 20'h01??? to the iq module. That way we do not need a new implementation of the IQ module. The way to do this is to feed the ren and wen signals of the iq module with (sys_ren & sys_addr[20-1:12] == 8'h01) and (sys_wen & sys_addr[20-1:12] == 8'h01) and forward all other bus signals.
+If you want, you can also directly modify the iq_block with a parameter ONLY_DEMODULATION which is only true for the scope instance of it. Then add
+generate if (ONLY_DEMODULATION == 1) begin .... end endgenerate blocks
+around the sections of iq that are not needed. That way we don't end up with the same code in different files.
+SpecAn gui works but easily crashes. It suffices to click 'run continuous' and then click anything but 'stop'.
+the specan gui seems much better now. But still, it crashes when i do continuous acquisition and change the span for example. I will recompile the bitfile with a 4th order lowpass for iq2. Maybe you can have a look at the python part samuel?
+So, I started working on the spectrum analyzer as it becomes really necessary for me now. I started by deleting plenty of the code because I didnt understand it (in a different brach of course, just for testing). Now I'm having second thoughts as to whether some things had a deeper reason.
+If you read this and have a few minutes, could you (Samuel) give a short summary of the design considerations you had in mind when you worked on it. Im thinking about 10 lines describing the math behind the code, along with making the association between the mathematical formulae and the variables used in the code? To that end:
+Things to do:

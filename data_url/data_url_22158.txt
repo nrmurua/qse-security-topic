@@ -1,0 +1,101 @@
+... seems to be around 25 kB/s currently (rust/smoltcp). Should and could be much faster.
+https://irclog.whitequark.org/m-labs/2017-03-17#1489751108-1489752071;
+(Commenting here, since #732 was closed.)
+I've had a quick look at our specific setup with varying levels of background (broadcast) traffic and different window sizes. I don't really have the time to fix this myself right now, but here are some bullet points:
+And on the MAC side of things:
+ACKs should be sent immediately on zero-window (or after having received two MSS-size packets). Currently, they always seem to be delayed.
+smoltcp does not implement delayed ACKs, this is an artifact of how we perform scheduling. I think this can be addressed, I'm currently trying a few approaches.
+Packets with non-consecutive sequence numbers shouldn't be dropped silently, but cause a duplicate ACK so that fast retransmission can be triggered for the dropped segments.
+Correct. This is the main reason for slowness.
+ACKs with the wrong sequence number should trigger a challenge ACK instead of being dropped.
+This would just be handled by the same logic as above.
+Related to the previous points, advertising the full receive window size and leaving the limited rx ring buffer size for the remote slow start/congestion control implementation to deal with seems like the much saner choice than trying to limit the window size
+It seems like a much saner choice but after experimentation I have determined that the Linux and Widnows TCP stacks in the default configuration are unable to deal with it correctly. The current situation is far better, if flawed conceptually.
+TCP reassembly would help a lot with recovering from dropped packets. Since those are going to be relatively frequent with the slow NIC, I think implementing this should be a priority after fixing the ACK issues.
+Implementing standards-compliant TCP reassembly is very tricky to do without heap allocation, especially in a space-efficient way. I've been thinking about the best way to do it, but I do not have a particularly good solution so far.
+The current rx ring buffer size of 4 is rather small for a Gb link, making it more sensitive to bursty but small broadcast traffic than necessary.
+Indeed, I'm rather unhappy with the current MAC. It doesn't support jumbo packets (which would remove a lot of overhead in the runtime), it doesn't support MAC address filtering (which would eliminate packet loss due to broadcast traffic), and it doesn't do DMA, which limits buffer sizes by the amount of free BRAMs in gateware. MAC address filtering is perhaps the easiest to address here...
+Theoretically, jumbo frames are easy, and would boil down to changing a few numbers in the MAC followed by the usual yak shaving.
+Anyway, lwip gave out 1MB/s with the current MAC and only 2 buffers.
+@sbourdeauducq This is just a wish, or maybe even a premature optimization. It should not be necessary to get lwip-like speeds.
+@cjbe How was the KC705 connected to the PC when you made the dump in #731? Did it go through some network router that can fragment a packet that is too large for MTU of the outbound port?
+@sbourdeauducq it was connected through a D-Link switch (DGS108B). I can try it with a direct connection tomorrow if that would be useful?
+smoltcp does not implement delayed ACKs, this is an artifact of how we perform scheduling.
+Makes sense, thanks – I was wondering where the delay came from, since I couldn't see anything obvious in the stack itself.
+It seems like a much saner choice but after experimentation I have determined that the Linux and Widnows TCP stacks in the default configuration are unable to deal with it correctly. The current situation is far better, if flawed conceptually.
+Fair enough. I wonder whether the outcome would change with "proper" ACK handling and out-of-order support, though.
+Implementing standards-compliant TCP reassembly is very tricky to do without heap allocation, especially in a space-efficient way. I've been thinking about the best way to do it, but I do not have a particularly good solution so far.
+It should be perfectly workable to keep a free list backed by a static pool around to store per-segment metadata (sequence number ranges, …), while building up the payload directly in the circular buffer. The tricky bit seems to be to make sure to get the various state transitions/edge cases right, not the method used for memory allocation (given that you can always just bail and revert to dropping the packet). What am I missing?
+You don't even need to support IP reassembly; a simple queue of incoming segments would be enough for this to be a huge improvement. This might not qualify as a "particularly good solution" according to your criteria, but a few-entry queue should get the job done admirably for our use case.
+If you have any patches to test on our network environment(s), just ping me and I'll be happy to oblige.
+@sbourdeauducq here is a packet dump with the KC705 directly connected to the PC - it looks qualitatively similar to the dump through the router.
+Tentative patch by @whitequark:
+@klickverbot @cjbe @dhslichter should be better now.
+It should be perfectly workable to keep a free list backed by a static pool around to store per-segment metadata (sequence number ranges, …), while building up the payload directly in the circular buffer.
+Yeah, this is how I would also go at implementing this. However this is a rather nontrivial chunk of work.
+Packets with non-consecutive sequence numbers shouldn't be dropped silently, but cause a duplicate ACK so that fast retransmission can be triggered for the dropped segments. This avoids the ~1 s pauses in some of the traces floating around here.
+I've implemented duplicate ACK responses in smoltcp. This improves things considerably.
+To summarize, the following test:
+running over the LAN now reports speeds of at least 1 MB/s, and up to 1.8 MB/s. I believe this can be further improved, but this should already be acceptable.
+Here are the TCP throughput graphs for the test above.
+First for a capture with 1.1 MB/s rate (which is consistently reproducible):
+
+Second for a capture with 1.8 MB/s rate (ideal conditions):
+
+Neither has any retransmissions so I'm not sure exactly where the difference comes from.
+Pcap files
+@klickverbot
+advertising the full receive window size and leaving the limited rx ring buffer size for the remote slow start/congestion control implementation to deal with seems like the much saner choice than trying to limit the window size
+I re-checked this again after implementing duplicate ACK responses. This doesn't work. The core device ends up sending exactly thirty eight (amusingly it's very consistent) duplicate ACKs in response to the host pushing the window, and this drops throughput to less than 100 kB/s.
+See for yourself:
+
+Pcap files
+I think the reason for this is that smoltcp always announces the entire buffer it has, however large, as its window, and this is not quite what one should do. This should ideally be replaced with a proper window management algorithm, which I should read up on, I guess...
+The two pcaps (1.1M and 1.8M) are exactly the same.
+The two pcaps (1.1M and 1.8M) are exactly the same.
+Hm, wireshark has messed up filename management. I've lost the other pcap then sadly.
+@jordens Packet captures reacquired and comment above updated.
+This is finally fixed! 🎊
+I very consistently get ~300 kB/s with the latest master, measured at the same LAN as the core device:
+This is nice to have the improvement, thanks @whitequark.  However, this is still very slow in the grand scheme of things, especially if we are going to larger Sinara setups.  It seems that we should be aiming to go at least an order of magnitude faster (if not more) once we are working with Metlino cards driving multiple uTCA crates etc -- complex experiments, with all the attendant parameterized waveforms, plus the possibility of a lot of data needing to be RPC'ed back to the PC.  It would be a big problem if all the fancy hardware were laid low by a slow TCP connection to the core device.
+@dhslichter I agree. This is actually slower than the results I've presented earlier in this thread.
+What I find encouraging is that unlike the previous problem ("the TCP stack completely breaks the expectations of the peer and destroys throughput"), the new problem ("the TCP stack is not tuned quite optimally") is much more tractable, and shouldn't require anywhere as much work.
+I'm not yet sure why it's three times slower yet, I've just started investigating it.
+Sounds good @whitequark, and I am glad that you have managed to improve the reliability here (I do recall your reporting better numbers before, but with consistency/reliability issues).  Definitely seems like tuning the TCP stack to optimize throughput will be a more straightforward task.  Anyway, my main message is "good work!" :)
+@dhslichter You wanted an order of magnitude faster? Well, how about ~2.2 MB/s? The throughput graph looks like this now. I believe it's limited by TCP Slow Start at the very beginning:
+
+Note that this is only host to core device though, core device to host is still 300 kB/s. I don't know why, everything seems perfectly normal both in packet dumps and TCP debug log, except that occasionally the core device stops sending packets for 150ms. (No retransmits.) I think it might be an artifact in the test.
+@whitequark I just tried 3.0.dev+1303.gc5fe2799 and I still see very low throughput with continuously increasing retransmit delays.
+Here is the packet dump from running transfer.py (which did not complete before I got bored).
+@cjbe No wonder, commit c5fe279 does not include any of the fixes I added to master...
+Ooops - that build (which conda install gave me) was from the sinara branch, hence does not have the latest fixes. Despite that, using 3.0.dev+1280.g20f43d57 I see the same problem.
+dump.zip
+@cjbe What is the OS used on the host machine?
+Linux (3.19.0-84-generic)
+@whitequark Good work on smoltcp!
+But (assuming RTT is in the ms range and you are testing this locally) I would not expect any of those 200 ms quiet periods in there. They look like some retransmission timeout. And from what I have seen in on other TCP those are usually not encountered at this stage.
+Those long timeouts might not affect sustained transfer speed. But for the small transfer (kernels << 1 MB) that we are doing they are critical.
+@jordens No timeouts (retransmissions on the transmit side and out-of-order packets on the receive side go into the log at WARN level, easily noticeable). The quiet periods are all on the host side. One of them is the compiler latency, the other I'm not sure.
+@jordens Actually, I'm not sure why the graph above is so pessimistic. Here I ran three kernels in rapid succession. It takes about 9ms from the end of one kernel to the start of another. No 200 ms quiet periods:
+
+Here's the log and the  packet dump.
+@whitequark ack. i thought they were raw transfers with fast source and and discard sink.
+Note that this is only host to core device though, core device to host is still 300 kB/s. [...] I think it might be an artifact in the test.
+I have determined that this is an artifact in the test. If, instead of an RPC, I directly transmit a large chunk of data (e.g. core log or analyzer buffer) then the throughput is also ~2.2 MB/s. Of course, this is still a problem, but it's not a problem with the TCP/IP stack.
+
+@whitequark interesting.  Definitely will need to see why the RPC does so much worse.  And good to see that rates >1 MB/s are appearing now.  The throughput and latency issues with the host-core device communication is probably the most major roadblock to switching to ARTIQ 3 for us in the lab right now, so keep us posted on how the debugging progresses.
+I've implemented reassembly of out-of-order segments in smoltcp, see c1829f3.
+@whitequark: For a simple test kernel that just sends 1 MB of zeros back and forth, I am now seeing about 18 MB / s (!) from master to kernel, and about 19 MB / s from kernel to master (same Linux 3.19.0-84-generic system as earlier). This almost seems too good to be true – if those numbers hold up in real-world usage, this is definitely fast enough for us in the short term. Long-term, we would like to get close to GbE line speeds, but this will of course involve more than just a few tweaks to the TCP stack (i.e. it might require changes to the SoC architecture).
+Having a quick look at the package captures, there still appear to be more duplicate ACKs than expected in the steady state (with smoltcp-rs/smoltcp@64369d9), but since the core device receive performance is almost identical to the other direction where Linux just gobbles up packets at full speed, I didn't have a closer look at it yet.
+Anyway, great work!
+(Edit: To preempt the obvious question – no, as far as I can see, I didn't mix up bits and bytes.)
+Great work @whitequark ! I get 2.3MB/s in both directions.
+@klickverbot can you share your source code that displays 18MB/s?
+@klickverbot Or packet captures, in both directions, I'd be quite curious to look at the duplicate ACKs.
+That machine seems to have crashed, it will take me a while to get back to the lab to revive it. But by now, I suspect there might be some funny business going on with the clocks in the firmware build I was using, as I was using the core device RTIO counter for timing.
+@whitequark there was indeed a factor 8 error in the numbers from @klickverbot : we were seeing about 2.4 MB/s in the above tests, not 18 MB/s. Here is a dump of a 1 MB master -> kernel transfer showing duplicate acks, then a 1 MB kernel -> master transfer.
+This is all with the core device connected through a 100M switch - I will try it with a 1G switch on Monday.
+Indeed – while I didn't mix up bits and bytes, the code mistook eight nanoseconds for just one due to a mismatching device db, as Chris pointed out. At least you now know what I would consider acceptable transfer speeds. ;)
+@cjbe: Your dump presumably didn't include smoltcp-rs/smoltcp@64369d9? Or was this with my last firmware build?
+I've also resurrected the test box and tried again swapping out the 100M switch with our Netgear ProSafe GbE switch. The extreme packet loss issue still persists (less than 1 % ICMP pings make it through, with no networking-related messages at TRACE log level). I (or Chris) will give it another go on Monday with a stock gateware build and open a separate issue to keep track.
+@klickverbot my dump was from the firmware build you put on the board

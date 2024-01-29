@@ -1,0 +1,17 @@
+Right now both external and internal qsim simulator and statespace objects make use of structs with static templated methods in order to provide parallelization support. For example: https://github.com/quantumlib/qsim/blob/master/lib/parfor.h . In order for TensorFlow Quantum to finish transitioning over to this version of qsim from the one we had originally adapted we need to write our own struct that defines the static methods Run and RunReduce that make use of Tensorflow's threadpool.
+Unfortunately unlike OpenMP, TF Threads are not global state that you can immediately use with some kind of #pragma. The way TensorFlow works is that when a C++ op is called it is supplied some portion of TensorFlow's available threads at call time. It is then our job to give these threads work to do. The problem is that because these threads are supplied to a local function at call time we can't make use of a global state and can't have our Run and RunReduce be truly static. I have tried some alternative like this:
+Which had not let to much success because TFQ might have many instances of a qsim powered op running at once competing for and overwriting the context resource (digging into writing a resource lock compatible with TF threadpool isn't something I think we want to do either).
+With all of this in mind I'm proposing that we move from templating the type of the XXXFOR struct we want a simulator and statespace to use, to instead supplying instances of the XXXFOR struct to the methods that require it. This would mean instead of doing something like:
+We would do
+This seems like a simple way to allow one to incorporate the amount of local/object state needed for parallelization with TensorFlow. What do you @sergeisakov and @95-martin-orion think ? (This is a blocking issue for TFQ to transition over to this version of qsim)
+Some context on the qsim side: this should only affect the *for.h, simulator_*.h, and statespace_*.h files. TFQ calls the methods provided by simulator and statespace, so the new For object could be passed in from there.
+This is in the simulation "hot path", but by passing reference objects I think we can avoid any significant performance impact.
+I think this is a good proposal. I'll do this in a slightly different way like this:
+Instead of passing a For object to every function, I keep the classes templated and add a (lightweight) For object to them. This requires only minimal changes to statespace*.h and to simulator*.h and basically no changes to the existing client code and tests.
+Ok, just to clarify with this new way of doing things can I still do something like this ?
+and expect things to work ?
+Yes, it is expected to work if tfq::TFQFor has a copy constructor (user-defined or implicit). One doesn't have to define my_for. The following will also work:
+Ok great.
+I’ll do this in a slightly different way ...
+When could we expect this to be a part of qsim with a new GitHub release ?
+Hopefully, it will be in the repository in less than a week.

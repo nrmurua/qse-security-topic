@@ -1,0 +1,25 @@
+How should for loops behave in a parallel block?  I would expect that the entries in the for loop would be executed in parallel, but it seems that the entries are executed sequentially.  This follows from the fact that the the parallel block at completion calls at_mu and resets the timeline cursor, but this does not happen inside the for loop.
+I found this related issue while writing this: #1151
+
+Here is a minimal example:
+gist
+In the example, if you add the uncommented lines back in it will perform as I would expect.
+Here is the output without resetting the timeline:
+
+Here is the output with resetting the timeline:
+
+If this is the intended behavior it would be nice to add some documentation that a for loop implicitly breaks the parallel block, and it might be nice to add something to the language to perform the operation without manually moving the timeline.
+Documentation would be good indeed – the way it works it that the cursor is reset before each statement in the parallel block. A for loop is a single statement in just the same way that a function call is.
+I think this behavior is a little confusing, and I can't think of a situation where I would want to put a for loop in a parallel block and have it execute sequentially.
+The posted work-around is very simple, but I can see this could trip up new users. Would there be any appetite for making a base level for loop a special case inside a parallel block, running each iteration in with parallel?
+A for loop in a parallel block would be expected to operate sequentially, because parallel behavior is only for all events at the top level of the parallel block.  You want this to be the case, because if running inside a parallel block cascades such that everything at sub-levels within that block is made parallel, you will have undesired behavior for someone who wants to run a sequential sequence inside.  For some of our gates, for example, we want to turn on a field that is always on during the gate, and then have sequential DD pulses spaced at appropriate times during that pulse in a sequence.
+This is one of those issues where the more Pythonic one wants to get with kernel code, the trickier it is to cover all the corner cases.  My strong belief is that something like the base parallel statement should be as simple as possible, with no edge cases that try to assume what the user wants, and it is incumbent on the user, if they want to make this more Pythonic kind of automated parallelism, to write the glue that makes it come together.
+That said, the documentation on parallel does not explicitly state this, so we might make a pull request describing the actual functionality in detail.
+NAC3 implements deep parallel (parallelism stops at function calls).
+@sbourdeauducq will this clobber the existing parallel context or will it be renamed?  Lots of legacy code will be broken by this and need to be repaired.
+We can add a legacy_parallel context to NAC3 if you really want. Then it should just be search-and-replace until you are ready to refactor.
+There are a number of incompatibilities with NAC3, you will need to review and modify experiment code anyway. To give you an idea, here are some drivers ported to NAC3:
+https://github.com/m-labs/artiq/blob/nac3/artiq/coredevice/ad9912.py
+https://github.com/m-labs/artiq/blob/nac3/artiq/coredevice/ad53xx.py
+https://github.com/m-labs/artiq/blob/nac3/artiq/coredevice/adf5356.py
+https://github.com/m-labs/artiq/blob/nac3/artiq/coredevice/urukul.py

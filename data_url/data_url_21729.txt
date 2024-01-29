@@ -1,0 +1,34 @@
+There seems to be an issue with handling of negative numbers in SUServo.
+Simple demo
+When I set offset to positive numbers, the data I read back matches the data I write:
+if I now change offset to a negative number then the value I readback is unaltered:
+Moreover, some negative offsets seem to have unexpected consequences such as disabling the servo.
+I've also seen issues with the ADC readings from get_adc returns large positive numbers when the input voltage is negative. Any ideas?
+This is using Artiq 5.
+Master is 5.0.dev+1025.g92adca41.dirty
+Also, unless I'm missing something, there seems to be an issue with data[6] (the lower bits of the ftw) always being 0.
+Note to self: the current delay in get_profile_mu isn't large enough and pretty deterministically gives underflows. Increasing to 6us fixes.
+I suspect the issue is related to 
+AFAICT value is a twos complement 32 bit integer. So for negative numbers all the higher bits are set, which corrupts the address (although I don't fully understand the SUServo memory structure so hard to be sure).
+Okay, all these issues are related to not correctly masking off bits in the data written.
+I'll submit a PR tomorrow.
+@jordens am I missing something, or does this issue appear multiple times in the SUServo code. e.g. 
+Usual suspect: 5631520
+(see #1252)
+cc @whitequark
+@jordens another thing I don't understand:
+This fragment sets the a1 coefficient to 1 and then reads it back.
+printed output is print:[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1]
+numbers I write to this coefficient all seem to behave as I expect apart from those two bits being set. Have I misunderstood how this is supposed to work, or is there a memory corruption issue here?
+Could you check whether this is a regression from release-4? There were the new rtio register API and the compiler changes.
+Well 4.0 if the compiler change already landed in releaee-4.
+@jordens I'll have a look at that soon. However, looking over the coredevice code it seems to me that there are issues that need addressing anyway, even if they only became symptomatic after the compiler changes.
+I've started pushing fixes here: https://github.com/hartytp/artiq/tree/suservo
+@jordens one thing that got us here (but which isn't necessarily a bug) is that the adc machine units can be negative, but are stored as the LSB of a 32-bit number. So, doing arithmetic on the raw mus for negative voltages can get one into trouble. I suggest that we either (1) convert all numbers to proper twos complement 32 bit numbers; or (2) make this clear in the documentation. Preferences?
+Iirc sign extending the read port on that memory is fine. The coefficient memory might be trickier.
+Okay, I'll sign extend at least get_adc_mu, and have a think about what to do with coefficients.
+Now that I understand this bug, it's not really a problem. #1258 is much more concerning.
+Sign extend the memory port. It's cheaper than in software.
+@hartytp is this resolved now with the patches? does it affect release-4?
+I haven't checked release 4 so can't comment.
+The negative numbers issue isn't fixed yet -- I had a tested sw patch that you rejected in favour of a gw solution. I've written but not tested a gw solution. It's been second thing on my to do list for a while now...

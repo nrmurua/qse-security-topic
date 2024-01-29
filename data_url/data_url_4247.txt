@@ -1,0 +1,24 @@
+When I run the install commands given in the documentation:
+or:
+The install fails with multiple distinct errors:
+I think the first two errors are because the documentation says I need to install "build tools" but doesn't actually say what they are or how to install them. So I wasn't able to do that. (I do have g++ installed.) But the third error looks typical of a python2 data-vs-str encoding issue.
+Interestingly, when I separately run sudo pip3 install pybind11, then sudo pip3 install projectq starts to work.
+Maybe the package is not correctly specifying pybind11 as a dependency?
+Repro steps:
+pybind11 is correctly included in the requirements.txt:
+https://github.com/ProjectQ-Framework/ProjectQ/blob/master/requirements.txt
+Any ideas why pip install projectq would switch from failing to succeeding after installing pybind?
+I have no clue and I think it's really weird that pip does not install pybind despite it being a requirement.
+Matthew thinks it's because of line 30 in setup.py, which has to build an Extension that uses pybind11. But this is before the setup call that actually installs pybind11.
+It looks like this could work if we could tell pip to install the required libraries before building the extension module.
+Line 146 creates an exception but doesn't raise it?
+I think there might be a problem with the 0.2.0 package that was uploaded to pypi. If I checkout git master and do pip install . it works. But pip install projectq fails in the way @Strilanc mentioned, and it also fails if I download the 0.2.0 tarfile from pypi and try to run pip install . there.
+Edit: false alarm; the 0.2.0 tarfile seems to behave the same as master, so at least the uploaded archive matches git. Still a problem with getting the version from pypi, however.
+Ok, I think I see the problem. As of version 6.0.1, pip does a topological sort on dependencies before installing them, so that dependencies of package foo get installed before foo itself. Prior versions of pip did not make this guarantee. If I create a new virtualenv on my system (ubuntu 14.04) I get the ancient system version of pip, version 1.5.4. In that case after collecting all the packages, pip says:
+So basically it is trying to install projectq before pybind11, which fails. The solution is to update pip itself in the virtualenv:
+Then when I run pip install projectq I get the following:
+Crucially, it installs pybind11 before projectq and everything works fine.
+I notice a lot of install instructions often start with pip install --upgrade pip, presumably because of stuff like this... makes me think the package should really be able to declare a minimum version of pip.
+Thanks @Strilanc and @maffoo, this is good to know.
+Also, I added the missing 'raise' in setup.py. Thanks for pointing this out!
+My only other suggestion would be to add a note in the tutorial to let users know they might need to update pip before installing projectq itself. Aside from that I think we can close this issue.

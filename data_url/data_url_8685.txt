@@ -1,0 +1,42 @@
+Hi,
+Discovered this pretty obscure bug when I wanted to calculate the two largest eigenvalues of a Liouvillian. If the Qobj is non-hermitian, and you use the sort='high' argument and eigvals = n, you will be returned the n smallest eigenvalues instead of the n highest, as you would expect.
+Example that reproduces the bug:
+In [179]: from qutip import *
+In [180]: (1j*sigmaz()).eigenenergies(sort='high')
+Out[180]: array([ 0.+1.j,  0.-1.j])
+In [181]: (1j*sigmaz()).eigenenergies(sort='high',eigvals=1)
+Out[181]: array([ 0.-1.j])
+Let me point out that this is handled properly for hermittian Qobj's.
+QuTiP version: 2.3.0.dev-183568a
+I think I have found the problem and will submit a bugfix. The problem was a bug in sp_eigs: when selecting large eigenvalues the eigenvalue vectors is flip (left <-> right) but then later on still the highest (which has become the lowest) eigenvalues was extracted from the total list of eivenvalues... We should probably restructure the function sp_eigs a bit... right now it is trying to do a little bit too many things. At least it should be split into sp_eigs and dense_eigs.
+Thanks for finding and reporting the problem. If seen this in other problems, in addition to your bug report problem. please check if the following patch fixes it.
+Hi Robert. I think the bug is still there for the sparse solver. Also, just by looking at the code, I think there is some bug in the sparse routine in terms of what the eigenvalues are sorted by for sort='high'. It appears that if sparse=True, sort='high' and op.isherm=False, then eigenvalues are sorted by largest magnitude (which='LM' argument to sp.linalg.eigs), whereas in non-sparse solver they are sorted by largest real part (which='LR').
+Cheers, Arne.
+Yes there seems to be an inconsistency in when LM and LR are used. Will try to sort this out.
+For eigs/eigsh LR and SR might correspond closer to the behavior for dense matrices. I'll write some test cases for this before I do any changes.
+This is somewhat unrelated, but I might also mention that I have experienced getting different answers for the dense and the sparse solver. This has nothing to do with qutip, as I tried calling scipy.linalg.eigvals() and scipy.sparse.eigs() directly. In certain cases, the sparse solver would output completely different values (difference being much larger than the specified relative tolerance), even though the maximum number of iterations was not reached. Not sure what to make of it, but I guess I would trust the dense solver more than the sparse one.
+Interesting.. I have not seen that behavior. If you could show an example next time you run into that I'd be interesting to see it, and probably the scipy people would be too if it really can be traced to a problem in scipy.linalg.eigvals or scipy.sparse.eigs. You could also try to compare with what numpy.linalg.eigvals gives...
+I have made one small change in the qutip sp_eigs function (50e5231), and created a notebook with test cases, which seems to behave as expected (68579ff). You can see the notebook through nbviewer as well:
+http://nbviewer.ipython.org/urls/raw.github.com/qutip/qutip/master/notebooks/test-eigenvalues.ipynb
+I take that back... there seems to be a bug with the argument combination "sparse=True, eigvals=5, sort='low'"
+Edit: With a1fe271 sorting of both sparse/dense and hermitian/nonhermitian eigenvalues seems to be consistent, according to my test cases anyways..
+Let us know if you still see some strange behavior..
+Thanks Robert.
+As far as the problems with the sparse solver in scipy, I have read around a bit and found that the solver doesn't perform well for finding eigenvalues with small magnitude. From a scipy tutorial:
+http://docs.scipy.org/doc/scipy/reference/tutorial/arpack.html
+Note that ARPACK is generally better at finding extremal eigenvalues: that is, eigenvalues with large magnitudes. In particular, using which = 'SM' may lead to slow execution time and/or anomalous results. A better approach is to use shift-invert mode."
+See also the example on that page. I tried using the 'shift-invert mode' as suggested, and that gave better results. But, they are still pretty bad for the problem I want to solve: I'm trying to find the low lying spectrum for a very large Liouvillian, as I vary a single external Hamiltonian parameter. The smallest one (in magnitude) is always zero, and all others are negative. Supposedly, the vanishing of the real part of the eigenvalue with the second largest (closest to zero) real part can be useful for characterizing phase transitions, see, for example, this recent paper: http://prl.aps.org/abstract/PRL/v110/i15/e150401.
+I attach a plot where I have computed the eigenvalue with second largest real part (which is also the one with second smallest magnitude; the two criteria coincide) using 1) scipy.linalg.eigvals (green line) and 2) scipy.sparse.linalg.eigs (blue line): https://dl.dropboxusercontent.com/u/6042643/liouvspec.png
+As you can see, the results from the sparse solver are pretty poor (I assume the dense solver results are correct).
+As far as the physics goes: Another thing to notice is that the system goes through phase transitions at -2.0, 0.5 and 2.0 for the parameter along the x-axis, and there are no signs of that in the plot. On a side note, I also wasn't able to reproduce Fig 2(a), middle panel, of the PRL paper I linked to, although I got qualitative agreement if I tried with different parameters than what is quoted in the figure caption. Do you by any chance happen to have any experience with this way of characterizing dynamical phase transitions?
+I might try to make a simpler example illustrating the problem later. The Liouvillian I am considering now is too big to use as an example, as using the dense solver requires a huge amount of memory.
+Finding the eigenvalues of a non-symmetric matrix (the Liouvillian) is complicated by the fact that the condition number for the underlying matrix is probably pretty bad.  There are some "balancing" methods that I have run into that are designed to help better condition a matrix in order to help solve for the eigenvalues.  I will try to code one of these methods up and perhaps that will help.
+Sounds interesting. I'm still very interested in this problem, as it would be very nice to be able to do this to characterize dynamical (steady state) phase transitions. So keep me posted.
+Arne,
+Do you still have the code where the eigenvalue solver breaks down for the Liouvillian?  I am starting to work on the matrix balancing functions and would like something known to cause trouble to test on.
+Cheers,
+Paul
+Is there still anything unresolved here or can we close this ticket?
+Well, we can close the ticket, but we still need to address this at some point.  It involves some eigenvalue balancing code, to better condition the eigenvalue problem.  I have started on this, but will probably not have it done for 3.1.  Note that this only effects the eigenvalues of non-Hermitian operators.
+I think we should close it and open a new ticket(s) for the specific problems that remains. I think the original problem of this issue has been solved, and its a bit confusing to have different problems discussed in the same issue.
+Agree.

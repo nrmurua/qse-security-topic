@@ -1,0 +1,11 @@
+Segfault happens randomly during some of the tests. Tested on test.terra.states.test_aer_state.TestAerState.test_appply_diagonal. The segfault comes from a load intrinsic in qv_avx2.cpp:
+The issue, I think, is that in the faulty instance &(qv_data[0]) is not 32-byte aligned. Depending on the alignment the tests succeeds or fails. I see that in:
+there is an effort to force the main allocator do be 64-byte aligned being std::complex only 8-byte aligned, but in this instance the data_ array might be initialized from other buffer and not allocated. I don't have a good understanding of the tests to track the origin well. This is the faulty instruction and backtrace:
+Run the test test.terra.states.test_aer_state.TestAerState.test_appply_diagonal after building Qiskit-Aer with clang 16.
+Test completes successfully
+Change:
+to check alignment and runtime and select unvectorized copy if not aligned. Or, if alignement is to be assumed, track down the initialization of  BaseState::qreg_ to understand what was the original allocator and change it to one that give alignement guarantees.
+I tracked down the source a bit further. The problem seems to come from here:
+In:
+the data coming from the Python API is copied for a piece of memory without any alignment attributes. The allocation happens here:
+That malloc_data could be changed to used a 32-byte alignment in case mm256 is always meant to be used.

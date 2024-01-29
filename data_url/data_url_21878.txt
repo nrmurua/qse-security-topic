@@ -1,0 +1,51 @@
+Running ARTIQ built from 8fd57e6. Board boots, Ethernet ping works (0% packet loss) and HMC830 lock is fine. Running the following ARTIQ python program. Looking at SMP outputs on scope for four of eight channels. Expectation is sinusoids at 49 MHz. Observe digital-looking output on DACs.
+
+Will next build a version of gateware with --without-sawg option. Will look for sawtooth pattern.
+We built using --without-sawg option from master 38b5128. We see sawtooth pattern.
+Is that the original sines example or did you modify it?
+What is in the rtio analyzer?
+OK. Here's a clue. If  sawg.amplitude1.set(.8) there is sinusoidal output. If sawg.amplitude1.set(.9) there is garbage like in screenshot above.
+OK. Here's a clue. If sawg.amplitude1.set(.8) there is sinusoidal output
+ooh, can I see a scope/SA shot?
+
+
+What are the wiggles there? Reflections or some kind of quantization noise?
+They're not reflections. They only appear on some channels. For some reason my scope doesn't do AC coupling AND 50-Ohm internal termination at the same time. I'm getting proper external terminators post haste. Prior to posting the present screen shots I confirmed that the wiggles were present even with 50-Ohm internal termination and DC coupling. But its easier to see with AC coupling .
+hmmm...I definitely saw something qualitatively like that even without the SAWG (looking at the saw tooth). Didn't track down it's origin.
+Oddly, after rebooting and programming sines.py again the "funky/wiggly" behavior went away on the two channels where it was formerly present. Here's SA for "good looking" channel.
+
+Now it reappears after a reboot of Sayma. Running sines.py. This time SA is of misbehaving channel.
+
+
+@sbourdeauducq The amplitude dependence looks reproducible. Have you seen this too?
+@sbourdeauducq The amplitude dependence looks reproducible. Have you seen this too?
+I agree, it would be helpful to know if @sbourdeauducq can reproduce these results (unless there is a reason that it's hard for him to do that test).
+But, if we want to track this down, let's see what the minimally complex setup that reproduces the issue is. Those "wiggles" you've nicely captured on sinusoids look a lot like the ones I saw on the sawtooth generated without the SAWG enabled. They also look like the ones you posted here. @jbqubit are you able to reproduce that when building the latest ARTIQ master when compiling without SAWG and not using Allaki? If so, that suggests that we can begin debugging this without the SAWG.
+The steps are expected. This is a sampled system. The sawtooth generators run at lower sample rate and have correspondingly larger steps. The distortion on the sawtooths after the jump is unexpected.
+I can't reproduce any of this (#1022, #1039, #1040) with the same SAWG gateware in simulation. Let's first eliminate JESD. What do the sawtooths look like currently? Please measure differentially with proper termination.
+Those wiggles look like they could be coming from some incorrect interleaving from the CORDICs -- if there was an incorrect phase offset between the start of each interleaved CORDIC, you could get something that looked like this instead of a clean sine wave.
+I suspect it's a JESD issue, since I see glitches on the sawtooth generator (https://irclog.whitequark.org/m-labs/2018-06-01) https://pasteboard.co/HnT4Gf6.jpg
+If the JESD is incorrectly serializing samples (out of order) this would also produce the effect I was describing, and looking at @hartytp's scope trace it does seem like this might be the case.  The sawtooth is a lot more jagged-looking than one would expect on the smooth part (the jaggedness is substantially larger than the spec'ed DNL, to my eye).
+Also sweeping amplitude over a narrow range results in glitches in output.
+What I assume:
+Detail. I can produce complex waveforms indefinitely (>10 minutes) if i avoid certain SAWG parameters. See for example the following where frequency sweeping works (over narrow range) provided I don't sweep amplitude. If I add amplitude sweep there are glitches in sinusoid.
+@sbourdeauducq @jordens What's the next step here? It looks to me like there may be both JESD and SAWG bugs here.
+Probably just a small JESD issue. Fix on the way. See IRC logs...
+@jbqubit: as discussed on IRC, i did some changes on the reset of the elastic buffers + implemented the stpl test. Can you test again? (i'm not able to visualize outputs).
+i'm not able to visualize outputs
+On what board? At M-Labs there is the Red Pitaya on 192.168.1.200.
+m-labs/migen@33bb06a#commitcomment-29242188
+@enjoy-digital when I look at the bigger picture of the JESD system, I don't see how your fix can help. You have the GTH input clock which gets multiplied to many-GHz by the GTH PLL(s), and then a number of unsynchronized dividers generate the clocks for each lane. So, lane clocks, which are also the read clocks for the elastic buffers, can have any phase with respect to each other, with random skew in integer multiples of the GTH PLL VCO period.
+The elastic buffers can only have random latency from lane to lane, due to the read clock phase randomization that covers one full period - sharing the write reset is not enough.
+So you must either:
+I suggest removing m-labs/migen@33bb06a from Migen, since I cannot see any problem that can be adequately solved by messing around with the write resets, and having this option encourages mistakes such as the one you made. In general you use an elastic buffer when you do not know the phases of the read and write clocks, and you assume completely random latency jitter between initializations of the elastic buffer.
+I just tested the latest code on hardware, and expectedly (from my understanding, the JESD behavior has not changed at all): this and the #1040 bug are still there.
+align the transceiver clocks like it's done in DRTIO,
+That may get tricky when there are 16 lanes scattered on two JESD cores, and IIRC Xilinx also has some annoying clocking/transceiver location restrictions for multilane alignment, so the first option sounds better IMHO.
+BTW, for the first option:
+the built-in transceiver elastic buffer is one of the rare features that IME works correctly and with an acceptable design (just set TXBUF_EN and then drive TXUSRCLK/TXUSRCLK2 with a clock that can have any phase but is derived from the same oscillator as TXOUTCLK). So you may want to just use that.
+@enjoy-digital I still see messed up output at 0.9 amplitude. 4.0.dev+1117.g38dac160
+
+@jordens @enjoy-digital Please comment on my inferences: #1022 (comment)
+Running 4.0.dev+1132.g5b73dd86. Glitches still present. Not out of the woods yet.
+https://www.youtube.com/watch?v=ynmZMRwUIqI

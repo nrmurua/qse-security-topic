@@ -1,0 +1,30 @@
+https://forum.m-labs.hk/d/503-connectionreseterror-with-fresh-gateware
+see also https://forum.m-labs.hk/d/499-connectionreseterror-between-artiq-v78116-and-v78123/2
+Can't reproduce this on a custom Oxford-local target based on defc69d with the below example – will need to try this using the actual builds from the reports.
+Can't reproduce on 3038639 mentioned in the forum thread on kc705_nist_clock either (though with gateware defc69d) .
+Can't reproduce on 3d25092 on Kasli tester either; thousands of artiq_run iterations proceed fine.
+The following configuration reproduces the problem on our kasli 2.0 (identifier ucsb). Our firmware and gateware version is 9aa81e1. Our software version is Jayich-Lab@f3bf24d. The software commit contains a few fixes and added features on the above firmware commit, but should be compatible with the firmware version above.
+I think maybe reproducibility of the bug is related to Windows? We are using python 3.10.6 on Windows 10. Do other labs who can reproduce this bug all use Windows?
+@fanmingyu212 Could you provide the exact firmware binaries you are using and where the problem is present?
+Please also send your device db and a kernel that produces the crash, I'll try compiling on Linux and send you the .elf to see if it makes a difference.
+@fanmingyu212 Would you mind preparing an ELF file with the dummy variable workaround as well? This does seem likely to be related to the toolchain, and I don't have a Windows box ready to test.
+I put both the working and not working kernels and ELF files in the kernel_and_elf folder in https://drive.google.com/drive/folders/1j8FNcPuehLIJcW65bP-SC364VKgV-iKT.
+artiq_compile by default have attribute_writeback equal to False (https://github.com/m-labs/artiq/blob/master/artiq/frontend/artiq_compile.py#L64). With the default False value, it seems that the ELF files from both kernels are the same. I tried to set it to True and compiled again, and the ELF files are different. All the files are in the folder shared above.
+You can use the ARTIQ_DUMP_ELF environment variable to get the ELF files out of artiq_run and artiq_master.
+@wlph17 Please also try with the MSYS2 version.
+I can reproduce the error on our Kasli system freshly flashed with ARTIQ-7.8123.3038639 and using a freshly installed conda environment with the same ARTIQ version. Running artiq_master both on Windows 10 and Linux (virtual machine) the error appears. More details here: https://forum.m-labs.hk/d/503-connectionreseterror-with-fresh-gateware/9 .
+I did not try it from a NIX installation yet, does that matter?
+@fanmingyu212: Thanks for the files, this it helpful. I see you are using LLD 15.0 – where are you getting that from? Is that a default package from upstream Conda? (Apologies for the basic questions; we don't use Windows for masters here in Oxford anymore.) This is not super-high in priority, but if you can see a way to easily install LLD 11 instead, would you mind giving that a quick try?
+@ThorstenGroh:
+[…] Linux (virtual machine) the error appears
+Thanks, this is interesting to know – how are you setting up LLVM/LLD/… in the VM, and which version of them are you running?
+@dnadlinger
+Thanks, this is interesting to know – how are you setting up LLVM/LLD/… in the VM, and which version of them are you running?
+Both on Windows and Linux I did not setup anything myself. If not preinstalled everything should then probably come via the conda install. On Windows LLVM is on version 15.0.4 (from llvm-config --version). On the linux virtual box it seems to be on version 14.0.6 (as returned by e.g. llvm-cat --version). On a second Windows computer running LLVM 15.0.5 the problem appears as well.
+The ARTIQ system was flashed from the first Windows box. I did not reflash the firmware from Linux or another computer if that matters.
+@dnadlinger switching to LLD 11.1 seemingly fixed the problem. We were not using Conda (llvmlite) so we were using the system LLVM (which I installed the latest LLVM 15). I am not sure how this was an issue for other labs who use Conda though. Can others who also see this issue confirm whether it is fixed by using LLD 11?
+@fanmingyu212 Okay, many thanks for the tests, that confirms my suspicion (and explains why it doesn't occur on Nix), which gives me a handle on reproducing the issue. Will look into fixing our codegen to avoid this issue…
+Occurs on LLD 14 and 15, but not LLD 13; also on Linux/Nix. Now to actually debug what's going on here…
+When building the runtime using LLD 14 (maybe even 13), also get:
+Looking into what's going on with the linker scripts/… there…
+Okay, this has been a wild goose chase. My current theory (at least for the kernel-side issue, i.e. when building the firmware with LLD 11) is that LLD 14 orders the sections a different way, as .got/.got.plt are not in fact mentioned in the kernel.ld linker script, and this then overlaps with the protected region for the stack guard – _sstack_guard = .; is just plopped in at the end. Since the kernel stack starts at the end of the main RAM, we probably just need to move the guard page to the actual end of the image to fix this.

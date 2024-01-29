@@ -1,0 +1,18 @@
+In testing Qiskit/qiskit#1778 with the Aer provider, submitting a conditional circuit with a qobj-compliant conditional raises a AerBackend: simulation failed error from 
+Checkout Qiskit/qiskit#1778 and run any conditional circuit. e.g.
+The resulting qobj
+contains a bfunc with register: 2, which is causing the JSON parser to throw.
+It looks like the JSON->op parser ( https://github.com/Qiskit/qiskit-aer/blob/master/src/framework/operations.hpp#L474 ) expects memory and register to be arrays ( https://github.com/Qiskit/qiskit-aer/blob/master/src/framework/operations.hpp#L38 ) but in the qobj-spec, bfunc instructions are a special case where they are singleton integers.
+Can you test if with this change in json_to_op_bfunc in operations.hpp fixes it?
+to
+NB: Do we actually need the "memory" part for bfunc? If only register used by the spec then the last part can just be removed.
+That gets it past the JSON validation failure and the simulation completes, but the counts returned aren't what I wouldn't expect.
+For the circuit above:
+I get (with qobj-conditionals from terra and the fix above):
+With old-style conditionals from terra and master aer I get:
+Looking briefly, it looks like apply_bfunc is making the right comparison, but its result is not being written to the provided register. (I'm not at all familiar with the simulator code, but it looks like apply_bfunc is returning the boolean result of the comparison, but State::apply_ops is not getting that return value written to the register.)
+Re: "memory", the spec lists it as "(optional): Memory slot in which to store the boolean function result" presumably for debugging.
+@kdk ok thanks for looking into it. I've tried fixing it in PR #55 if you want to test it.
+Note: there might still be bugs in the actual logic of the bfunc function since it hasn't really well tested.
+👍 Awesome, tested on #55 and it looks good. Thanks!
+Closed by #55

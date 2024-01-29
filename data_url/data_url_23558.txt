@@ -1,0 +1,29 @@
+Here's a MWE:
+The instrument should have the GroupParameter with the given initial value.
+Raises RuntimeError("Trying to set Group value but no  group defined").
+The GroupParameter should defer setting the initial value until it has been added to the group. One way of doing it would be to add something like the following to GroupParameter.__init__, before the super().__init__ call:
+and then adding a GroupParameter.add_to_group method where the value is actually set, and calling that instead of just setting parameter.group = self in Group.__init__. I'm not 100% sure if this is the right way to do it.
+qcodes branch: master
+qcodes commit: c7eef82
+@mgunyho could you clarify your use case? (a group with a single parameter does not seem to have value in my opinion)
+in attempt to still answer you back now, i tend to think that instead of passing initial values to each parameters in a group, a simpler (and perhaps cleaner) way is to request from the instrument a value of one of the parameters from the group AFTER defining the whole group. This request will automatically update all the parameters in the group (because they are in the group). Will this approach work for your case?
+Of course in a real driver the group would have multiple parameters. In my case I have a group where for some values I would like to define an initial value, but not necessarily all of them.
+I think it would definitely be cleanest to specify the initial values in the add_parameter call. Currently I have a workaround, where I do
+which is quite cumbersome and error-prone, as each parameter has to be handled twice.
+I'm not sure if I understand your suggestion. Would it differ much from this workaround I have? Or do you mean something like what I was initially trying to suggest, that the parameter set functions are called when the Group(...) is created?
+Thanks for the explanation!
+a group where for some values I would like to define an initial value, but not necessarily all of them
+So the but not necessarily all of them part is the tricky one. The point of having a group of group parameters is that they are being set and get by a single VISA command. That is, when setting one of the parameters from the group to some value, all the other parameters also HAVE to be set to some values.
+So my initial suggestion (apologies that i wasn't clear when describing it) was:
+And this suggestion of mine looks indeed similar to the "workaround snippet" from your last message. And it is indeed cumbersome, as in, a lot of boilerplate code is needed.
+... do you mean something like what I was initially trying to suggest, that the parameter set functions are called when the Group(...) is created?
+Indeed!
+My suggestion is the following:
+Would you agree with this suggestion? Will it solve your use case?
+That would indeed solve the issue, but I think it's unwieldy having to go through all parameters three times (add_parameter, Group([...]) and with the default values dict). It also doesn't feel right that GroupParameters have a special way of setting the initial value compared to all other subclasses.
+The most correct way in my opinion would be that
+Does this make sense? I can try to write something tomorrow and submit a PR.
+Thanks for raising a valid usability and parallelism concerns.
+I like you suggestion, but let's not implement the extra smartness of ..their current values are read from the device, and for those GroupParameters that had an initial value the values are replaced.... Explicit is better than implicit. Moreover, from experience with debugging instrument drivers and isntruments in general, "extra smartness" is difficult to remember of and difficult to debug with, hence when developing drivers we always try to make them as straightforward/dumb as possible.
+In other words, allow me to modify the bullet points above (see the last one):
+And great that you are willing to initiate a PR!

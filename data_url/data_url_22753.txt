@@ -1,0 +1,40 @@
+Compared to the current solution, PPP adds robustness, error detection/correction and support for multiplexing monitoring/injection data, with maximum code reuse.
+PPP should already be supported by lwip.
+(This is low priority)
+How sad:
+Serial Line Internet Protocol (SLIP) option is not available in Windows 7.
+However, if you have Windows 7 Professional or Ultimate, you may try using Windows XP mode for SLIP connection.
+Microsoft
+PPP should be fine, no? AOHell even still make millions from dial-up connections in the US.
+PPP is fine. Just reminiscing.
+9492802 makes the PPP connection work as well as most of ICMP and UDP. TCP is unusably slow, and the wireshark capture shows excessive retransmissions. ping -s 1000 -f 10.0.0.2 shows excessive packet losses.
+On the PC side, use this command:
+pppd /dev/ttyUSB1 115200 noauth  nodetach local nocrtscts 10.0.0.1:10.0.0.2
+Could be a flow control issue at the serial port level.
+Increasing the UART software FIFO buffer sizes in MiSoC to 8192 reduces the ping -s 1000 -f 10.0.0.2 packet loss rate and does nothing for TCP.
+Nice!
+Is the TCP problem dependent of congestion or does it also happen at light load?
+Does pppd ignore stuff sufficiently and resynchronize itself if left running through a core device boot or does it need to be started after runtime boot?
+Also happens at light load.
+i tracked down the problem: the application doesn't read the software receive buffer fast enough and when the two rx fifo pointers point to the same location (== the buffer is full) it stops reading bytes from the hardware buffer in the interrupt handlers for a long enough time that some data gets lost.
+i'd add a threshold at which a xoff byte is sent, so that the ftdi stops sending data in time and no data gets lost.
+I had looked into this (ppp, the serial buffering, top half and bottom half, the various ringbuffer corner cases) a while ago. The two rx ringbuffer pointers equal means fifo empty. Not full.
+And since the errors also happen for rather huge buffers (i tried 8k IIRC), the stack must be horribly slow to handle packets at only such a slow rate (~ 100 packets/s if my numbers are right).
+in https://github.com/m-labs/misoc/blob/master/misoc/software/libbase/uart.c#L34 it is checked if the next byte writing address is equal the current read address. So those two addresses being equal means the software buffer is full; if new data was written to the buffer, old data would be overwritten.
+The buffer would be empty, if the current write address and the current read address are equal, but the the next write address wouldn't be equal to the current read address.
+i do agree though that the stack is ways slower than i'd expect it to be. so it is somehow likely that this bug is just the effect of some other bug. problem is that there is no proper debugging support...
+What would be "proper debugging support" and how exactly would it help in this case?
+i was thinking about instruction trace support to identify where the code consumes that much cycles that it isn't able to process those maybe 100 packets per second and breakpoint support to have a closer look inside those functions
+Use the timer and a second UART? FWIW there was a similar issue with Ethernet that was fixed in 110f7bc. Of course, you'd think lwip would print error messages in those cases...
+8d16633 was also a lot of fun. Rounding issue in the lwipopts example, and no error printed.
+If anyone wants it for this, I have a half working UART-over-BSCAN-over-openocd around.
+Much better now.
+But it looks like there is a different buffering issue now (this is traffic due to an artiq_run):
+I rebased and redid the ppp branch (in ppp2 for comparison with ppp). But nothing that is an obvious fix to me.
+And it would be cool to use Florent's parallel FIFO core instead of the uart. https://github.com/enjoy-digital/liteusb/blob/master/liteusb/phy/ft245.py
+The main point of this PPP support is portability, not performance. In that case, a common and simple 2-pin serial interface wins.
+It's exchangeable and using the parallel interface does not affect portability. The Opal Kelly boards are byte-wise as well and would need this abstraction anyway.
+Closed with 2c847b3. Remaining items:
+If the uart speed is cranked up to 921600 Baud, the uart rx ringbuffer and
+the ppp/tcp stack can't keep up. Lots of lost segments, retransmissions and/or duplicate acks. Increasing the rx ringbufffer to 2048 helps a lot (but the uart is not easily reconfigurable and
+the code as it is written has to fit the sram of the bios as well).

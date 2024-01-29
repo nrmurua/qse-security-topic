@@ -1,0 +1,18 @@
+Description of the issue
+Calling cirq.resolve_parameters to resolve the parameters of a symbolic circuit with np.float32 parameters leads to a significant performance loss. I ran into this bug while working on loading circuit parameters from a .npy file on this TensorQuantum Dataset PR. Verifying that the circuits produced the expected wave functions took ~30 minutes on the CI, since we have to check hundreds of circuits. On further investigation, I discovered that the parameters were 32-bit, and casting them to 64-bit decreased the parameter resolve time by a large margin.
+How to reproduce the issue
+This produces the following figure
+
+As we can see, with increasing circuit depth the time it takes to resolve the 32-bit parameters creates a massive slowdown.
+Cirq version
+Cirq 0.8.2
+There's a special case in resolve_parameters to handle floats: https://github.com/quantumlib/Cirq/blob/master/cirq/study/resolver.py#L93. It currently checks isinstance(value, float) which on 64-bit python seems to be True for np.float64 but False for np.float32:
+Perhaps instead we could for example expand the list of types, or do something like isinstance(value, numbers.Number).
+Right. But then integers also make it through, I don't know if that will lead to unexpected behavior.
+Changing it to isinstance(value, (float, np.float32)) would solve the issue I had. Alternatively, the resolve_parameters docstring could mention that we expect Python float or np.floatx on x-bit python. It's kind of a fluke that I stumbled upon this, just because I accidentally stored parameters as np.float32 when I'm on 64-bit Python.
+I think the conservative solution here to add np.float32 is a fine incremental step. I opened a PR to add this in #3366.
+I would be open to create a more generic solution which matches and returns number literals, maybe relying on numbers.Number - One of the problem with numbers.Number is that it matches things like sympy.S.NegativeOne, so we'll have to think a bit harder to introduce that level of generic support.
+I have a fix that provides pass-through for numbers.Number instances and the sympy constants.
+The speedup is there now for np.float32 as well:
+
+Great!

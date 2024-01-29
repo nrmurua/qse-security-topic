@@ -1,0 +1,26 @@
+ssesolve is slow when used with the "euler-maruyama" solver and a large number of sparse noise oprators.
+Qutip should take into account sparsity in sc_ops when used with the "euler-maruyama" solver.
+No response
+I'm currently using qutip.ssesolve, however for my application I require a large number of independent noise operators. This currently causes the solver to run very slowly, however in theory increasing the number of operations should only result in a small overhead if the underlying matrix is sparse. If I add together all matrices it runs much quicker. Is this something that has already been addressed in the 5.0 refactor? I am potentially interested in making a pr to fix this but I don't want to waste effort on something which is already fixed or undesirable
+The stochastic solver are not thought for a lot of noise operators.
+In v4, operations are all CSR @ Dense_1D_array.
+In v5, you have more control on which storage is used for each operators, we support  dense, csr, dia format (+ plugin for cupy, jax, tensor network in development.)
+But I fail to see how you can use sparsity for speed it up in this case in particular.
+Could you write the equations / logic of the optimization here?
+I'm not actually sure if this is the code in question, but for example in /qutip/solver/sode/_sode.pyx line 45
+In my case b[i] is sparse, and I would expect that running with 100 operators with 50 non-zero element should not take much longer than running 1 operator with 5000 non-zero elements for example (just the overhead of generating 100 random numbers). It is unclear to me if this is optimised properly for a sparse b[i] (I'm pretty sure in 4.X it wasn't)
+We don't use the same code for the sparse addition as in v4. v5 sparse addition is quite faster.
+But I expect it to be slower for 100 additions of 50 elements since you need to allocate memory for the 100 intermediate results, while for 1 addition with 5000 elements, there is only one memory allocation.
+But if you want to have a go at optimizing our basic operations, we will welcome any improvements.
+Ok so as I read it currently there is no iadd_ function for CSR matrices. Am I also right that there is no add_ operation for Dense + CSR? How does the current code deal with adding a Dense to a CSR matrix (I'm looking in core/data/add.pyx). I think replacing add_ with iadd and making a specialised iadd impl should help improve performance a lot.
+It will convert the CSR to Dense then use add_dense.
+iadd for sparse is not easy. When none-zero entry are not lining up, the array need to be expanded.
+Also if the values cancel themselves, there is a need to remove an entry and more the others to fill the gap...
+Also our dispatcher, the code that allocate add(Data, Data) to each specialization add_dense, add_sparse, does not support inplace operation.
+I think because it is rare that the wavefunction is sparse would it be just fine to use iadd(Dense, Sparse). Would it be acceptable if I just added a reuse_first:bool argument to the current add function, to allow the reuse of the buffer?
+@Ericgig I'm just attempting some profiling with cProfile to make sure I'm optimising the right thing - do you know the best way to get it to work with the cython code. I've tried setting
+But it doesn't appear to work.
+When I use pyinstrument it appears that _expect_csr_dense_ket is the main performance bottleneck. This is probably because the function must iterate over all rows, even though most are empty. I think a COO format would be more suitable in this case - would you accept it if I added this?
+It will be a lot of work to add a COO format, there are a few dozens of functions to implement (add, expect, mul, matmul, ptrace, eigen, kron, ...). We had students write new data formats over a summer for GSoC a few years ago and they were mostly working by the end, but not final...
+Yes profiling cython is not easy, I managed once, but can't do it anymore.
+Now I usually write multiple implementations of the same function, benchmark them and increment until I feel it's good enough.

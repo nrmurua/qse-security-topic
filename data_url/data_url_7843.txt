@@ -1,0 +1,12 @@
+With the PR for adding hypothesis #1957, we have the issue of how we should handle the NaN and inf.
+I see 3 main ways:
+I prefer raising an error as soon as a bad value is obtained. Otherwise computation can continue for a while, hiding the source of the issue and wasting time. Even when the NaNs are properly propagated, it's often not that helpful when debugging.
+Failing as soon as the bad value is obtained will make debugging the easiest.
+I looked at all the places that would need to check for bad values:
+Creation: dense.pyx's, csr.pyx's, one_element, diag.
+Modification: project, ptrace, kron.
+Operation: add, mul, matmul.
+The other functions either don't create a Data object or use one of the previous function (pow use matmul, eigen uses Dense.__init__, etc.)
+I believe that we should check at creation, even if we otherwise mostly ignore bad values.
+Adding check in project, ptrace, kron shouldn't be too costly.
+The issue is we want the operations add, mul, matmul to be fast, so checking after each call would not be great. But if we keep track of the largest element, it could only cost one extra addition or multiplication, which could be fast enough to make refusing inf and NaN in Qobj doable.

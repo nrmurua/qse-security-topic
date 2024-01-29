@@ -1,0 +1,13 @@
+Apparently we don't have round() on the core device, and this is what @llvm.round.f64 intrinsic lowers to. @sbourdeauducq, should we find some variant of, and link libm?
+Sounds overly complicated and then there will be a dangerous incentive to implement math.cos & friends. Just implement that round function somewhere.
+This is useful. Not as intrinsics but as part of the runtime API. Can't libm become part of the runtime?
+@sbourdeauducq The implementation of round is simple-ish (https://github.com/JuliaLang/openlibm/blob/0036d707347b27c580bf25c28cfc43dcbe412437/src/s_round.c) but it depends on floor, which isn't... (https://github.com/JuliaLang/openlibm/blob/0036d707347b27c580bf25c28cfc43dcbe412437/src/s_floor.c). I'm not sure.
+Why was that not a problem with my compiler? Note that Python's round returns an integer, not a float, and therefore is implementable with the integer conversion function in compiler-rt (that floors) and some arithmetic.
+@sbourdeauducq Ok. By the way, what should be the behavior of round(1e100)? C makes it unspecified and also may set errno, and naturally Python doesn't have this problem.
+Should be similar behavior as integer overflows. And I propose that round be 32-bit by default and take a width parameter like int.
+Do you mean wraparound? That is bound to produce some very obscure bugs...
+Wraparound or undefined. I don't think the wrapping around of ints should be relied on by programs anyway, as this is not what Python does.
+How about raising an exception on overflow? That would actually bring us back to the "strict subset of Python" semantics rather than the current "strict subset of Python except for integer literals"
+I think performance of integer operations is more important (I know that mor1kx has hardware overflow detection hooked to an exception vector, but this is non-portable and somewhat complicated to use).
+We can do it like Rust does: overflow in "release" mode, exception in "debug" mode.
+Also, is it really complicated to use? All exception vectors are already hooked up to produce ARTIQ Python exceptions. Nonportable, yes, I agree.

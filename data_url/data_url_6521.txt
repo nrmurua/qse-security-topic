@@ -1,0 +1,11 @@
+As part of #313 issue we are building a PyPI wheel for Windows platform based on Github Actions Windows Server 2019 virtual environment. The wheel is successfully built using python3 setup.py sdist bdist_wheel that utilizes cmake-3.20 and for building and MSVC 14.28.29910 for compilation of the underlying libraries. The build also uses pybind11 to create binding between Python and C++ libraries.
+Installing the built PyPI wheel on Windows Server 2019 virtual environment and running pytests:
+fails with the following stack trace:
+Windows fatal exception: code 0xc0000374 points to the heap corruption. Also, running C++ library tests under qsim/tests using Bazel 4.0.0 bazel test tests:all completes tests successfully:
+The stack trace points to the modules defined in the pybind_interface, are there any suggestions what could be causing this issue? Thanks!
+After further investigation I tracked down the failure to the method SimulatorHelper#release_state_to_python in pybind_interface/pybind_main.cpp. The heap corruption comes from pybind11:capsule:
+which according to the StackOverflow is used to deallocate memory of the returned Numpy array when it's no longer used.
+Removing the capsule from the base argument in the py::array_t<float>(fsv_size, fsv, capsule); fixes the heap corruption issue and all tests pass.
+@sergeisakov, are you familiar with this py::capsule issue? IIUC, the concern here is that removing py::capsule may cause the vector to be copied, or cause a memory leak down the line - do you know if that is the case?
+No, I am not familiar with this issue. I guess the problem might be that py::capsule in SimulatorHelper#release_state_to_python uses delete reinterpret_cast<float *>(data); to deallocate memory and this causes the heap corruption. @laurynasas could you test that by putting the capsule back and by replacing delete reinterpret_cast<float *>(data); with detail::free(data);?
+@sergeisakov Thank you for the input, that indeed fixed the issue! I opened the PR with changes.

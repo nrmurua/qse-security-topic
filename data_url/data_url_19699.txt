@@ -1,0 +1,30 @@
+qiskit-ignis/qiskit/ignis/verification/quantum_volume/fitters.py line 326 compares the probability of the HOP being above 2/3 to 97.5 %  ..  The QV paper (https://arxiv.org/abs/1811.12926 ) specifies that the single-sided 2-sigma probability should exceed 2/3, re-iterates this in supplemental equation C3, and then includes the 97.5% number (which contradicts the text and equation C3; it should be ).  Lev Bishop confirms 2-sigma was the intent, and the threshold should be 0.9772498680518208
+( 1-(1-0.5*(1+erf(2/(sqrt(2))))) ) ; 97.5% was a rounded typo.  Pyquil implements this correctly.
+read the code and paper
+Compare to ( 1-(1-0.5*(1+erf(2/(sqrt(2))))) ) not 97.5%
+Compare to ( 1-(1-0.5*(1+erf(2/(sqrt(2))))) ) not 97.5%, and update the qiskit docs to be correct as they repeatedly say 97.5% .  Lev should probably also update the arxiv paper.. :)
+I am not an expert in statistics but I think 97.5% is the right threshold for one-sided 2-sigma confidence interval. What needs to be changed is the z value in equation C3. It should be 1.96 instead of 2 for 97.5% CI.
+@dcmckayibm @levbishop @awcross1 Any comments?
+See also: https://github.com/qiskit-community/qiskit-textbook/issues/687
+I think both of these are tackled in appendix c of the QV paper; >100 trials, z=2 ; https://arxiv.org/pdf/1811.12926.pdf , but I'd be happy for someone else to weigh in
+The intention was definitely z=2 and >=100 trials. Algorithm 1 from the paper was supposed to be the definition and everything else discussion and clarification. Unfortunately in the process of clarifying, we mentioned 97.5% instead of 97.7% and added this confusion. That was the original intention - we could revisit it, but others (eg pyquil) have gone with the original so I would prefer to keep that.
+In that case I think we should follow PyQuil’s implementation and algorithm 1 to use equation C3 directly rather than using the confidence interval as the criterion. I can take this one and fix it.
+Thank you!
+I read the new QV64 paper and see the merit of being able to report confidence level as opposed to only reporting success or failure. In this case, we can just do a simple fix changing 0.975 to (0.5*(1+erf(2/(sqrt(2)))))) ~ 0.977.
+I have some doubts about how the confidence level is calculated
+cfd = 0.5 * (1 + math.erf((hmean - 2/3) / (1e-10 + self._ydata[1][depth_ind])/2**0.5)) which is
+
+($$cfd = \frac{1}{2}(1+erf(\frac{ \frac{\bar h - 2/3}{10^{-10} +\sigma}}{\sqrt{2}}))$$)
+According to this page on Wolfram MathWorld, the probability in the [0,z] interval can be calculated as:
+
+($$\frac{1}{2} erf(\frac{z}{\sqrt{2}})$$)
+for QV, we need to calculate the probability (confidence level) in the [-z,+infinity], which is
+
+($$\frac{1}{2} (1+erf(\frac{z}{\sqrt{2}}))$$)
+When z = 2, this is the threshold provided by @oliverdial. Z can be calculated using the following equation
+
+($$z = (X-\mu)/\sigma = (\bar h - 2/3)/\sigma$$)
+, which yields
+
+$$cfd = \frac{1}{2}(1+erf(\frac{ \frac{\bar h - 2/3}{\sigma}}{\sqrt{2}}))$$
+So my question is, what is the purpose of adding 1e-10 to sigma in the code? @dcmckayibm @levbishop Any idea?

@@ -1,0 +1,67 @@
+Hello, I am interested in running NEGF simulations, but could not find a complete example code as a starting point.
+I found this page, which mentions examples are still to come:
+https://www.cp2k.org/howto:cp2k_omen
+I also found this powerpoint, which has some code excerpts as a starting point. However, I am a beginner to DFT simulations and not confident that I can fill in the missing sections properly.
+https://www.cp2k.org/_media/events:2018_user_meeting:cp2k-uk-2018-chulkov.pdf
+If you guys have a full example input available for a NEGF code,  it would be very appreciated.
+Thank you,
+Anne
+There are few test input files inside the directories tests/QS/regtest-negf and tests/QS/regtest-negf-fft . You can also find additional input files here .
+Thank you very much. It looks like there are 3 instances of the Li chain in each link. What does the fft version mean? Are there any other differences I should be aware of?
+Also, I tried both the Li and Au examples, and for both I got this error. I am using the CP2K version that comes as an Ubuntu package using sudo apt-get install cp2k (v 5.1)
+===== Routine Calling Stack =====
+Unfortunately, CP2K+Omen never left the prototype stage. I once managed to run it on this input file.
+So, unless you are interested in Omen specifically, you should use the NEGF implementation by @schulkov et al. And we should probably put a big disclaimer on that wiki page or remove it altogether.
+In order to run these tests you need to use the latest stable version (7.1) of CP2K or at least git:d1f014f.
+The provided c6h4s2/Au(111) input file (the one with k-points) was used to generate Figure 4 from this report. You need a machine with at least 30 GB of RAM in order to run it. You can reduce memory requirement by using a smaller plain-wave cutoff and disabling caching of intermediate matrices (keyword DISABLE_CACHE .true. in NEGF section). Thus, in case of 300 Ry plain-wave cutoff, you need ~20 GB of RAM.
+Unfortunately, CP2K+Omen never left the prototype stage.
+This statement is not true.
+If you are interested in performing DFT-NEGF calculations using CP2K-OMEN, please feel free to visit this page or the project's Github page and contact the developers.
+In order to run these tests you need to use the latest stable version (7.1) of CP2K or at least git:d1f014f.
+The provided c6h4s2/Au(111) input file (the one with k-points) was used to generate Figure 4 from this report. You need a machine with at least 30 GB of RAM in order to run it. You can reduce memory requirement by using a smaller plain-wave cutoff and disabling caching of intermediate matrices (keyword DISABLE_CACHE .true. in NEGF section). Thus, in case of 300 Ry plain-wave cutoff, you need ~20 GB of RAM.
+Thank you very much Mr. Chulkov, I was finally able to get things running today with the correct software. I am running the au111_c6h4s2 examples, and it looks like both Fermi level and electric potential of each electrode are defined. It was my impression, however, that one of them defines the other, so I am questioning how both parameters can be set - is there a physical basis for this?
+Thanks,
+Anne
+... it looks like both Fermi level and electric potential of each electrode are defined. It was my impression, however, that one of them defines the other ...
+In NEGF section, the keyword FERMI_LEVEL refers to the chemical potential of a given contact when no external electrostatic potential is applied. The applied potential, indeed, shifts the contact's chemical potential. This shifted chemical potential is then actually used to compute a lesser Green's function.
+There are two reasons against a combined FERMI_LEVEL+ELECTRIC_POTENTIAL keyword:
+you may wish to use different energy units (for example, Hartree for zero-bias Fermi level and eV for electrostatic potential);
+zero-bias Fermi level for each electrode can be computed automatically, so, in principle, you do not need to provide one. However, the algorithm that calculates zero-bias Fermi level is somehow expensive. It tries to match the electron density computed using the lesser Green's function for the bulk contact region to the DFT ground-state electron density for the same bulk contact unit cell. For this reason, when you plot the current as a function of applied voltage you may wish not to recompute zero-bias Fermi level every time you change the external electrostatic potential. You may also decide to use your own zero-bias Fermi level, for instance the Fermi energy from the ground-state DFT calculation.
+... it looks like both Fermi level and electric potential of each electrode are defined. It was my impression, however, that one of them defines the other ...
+In NEGF section, the keyword FERMI_LEVEL refers to the chemical potential of a given contact when no external electrostatic potential is applied. The applied potential, indeed, shifts the contact's chemical potential. This shifted chemical potential is then actually used to compute a lesser Green's function.
+There are two reasons against a combined FERMI_LEVEL+ELECTRIC_POTENTIAL keyword:
+Thank you for the answer.
+If I have an electrochemical cell and I know what the Fermi levels of each electrode (Mu1 and Mu2) should be relative to the SHE in the given solution, and therefore the resulting bias U between them, how would you recommend entering the electrostatic voltage (and fermi level, if applicable) for each electrode input in this simulation?
+Also, do the absolute values of the electrostatic voltages have any meaning? For a two-electrode system, would there be a difference between applying -0.5 and +0.5, versus 0.0 and 1.0?
+If I have an electrochemical cell and I know what the Fermi levels of each electrode (Mu1 and Mu2) should be relative to the SHE in the given solution, and therefore the resulting bias U between them, how would you recommend entering the electrostatic voltage (and fermi level, if applicable) for each electrode input in this simulation?
+I would try to set up the system and run the Equilibrium Green Function calculation (NEGF with zero bias) first by omitting/commenting keywords ELECTRIC_POTENTIAL and FERMI_LEVEL for each electrode. This will give you zero-bias chemical potentials ("Fermi level") for both electrodes (Mu10 and Mu20) and shift in the Hartree potential (dV) that converges NEGF/SCF cycle in one iteration. Then I would set up a NEGF calculation (assuming Mu1 and Mu2 are both in atomic units) as:
+For a two-electrode system, would there be a difference between applying -0.5 and +0.5, versus 0.0 and 1.0?
+It affects convergence of NEGF/SCF iterations which look like the following:
+density matrix -> Hamiltonian matrix -> lesser Green function -> new density matrix -> new Hamiltonian matrix -> ...
+The shift in electrodes' chemical potentials affects lesser Green function, which in turn leads to a somehow different "new density matrix". The hope is that these iterations will converge to the same state at the end.
+P.S. If you need any assistance regarding your NEGF simulations, please do not hesitate to contact me. You can find my email address as part of the git commit log.
+If I have an electrochemical cell and I know what the Fermi levels of each electrode (Mu1 and Mu2) should be relative to the SHE in the given solution, and therefore the resulting bias U between them, how would you recommend entering the electrostatic voltage (and fermi level, if applicable) for each electrode input in this simulation?
+I would try to set up the system and run the Equilibrium Green Function calculation (NEGF with zero bias) first by omitting/commenting keywords ELECTRIC_POTENTIAL and FERMI_LEVEL for each electrode. This will give you zero-bias chemical potentials ("Fermi level") for both electrodes (Mu10 and Mu20) and shift in the Hartree potential (dV) that converges NEGF/SCF cycle in one iteration. Then I would set up a NEGF calculation (assuming Mu1 and Mu2 are both in atomic units) as:
+For a two-electrode system, would there be a difference between applying -0.5 and +0.5, versus 0.0 and 1.0?
+It affects convergence of NEGF/SCF iterations which look like the following:
+density matrix -> Hamiltonian matrix -> lesser Green function -> new density matrix -> new Hamiltonian matrix -> ...
+The shift in electrodes' chemical potentials affects lesser Green function, which in turn leads to a somehow different "new density matrix". The hope is that these iterations will converge to the same state at the end.
+P.S. If you need any assistance regarding your NEGF simulations, please do not hesitate to contact me. You can find my email address as part of the git commit log.
+Hi Dr. Chulkov,
+I sent an email but just in case I have the wrong address - thank you so much for your help with the potential assignment so far.
+I have one more question on NEGF simulation setup - what would you suggest is the best method of outputting the resulting charge distribution at the electrode sites? I am aware of Lowdin population analysis - since there are several FORCE_EVAL sections, should I activate Lowdin output for all of them? Or is there a different method that you would suggest as more suitable?
+Thank you,
+Anne
+@anneb101, would you be interested to contribute a howto page? It seems you're now in the perfect position to write up a beginner's guide.
+@anneb101, would you be interested to contribute a howto page? It seems you're now in the perfect position to write up a beginner's guide.
+@oschuett , thanks for the opportunity! I would be interested, but being new to this, there are some things I would need to sort out and if it goes OK I will follow up with you. Please let me know if there are any specific things I need to keep in mind for the howto.
+Thanks,
+Anne
+Glad to hear :-) I think, the best approach is to aim for the kind of tutorial that you wish you have had three weeks ago. Also, the first version doesn't have to be perfect. The community will polish it over time. Getting a new document started is really the hard part.
+So, just shoot me an email when you're ready: ole.schuett@cp2k.org.
+Ok, thank you. If I get everything sorted out properly, I will follow up with you.
+Anne
+Hi all, I have another question on this. I am interested in seeing the resulting charge distribution from these calculations. In the Au example, I have successfully added a cube file print output section to each of the three FORCE_EVAL sections (lead1, lead2, and "main").
+Since the lead atoms repeat in the "main" and individual leads' FORCE_EVAL sections, would it be correct for me to use the individual leads' cube output files to know the charge density in the leads, and then the "main" cube output file to know the charge density for the species in between the leads?
+Thanks,
+Anne

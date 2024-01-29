@@ -1,0 +1,55 @@
+Looking at the implementation of the LinearAmplitudeFunction, in the code of the instantiated object PiecewiseLinearPauliRotations there is a term in the mapped_offsets elements calculation that I can't explain.
+As it is written in the Qiskit documentation for Linear Amplitude Function we can write the generic piecewise linear function as
+$$
+f(x) = \sum_{i=1}^m 1_{[p_{i-1}, p_i]}(x) (\alpha_i x + \beta_i)
+$$
+and the rescaled version is:
+$$
+\hat{f}(x) = \frac{f(\phi(x)) - c}{d - c}
+$$
+now we have to rescale the function between the interval $[-1, 1]$
+$$
+\tilde{f}(x) = 2\frac{f(\phi(x)) - c}{d - c}-1
+$$
+Expliciting the value of ${f}(\phi(x))$ for a given i-th piece of the function we find:
+$$
+\tilde{f}_i(x) = 2\frac{\alpha_i \left(a + \frac{b-a}{2^n-1}x\right)  +\beta_i - c}{d - c} -1
+$$
+Then we calculate the function $r\frac{\pi}{4}\tilde{f}_i(x)+\frac{\pi}{4}$:
+$$
+r\frac{\pi}{4}\tilde{f}_i(x)+\frac{\pi}{4} =2\alpha_ir\frac{\pi}{4}\frac{b-a}{2^n-1}\frac{1}{d-c}x+2r\frac{\pi}{4}\frac{\beta_i-c+\alpha_ia}{d-c}-r\frac{\pi}{4}+\frac{\pi}{4}
+$$
+and we isolate the new slopes ($\alpha_i'$) and offset ($\beta_i'$):
+$$
+\alpha_i'= 2\alpha_ir\frac{\pi}{4}\frac{b-a}{2^n-1}\frac{1}{d-c}
+$$
+$$
+\beta_i'=2r\frac{\pi}{4}\frac{\beta_i-c+\alpha_ia}{d-c}-r\frac{\pi}{4}+\frac{\pi}{4}
+$$
+I found some incoherence between the above calculated values and the one implementented in the code.
+While $\alpha_i'$ is coherent with what is passed to PiecewiseLinearPauliRotations in slope_angles at index $i$:
+
+pwl_pauli_rotation = PiecewiseLinearPauliRotations(num_state_qubits, mapped_breakpoints, 2 * slope_angles, 2 * offset_angles, name=name)
+for what concerns $\beta_i'$ we found a missing addendum (from now on referred as $\gamma_i'$) with respect to the composition of offset_angles:
+$$
+\gamma_i'= 2r\frac{\pi}{4}\frac{\alpha_ia}{d-c}
+$$
+To see if the term $\gamma_i'$ is added in a sequent step, I went through the code inside the PiecewiseLinearPauliRotations.
+In the mapped_offsets property of the class, in the offset calculation: mapped_offsets[i] = offset - slope * point - sum(mapped_offsets[:i]), the term -slope*point (from now on referred as $\delta_i'$) is added, for $i=0$ we can ignore the term sum(mapped_offsets[:i]) and evaluate the offset final composition:
+$$
+\delta_0' = -\alpha_0'\frac{b_0-a}{b-a}(2^n-1)
+$$
+with $b_0$ the first breakpoint. Substituting $\alpha_0'$:
+$$
+\delta_0' =-2\alpha_0r\frac{\pi}{4}\frac{b-a}{2^n-1}\frac{1}{d-c}\frac{b_0-a}{b-a}(2^n-1) = \underbrace{r\frac{\pi}{2}\frac{\alpha_0a}{d-c}}_{\gamma_0'}-r\frac{\pi}{2}\frac{b_0\alpha_0}{d-c}
+$$
+So here we found the missing term $\gamma_0'$ but a new one (we will call it $\epsilon_0'$) is added.
+$$
+\epsilon_0' = -r\frac{\pi}{2}\frac{b_0\alpha_0}{d-c}
+$$
+We can't manage to find the meaning of $\epsilon_0'$, not present in the expanded formula for $\beta_i'$.
+Is it a possible bug? Or is there a reason for the presence of $\epsilon_0'$?
+We reference the paper Option Pricing Using Quantum Computers
+The code of LinearAmplitudeFunction is inside qiskit.circuit.library.arithmetic.linear_amplitude_function
+The code of PiecewiseLinearPauliRotations qiskit.circuit.library.arithmetic.piecewise_linear_pauli_rotations
+This is around function in the circuit library and as such, unless these library functions are no longer wanted there, I am removing the mod:algorithms label. My assumption is that issues with mod: algorithms label would be moved along with the qiskit.algorithms code and since this relates to circuit library function this issue should stay here.

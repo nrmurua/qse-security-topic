@@ -1,0 +1,52 @@
+The output of the make.log:
+@marekandreas calling type-bound procedures in OMP parallel regions is a problem with some GCC versions. Which GCC did you use for testing?
+@oschuett maybe build ELPA without OMP? See also #1444 (comment)
+@oschuett maybe build ELPA without OMP? See also #1444 (comment).
+According to the changelog the MPI thread level issue has been addressed:
+"limit number of OpenMP threads to one, if MPI thread level is not at least MPI_THREAD_SERIALIZED"
+@oschuett sure, but since we initialize MPI with MPI_THREAD_FUNNELED anyway we can directly build ELPA without OMP and solve the build issue with gcc <= 7.5.0 (not sure in which version and whether it got fixed)
+Good point! According to the changelog ELPA will no longer take advantage of OpenMP for us. However, that renders it essentially useless on a modern CPU machine. So, maybe we could upgrade to MPI_THREAD_SERIALIZED instead?
+@oschuett not sure what distros ship, THREADED (lvl. 4) was not widely supported last time I checked, SERIALIZED (lvl. 3) might be. But this means we'll be dropping gcc-support? Because the default toolchain configuration doesn't build on gcc-7.5.0 atm.
+Can we somehow estimate how prevalent gcc-7.5 still is? Certainly, crippling ELPA on CPUs will also affect many users.
+Furthmore, are you sure that disabling OpenMP will actually solve all problems with gcc-7.5?
+I think, we'll see only more adoption of Fortran OOP. Hence, supporting those old GCC version is an uphill battle.
+Can we somehow estimate how prevalent gcc-7.5 still is? Certainly, crippling ELPA on CPUs will also affect many users.
+For thinks like that I usually query sources like https://software.opensuse.org, https://packages.debian.org, https://packages.ubuntu.com and pages like https://access.redhat.com/solutions/19458 just to get an overview what distros ship.
+Furthmore, are you sure that disabling OpenMP will actually solve all problems with gcc-7.5?
+No. But the error above I've seen as part of my HFX refactoring when I tried to introduce type-bound procedures.
+I think, we'll see only more adoption of Fortran OOP. Hence, supporting those old GCC version is an uphill battle.
+Sure. Such things (Python 2/3 comes to mind) always need careful consideration. Dropping support for older versions of gcc means more people will need to build a gcc and an MPI implementation, increasing the number of potential pitfalls.
+And I would really like to rely on the Linux distros for their work on validation and bugfixing of those components.
+Relying on Spack could be an other thing, there we would only have to maintain a fraction while being able to rely on their efforts.
+The final question is then about HPC centers: if the user has to use the MPI implementation provided by them they may also be locked into a specific compiler (version).
+@marekandreas calling type-bound procedures in OMP parallel regions is a problem with some GCC versions. Which GCC did you use for testing?
+@oschuett maybe build ELPA without OMP? See also #1444 (comment)
+We are testing ELPA with/without openmp, with/without mpi and so forth for several compiler "vendors", such as Intel, GNU, AMD, Fujitsu
+With respect to GNU compilers we test for: 8.x, 9.x, 10.x
+Yes, it is know, that GNU 7.x has problems with type_bound procedures in OpenMP regions.
+I could work around this, but rather not do it, since the 7.x compiler version are very old. We decided that GNU >= 8.x is required for ELPA.
+Honestly this has not been a problem up to now, since users have been able to update gcc on there Linux distros. Up to my knowledge the standard compiler shipped with distros might be old, but normally one can just install a newer version from official repos (with yum, zypper or whatever). As long as there are no proofs that one distro does not offer this possibility, I consider this work to be done by the user if one wants to use ELPA
+Thanks @dev-zero for those links. I had a quick look and it seems gcc-8 has reached all major distros, including your openSUSE LEAP 15.2. Hence, it seem quite reasonable of ELPA to drop support for gcc-7.
+I'd suggest we close this issue now. CP2K itself still works with gcc-7 and we never made any promises about our dependencies.
+Thanks @dev-zero for those links. I had a quick look and it seems gcc-8 has reached all major distros, including your openSUSE LEAP 15.2.
+Interesting, where did you find that?
+I'd suggest we close this issue now. CP2K itself still works with gcc-7 and we never made any promises about our dependencies.
+Then I'd suggest we drop ELPA from our default toolchain build.
+Claiming we support gcc < 7 but our default toolchain config breaks with it doesn't make much sense.
+Interesting, where did you find that?
+While gcc-7 is the default, packages for version 8 and 9 seem to exist:
+https://software.opensuse.org/search?utf8=%E2%9C%93&baseproject=openSUSE%3ALeap%3A15.2&q=gcc9
+Then I'd suggest we drop ELPA from our default toolchain build.
+I don't know. ELPA will provide crucial GPU acceleration for many users.
+Claiming we support gcc < 7 but our default toolchain config breaks with it doesn't make much sense.
+Those compatibility claims were actually never meant to apply to the default toolchain. However, I agree there is a need for this. As a first step we should probably start to use the default toolchain for some of our dashboard tests.
+Interesting, where did you find that?
+While gcc-7 is the default, packages for version 8 and 9 seem to exist:
+https://software.opensuse.org/search?utf8=%E2%9C%93&baseproject=openSUSE%3ALeap%3A15.2&q=gcc9
+Unfortunately the official MPI packages are built with the default compiler.
+The main issue was resolved via #1564.
+I'm hitting this issue again, building dbcsr 2.6.0 standalone using GCC 7.5.0.
+'__vtab_dbcsr_mpiwrap_Mp_comm_type' not specified in enclosing 'parallel'
+What's the recommended solution now? Is GCC 7 officially unsupported? Is there a fix in CP2K that's not in dbcsr?
+That's easy to answer: just check the CP2K dashboard https://dashboard.cp2k.org/index.html.
+The first compiler we support is GCC 8 (which has already some workarounds to get it to work)

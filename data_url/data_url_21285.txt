@@ -1,0 +1,64 @@
+The CORDICs are the main driver for resource usage and speed on Sayma.
+They do not achieve optimal accuracy and SFDR and have high latency.
+But they support output scaling for free without added multipliers.
+This would be very useful for Shuttler if implemented, as well as for Sayma.  The more output tones can be implemented per channel, the more useful this hardware is for simultaneous laser gates, tweezer arrays, parametrically modulated couplings, etc.
+Did you have something like this in mind?
+https://github.com/jorisvr/vhdl_sincos_gen
+It seems like we would want finer phase resolution than either of their tested variants (48 bits ideally?) but the general bones might be useful?
+Similar. The basic techniques are all well known. Pre-multiplication and proper sizing of the bit width of the interpolation coefficients is missing from that VHDL code.
+I'd do without the DSPs used in that code, with the convenient metaprogramming in migen added, and better analysis tooling.
+Phase truncation when going into the LUT will always need to be done (and doesn't limit frequency resolution). And since that truncation defines a SFDR level already, things like the higher order interpolation and wide multiplication in the code you mention can safely (and very resource-savingly) be ignored.
+Ack, sounds good.  I didn't look into this code, just noticed it (along with many papers on this topic).  Realistically, what kind of resource savings would we expect for something like your proposal vs. the current CORDIC implementation?  Factors of two?  More/less?
+Would need to be determined, from a very rough guess maybe a factor of 5-10 less in luts/ff but about 40-80 ramb18 and 140-280 added dsp48 usage for the full 8 channel 1gsps sawg. But only order of magnitude.
+In Sayma v2 contract optional item C.3.2.2.16 is "Low SFDR pattern generator".
+Development and characterization of a high-efficiency sine-cosine generator based on a hybrid LUT and coefficient-based interpolation. Optimized for minimal BRAM, LUT, and DSP resource usage. Achieving > 100 dBc spurious-free dynamic range (SFDR). This is a standalone generator not integrated into SAWG.
+Some questions.
+For example, increasing the number of output tones per channel.
+Also, the feasibility of adding new tones with the current/proposed pattern generator from a timing/resource usage perspective.
+Of course it can be built into SAWG, with a bit of extra work. I guess that you are referring to the "standalone generator not built into SAWG" wording which appeared in some earlier proposals for reallocating funding. This was only there to clarify what is funded by what.
+A few remarks:
+I added implementation details to the top post to allow (some DSP background assumed) judging of the value/complexity of the implementation.
+@jordens Thank you for the details on implementation. I will respond on Monday.
+@jbqubit ping
+ping @jbqubit ... it's quite hard to see how we're going to make progress on this project without an ability to make project management decisions on a sensible time scale.
+Thank you for the detailed response.
+As we keep getting hung up on documentation I'll try to be more explicit. On documentation I'm thinking of three sorts.
+One is for an end user who needs a mental model of how SAWG works in order to use the tool and understand its limitations. This dovetails with API documentation. What's done in PDQ3 better marries these two and is closer to what I have in mind for SAWG [pdq3doc].
+I'd also like to see comments embedded in the source code implementation. I'd like so that an interested physicist-programmer with knowledge of Migen can figure out what's going on without without fully reverse engineering your logic. These comments are human readable textual or mathematical hints or cross references to specific sections of your favorite DSP text book. These comments communicate the signal processing techniques at play and frame the logical structure of your implementation.
+For example, an annotation to your guard (https://github.com/m-labs/misoc/blob/117039bae3408c5a521c88714a5a5ed31026bf0d/misoc/cores/cordic.py#L177) that would have helped me is
+[meher2009] Ref Walther [3]; log2(n) extra bits in datapath to eliminate finite word-length error. 
+We've pointed out repeatedly the flaw in the demand that unskilled users must be able to perform complex tasks that we ourselves have a tough time finding qualified workers for.
+The language in [meher2009] is relatively accessible. My comprehension of Meher is certainly not such that I could write my own gatware implementation but it's sufficient to get the gist of the various approaches and their relative tradeoffs.
+For all three types of documentation block diagrams provide a scaffold on which to build deeper comprehension. This is common practice. For example, [intelNCO] Fig 8, [xilinxDDS] Fig 2-1, Fig 3-1, [meher2009] Fig 6 and various. With block diagram and accompanying text in the Xilinx and Intel IP white paper I have some notion of what they're doing.
+Reusability and composability in programmable logic is very different and much more challenging than reusing some software library.
+OK. I appreciate your explanation. And it gives me a better sense of what's involved in the optimization you propose and, for example, increasing the number of tones per channel. Perhaps I was misled by the reconfigurability of the Intel and Xilinx NCOs [intelNCO] [xilinxDDS]. I understand that you're aiming for a highly optimized solution while what they provide appears to be more general-purpose and not carefully tuned to our particular FPGA. Let's hold off for present purposes on worrying about increasing the number of tones per channel.
+If you desire a system that a typical physicist without the background mentioned above can extend, then we are talking about something like a RF NoC. We pointed this out before. I assume this is out of scope.
+No this is not what I mean. But it's a cool idea.
+Achieve > 100 dBc spurious-free dynamic range (SFDR)
+What is theoretical SFDR of current CORDIC implementation?
+Why does your approach not include phase dithering to reduce SFDR? This is used by both Intel and Xilinx IP.
+How many hours of work to you anticipate the work as presently outlined would require?
+@jbqubit that answer is a good summary of much of what’s gone wrong with Sayma. This is a relatively low value item which you already have a quote for. It provides clear benefit and a likely overall cost saving for the project (due to simpler code, easier maintenance, lower compile times); it should be a no brainier to fund this.
+Instead you’re taking an age to respond (and developers are having to repeatedly chase for decisions), needlessly over complicating thjngs and generally confusing the process for no real reason.
+Speaking personally, I have very limited time remaining to devote to Sayma and it’s exactly this kind of thing which is going to make me feel that Sayma is unworkable and walk away from the project.
+There is a productive conversation to be had about code documentation in artiq. But it’s actively unhelpful to tie that conversation to this specific issue; it applies equally to all of artiq/misoc/migen /Sayma. And if you want to have that conversation then get on irc and engage properly to find a plan rather than sending intermittent essays on git hub.
+Re sfdr: do you need better than 100dBc for your experiments (we don’t)? The point here is to minimise complexity and cost, not to reproduce every feature present in every other core out there.
+The attitude with Sayma seems to be that it’s only worth finding things if we can fund the be all and end all with all possible bells and whistles from day one. Contrast that to the philosophy with eems where we fund the minimal system required to meet our goals and extend incrementally in future contracts as necessary. This is a large part of the reason we have so many working eems but not Sayma...
+The attitude with Sayma seems to be that it’s only worth finding things if we can fund the be all and end all with all possible bells and whistles from day one.
+This is precisely what has gone wrong with Sayma.  I thought we had learned our lesson about this, for example by dramatically reducing scope for Sayma 2.  The goal should be to get something working in the lab that people can use.  The lovely thing about FPGAs is that you can always come back later and tweak the gateware -- let's not get so bogged down in trying to have it be "perfect" right now that we can't actually deliver something.  There's been a lot of ill will generated in the community from Sayma delays....biting off more than you can chew has real negative impacts.
+Contrast that to the philosophy with eems where we fund the minimal system required to meet our goals and extend incrementally in future contracts as necessary. This is a large part of the reason we have so many working eems but not Sayma...
+Agreed, although perhaps a little unfair as none of the EEMs are called upon to do anything like the complexity of what Sayma is designed to do, so that also helps speed their development.  However, I think despite the fact that Sayma is aimed at synthesizing more complex signals, it could definitely have benefited a great deal more from the general philosophy of the EEMs, namely to get things working simply first and not try to make it all things to all people.  I certainly thought we learned our lesson with that, and I am not eager to repeat that mistake.
+Re sfdr: do you need better than 100dBc for your experiments (we don’t)?
+@jbqubit what DAC do you have that will generate signals at hundreds of MHz with better than 100 dBc wideband SFDR?  I haven't seen one.
+@jbqubit what DAC do you have that will generate signals at hundreds of MHz with better than 100 dBc wideband SFDR? I haven't seen one.
+No, I don't need > 100 dBc SFDR. The main point of this contract item is improving compile time and resource utilization. I'll create a new Issue to discuss documentation.
+@jordens I'd like to modify PWS C.3.2.2.16 as follows.
+If you agree with these changes please proceed with the work plan you outlined in this Issue.
+SFDR should be maximized. That's why it should be larger (">") than a given minimum.
+Strike "Achieving > 100 dBc spurious-free dynamic range (SFDR)" and replace with "Maximize SFDR".
+Generator code, tests, and characterization published. https://github.com/m-labs/cossin
+Integration into MiSoC and SAWG to follow.
+Cool!
+Looks nice, @jordens!  How does the resource usage (9x36 block ROM, two 3x6 bit multipliers, two 16 bit adders) compare to the current CORDIC?
+There is no easy comparison. This problem has a very high dimensional figure of merit. Currently it's about 50 20 bit add/sub/mux, 50 20 bit registers, 20 comparators and 0 ROM, 0 multipliers. They are just very different.
+I see, thanks.  Perhaps the figure of merit is "how many can you put on XXX FPGA", where it's whatever the relevant FPGA model that is on Sayma or other hardware items that would use this?  Anyway, nice work.

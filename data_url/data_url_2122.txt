@@ -1,0 +1,56 @@
+In:
+Out:
+Minor xref: #2406
+If you change the circuit construction to
+i.e. re-order the first (uncompiled) moment, it gives the "correct" circuit:
+Bump
+Bump
+I am digging into this work. Plus, I found out that clear_span=0 with non-empty new_operations ran endlessly.
+Yeah, this is still a problem for me so let me know if you find anything out!
+This behavior is highly unexpected.  I'm marking as a bug since I think it means that PointOptimizer is broken in some way.
+I did some analysis on this too.
+The problem is that when the new operations from a point optimization is inserted, the algorithm inserts a new Moment that shifts everything globally. By globally, I mean shifting the operations to a new Moment on all the qubits, not just on the qubits that the new operations operate on.
+The reason you are seeing the weird "non-commutative" behavior, because the optimize_circuit method iterates through the operations in order of definition. In the first case: the first replacement creates the extra  XX and CZ operations on the first two qubits, it doesn't create new moments, because the first CZ is the last operation on the first two qubits, the new operations wouldn't overlap with anything. Then, the second replacement should only touch the 3rd and 4th qubits, but as it does it, it inserts a couple of new moments to create space for the new operations. It needs to insert new moments because otherwise the new operations would overlap with the 3rd CZ. The new moments push back the 3rd CZ (correctly) on the 4th & 5th qubit and also the [1:] operations on the first two qubits (incorrectly?). The 3rd CZ replacement requires no new moments.
+If you do the replacements in reverse order, starting with the second CZ creates a new Moment which pushes the 3rd CZ - and if something would be after the first CZ, those operations as well, however, there is nothing after the first CZ at this point. Replacing the first CZ now goes on simply without creating new moments, and similarly the 3rd CZ replacement requires no new moments.
+I reproduced the issue on a smaller (I think minimal) example:
+That results in:
+Some pictures for more intuition:
+The ideal scenario with two qubits, operation on the unaffected qubit remain in the same Moment (index 1), resulting in a "broken" Moment into two parts:
+
+The current behavior with a larger example of 5 qubits and two extra Moments required, the unaffected operations are still being pushed (pink), alongside with the affected operations (green) to make space for the new operations (yellow):
+
+I'm thinking about what the final strategy would look like.
+1.) Reinsertion - A naive, simple approach could be - if we don't care about preserving the moment structure (we are kind of meddling with it anyway), we could re-insert everything with an EARLIEST insert strategy at the end. This would add an extra O(n_ops) operations to the optimizer. We could even think about simplifying the optimizer algo by making it moment-agnostic. The problem is that if there was an intentional structure in the moments, that different from EARLIEST insert, this method would erase those.
+If we do care about preserving the moment structure as much as possible we have three online options:
+2.) pull back the "unaffected" operations after the insertion - this is O(n) worst case per step - i.e. it adds up to O(n^2) :(, but relatively simple to implement, iterating through the operations.
+3.) partial push - "push" only the (transitively) affected operations to make space - this is also O(n^2) worst case, but a bit more involved.
+4.) minimal - We could use a hybrid approach as well, and pick the one from 2/3 that moves less operations?
+@bryano - can you comment - it's been 2 years since you wrote this algorithm, but you might have some insight about it - or if I misunderstood something.
+The logic currently lives in Circuit._push_frontier:
+
+It is used in _insert_at_frontier:
+
+I don't think your minimal example captures the truly surprising behavior here. In the minimal example, the current behavior makes sense: you're expanding an operation so you have to push everything back to fit it. What's happening in the bug part of the bug is you push everything back "twice". It would be like if your example did this:
+A special-purpose fix would be to go through all the operations in a moment and see how the point optimizer would expand/contract them and figure out the total, minimal amount of space you need to create. Then you're off to the races
+Can you explain more how the push back "twice" applies to your example?
+It seems to me that the operations are pushed back by exactly 3 moments, the same amount required for your Opty's new operations to fit.
+In case of the small example, if the optimizer would replace with 5 Y gates instead, we get this:
+Your example has an extra Y in it also...that was accidental?
+I think I know what you mean by "twice" - on the first two qubits there is space created seemingly not only for the 3 extra operations but 3 more "holes" are there. The problem is because the overlapping "replacements" can create holes in previous ones. The first replacement is "being taken apart" by the second replacement, as it creates the new moments.
+It looks to me that a fix here - to calculate the minimum possible "holes" created - will need to cater for grouping multiple operations that are to be replaced together, so it will require a bit of rewiring to batch operations compared to the one operation at a time, online algorithm as it is now.
+Also, as I was digging into this I found some more properties of the algorithm that would be great to discuss. I'm writing up a little summary of my findings and recommendations, I will need input from you to discuss requirements.
+That's right. A sneaky change I made in my version of the "minimal example" was to change the input to two Y gates
+Oh, yeah, got it. We need one of the replacements to "not need" new moments though (i.e. to have enough space). So with the same Y -> Y@Y replacer this is now a real minimal example that shows the same reordering issue:
+Yes, to clarify my first comment - that "minimal example" was not the reproduction of the original out of order behavior. It was the reproduction of the intermediate step that "injects" a moment into a set of operations, as my assertion there was that this was the wrong step and we should fix the issue there. However, a batched approach might be more efficient.
+Hi folks,
+I have a fix for the bug. After rewriting the algorithm, the prototype provides the following results:
+in:
+or
+out:
+in:
+or
+both give
+out:
+This will get fixed as part of migration to new moment preserving compilation primitives proposed in https://tinyurl.com/moment-preserving-transformers
+This is fixed with the new transformer primitives. Specifically, executing the following code:
+gives the expected output:

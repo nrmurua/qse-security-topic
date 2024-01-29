@@ -1,0 +1,39 @@
+Gives wrong answer and not consistent with the doc definition.
+Seems to not account for normalization correctly, esp. in view of the way I read and understand the documentation.
+Yields
+Chi([[2.+0.j, 0.+0.j, 0.+0.j, 0.+0.j],
+[0.+0.j, 0.+0.j, 0.+0.j, 0.+0.j],
+[0.+0.j, 0.+0.j, 0.+0.j, 0.+0.j],
+[0.+0.j, 0.+0.j, 0.+0.j, 0.+0.j]],
+input_dims=(2,), output_dims=(2,))
+For 2 qubits identity, gives 4 instead of 1. For 3 qubits gives 8, etc.
+Should be 1 not 2:
+Chi([[1.+0.j, 0.+0.j, 0.+0.j, 0.+0.j],
+[0.+0.j, 0.+0.j, 0.+0.j, 0.+0.j],
+[0.+0.j, 0.+0.j, 0.+0.j, 0.+0.j],
+[0.+0.j, 0.+0.j, 0.+0.j, 0.+0.j]],
+input_dims=(2,), output_dims=(2,))
+No response
+@chriseclectic: can I ask you to check what normalisation $\chi$ matrices should have?  Fwiw, QuTiP gives this same 1q process matrix a 4 in the $II$ position, but then claims that it's not TP despite it being happy that both the column-stacked super and intermediate Choi matrices (which match Qiskit) are.  Qiskit is happy that what it's spitting out is TP, except that's a fairly meaningless statement because it evaluates that by converting back to Choi; if there's a normalisation problem, it'll get wiped out by that.
+edit: fwiw, my understanding of process matrices agrees with what Zlatko's saying as well, but my knowledge of the formalism is sketchy at best.
+To illustrate a bit more completely, let's say I manually set up a process matrix $M$, and build a column-stacked superoperator manually, where left-multiplication of np.kron(pre, i) for identity matrix i to a column-stacked vectorisation of a matrix represents matrix multiplication from the right by pre (i.e. it's the matrix $\text{Pre}(A)$ such that $\text{Pre}(A)\lvert\rho\rangle\rangle$ is the action $\rho A$, etc for np.kron(i, post)).  Now the $\chi$ form of my operator should be exactly $M$ (as I understand things), but Qiskit reckons it's $2M$ (and QuTiP has it as $4M$):
+If so, the suspicious lines to me look like in qiskit.quantum_info.operators.channels.transforms._transform_{to,from}_pauli, which normalise by 2 ** num_qubits, but it feels like they maybe ought to be 4 ** num_qubits to account for the squared size of superoperators?
+I discussed this with Zlatko and we concluded that the normalization is indeed incorrect according to the docs and standard convention. From the docs:
+
+If the P_i are standard Pauli matrices, then the chi matrix of the identity channel must have a 1 in the upper left corner for all system sizes. We found the following references to support this convention:
+If so, the suspicious lines to me look like in qiskit.quantum_info.operators.channels.transforms._transform_{to,from}_pauli, which normalise by 2 ** num_qubits, but it feels like they maybe ought to be 4 ** num_qubits to account for the squared size of superoperators?
+I tried making this change, but it seems to result in operators that are not CPTP and it also breaks all conversions. I can investigate this issue further to find a proper fix.
+@chriseclectic I just wanted to check that you agree with the assessment above. Since it appears you wrote the operator implementations, any tips on the best way to fix it would be appreciated.
+In https://arxiv.org/abs/1111.6950, which is cited in the documentation, the chi matrix is defined using an orthonormal operator basis (which translates to dividing the Pauli matrices by a normalization factor), but this convention seems rare and is not what is actually documented.
+As @kevinsung notes this is the difference to whether you define Chi wrt to the orthonormal Pauli basis {\sigma_j / \sqrt{2^n}} or un-normalized Pauli basis {\sigma_j}. The definition of Chi in qiskit is wrt to the former which would make the documentation incorrect: It should say $\mathcal{E}(\rho) = \sum_{ij} \frac{1}{2^n}\chi_{ij} P_i \rho P_j$. Similarly the documentation for PTM is missing some factors of $1/2^n$ and $\sqrt{1 / 2^n}$ for $R_{ij}$ and $|A&gt;&gt;_p$
+Ok, I've submitted #10909 to fix the PTM documentation.
+As for the Chi matrix, we're faced with a choice:
+@jakelishman @zlatko-minev @chriseclectic Do you have thoughts? I'm partial to to (1) because it avoids breaking things, but I don't have a good sense of how surprising the current convention is likely to be to most users.
+I agree, 1 sounds like the best choice to me too - there's nothing inherently wrong with the code, so it would be painful to make a breaking change to it.  In #10909, should we update the docs for Chi as well, or were you intending that to be separate?
+Also: thanks a lot for digging into the literature to both Kevin and Zlatko, and to Chris for replying here - that's a huge help in getting this sorted!
+Yeah, I agree, thanks everyone. Given the precedent throughout the code base, option one sounds good to keep it as it is and document it heavily.
+I would suggest maybe using some of those caution boxes in sphinx, I think I've seen elsewhere in the documentation.
+That is since what we mean by a Pauli now varies in different parts of the qiskit stack. Here it is normalized and in other parts it's unnormalized, such as when creating Pauli operators.
+Thanks everyone. I'll update #10909 to also fix the Chi documentation.
+That is since what we mean by a Pauli now varies in different parts of the qiskit stack. Here it is normalized and in other parts it's unnormalized, such as when creating Pauli operators.
+I'll try to make this clear. I think we can stick with a single meaning for the Paulis by carefully explaining the normalization factors.

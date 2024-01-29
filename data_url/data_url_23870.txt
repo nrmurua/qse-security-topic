@@ -1,0 +1,132 @@
+Continuing discussion from #2
+Should we have 1 sweep function or multiple nested (user-defined) measurement functions?
+E.g. for each B, apply my_pulse 10.000x and monitor the system for 10 minutes
+measurement.sweep((B[-6:6:0.1], AWG.applier('my_pulse.dat', n=10000)), 60, repeat(600), 1)
+or
+measurement.sweep(B[-6:6:0.1],60).apply_pulse_scheme('my_pulse.dat', n=10000).monitor(t=600).run()
+and e.g. 2D sweep measurement
+measurement.sweep(B[-6:6:0.1], 60, c0[-20:20:0.1], 0.2)
+or
+measurement.sweep(B[-6:6:0.1], 60).sweep(c0[-20:20:0.1], 0.2).run()
+I would prefer to chop the syntax up in parts:
+any thoughts/ideas?
+I haven't followed the previous discussion so much, but in terms of the syntax, or how as a User I'd like to do things, I do have a few comments.
+I see a sweep as more than just
+measurement.sweep(B[-6:6:0.1],60)
+I can imagine a more intelligent sweep which in many situations would look more complicated
+measurement.sweep(B[-6:6:0.1],do_before_step,do_after_step,pause_for_x_in_case_of_T)
+For a multidimensional sweep this would be unreadable, as @guenp mentions, some of us like to have a readable and more flexible version to work with.
+also the nested measurements can do much more
+measurement.sweep(B[-6:6:0.1],60).list(m.monitor(60),m.sweep(A[0:42:1]),m.monitor(60),m.set_async(A[0])).run()
+i.e. for each step in B a list of stuff would be excecuted, ie. monitor for a while, sweep A, monitor again, set A to zero and continue with B...
+just a few thoughts :)
+@MerlinSmiles good point about potentially doing multiple measurements in sequence (which may have different dimensionality, and certainly different size) during an inner loop. That's certainly not going to work well with the syntax as it stands now. It also shows that the whole concept of the sweep being a method of a MeasurementSet is limiting - a single task can involve several different MeasurementSets.
+But I also don't think we want to create a lot of methods within whatever object is constructing the sweep that all amount to either "do something repeatedly" or "at each point, do X and then..." - that would require the sweep constructor to know about everything we might want to do during a sweep. Much better I would think to have objects that are arguments to a couple of basic method calls, so that users can make new objects, as long as they conform to the API we define, to accomplish any specialized task.
+I'm coming around on having to end the call with .run(). I actually don't want to encourage recycling sweeps, I think it makes the experiment record harder to understand (because it's less explicit) and encourages less purposeful and in certain cases even more error-prone measurement. But it does have its place, and certainly makes composing complicated procedures more flexible.
+@guenp would calling it a loop or something instead of a sweep make it more palatable to think of monitoring over time in the same framework as stepping a parameter? It still needs a number of points and a delay time, not just a total duration.
+So what about a syntax like:
+@AdriaanRol points out in #5 the use case of acquiring data in 1D slices rather than point-by-point. While I'm sure we could shoehorn this into a Loop().measure() syntax, with all the action happening in the initialization and the results just regurgitated by measurement.get, this would be ugly.
+We could also let a MeasurementSet parameter support array results for .get - but that would make the rest of the code much more complicated, as the dimensionality would be ill-defined.
+Seems like another class is in order, whose API looks like an already measured loop.
+Something like:
+@alexcjohnson i like that syntax better, it looks much more flexible and there are several situations I would have used this already.
+Loop(B[-6:6:0.1], 60).each(  # do a sequence of things at each outer step Wave(k1, [1:100:10000]), # upload a wave to instrument, or just select a saved wave Loop(repeat(100), 1).measure(measurement2),  # measure something while wave is running GetArray(DMM1,trig), # get data from instrument triggered by the wave instrument GetArray(DMM2,trig), # and from a second instrument that is also triggered GetArray(DMM3,1000,0.1), # and from a third instrument that is not triggered but just gets x datapoints in y time ).run()
+now there is somehow a data-mix from a traditional loop and arrays from instruments, these somehow need to end up in my data storage thing in the right order / timestamp so that I can plot them against eachother
+@alexcjohnson I agree with @MerlinSmiles, this syntax looks much nicer & more flexible! I like the .each syntax - it's very intuitive. Also - I like the idea of adding a 'runnable' measurement class in the example you give for GetArray in which users can define their own measurement, e.g. finding the qubit resonance.
+I still do like the .run() command. I agree with you it doesn't look as nice as running a one-line method, but it does give me the flexibility to create my own measurement runs and re-run them which could de-clutter the code a lot. I'll give an example below.
+@AdriaanRol what do you think? Could you give a pseudocode example of a measurement you'd do and see if this syntax would work for you?
+e.g. here's a measurement I'd do for scanning SQUID:
+Would that make sense?
+edit: hit enter too soon 😲
+Just had a short discussion - for scanning SQUID, we need to measure the sample inclination as well, and instead of setting the piezos individually we apply a ramp on the niDAQ channel, and sample the signal.
+So in pseudocode:
+@guenp I can give you some examples of the loops we currently use and why we chose for the different functions.
+We use a custom MeasurementControl instrument that we give the variable name MC.
+@alexcjohnson  I'll also try to point out how we deal with different sized arrays that get returned and how we deal with adaptive measurements (e.g. numerically optimizing).
+Comment after rereading my comment, it seems I am utterly incapable of writing short posts. I hope the examples of how we constructed our measurement loop can be useful for coming up with the best possible syntax for the new measurement flow.
+Let me know what you guys think, I think there are some interesting use cases in my examples in addition to some clear areas where our syntax and structure can be improved.
+To run our experiments we have created a Measurement Control instrument in QTLab.
+The measurement control is an instrument (object) to which we attach sweep and detector objects with the set_sweep_function and set_detector_function functions. The measurement control then takes care of looping over the sweep points and repeatedly calling the sweep and detector functions. By having them as objects with predefined functions we can execute any code we want inside the sweep and detector functions.
+In the example below both sweep and detector functions come from libraries that we created.
+Same example as above, mode=2D takes care reshaping the sweep points such that it has an inner and outer loop.
+It is also possible to specify any n-dimensional sweep by handing a list of sweep functions to the set_sweep_functions command as long as the shape of the sweep points is consistent with it. (n*m array where n == len(sweep_functions) and m the total number of points to measure)
+Less pretty syntax,  because a detector function just retruns values  it is possible to create something we call a measurement_function
+By passing this measurement function to an adaptive function we can make use of the existing scipy optimization functions or any other kind of adaptive algorithm.
+Code that we use for running this looks like this:
+As you might have guessed by now the fact that we can execute any piece of code in our detector function allows us to create a nested measurement. An example of such a nested detector would be a "qubit characterization detector"
+This composite detector runs multiple measurements, in this case, find resonator, find qubit, tune pulse amplitude and then perform a T1, Ramsey and Echo experiment. Finally it returns multiple values.
+The way we do this is by creating a nested MC instrument on which we perform these other experiments, allowing us to reuse our tested code for these experiments. The thing that we have not yet solved is how to deal with data saving, currently each nested loop creates its own datafile, making analysis easy but also creating a lot files.
+Something I have omitted up to now are what we call 'hard' measurements, as opposed to 'soft'(ware) controlled measurements the points are no longer set one by one in the measurement control but are controlled by some piece of hardware which runs multiple points and afterwards returns an array of values. Although the nr of points might seem ill defined it does always return a predefined nr of point, thereby making it very possible to deal with this in well controlled way for datasaving.
+@AdriaanRol thanks for your long story 😁
+So if I would compare this to the Qcodes syntax that @alexcjohnson proposes:
+So translating your above code would become something like this:
+1D sweep trivial example:
+@alexcjohnson re: Source_frequency_GHz(source) not sure if the sweep parameter can take input parameters though?
+2D sweep trivial example:
+Adaptive measurement, don't know enough details for this one so just freestyling here:
+@alexcjohnson do we already have a way to define the measurement name? would you also make it an input parameter to .run()?
+@AdriaanRol What do you think? Does the translation I made above make sense and would it be a nice syntax for you to use?
+@AdriaanRol thanks for the detailed comments! I think that the syntax I've proposed can accommodate all of the use cases you've enumerated, along the lines of the translations @guenp has provided - working on the implementation now. One difference is I've tried to do things using built-in python constructs whenever possible in place of explicit methods.
+Take SweepValues as an example, which replaces MC.set_sweep_function and MC.set_sweep_points with one object (that's usually constructed from a parameter but doesn't need to be): the looping code will do something like:
+All SweepValues objects need to have a set method which normally just maps to whatever parameter you're creating the sweep out of. (as an aside, if the sweeping code were really as simple as the pseudocode above, setting could have been accomplished by the iterator... but of course it's not that simple 😈 eg for nested loops, so I used an explicit setter). And then more complex cases like adaptive sampling need to know what was measured, so they have a feedback method as well. But the rest (providing the values, and prepare() and finish()) are in built-in constructs:
+For the standard case SweepFixedValues which handles any collection of fixed setpoints, not necessarily linearly spaced, the for ... in construct just iterates its _values sequence.
+For more complex scenarios (like my toy AdaptiveSweep) you create an iterator in the canonical python way:
+@guenp
+re: Source_frequency_GHz(source) not sure if the sweep parameter can take input parameters though?
+Sure, if Source_frequency_GHz(source) is a factory function that creates an object with a .set and a .__getitem__ method - though wouldn't source normally already have a frequency parameter that one could use directly?
+do we already have a way to define the measurement name? would you also make it an input parameter to .run()?
+good point - yes, I think that should be in .run(). A side effect of that is that everything that happens together (if you have several things in the Loop.each() will get the same measurement_name, but would have different measured parameter names within that. So measurement_name would map to a folder name or something, and the parameters would be separate files (or maybe just columns) inside that.
+@alexcjohnson
+though wouldn't source normally already have a frequency parameter that one could use directly?
+No idea, ask @AdriaanRol :) I guess this is up to the user. My point was that input parameters would be handy in this case.
+everything that happens together (if you have several things in the Loop.each() will get the same measurement_name, but would have different measured parameter names within that. So measurement_name would map to a folder name or something, and the parameters would be separate files (or maybe just columns) inside that.
+True! I would just put everything in 1 tab-delimited file, like QTLab. Each column is a parameter, 1 header line specifying the column names, a block separated by two carriage returns for each outer loop iteration (basically GNUplot format which is also used for SpyView). This is also easy to read with pandas. E.g.:
+In the folder there could be more stuff (instrument param snapshot, incremental Monitor log, some graphs).
+I would even allow people to append several measurements to the same data folder and file, if they would want to. I did a measurement yesterday where I was looking for a critical magnetic field, and instead of starting a measurement from B=0T to B=14T I first went to 6T, then to 8T, then to 14T, just cause I wanted to have a feeling first of where Bc more or less was before having to abort a long measurement halfway. All these measurements were appended to the same datafile (I used a Quantum Design PPMS in AC transport mode, using the in-built software. It basically just appends all measurements to 1 file unless you change the filename).
+So this was my measurement in QCodes syntax:
+etc. Specifying the same measurement_name for subsequent measurements should add the data to the same data file (or alert the user "This file name already exists. Do you want to start a new data file or append to the existing one?")...
+@guenp
+@AdriaanRol What do you think? Does the translation I made above make sense and would it be a nice syntax for you to use?
+I think your translation is generally correct, however I very much dislike the syntax, mostly from a readability point of view. I do not think that our way is the only way (or best for that matter), however I do think that having all the .sweep .measure linked together in one statement can become very cluttered very quickly.
+I like our method because it has a single line for each statement, an alternative would be to have a single function call with multiple arguments as this also allows lines to be split and makes it clear what is happening.
+With respect to setting the sweep points as follows, I think that that also introduces an extra constraint, I'd much rather give them either explicitly or as an iterator as this gives more freedom to the user (e.g. non uniformly spaced sweeps, rough scan for most, fine around certain known regions).
+@alexcjohnson
+Sure, if Source_frequency_GHz(source) is a factory function that creates an object with a .set and a  .getitem method - though wouldn't source normally already have a frequency parameter that one could use directly?
+This is indeed true, the choice of making it a sweep object is a very deliberate one though. By making it an object this allows us to set any kind of code we like within the sweep function object, thereby giving far more freedom to the user while still providing the rigidity that is required to standardise loops and data storage.
+To provide a (simple) use-case where this might be handy, this weekend we found out that agilent sources reset the phase whenever a frequency is set, this makes sense as for a different frequency phase will change, however even when setting the frequency back to the same value the phase is lost. By having a sweep function in which we can as a user add stuff like get and set phase around the set frequency, this problem can be circumvented without having to access the measurement loop/control code and /or the instrument driver.
+Now obviously there are other ways to work around this but this way of implementing it removes artificial constraints on the user and also allows more elaborate sweep functions which might not fit into the instrument and parameter paradigm (ones that program sequences into the AWG for example).
+The same logic applies to why we hand detector functions as objects to the measurement control.
+@AdriaanRol the syntax is certainly quite different from QTLab but maybe the patterns I describe below can assuage your concerns? I think in the end it will allow quite some better flexibility.
+I very much dislike the syntax, mostly from a readability point of view. I do not think that our way is the only way (or best for that matter), however I do think that having all the .sweep .measure linked together in one statement can become very cluttered very quickly.
+You can certainly break these statements up, though as I'm envisioning right now pretty much all of the method calls make new objects, rather than modifying the existing one:
+It's more verbose because you have to hold onto the new objects, but the advantage of this over everything being a method of and modifying MC is that you can have several things defined at once and call them repeatedly, nesting them different ways. So for example the IV_curve object @guenp constructed above can be run by itself any time as a 1D sweep, or nested inside a B sweep (or any other loop) to make a 2D sweep - and in this example, that's happening in the same B sweep as a 1D Rxx vs B curve is being measured. (without having had to create a separate measurement function that includes separate Rxx and I/V measurements).
+That being said, one advantage of your syntax that I don't have yet: most of the time your measurement would be the same across many sweeps, and your way MC remembers the detector_function. One thing we could do is define a default measurement that gets used if you run a Loop with no actions:
+With respect to setting the sweep points as follows, I think that that also introduces an extra constraint, I'd much rather give them either explicitly or as an iterator as this gives more freedom to the user (e.g. non uniformly spaced sweeps, rough scan for most, fine around certain known regions).
+I think the current implementation gives you the flexibility you want. The code documents it here: https://github.com/qdev-dk/Qcodes/blob/master/qcodes/sweep_values.py#L77-L91
+So re @guenp 's quadrant, a slice can't be created in quite that notation but you have many options:
+or as a sequence of (built-in) slice objects - this is useful in case you want the same sequence of values available to different parameters:
+you can in principle pass any iterator inside the [...], but note that it will be immediately evaluated to a list, so that you know its length and you can use it as many times as you want. If you want some sequence of values that you don't know ahead of time, you can make another SweepValues subclass like AdaptiveSweep that implements its own iterator with feedback.
+it removes artificial constraints on the user and also allows more elaborate sweep functions which might not fit into the instrument and parameter paradigm (ones that program sequences into the AWG for example).
+The same logic applies to why we hand detector functions as objects to the measurement control.
+I think the QTLab syntax and what I'm proposing are actually not that different in this respect - a parameter doesn't have to be tied to an instrument, it's just anything that has a set (if you're sweeping it) and/or a get (if you're measuring it) and soon, when I get to making pretty plots out of all this, also something about units/labels. One difference though is that with the .each syntax it will be easy to compose multiple actions that you've already defined into a sequence to nest within a new sweep.
+So for your phase example, you wouldn't need a whole new measurement function or sweep function, just the new piece, and then you list each thing you want to happen within the loop as additional arguments to .each:
+Then if you find you're doing the same things all the time, you can create a parameter out of it:
+@alexcjohnson , Thanks, that does indeed clear up quite a lot.
+I think you have addressed most of my concerns
+I can imagine several workarounds, the first being that we abuse some kind of parameter that is being set and get in each of the loop to achieve some kind of forwarding of information between comma separated values in your loop and the other is putting it all within the set or get part of one of the objects that you loop over.
+It is still unclear to me how the "measure()" command works. If it works with a similar object as input as your .sweep command I think that that can be rather versatile. I am wondering how you deal with .measure() functions that return multiple variables (e.g. I and Q quadratures or res_freq, qub_freq and T1,T2 etc) or return multiple values of said variables at once. It seems to me that the .each syntax starts becoming unnatural here.
+Another thing which I am worried about is the ease of implementing adaptive functions. Altough I think that with what you describe it is possible to write adaptive functions it is rather hard to use standard out of the box adaptive functions (e.g. scipy.optimize ). Those adaptive functions usually require a function that they can call to which they pass some parameters and get some value back. By combining the .set (sweep point) and .get (measure?) parts in one function that gets repeatedly called it is possible to pass that specific function. Maybe this is already what you have in mind but I thought I'd point it out as this gives nice forward compatibility with all sorts of libraries.
+Also the syntax I'm comparing to is more our own lab standard than that it's QTLab :)
+It is still unclear to me how the "measure()" command works. If it works with a similar object as input as your .sweep command I think that that can be rather versatile. I am wondering how you deal with .measure() functions that return multiple variables (e.g. I and Q quadratures or res_freq, qub_freq and T1,T2 etc) or return multiple values of said variables at once. It seems to me that the .each syntax starts becoming unnatural here.
+@AdriaanRol That shouldn't have to be a problem. Every time a measurement is done, the results are written to the data file (one data point = one line in the file). In the case of multiple different measurements, you can just save everything in 1 file and enter NaN where there's no values saved. In my example the datafile could look like this:
+You could also choose to save it in multiple different files as @alexcjohnson suggested before, however, I prefer to have everything in one single file, but it should be up to the user.
+Another thing which I am worried about is the ease of implementing adaptive functions. Altough I think that with what you describe it is possible to write adaptive functions it is rather hard to use standard out of the box adaptive functions (e.g. scipy.optimize ). Those adaptive functions usually require a function that they can call to which they pass some parameters and get some value back.
+@AdriaanRol I still don't have a very clear picture of your adaptive measurement since you just provided a brief pseudocode example. If I understand it correctly - you measure a waveform, then use scipy.optimize to extract some value, which you enter into the subsequent measurement?
+I would say that the AdaptiveMeasurement class in this case should do a measurement every time .get is called:
+This would make the code look like this:
+Does this make sense?
+@alexcjohnson perhaps .measure and .each are getting redundant now. They both basically do the same thing, except that .each takes multiple input arguments. I would say just merge them and have measure take multiple input arguments & drop .each (or vice versa).
+@guenp
+perhaps .measure and .each are getting redundant now. They both basically do the same thing, except that .each takes multiple input arguments. I would say just merge them and have measure take multiple input arguments & drop .each (or vice versa).
+haha I've already dropped .measure in the code I'm developing around this discussion, and just have .each 👍
+@AdriaanRol re: adaptive measurements: I haven't used scipy.optimize, but I can imagine two classes of adaptive algorithms - do your example and other uses of adaptive sampling you can think of fit into these categories?

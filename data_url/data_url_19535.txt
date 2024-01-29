@@ -1,0 +1,22 @@
+Currently the state is stored and manipulated as a rank-n tensor with dimension 2 for each index, instead of a 2^n vector. This requires reshaping the state at the beginning and end of the simulation and applying 2-qubit gates as rank-4 tensors.
+I plan to create an alternative implementation (initially in a different branch) where all manipulations happen on the 2^n vector and then compare the two approaches using the QFT benchmarks. We can then keep the method that performs better.
+@scarrazza, my slice implementation is ready on slice_implementation branch. I am not opening a PR because I am benchmarking this for QFT and I find it to be slower than einsum (used in our current master), at least for CPU (see plot bellow - run still in progress). So let us keep the discussion about this here for now. If you are interested you can check GPU, just check out the slice_implementation branch and run benchmarks as before.
+
+The main tf methods used in the new implementation are tf,gather and tf,tensor_scatter_nd_update, I am assuming that these are slower than tf.einsum and reshapes which is why we get these benchmarks. The way I am generating slices may also be slow.
+Regardless of the benchmark results, I would also like to point out that the slice implementation supports a controlled_by method on all gates. This allows the user to control any gate (one and multi-qubit) to an arbitrary number of qubits. For example CNOT(0, 1) is equivalent to X(1).controlled_by(0) and Toffoli(0, 1, 2) is equivalent to X(2).controlled_by(0, 1). This method is not so straightforward to implement using einsum, though it should still be possible. I think it is useful to have it, particularly for research purposes, as some circuits require constructions such as controlled SWAPs which can be implemented easily using controlled_by.
+Thanks for this test. I think we should compare the tf.einsum to the qcgpu kernels (which so far is the fastest approach) and if needed we can create customs tf operator for those kernels reducing overheads.
+Thanks for this test. I think we should compare the tf.einsum to the qcgpu kernels (which so far is the fastest approach) and if needed we can create customs tf operator for those kernels reducing overheads.
+Thanks for the reply. I added the QCGPU times from my previous QFT benchmarks in the plot above for reference.
+Ok, thanks, so we should look at the qcgpu code and paper and understand the difference to our einsum, looks like there are simplifications our code is missing.
+@stavros11 here the numbers for the QFT using qupy and qcgpu. Looks like your implementation is different from mine, the memory consumption is too high and QCGPU with complex128 cannot simulate more than 17 qubits...
+qupy_qcgpu_gpus.zip
+@stavros11 could you please add also these numbers and paste the image here?
+qibo_complex64.zip
+These are the plots from the GPU complex64 and complex128 benchmarks.
+Please note that the y-axis label is wrong, it says RAM usage but what is actually plotted is simulation time in seconds. Sorry for this!
+
+
+Thanks, quite nice to see that qibo is really stable.
+Now, I am pretty sure there is there an algorithmic difference to be investigated.
+@stavros11 I believe we can close this issue, right?
+We did not really avoid reshapes but I agree to close it as it is not relevant any more. We just have to remember to have optimal implementations for each device and particularly review the CPU case. I would suggest to keep #47 (or something similar) open instead of this.

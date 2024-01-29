@@ -1,0 +1,13 @@
+When composing a circuit with another circuit containing a switch statement and then exporting to OpenQASM 3. I receive an error
+This may be related to #9746.
+Run
+QASM3 should be exported.
+No response
+I have verified that using append also does not work and results in the same error.
+I believe what needs to happen is to remap the ClassicalRegister in the SwitchCaseOp target analogously to the condition in the IfElseOp here
+I believe what needs to happen is to remap the ClassicalRegister in the SwitchCaseOp target analogously to the condition in the IfElseOp here
+this may be obvious, but I just realized that this only addresses the issue with compose. For append to work, a dual fix is also needed for the DAGCircuit in substitute_node_with_dag to map the target cbits when the operation has only a target instead of a condition.
+The surface-level problem in compose is not too difficult to fix, but that alone won't be enough in the current form of qasm3-runner to make things work.  There's further demons lurking in nested control flow, I'm fairly sure, but that's a further issue.  For the time being in append, I think circuit_to_instruction will need to error out if there are ever any classical registers that are used; there's no current way for this to properly make sense as we've got no concept of scoping a classical value.
+If I were to patch compose to handle the simplest case, the code as given would then fail in the OQ3 exporter. It's not immediately clear to me how we could / if we should fix that entirely from the Terra side in a way that the QSS compiler can ingest. The initial creation of composed contains one ClassicalRegister(6, name="c"), so when we compose the circuit with two registers onto it, we're going to have overlap between c (in composed) and cr_random (in qc).  Qiskit will happily accept this (it's valid in our model), but I don't think qss-compiler supports the OQ3 aliasing semantics needed to represent it.
+As a temporary work-around at least, the base of the composition (composed, in this case) could be created as
+(see #6496 for an issue that's proposing that these semantics should be the default for QuantumCircuit(int, int), but that would be a breaking change in Terra so it can't happen overnight).  That may be sufficient for your use cases, though it doesn't fully solve everything.

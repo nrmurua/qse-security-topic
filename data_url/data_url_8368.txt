@@ -1,0 +1,36 @@
+Code to reproduce:
+This crashes with a CompileError: command 'gcc' failed with exit status 1 on Python 3.6 or CompileError: command '/usr/bin/clang' failed with exit status 1 on Python 3.5. It works fine if I don't to the conversion from the function to the array.
+The Cython program that is being generated and that fails to compile is this:
+Program versions are
+I also tried this with Python 3.5  and qutip 4.2
+Actually, this seems to be a platform-specific problem. I just ran this on a Linux server, and there it seems to work fine (at least it runs through)
+Package versions are exactly the same as above, and the platform info is this:
+Oh, I just noticed that if I do this in a jupyter notebook, I get a somewhat useful error message from the server:
+I see this was already mentioned on the mailing list...
+https://groups.google.com/d/msg/qutip/Z-5o4HHYRv4/50-nw-J-BQAJ
+xcode-select --install does not fix the problem
+I'm also seeing this on Windows, with a fresh installation of Anaconda on a virtual machine (the Win10/Edge one) from https://developer.microsoft.com/en-us/microsoft-edge/tools/vms/
+Cell 18 in https://github.com/qucontrol/krotov/blob/9e6b7cf45a3e3ddbdb9192d2c9824b8a7e1f9fa2/docs/notebooks/01_example_simple_state_to_state.ipynb
+is an example for a failing propagation on Windows. The mesolve method that is being called there maps very directly to QuTiP's mesolve: https://github.com/qucontrol/krotov/blob/9e6b7cf45a3e3ddbdb9192d2c9824b8a7e1f9fa2/src/krotov/objectives.py#L199
+The error reported here
+Suggests that any string format time-dependence would fail to compile. @goerz Could you try to reproduce with simple example, e.g.
+?
+Yes, that also fails, with the same error (on Windows):
+Building module rhs44481 failed: ['distutils.errors.DistutilsPlatformError: Unable to find vcvarsall.bat\n']
+I just realized that this particular problem is probably just that this Windows VM doesn't  have Visual Studio installed (maybe I should try again with the 20GB developer's VM that Microsoft has).
+So as a user on Windows, having installed QuTiP through Anaconda, I can't do any time propagation? Somehow, I would have thought that having Cython though Anaconda would also come with some compiler like gcc (which is what it seems to be doing on the Mac). Otherwise, that seems like a very limiting factor to any Windows user. There's no way to run QuTiP while preventing it to cythonize time-dependencies, right? That is, aside from workarounds like the one I did here: https://github.com/qucontrol/krotov/blob/247d4066c83ee4923769b934486da9dae95f6879/src/krotov/objectives.py#L175
+Anyway, this is likely not really the same issue as the original problem on the Mac.
+H = [[sigmaz(), "sin(t)"]] also fails on the Mac, with the same 'complex' file not found
+I don't know if it is relevant, but I copy-pasted the block in the first post of the thread and I do not get an error message by running it on OS High Sierra 10.13.6 in a Jupyter notebook.
+There is a clang warning
+Other details
+@nathanshammah Is this from within an Anaconda installation?
+So as a user on Windows, having installed QuTiP through Anaconda, I can't do any time propagation?
+So what is certain is that if you use string type time-dependence then this needs a compiler, this is implied by the string type. Also, at present, giving an ndarray (and I think qutip CubicSpline) also means the RHS will be compiled, because it is much faster. Clearly we could make this optional, but it is not at present. @Ericgig is working on new versions of the solvers at the moment, I think he could easily include this in the design.
+You should not need a compiler for using func type time-dependence, so you could make a function that encapsulates this array and spline behaviour. If I have not covered what it is that you to achieve, then please be explicit here.
+As for a C++ compiler on Windows, there is supposedly a C++ SDK for Windows that is a lot lighter than VS Community edition. However, I tried at some point to get it working a failed. I just now tried again to find it, but could not. MS has this habit of moving stuff around. There a lot of conflicting info out there. I am sorry that MS makes compiling C/C++ such a complicated thing. I'll see if maybe I can make some progress this week.
+@goerz yes.
+@goerz you may find #954 helpful
+Just tried a potential solution that didn't work, so here's what I did in case someone finds the information useful:
+I'm running macOS Mojave 10.14.4, and Theano was complaining about not being able to find stdio.h. This comment gave a fix (apparently stuff used to be in /usr/include but isn't by default anymore). Since it was a similar issue to what we're facing with qutip, I wondered if it might fix the problem finding complex. It didn't.
+This ran fine on Mac Mojave with the latest conda and pip release (4.4.0). In pip, I first created a new conda environment and then ran conda install pip, pip install cython numpy scipy qutip Feel free to reopen if it is not solved on your machine.

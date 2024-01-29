@@ -1,0 +1,24 @@
+During our discussion of #1168 I proposed that the OpenQASM parser should be split off into a separate project, in the context of OpenQASM, and @jlatone concurred. This would allow projects other than Qiskit to interoperate using OpenQASM. Furthermore, it will be easier to test and optimize the parser by itself, unbound by Qiskit, possibly giving a much more efficient parser (and resolving #1168).
+Qiskit itself should be minimally impacted. The subfolder src/qasm should be split off into the separate parser project. What remains is parsing the AST produced by the parser into a data structure good for Qiskit. That is currently trivial since code for it already exists (and is used by e.g. QuantumCircuit) in converters/ast_to_dag.py.
+I think its best we don't remove it for now. We are going to move it a directory called importers or something like that so that it has a clear separation in the qiskit structure.
+We are going to move it a directory called importers or something like that so that it has a clear separation in the qiskit structure.
+It currently is already in a separate folder, so I wouldn't think that would result in extra separation.
+it removes it from the flow. I agree we have continued to work to make the openqasm less part of qiskit over each release. But for now, we don't want to remove it but make it clear how different representations of circuits can be imported into qiskit.
+But for now, we don't want to remove it but make it clear how different representations of circuits can be imported into qiskit.
+I agree, Qiskit needs to be able to import from OpenQASM but this does not impact that ability. Qiskit needs methods like "read circuit from qasm" (which exists in various places), not "read qasm file to AST" (the src/qasm folder). What I propose is to split off the parser (which produces an AST) and leave in place the methods that interpret that AST to Qiskit objects.
+@eddieschoute wrote:
+What I propose is to split off the parser (which produces an AST) and leave in place the methods that interpret that AST to Qiskit objects.
+I've already done that in my nuqasm2 project, though I made up the AST myself out of ignorance :)  And it makes the circuit, I use nuqasm2 as an optional assembler (instead of Qiskit qasm) in my qis_job project.
+Cool! Do you have benchmarks for this parser? Say on the example file in #1168 ? I'm interested to see how it performs memory-wise as illustrated in #1168 (comment).
+Cool! Do you have benchmarks for this parser? Say on the example file in #1168 ? I'm interested to see how it performs memory-wise as illustrated in #1168 (comment).
+It profiles itself, it's one of the command-line args. Give it a try.
+ nuqasm2 -i /some/include/path/for/.inc/files -c -p somefile.qasm
+I'm trying it now on highmem.qasm, will let you know ... I used that last spring before I added the "actually generate the circuit" stuff.
+Hmm, this is horribly inefficient because when I wrote nuqasm2 driver as a demo, it was designed to print out the AST .. I'll have to add a switch to the demo so it just compiles the circuit and doesn't spew the AST.
+Added switches and attaching profiling data. I thought it tracked mem but I only got time. I'll work more on this tomorrow. I doubt it's anywhere near as efficient as your experiment in #1168 because it gens all the AST (very wordy at that, my off-top-of-head proof-of-concept AST design) but it does unroll custom gate definitions.
+highmem.out.txt
+I could greatly diminish the memory footprint. Some stuff I keep in the AST isn't really necessary. Originally it was just a proof of concept, but now I'll look at jettisoning stuff that's essentially debug info.
+...
+Next morning: Actually, I see now that, while the AST itself is not terribly efficient, I'm not saving too much unless flags to save the stuff are passed to the ctor.
+nuqasm2 assembles highmem.qasm to a qiskit.circuit.QuantumCircuit, mprofed
+

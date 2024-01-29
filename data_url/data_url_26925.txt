@@ -1,0 +1,27 @@
+There is a bug in GMP [1] that in SSIKE software results in accessing invalid (previously freed) memory and subsequently in failing to successfully calculate the same shared key on Alice's and Bob's side.
+According to the following comment in gfp2.c,
+you already suspected something, but what you describe there is just a symptom. The underlying problem is that when input and output mpz_t variables are copies of one another (if they are the same, then there is no problem), invalid memory accesses occur and you get unpredictable behavior - sometimes the calculated value will be correct despite accessing invalid memory, sometimes it will be wrong.
+In my testing (using a modified version of you SSIKE software) this bug manifested itself in sporadically wrong results from neg_GF() or more specifically mpz_sub() inside it. In your testing bug might manifest itself somewhere else. So the correct way to fix this bug is to not use multiple copies of the same mpz_t object unless they are all read-only.
+See [1] for code that ilustrates the bug. There pair_t is similar to GF in SSIKE.
+[1] https://gmplib.org/list-archives/gmp-bugs/2016-April/003939.html
+Wow, this is bad, and I agree with the GMP devs that the bug is in my code, not in GMP. I feel ashamed!
+I guess the easiest fix is to modify the code to pass all GF arguments by pointer. That would touch a lot of code lines, it would take me some time to do it. Do you have a better idea?
+Just makes me want to say: REWRITE EVERYTHING IN RUST!
+http://robert.ocallahan.org/2016/02/rewrite-everything-in-rust.html
+Why even use gmp? Create a utilities class for the math functions, you would eliminate the dependency, smaller footprint, resource control, and you may be able to improve performance..
+Why even use gmp? Create a utilities class for the math functions, you
+would eliminate the dependency, smaller footprint, resource control, and
+you may be able to improve performance..
+—
+You are receiving this because you commented.
+Reply to this email directly or view it on GitHub
+#2 (comment)
+​Yes, of course, that's a plan​ I have. There's even space for some cool
+research there. Just not something that can be done overnight.
+One other suggestion would be to get rid of the scripting, pass the params as structs and make it pure C++, more attractive for implementers.
+I'm writing into my own library today, maybe I'll take a look at what's involved in creating the utils class..
+I guess the easiest fix is to modify the code to pass all GF arguments by pointer. That would touch a lot of code lines, it would take me some time to do it. Do you have a better idea?
+I think you could also leave the *_GF functions as they are and just make sure that they are never called in a way that would create more than one copy of the same GF struct which means that fields a and b would also not be duplicated. The remaining field, parent, is a pointer anyway, so copying GF doesn't affect it. Since GF_params that parent points to is shared between multiple GF objects, you would also have to take some care that all fields remain unique (none of them is a copy of any other), but that should not be hard to check, because those fields are not affected by moving GF around, you have to change them explicitly.
+Here's an example of code that produces an invalid read (lines 812 and 813 in gfp2.c):
+And here is a fix:
+There aren't that many places that need this kind of fix, so it is probably less work than changing all function parameters to pointers, provided that it does actually fix the problem.

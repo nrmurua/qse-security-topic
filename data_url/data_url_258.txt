@@ -1,0 +1,17 @@
+The NVQPP auto-kernel test is failing when running on aarch64 architectures.
+PR #548 forces the test to run only on x86_64. That requirement should be removed.
+The test should pass.
+Not a regression
+No response
+Investigation findings:
+The cause of the test failure is memory corruption in our LLVM IR generation/runtime handling sret on ARM platforms.
+In the auto_kernel.cpp test, the returned counts is expected to be a vector<bool> of size 3, but on ARM, it could be a corrupted/uninitialized vector (invalid size such as 4022192104).
+Adding some debug loggings inside __nvqpp_initializer_list_to_vector_bool:
+I can confirm that the address of the input-output result vector (sret) is different from that of the returned counts variable in auto_kernel.cpp when compiling on ARM.
+N.B. The same debug printing on x86 showed the same address between call size (counts variable and the one passed to __nvqpp_initializer_list_to_vector_bool).
+@schweitzpgi Do you have any idea about what might be causing an issue here on ARM?
+This is just a shot in the dark since I cannot reproduce the issue on my machine, but is it possible this (copied from runtime/cudaq/cudaq.cpp::__nvqpp_initializer_list_to_vector_bool) is an unsafe assumption on ARM?
+Perhaps it should be replaced with:
+Setting the vector structure bits to 0 should be safe on virtually any platform. We could write a small test in the cmake files when building the runtime to confirm that on a given platform a global std::vector variable will be placed in .bss.
+The reason we do not use clear() here is because the structure can contain trash (its allocated but not constructed) from the stack. Calling clear() when the trash looks like it might be a few semi-valid pointers would cause mischief.
+The root of this bug is that the Aarch64 ABI is a little different than X86-64's ABI when it comes to promoting return values. On X86-64, the return value is placed in the first position and treated like another argument. On Aarch64, the return value is logically in the first position but it is passed, returned in a special register (x8). So it is not like the other arguments and has to be annotated. We have all the code to determine when this needs to happen in the GenKernelExecution pass, but we missed adding the attribute. (I added the attribute handling to MLIR a few years ago, so those parts should be working as well.)

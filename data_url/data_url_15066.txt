@@ -1,0 +1,32 @@
+Qiskit Pulse currently supports two in-memory representations, Schedule and ScheduleBlock. The pulse builder syntax only supports the block representation, and we are going to deprecate the legacy Schedule representation due to its poor capability of parameterized duration handling.
+However, instruction filtering is not supported by ScheduleBlock. This is because the current implementation of the filtering function assumes (t0, instruction) tuple as an internal data structure, which doesn't match with one of the block representation (note that block is not aware of the instruction issued time t0). To deprecate Schedule without loosing the operability, this function must be properly supported.
+Typical use case of filtering method:
+It would be great if this could be more natively supported: e.g.
+@nkanazawa1989
+I would like to work on this issue. Thank you so much in advance! 🙇
+@nkanazawa1989
+Hello 👋 I have one question. ScheduleBlock has the attribute instructions, by using which we can easily get time-ordered (t0, instruction) tuples. However, what we want here is a filtering method that directly deals with block elements in ScheduleBlock, i.e. not using the attribute instructions, is that right? Thank you so much in advance! 🙇
+Yes, this is correct. Note that .instructions method exists just for backward compatibility and it internally calls transform to Schedule, i.e.
+Even if you implement filter in this approach, you are just filtering the instructions on Schedule domain, which we want to deprecate in future. We don't need to support filtering with time range, but other functionality must be supported. I think you can dispatch internal filtering logic based on instance type.
+@nkanazawa1989
+Thank you very much for your reply and telling me that! I see! 🙇
+@nkanazawa1989
+Hello 👋  I have another question regarding outputs after filtering.
+I pushed the first version into #9971, and its behavior is as follows.
+Please let us take the following schedule_block as an example (this is from the official doc ):
+When I filter MeasureChannel(0) as
+then I get
+
+However, if I do the same thing using the filter method in Schedule class, then I get
+
+which is different from the above schedule_block result.
+So, my question is that the above kind of difference is acceptable or not? (In other words, do you expect that the filter method in ScheduleBlock class outputs the completely same result as that in Schedule class does?)
+Considering that a schedule_block may be just one component of another schedule_block, then the above behavior might seem ok, but I am not sure..
+Thank you so much in advance! 🙇
+Thanks @junnaka51, it's good question. Because ScheduleBlock doesn't have scheduled instructions, when you filter it and visualize, the filtered block schedules instructions on the fly. Since some instructions are now filtered out from the block, generated schedule doesn't preserve timing of instructions. If you want to keep the instruction time, you could schedule it in advance and pad idle time with Delay. However, I don't think we need to keep the instruction time from the viewpoint of its usage, e.g.
+This example shows how you could create ECR from CX schedule block. Because filtered instructions may be used in another builder context which provides own scheduling policy, I think they don't need to preserve instruction time in the original context.
+In this sense, you don't need to keep alignment of the block as well (in principle you can keep the alignment and original nested data structure, but I think you need to implement complicated code). Just recursively listing all blocks and apply filters to them would be the simplest solution and should be enough for most of its use case.
+@nkanazawa1989
+Thank you very much for your quick reply and teaching me that! 🙇
+I see, then I would like to go ahead with this approach 👍
+Manually close as #9971 is merged.

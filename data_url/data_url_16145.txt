@@ -1,0 +1,31 @@
+gives:
+which is twice as long in duration as directly using x since both sx and x have the same duration on the backend.
+Perhaps x goes before sx in the basis gates?
+I have the same inquiry (still true as of qiskit 0.23.4).  But I'd like to add that this behavior is more general than just Y. In particular, it occurs for \pi rotations with axis in the xy plane which I explain below.
+In my own work, I need to define both gates like X and -X. To make sure the phases come out right across updates, I define all single qubit rotations R_n(\alpha) where n = (\theta, \phi) is just unit vector in spherical coordinates and \alpha is rotation angle as,
+Hence, X corresponds to theta = \pi / 2, \phi = 0, \alpha = \pi and -X to theta = \pi / 2, \phi = np.pi, \alpha = \pi. When I implement X and -X (called Xb in my code), I get the following
+
+where I've used my own custom class wrapper/ functions, but the idea should be clear from the above, I hope.
+For rotations defined as above, then this "bug" happens for all \pi rotations with rotation axis in the xy plane, e.g.
+
+where eta is angle from x-axis that determines rotation axis.
+On the other hand, for a completely arbitrary rotation, we generally expect an RZ gate to between the sx gates, as follows
+
+Hopefully this helps clarify in what cases this transpiler bug occurs--it's probably not exhaustive, but more general than just Y.
+Looking at this briefly I don't think the transpiler is currently capable of simplifying an arbitrary 1q gate to anything with an X gate. For the new IBMQ basis set of ["id", "rz", "sx", "x", "cx"] the transpiler is using the Optimize1qGatesDecomposition  pass which under the covers is just using the OneQubitEulerDecomposer to decompose a 1 qubit unitary for a run of >1 1q gates in the circuit into a simplified form with a compatible basis. Since the OneQubitEulerDecomposer doesn't have any basis that use the X gate it never ends up simplifying any runs into a form that uses it. The order of the basis gates doesn't matter here.
+For example using the Y example from the original issue, this gets translated with the basis translator to:
+Then this gets simplified to
+and then
+after two runs of Optimize1qGatesDecomposition and the pass can't simplifying it beyond that.
+The simplest fix here might be to add explicit handling for the case when X is in the basis gates and there are 2 SX gates next to each other in the output decomposition as a simplification. (similar to #5554)
+Can we implement a pass that merges general consecutive instructions such as Rz-Rz, X-X, SX-SX, ....? @itoko
+With pulse gate (add calibration) we can easily create custom calibration. For example,
+This is current backend CX pulse definition. As you can see there is Y pulse on control qubit but this is decomposed into two SXs. This visibly affects the RB fidelity as CR pulse duration become shorter due to the coherence limit. Thus I should use
+this instead. This is really annoying and discourage to use pulse gate though this is really great feature.
+@nkanazawa1989 It's possible but I prefer the solution suggested by @mtreinish to fix issues reported here.
+@nkanazawa1989 I think most consecutive gate cases (including Rz-Rz and X-X) should currently be covered by the existing Optimize1qGatesDecomposition  optimization pass. The pass works by collecting runs of 1q gates on a qubit taking the unitary of those gates and decomposing that unitary into the shortest set of gates it can (over all the compatible basis that it knows how to decompose with). For example:
+returns:
+and
+returns:
+This is not really a general issue but more of a specific case here around a limitation in the 1q euler decomposer that it isn't actually aware of the full ibmq basis and doesn't know that it can use an X gate to further simplify things.
+As per @mtreinish 's suggestion, I put together this hack which I put here for anyone else who comes across this issue. It's not a "proper" solution since I don't keep track of whether the sx-sx actually acts on the same set of qubits. But for my current work, this is always true, so I didn't bother. So be careful of that!

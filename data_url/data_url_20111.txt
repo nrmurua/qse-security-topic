@@ -1,0 +1,60 @@
+Is it planned to support other architectures besides x86_64 and arm? Especially i586 and ppc64le.
+Those were surely not at the top of our priority list so far. Do you know how many i586 machines there still are around? How do you validate demand for these architectures? Regarding ppc64le @bhess may want to comment, too.
+Those were surely not at the top of our priority list so far. Do you know how many i586 machines there still are around?
+Still fair number. I'm using one right now to write this comment. Why? It has no branch predictor, so it is invulnerable to meltdown and all spectre class attacks.
+Anyway I see no real need to limit list of supported architectures in the first place: it should be always possible to fallback to generic C code.
+I don't know about quantities of i585, but it's still supported by some distros like Debian.
+I would be in favour of changing "FATAL_ERROR" to "WARNING" here:
+
+I'd also be OK with adding explicit i686 support (i586 is questionable, Debian dropped support for it in stretch), but this is really up to whether or not we have the resources for testing.
+I would be in favour of changing "FATAL_ERROR" to "WARNING" here:
++1.
+If you have good tests it would be easy to continuously integrate them with Github actions.
+You seem to have circle-ci already, so 32-bit x86 build^tests  could be added there.
+With less candidates remaining after the next NIST round, it could become more feasible to focus on more platforms. It would be definitely useful. Github Actions CI looks quite flexible for this with hosted and self-hosted runners.
+My personal priorities would be s390x and then ppc64le.
+Btw, I'm told that Travis-CI still free for non-x86 architectures: https://docs.travis-ci.com/user/billing-overview/#partner-queue-solution
+So, you can even run tests on ppc64le/s390x natively.
+With less candidates remaining after the next NIST round, it could become more feasible to focus on more platforms. It would be definitely useful. Github Actions CI looks quite flexible for this with hosted and self-hosted runners.
+My personal priorities would be s390x and then ppc64le.
+@bhess Use of self-hosted runners for Github Actions were looked at by @thomwiggers and he found it hard to use and without sufficient safety for public repositories (which we are).
+I'm not opposed to adding support for building on other architectures, or at the very least modifying makefiles to not block this. Before advertising support for a particular platform I'd want to have a good CI workflow that is testing it.  At UW we're limited in our ability to maintain that, so would need others to take the lead on this.  I don't object to using other CI systems (Github, Circle, Travis, Appveyor, ...) but prefer to only expand beyond our current CI systems (Circle and Appveyor) if the alternates give us access to something we don't currently have access to. (Just to avoid having to develop expertise with too many systems.)
+Github Actions runners are annoying for many reasons: you need to set them up for each project individually, you need to set up a virtual machine/environment per individual runner (so no running multiple runners out of the box), and I had massive issues where a lot of very basic actions just don't work because of assumptions that are present in the hosted runners but not in self-hosted runners (such as the runner always running as root: true on the hosted runners, not allowed by the self-hosted runners).
+The best I know that supports "bring your own runner" for public repositories is Gitlab Runners, which means hooking up to a gitlab enterprise server (but Gitlab.com counts). gitlab-ci-multi-runner allows you to very easily run the equivalent of a shell script in a container, while it can even take care of automatically orchestrating/provisioning/tearing down boxes in the cloud as necessary.
+FYI: I attempted simplistic port to x86 and ppc64le:
+http://git.altlinux.org/people/vt/packages/?p=liboqs.git;a=commitdiff;h=c5023ce0eef244f324864c51bf9d68751cc84ddf
+http://git.altlinux.org/people/vt/packages/?p=liboqs.git;a=commitdiff;h=387fdab3492c0e22cde571e3df6c636adae25706
+All tests are passing except skipped ones (distbuild and constant_time).
+ps. I'm aware that secure_cmp32 for BIKE  does not handle ppc64le properly, but I did not notice (at the first glance) branching in asm (objdump -S) there.
+Nice work @vt-alt. Can you create pull requests for each of those -- separate ones for x86 and ppc64le?  We need a testing plan for those before merging, however. For x86, would it suffice to build a 32-bit Docker image and run that on CircleCI? Or do we have to do something more complicated?  As for ppc64le, it sounds like we'd have to set up a Travis configuration again and use IBM's free ppc64le environment on Travis.  Are you of @bhess able to look into that?
+@dstebila Yes, I will create PR later today. i386 docker images should work, AFAIK.
+As for ppc64le, it sounds like we'd have to set up a Travis configuration again and use IBM's free ppc64le environment on Travis. Are you of @bhess able to look into that?
+Yes I can look into that. Did OQS previously already use Travis CI?
+ps. I'm aware that secure_cmp32 for BIKE does not handle ppc64le properly, but I did not notice (at the first glance) branching in asm (objdump -S) there.
+I think this is something we need to be careful when adding (explicit) support for new platforms. In KEM decapsulation these constant-time comparisons are often critical for CCA security.
+secure_cmp32 in BIKE contains a warning that the code might be insecure if compiled on platforms other than Intel/ARM64.
+Similarly, the secure_cmp function in BIKE seems to also depend on the platform and compiler used:
+
+Most often this should work ok. But trying with a few compilers, at least gcc on AVR compiles the return (0 == res); to a conditional branch. In this case the implementation in OQS_MEM_secure_bcmp would be more portable.
+Especially on older platforms there are examples of instructions and code that are not constant-time as one would expect. Some are summarized in https://eprint.iacr.org/2019/893:
+I'm not sure if TIMECOP used in our tests would detect such non constant-time behavior.
+ps. I'm aware that secure_cmp32 for BIKE does not handle ppc64le properly, but I did not notice (at the first glance) branching in asm (objdump -S) there.
+I think this is something we need to be careful when adding (explicit) support for new platforms. In KEM decapsulation these constant-time comparisons are often critical for CCA security.
+I agree, but in this case it's clear that the C code is deficient. Both secure_cmp32 and secure_cmp could be rewritten in a way that makes it more likely that a compiler will output constant time code.
+Of course we can't provide a "guarantee" of constant time behaviour for any C code on any architecture. The best we can do is say that we've audited implementation W on architecture X when compiled with version Y of compiler Z.
+I'm not sure if TIMECOP used in our tests would detect such non constant-time behavior.
+It would not detect most of these. Maybe the PowerPC multiplication, but I'd have to look at the actual instructions that the compiler outputs.
+Did OQS previously already use Travis CI?
+Yes. But we removed it when pruning a hard-to-maintain "zoo" of CI systems.
+With #1037 and #1048 landed, I think we've made sufficient progress to close this. I've created #1049 to remind us that we'd like to have an x86 CI at some point.
+I am currently porting liboqs to an AVR32 microcontroller (GomSpace a3200) and I've stumbled upon the following issue.
+Although liboqs is written in generic C, the implementation of standard libraries (libc) differs especially on microcontroller platforms due to the lightweight requirements.
+#include <strings.h> inside of kem.c is not supported by the libc that the avr32-gcc compiler uses.
+The required function strcasecmp() is available from the regular <string.h> (without "s") as described here:
+nongnu.org/avr-libc
+I am currently porting liboqs to an AVR32 microcontroller (GomSpace a3200) and I've stumbled upon the following issue.
+Although liboqs is written in generic C, the implementation of standard libraries (libc) differs especially on microcontroller platforms due to the lightweight requirements.
+#include <strings.h> inside of kem.c is not supported by the libc that the avr32-gcc compiler uses.
+The required function strcasecmp() is available from the regular <string.h> (without "s") as described here:
+nongnu.org/avr-libc
+As far as I can tell, strings.h is the POSIX-compliant location for the strcasecmp function. We do have a workaround in kem.c to use pre-processor macros for WIN32 which  uses string.h. If your target platform isn't POSIX-compliant, my preference would be to do a similar workaround.

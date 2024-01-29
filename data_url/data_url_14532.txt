@@ -1,0 +1,10 @@
+Any subclasses of TwoQubitWeylDecomposition are not serialisable.
+will result in
+This becomes an issue when defining custom pass managers, e.g.
+This throws the same exception as above, because running several passes is done in parallel and requires serialising the PassManager.
+Examples above should not fail.
+No response
+Yeah, looking at the code the way the PassManager class is doing the parallel dispatch it's incorrect and could never work unless we were guaranteeing all Passes are pickleable which we traditionally haven't enforced. This was never caught because the transpile() path does it's own parallelism: https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/compiler/transpiler.py#L321-L322 where it integrates the pass manager construction into the child process.
+For this specific issue the quick fix is to add either a __getstate__/__setstate__ or __reduce__ method to TwoQubitWeylDecomposition so that pickle is able to deal with the custom __new__ and subclassing logic that the class implements. This is simple and should fix this specific issue.
+But this raises a larger issue around how we do parallel dispatch in the transpiler. If we just want to do it at the transpile() function level then we should remove the support for parallel dispatch from the passmanager.run() method so that individual passmanager instances only run serially and we rely on an outer function to do parallel dispatch. Or if we want to enable standalone passmanagers to run in parallel we should change transpile() to leverage the same parallelism path and let the passmanager.run() instance control it's own dispatch. Right now having two different paths lets bugs like this slip through.
+I'll fix the TwoQubitWeylDecomposition pickle piece since its easy. Agree that there is a larger issue to discuss around parallelism

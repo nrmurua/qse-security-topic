@@ -1,0 +1,36 @@
+Building CP2K (respectively DBCSR) with PGI 18.7 yields the following errors:
+older versions of PGI 18.x may instead produce an Internal Compiler Error instead.
+A support ticket is open at PGI for this very issue. Since this is valid Fortran and other compilers have no problem with this part, there is not much we can do about.
+Keeping this ticket as a reminder to test newer versions of PGI once they get released.
+Due to its heritage, Flang has very similar issues: flang-compiler/flang/issues/239, flang-compiler/flang/issues/360, flang-compiler/flang/issues/424
+I see that there is a new PGI version (18.10). Have you tried it?
+OK, the 18.10 is still buggy. On Swan I get an error when compiling dbcsr_work_operations.F90:
+@dev-zero could you update the bug with PGI?
+@alazzaro will do, haven't heard from them since, but their engineer started testing with DBCSR/CP2K as well
+Just tried PGI 19.4.0 on a Cray machine and it is still failing on dbcsr_work_operations.F:
+It doesn't say why it doesn't like this file...
+This is the only file which crashes during the compilation, all other files are fine (although I cannot test what it is producing). One thing I can imagine is that this file is too big (~2K lines).
+We've had a similar experience to what @alazzaro just described, on Summit.
+Can you try without the Cray wrapper?
+... but since I haven't gotten any updates from our case with PGI I guess they're still not ready.
+Yes, it crashes in any case...
+I did some investigation. The offending part is inside the function dbcsr_create_new (file src/work/dbcsr_work_operations.F). The module compiles if I do comment out the entire function...
+Doing step by step, I found the compilation bug is in the default construction of the matrix, i.e.
+https://github.com/cp2k/dbcsr/blob/ea6af6e10ff2d75277a3fad63036f50c1d6f4bc5/src/work/dbcsr_work_operations.F#L208
+I don't see any mistake there, so it is the same old bug...
+OK, PGI 19.5 can compile the previous DBCSR code, but now it gets stuck at:
+I don't why it doesn't like this code:
+I cannot undeerstand why it doesn't like the ORDER, it seems another flaw in the compiler...
+@pseewald do you see anything wrong there?
+This code is a bit confusing since block has 2 dimensions but the shape of the ORDER argument (which should be 2) is dynamic. This should nevertheless compile and run as long as the shape matches at runtime. It's easy to check with an example whether the compiler does not accept the ORDER argument or whether it stumbles over this particular use.
+given a simple test case we can add another compiler check to cmake to make sure at the beginning that we're building with a standards compliant compiler
+the following minimal example works with GNU, Intel, Cray and NAG but not with PGI. The standard also seems to allow allocatables as the order parameter. Opened yet another issue with PGI.
+thanks to @pseewald
+Update: PGI 19.7.0 still fails to compile the code above.
+PGI 19.10 still fails, issue reported above not yet fixed but since we now have a test for it in DBCSR's CMake I'd say we track that in DBCSR for now
+Hi,
+It seems I had the same issue.
+I compiled cp2k@7.1 with llvm@9.0 and it raised this Internal compiler error.
+Do you know if  there is any update on it?
+This will probably not get fixed in CP2K since it's an issue with the compilers, not with CP2K. Please use a supported compiler:
+https://www.cp2k.org/dev:compiler_support

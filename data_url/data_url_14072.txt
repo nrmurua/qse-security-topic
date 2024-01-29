@@ -1,0 +1,18 @@
+A swap gate on a 4-qubit quantum circuit is transpiled incorrectly with a linear connectivity and layout_method trivial.
+A minimal example:
+The output of the transpiled circuit is
+This is incorrect, the swap gate on qubit 1 and 2 should be after the swap gate on qubit 2 and 3.
+No response
+We consider this a valid transpilation; while the visualiser hasn't shown it, the transpiler internally has tracked a virtual remapping as well as the physical gates.  If you put a final measure instruction on each qubit before transpiling it, you'll be able to see it most easily.
+At higher optimisation levels, the entire swap structure is completely discarded since it can be done virtually.  I should mention, though, that the transpiler treats a literal swap in a circuit differently to one that's inserted during routing; a routing-inserted swap is considered to modify the virtual->physical layout, but a literal swap doesn't, because it's a swap acting on virtual qubits, not a physical swap added to specifically change the order.
+The matrix form (Operator) of a circuit is tied to the Hilbert space you're considering.  Prior to transpilation, Operator reads in terms of the virtual qubits, so it has the form that feels natural to most people.  After transpilation, the circuit is defined in terms of physical qubits, and the $V\to P$ layout at the start of the circuit is not necessarily the same as the $V\to P$ layout at the end of the circuit, so the matrix might look different.  In theory you can use Operator.from_circuit on a transpiled circuit, but I think in practice we might have a bug in the implementation of that at the moment.
+Another example with the measure:
+Output is:
+The output of the transpiled circuit is indeed correct (although a bit puzzling at first). The transpiled circuit is not very efficient though, if we are allowed to have a mapping of qubits than we can eliminate the swap gates completely.
+The transpiled circuit is not very efficient though, if we are allowed to have a mapping of qubits than we can eliminate the swap gates completely.
+Yeah, this is true, and I think at optimization_level=3 if the barriers are removed, it should find the complete swap removal (certainly it does on main).
+For sure, in general, we're not super efficient at resynthesising big swap chains at the moment in the preset pass managers, but let me tag @alexanderivrii and @ShellyGarion who might be able to tell you more about some coupling-map-aware permutation resynthesis efforts - I think we might have a couple of plugins that handle it better than the built-ins, especially for linear coupling maps.
+I am not sure I agree that the transpiled circuit is not very efficient. In both examples you are forcing the layout to map each virtual qubit i to the physical qubit i by specifying either layout_method='trivial' or initial_layout=list(range(nn)). We need two extra swaps to bring the qubits 0 and 3 next to each other -- and this is exactly what the transpiler does!
+If the transpiler was allowed to choose the layout (simply remove layout_method / initial_layout in your exampes), it would map the circuit without introducing extra swaps, for instance in the second example we would get the following transpiled circuit:
+We still have one swap there, but it corresponds to the original swap in your circuit.
+Now, you are correct of course that by additionally relabeling output qubits we could remove that swap as well. I am hoping that the elide permutation pass (see #9523) will be able to do this.

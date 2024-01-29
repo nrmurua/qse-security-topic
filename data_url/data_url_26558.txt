@@ -1,0 +1,25 @@
+The toolchain already enables threading for OpenBLAS, which should do the trick.
+However, for some reason our performance test still show that COSMA does not take advantage of threads.
+Furthermore, the performance fluctuates by 2x:
+
+I have found similar issues with the MP2 gradient code. In my case on Daint/GPU, the execution time of COSMA increased by a factor of 6 or 7 (I have to look it up) when I changed the number of threads per rank from 1 to 4 (there is no significant change from 1 to 2). @kabicm told me by mail, we should wait for the next release this month. It is supposed to include some performance improvements.
+Do we know for sure that this issues lies with OpenMP only? I have observed roughly a 10x slowdown in the performance of COSMA pdgemm when built with OpenBLAS versus MKL or LIBSCI. I just oppened an issue on the subjet: #1870.
+Is this issue resolved with #1870 (comment), or is it still an ongoing problem?
+@fstein93 does #1870 (comment) also resolve the issue you reported to me?
+Thanks for looking into this! I believe USE_OPENMP=1 implies USE_THREAD=1, but I'll definitely try NO_AFFINITY=1.
+Unfortunately, setting NO_AFFINITY=1  did not do the trick. So, COSMA + OpenMP is still very much an open problem:
+
+@oschuett Thanks Ole! I would like to have a look into this, as we are working on a new release at the moment. How can I reproduce these tests on daint?
+Let me just check one more thing: from my experience, these oscillations usually happen when --cpu_bind=sockets is not set. In that case, the performance of local blas gemm oscillates 2x, which as a consequence also affects COSMA. Did you try setting the --cpu_bind option in slurm?
+These results are not from Daint, they are from GCP where they run on Intel Skylake.
+Unfortunately, the behavior seems to be rather flaky. So, I could for example not reproduce it on my AMD Threadripper. Nevertheless, you should give it a try - this is the input file.
+In the meantime, I've added -bind-to socket to our performance tests (b4b7b1d).
+Aren't the valid commands: --bind-to socket, -bind-to-socket and --bind-to-socket instead of -bind-to socket? source.
+I believe this depends on the MPI library. Here we're using MPICH.
+In any case, it didn't help. Hence, I took a closer look and it turns out the node is single-socket:
+... at least that's what the VM reports. According to this doc I might be using the wrong instance type (N1 instead of C2 or C2D).
+Then again, all our other timings are pretty steady. Also I feel like 2x is too much and too reproducible to be caused only by sub-optimal scheduling.
+My 2c. COSMA is running DGEMM that is a compute intensive task. It just uses OpenMP, so at least a CPU affinity for threads should be applied (OMP_PLACES...). Even though, any jitter by the OS, including the fact that you are running on a VM instance, can impact on performance, so I would say a 2x effect can be expected. For instance, I assume you are using virtual memory, OS uses to run on core 0, MPI can spawn threads for communications...
+The best way to check the performance stability would be to run a bare-metal system, with affinity, leave some cores empty... i.e. a Supercomputer... If it doesn't work, then you can decide to enable some low-level profiling.
+Oh wow, #2021 was quite a trick! The timings for  cp_gemm_cosma literally plunged off the chart.
+This is a good illustration of how difficult it is to integrate so many libraries. It took us over two years to get COSMA working!

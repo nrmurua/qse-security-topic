@@ -1,0 +1,62 @@
+I have a kasli system that I am working through the installation instructions for version 3 here
+I am working with artiq-kasli-master version 4.0.dev (805+gitd0f6123) and artiq 4.0.dev (1191+git8b3c12e6) on Windows 10.
+It looks like there have been a couple tool chain changes between 3 and 4 and the manual in the artiq repo has not been updated for 4 yet.
+I have managed to figure out the new steps up to writing the compiled idle kernel to the device.
+The process fails here, (which was my best attempt to modify the artiq_coreconfig write -f idle_kernel idle.elf instruction):
+artiq_coremgmt config write -f idel_kernel idle_kernel.elf
+I am suspecting a couple reasons that could cause this not to work:
+Thanks for any help
+Thanks for that link.  The updated manual is helpful.  It still seems to be behind since artiq_coreconfig appears to not be a command anymore.
+I set up a mac and a static IP for the kasli (and a rule for mac->ip in the router), flashed it, and now I can ping it on my LAN, however it does not appear on my router's DHCP list.
+I set the ip address in device_db.py and rerun the write command from before and now I get a ConnectionResetError.
+I also get the same error when I attempt a read:
+@mfe5003 Can you run idle kernel you mentioned in your first post? (artiq_run name_of_experiment.py in the same directory as device_db.py).
+@marmeladapk I haven't defined and experiment file yet, but I suspect because I haven't been able to write the idle_kernel to the device yet that it would not work.  I will try to make an experiment though and let you know.
+@marmeladapk when I run a modified version of the led.py from the manual:
+I get the following warning but no error:
+Neither led0 or led1 seem to turn on or off on the board.  Right now what I think is led1 is on and I don't see an led0.
+WARNING:artiq.coredevice.comm_kernel:Mismatch between gateware (4.0.dev+805.gd0f6123f) and software (4.0.dev+1191.g8b3c12e6) versions
+@mfe5003 Did you use prebuilt gateware+firmware (I don't know if there are any TBH) or did you built them yourself and flashed on Kasli?
+This warning shouldn't worry us too much, for simple experiments like that it should be fine.
+Try to change  self.setattr_device("led1") to  self.setattr_device("led0") and do something like:
+One of the front panel leds (AFAIR one under SFP1) should be flashing. Press ctrl+c to break experiment.
+@marmeladapk When I add the loop the command hangs and I can't kill it with ^C.
+I can kill it by disconnecting from the LAN, which I'll take as a good sign that I am actually talking to the board.
+I don't see any flashing lights though for led0 or led1.
+The device_db file I am using has them set up like this at the bottom:
+@mfe5003 Ok, if this doesn't work (and no LED is flashing on front panel nor near power supply LEDs) we need to find out if you're using right variant of gateware with right variant of software. If you're flashed different variant of gateware to the board it will have different numbering of channels.
+What command did you use to flash Kasli via USB?
+ed: Also perhaps you can't break python scripts with ctrl-c in Windows command line? See here
+@marmeladapk I was just following the list of commands from the manual installing. The flashing commands I ran were:
+I am not used to conda (I typically stick to pip and virtualenv) and I had an older version of artiq on my WSL installation which did still have the artiq_coreconfig script, so I went through and updated both artiq and artiq-kasli-master packages on the vanilla windows conda environment at some point, which might be where the gateware/software disconnect originated from.  Maybe I should have only updated one...
+Ok, so you flashed  master variant of gateware, and you are using tester variant of device_db.
+Run artiq_flash -t kasli -V tester and try to run experiment with blinking LED.
+It looks like there are no binaries for a tester variant.  I get the following error message:
+There also doesn't seem to be a master example device_db
+Could you check what variants are present in C:\Users\ebert\Anaconda2\envs\artiq-dev\lib\site-packages\artiq\binaries? Perhaps we could try with opticlock.
+There is only kasli-master in the directory, however the actual path is envs/artiq-dev/**Lib**/site-packages which might be part of the problem.
+I've noticed before that the windows installation use capital **Lib** and the WSL installation uses lowercase lib and thought it was just a conda thing.
+Perhaps, but it flashed master somehow. On Windows lower/upper case shouldn't matter.
+Ok, so if you only have binaries for master you should modify device_db to be compatible with master. Make a copy of it and change led0 channel to 0, led1 channel to 1 and you can add led2 with channel # 2. Comment out everything from line 51 to line 172. These are declarations of devices that aren't used in Master variant.
+Also change line 42 to range from 3 to 3+8=11. That way we won't have any channel number collision, and everything will be as laid out in target gateware file.
+Thanks that worked!  I can see L2 flashing as led1 in the code.
+I still can't configure the idle kernel though. I get the same error message as before.
+artiq_coremgmt config write -f idle_kernel idle_kernel.elf
+I can't read or write records either.
+So it looks like I can communicate with kasli using artiq_coremgmt and the log (0x01) and reboot (0x05) commands seem to work fine.  I can change the log level to debug then try to write a key value pair.
+When I send a write (0x0D) or a read (0x0C) command the request type is not recognized and the rest of the payload (key_length, key, value_length, value) shows up on the kasli as a network error.
+I can't tell for sure, but it looks like commit b81b20c on 5/16/2018 before artiq_coreconfig was rolled into artiq_coremgmt used a different set of command bytes (artiq/artiq/coredevice/comm_kernel.py) where the FLASH_READ_REQUEST was 0x09 instead of 0x12 like it is now.
+I tried swapping the byte manually in comm_mgmt.py but I get the same unknown request type error.
+Is there an old commit I can roll back to to get the kasli board working?
+@mfe5003 This is a question to @sbourdeauducq or @jordens. But you don't need a idle kernel to work with Kasli and schedule experiments, it's just an experiment that activates when nothing else is happening (for example to toggle diode).
+Is there an old commit I can roll back to to get the kasli board working?
+Is there a reason you can't use the same version for gateware, runtime and host software?
+@whitequark This is my first time trying to use artiq, so I am trying to figure out how it all works.  I did not intend to use different gateware/firmware.  It seems like I need to use version 4 to use kasli, because conda ends up pulling from the version 4 dev branch when I do:
+conda create -n xxx artiq-kasli-master
+I can try wiping my install and seeing if that fixes the mismatch.
+If you want to stay on the release versions, you can remove the dev channel from conda instead. Alternatively, you could flash the dev channel gateware using the artiq_flash script.
+I rolled back the artiq package to match the kasli-master gateware and I can now read/write to the device.
+For reference I just had to run:
+conda install artiq=4.0.dev=805+gitd0f6123f
+where 805+gitd0f6123f is the build string for the gateware (and reflash the device).
+Thanks for the hand holding while I get started. Hopefully with a basic working system I can figure out my own problems in the future.

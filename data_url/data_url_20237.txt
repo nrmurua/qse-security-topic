@@ -1,0 +1,26 @@
+As noted in #633 (comment)
+I came across this, which (among other things) says that, when the compiler is MSVC, the generated CMake build files have the W3 flag automatically added to them. I've also verified that our MSVC 2019 Appveyor Builds do have this flag turned on.
+I've started to look at all the warnings. I've asked for review from the code authors.
+I'll modify the code/cmakelists accordingly
+Done in PR #664 and #665. @dstebila, I'll let you double-check I didn't forget anything.
+Compiler warnings look clear to me.  Is there a MSVC equivalent of -Werror that we should turn on?
+There are some warnings during linking -- should we do anything about those?
+I think /WX is the equivalent for cl.exe. I'll check the linking warnings. By the way, where did you see the warnings; local or on AppVeyor? My local cmake compilation doesn't print them out (is there an option to print out warnings?)
+By the way, where did you see the warnings; local or on AppVeyor? My local cmake compilation doesn't print them out (is there an option to print out warnings?)
+https://ci.appveyor.com/project/dstebila/liboqs/builds/31249636/job/934ptnnyt8qa8lvl
+Nothing shows up when I compile locally. Is there a setting in cmake to printout the warnings?
+Not sure why your output is different than AppVeyor's.  Sorry.
+Ok, I get the warnings now by static library; I'll take a look.
+It looks like the Windows build is linking with the debug C runtime even in non-debug builds; the /MD option should be used instead of /MDd in this case. It looks like cmake is setting this automatically, I can't find any of our config files specifying this. I wrote some code to correct this in CMakeLists.txt:
+It gets rid of the LINK : warning LNK4098: defaultlib 'MSVCRTD' conflicts with use of other libs warning, but the /MDd option still appears all over the build directory.  It looks like it comes from build/CMakeCache.txt:
+Is the default build debug even if you don't explicitly specify its type to be Debug? @dstebila @xvzcf ?
+No, the default isn't Debug, and I think CMake is automatically setting it to that. But then again, I've been using CMAKE_BUILD_TYPE incorrectly, which I need to fix.
+When I set CMAKE_BUILD_TYPE=Release the problem goes away (/MD is used instead of /MDd as it should be) without any workaround code. So the issue only appears if we don't set the CMAKE_BUILD_TYPE explicitly to Debug or Release. appveyor_build.bat uses Optimized; what should it be instead? (adding Debug/Release, removing Optimized?)
+what should it be instead? (adding Debug/Release, removing Optimized?)
+Yup, it should be like that all over, as noted here.
+@xvzcf; following our conversation on the call today, when I configure cmake without any flag (cmake -GNinja ..), I still get the /MDd flag, which implies debug mode. Is that the expected behavior? Should appveyor build OQS using the CMAKE_BUILD_TYPE=Release?
+Yup, will be pushing a fix soon.
+Was PR #730 the fix you mentioned, @xvzcf ?
+Yup.
+Did #730 resolve this?
+I think so. Appveyor now builds in Release mode, and the right DLL is used at linking. I don't see the warning locally, nor in the nightly build, so I think this is done.

@@ -1,0 +1,84 @@
+Within days to weeks after startup, the connection to ARTIQ is lost with the Error WinError 10060 and cannot be restored, other than by power cycling Kasli.
+The experiment returns quickly and successfully. The device responds to the ping.
+conda_list.txt
+Can you record the serial output of Kasli and see if any error message or panic/crash is reported?
+I used Wireshark + USBPcap to monitor the connection to the host from restarting the master to seeing the error message and I got this on the serial USB connection (Quad RS232-HS):
+No.	Time	Source	Destination	Protocol	Length	Info
+1	0.000000	host	1.6.0	USB	36	GET DESCRIPTOR Request DEVICE
+2	0.000000	1.6.0	host	USB	46	GET DESCRIPTOR Response DEVICE
+3	0.000000	host	1.6.0	USB	36	GET DESCRIPTOR Request CONFIGURATION
+4	0.000000	1.6.0	host	USB	129	GET DESCRIPTOR Response CONFIGURATION
+5	0.000000	host	1.6.0	USB	36	SET CONFIGURATION Request
+6	0.000000	1.6.0	host	USB	28	SET CONFIGURATION Response
+I let it run for about an hour afterwards and did not receive any additional lines.
+Don't use wireshark, just look at the serial port normally.
+What do you mean by that? I am not very familiar with the serial connection of ARTIQ. Is there a dedicated built-in terminal? When I search the documentation for "serial", I find flterm, which I cannot use I think (because I am on Windows). I initially tried to use hterm, but there are no serial connections listed there. Also, there is the SPIMaster device, do you mean that? I have not used it yet, do I just need to use its readmethod to get the logs?
+Also I do not get any output when I try to get the firmware version with artiq_coremgmt as described in the form for bugs. The four dots are supposed to be the IP address of the device, right?
+@steine01
+I am not very familiar with the serial connection of ARTIQ. Is there a dedicated built-in terminal? When I search the documentation for "serial", I find flterm, which I cannot use I think (because I am on Windows). I initially tried to use hterm, but there are no serial connections listed there.
+Any serial terminal will do (e.g. python -m serial.tools.miniterm ) -- just make sure you're connecting to the right port and using the correct baud rate.
+If you want more help with that, the issue tracker is probably not the best place (M-Labs forum?).
+Also, there is the SPIMaster device, do you mean that? I have not used it yet, do I just need to use its readmethod to get the logs?
+No, that's different.
+@hartytp
+Thank you for the help, I will open a question in the forum about it, because something does not seem to be correct on my end.
+Using a different ethernet cable (also a different type, I exchanged an optical cable with a "standard" cable) and different networking adapter did not resolve the issue.
+Also it seems that the error only happens, if an experiment is actively running. It never occured when ARTIQ was idle.
+I have since changed the network architecture between the host PC and Kasli, because other groups reported improvements for similiar issues after doing that. Instead of connecting the host and Kasli to a common switch, I now use an USB<-> Ethernet adapter to connect the host directly to the Kasli.
+But now that I ran multi-hour long experiments again, I still see the same error (TimeoutError) and ARTIQ does not respond to requests from the dashboard anymore until it is power-cycled. Also I still do not know what kind of serial connection I should use to get a more complete error message, there were barely any response to my question on the forum https://forum.m-labs.hk/d/303-serial-connection-between-host-and-kasli.
+What can I do to solve this problem? From communication with our IT department last year, it seemed as if the Kasli just stops responding if a package is sent to the host and it takes a long amount of time for the host to respond. Specifically, there seemed to have been a 2 second delay between a request sent by the Kasli and the response of the host in one instance.
+An assumption was, that a congested network might be the cause of the long delay, so I exchanged the connection over a switch to the direct connection between Kasli and host. This did not solve the issue though, because I still get the error. Also, that Kasli does not just time out and cancel the experiment, if there is a significant delay in communication, seems like an issue to me.
+Hmm. For this now wireshark trace would be very helpful. That would show why and when which connection breaks.
+In the current state, where I have not yet power-cycled after the error, I only see broadcasts from the host (192.168.1.2) to the Kasli (192.168.1.3), but no response. At time 0, I submitted reset core and I submitted it again at time 146. 192.168.1.1 is the gateway IP.
+Should I power-cycle and run wireshark while my long experiment is running? Or are there other diagnostics I can perform in this state?
+
+Not much. The wireshark trace should cover some time before the problem start and then a few more minutes after the problem has occurred.
+This weekend it happened again with the same setup, but I logged the network activity for the connection. I attached a couple of minutes of the log before and after the crash at ~11:38 as a CSV file. For the remaining log, there were no further connection attempts with the Kasli after this point. If I attempt to run any experiments, I find the same issue as before.
+It looks as if at 11:38:26 three Keep-Alive packets are sent by the host, but no response from Kasli arrives. Afterwards, there are a couple of ARP requests, both to the MAC address of the Kasli and general broadcasts. Then, no broadcasts for the Kasli occur anymore (probably, because the experiment terminates with the error in this issue?).
+wireshark_log_artiq_crash.csv
+Doesn't look like an obvious networking issue, more like a crash. Are you still using the exact same experiment that you mentioned at the top and ARTIQ versions on device and your computer?
+Could you have a look at the console output around the issue?
+If you ran zadig on all four serial interfaces, then you won't see any. Revert the console interface back to standard serial port. The console is interface 2 (the third) that is being exposed over the USB connection.
+To test, yes I am using the exact experiment I mentioned above. The sequence during which the crash happens has been modified between then and now, but uses the same components (mainly Urukul and TTL). I just checked the version, it is the same on the computer and should be the same on the device, since we did not flash a new version onto the device. But we also had this issue for several versions and at least two different Kasli over time.
+For the console: I changed the Interface 2 driver to USB Serial (CDC) and checked the serial connection with python -m serial.tools.miniterm. I then see the port in the list, but cannot access it with the following error message:
+Do I need to configure the other interfaces of the Quad-USB interface as well? Or is there something else wrong?
+That looks a bit like Jonas' issue which seems to be resolved but unknown (to me) how.
+Could you quickly try hyperterm/putty/whatever from another (without zadig modifications) computer?
+I checked the serial connection with hterm on another PC, that did not have Zadiq installed. There I see the connection on COM4, and I can connect to it. But the received data is empty (I use the baud rate mentioned in the forum post about the serial connection). Should I restart the Kasli and check again?
+Is a continous log feasible here as well, or is there too much data being written on the serial bus? (Disregard this point, I saw that there are groups that log the serial port, so it should be no issue.)
+Use the device manager to figure out what port number windows assigned to interface 2. Connect to that. There is only logging output if something is happening (booting, running new kernels).
+Well, this is the only serial port I see in the device manager and hterm, no port is labeled as Interface 2 (or any interface). If I disconnect the USB cable on the Kasli, this port disappears. After reconnecting I get a byte 00 and nothing else. Submitting an experiment also causes no output and results after some time in the error mentioned in the beginning.
+And this is with the correct baudrate/stopbits/parity settings?
+This is with 115200 baud 1 stopbit , 8 data, no parity as sb10q mentioned in the forum.
+Just to check: are you trying to get logging output while the device is in this "crashed" state? Does the kernel actually run?
+Is there output when the device boots?
+So far I have not power-cycled the Kasli, so it is in the crashed state. I specifically asked earlier, if I should reboot it and said that experiments do not run currently. I do this, because I do not know, if you expect some messages on the serial connection in this state or not. I can power-cycle it, if you say that this is now the right moment.
+With "console output around the issue" (above) I mean a time interval from well before to well after the issue occurs.
+With "There is only logging output if something is happening (booting, running new kernels)." I mean there is no output if the system isn't booting or (successfully) executing new kernels.
+Yes. Please procure these logs.
+Ok, then I will power cycle and let the system run while logging the serial output. Since I so far cannot reproduce the crash, it might take some time, until it happens again.
+But to confirm, you can connect to the console on that other computer now and you see the boot log output?
+I connected to the port with hterm and after I power-cycled and reconnected, I saw many zeros written on the received data. After booting has finished though, I could not get any additional output so far. If I submit an experiment, it runs well and terminates, but I see no change on the serial connection.
+Also if I raise an RTIOUnderflow on purpose (which arrives in the dashboard), I see no output on the serial terminal. Is this expected? Is there some test I can do to check, if the serial connection works as intended? I checked the documentation and issues but found nothing specific there. In the forum, there is a mention of artiq_coremgmt --device-db <path_to_device_db.py> debug allocator, that should print memory info on the serial output, but I see nothing there.
+Do not power-cycle and then reconnect. Just remain connected and power cycle.
+Do one thing at a time. Let's get some messages when booting first. The log should look as described elsewhere, e.g. #1776
+When I just do that, I only see many zeros on the terminal monitor, it does not look like the example you provided:
+
+Maybe it is easier to communicate in Mattermost?
+I'm not often on mattermost but usually at https://matrix.to/#/#quartiq:matrix.org Let's go there.
+After installing a satellite and running the experiment for a longer amount of time, the connection loss happened again and this time I also checked the serial connection. This is the complete output:
+The packets seen by Wireshark are similiar as before:
+
+Can you decode the backtrace with or1k-elf-addr2line?
+Most of the time when I've hit panics like this it's turned out to be due to a compiler issue like #1677
+I hope I did this correctly, I never used this tool before. This is the command I used and the output corresponding to the adresses from the serial monitor:
+smoltcp-rs/smoltcp#527
+@hartytp Thank you for the link to this issue, that seems to fit pretty well to what I see. I will try the suggestion at the end for now, but I don't think this is a good long-term solution.
+What is the status of the 0.8 update of smoltcp for ARTIQ 6 (which is suggested in the issue as a possible fix)? In my Cargo.tml file, version 0.6 is still included, while in the repository version 0.8 is included. The latest build of conda-artiq (120931) still references version 0.6 though (I just downloaded it and checked).
+Use the beta builds for your systems to try that.
+Unless I am mistaken, the earliest available beta build on Hydra (https://nixbld.m-labs.hk/jobset/artiq/main-beta) is an ARTIQ 7 build (3632). When I tried an earlier ARTIQ 7 build, most of my experiments broke because of typing issues (e.g. ad9910.cfg_sw now needs a bool instead of an int), so using that would require that I rewrite many of my experiments. While this may be necessary in the future, I think it is a bit much just to fix this bug.
+The alternatives are likely quite a bit more involved. Rewriting your experiments is not required now. Just verifying that there is a fix. It would be great if you could test it, maybe on a system that isn't used in production but where you can still reproduce it.
+Ok I will have to see if I can setup a system that provokes the error. Maybe also interesting: I cannot restart the Kasli with the artiq_coremgmt command suggested on the serial terminal. Instead I receive the error of the issue [WinError 10060].
+Yes. If it's crashed you won't be able to restart it using coremgmt.
+Maybe an update of this issue for our lab: I have commented out the line smoltcp::phy::EthernetTracer::new(net_device, net_trace_fn) in ~\artiq\firmware\runtime\main.rs  for two of our systems and have so far not observed another network error over the last few months. I don't quite understand how this fixed the problem though, since I would have expected, that some kind of recompilation is necessary for the change to have an effect. Unless this part is compiled again for each experiment?
+It's not, all changes in in artiq/firmware need recompilation and reflashing before they take effect. If you are sure that nobody flashed that, it's just a coincidence.

@@ -1,0 +1,43 @@
+A thought: It might be nice to be able to upload a waveform that would be directly written out sample by sample to the output at the DAC clock speed ("point per clock")
+DDS is nice and super flexible, but suffers from bad phase noise at frequencies that are not commensurate with the clock, and is particularly bad for pulse timing applications: the interpolation strategy of the DDS can lead to bad and unpredictable timing jitter.
+You lose flexibility (unless we can change the DAC clock, which I guess we can't easily), but to get the ultimate performance for AWG and pulsed waveforms, point per clock would be a nice option to have
+Just a though, I have no idea how hard it would be to implement? But seems simpler than DDS, maybe it could even be an option enabled in the DDS hardware block?
+One could even add some simple things like point duplication to offer a sub-multiples of the DAC clock without uploading a new waveform (and without filling the memory for slow ones...)
+Curious to see what people think. Also, I could offer to pay / hire a programmer if that is useful. (no time myself unfortunately...)
+Cheers,
+Gary
+Hi Gary, we've had this on our roadmap for a while. This is a bit of work, where the main difficulty lies in streaming the data at a sufficiently high rate. There is the officia redpitaya streaming app - https://redpitaya.readthedocs.io/en/latest/appsFeatures/apps-featured/streaming/appStreaming.html - which can at least stream data from redpitaya to the computer, and I think I remember discussions on repitaya forums about also streaming AWG data from PC or SD-card to the DAC.
+There are a number of alternative strategies:
+Can you give a few more details on the requirements, e.g. if you'd use this feature with all other pyrpl features or standalone, if you'd also have to stream ADC data back to the PC, what durations at what sampling rate would be interesting, and whether you'd precompute the waveform or kind of want to have python generate it in realtime?
+I would estimate the work for this feature at high rate (say 62 or 125 MSPS) around 2-3 weeks for a junior FPGA developer, given the current state of the code. If you find a programmer capable and willing to implement this I'm happy to collaborate and help. I can also spread the word and see if someone turns up.
+Thanks for the quick reply!
+Our application would be purely for repetitive waveforms, so live streaming would definitely be overkill!
+Also, my primary application would be on outputting repetitive waveforms: digitising is not per se a high priority, using the existing scope app with no decimation would be fine I think.
+disable ASG phase wrapping, i.e. jump to phase zero after a full cycle - this decreases the amount of implementable frequencies but avoids the phase jitter
+This probably is closest to what I am thinking of:
+Basically, I would upload an array of length N to the RP. The RP would run through the array, outputting each element one after the other on sequential DAC clock events. When it hit the end of the array, it would wrap and start again.
+In this "level 0" implementation, the repetition rate of waveform is DAC_clock / N. The user would have to do some thinking, and would not be able to "just specify" the frequency of the waveform. But as this is an advanced mode of operation for users that are concerned about the fidelity of the reproduction of their waveform, I feel that should be OK. It would be indeed off-loading the waveform synthesis to their own python code to a certain degree, but  I think that is what that type of user would want anyway
+One limitation of level 0 is that there is a maximum practical repetition rate: if we stick to max N of 16384, the max repetition time would be 131 microseconds (7.6 kHz).
+Say we wanted to enable longer, high fidelity ARBs, an option for "level 1" would be to have an option to do pixel repeating in the FPGA: have the FPGA clock out a given array element M times. M=2 would allow one to reach 3.8 kHz, M=10 760 Hz, etc.
+Now, of course, we will end up with a bit of an ugly waveform if we just "block repeat" pixels: phase stability will be good, but higher harmonics will be bad. To address this, one could have an option to have the FPGA do linear interpolation instead of "pixel repeating" for M>1: this would then make a pretty nice waveform.
+Now, for general use, the usual DDS approach will likely still be what most generic users would pick, since they don't have to think too much. But, for users that are worried about these high fidelity issues, this would be a pretty simple way to give them then control they might want.
+My personal applications are actually for much shorter waveforms (thinking about applications such as qubit pulse spectroscopy, if I have qubits with 100 microsecond coherence time, I'll be having a party in the lab), so already level 0 (M=1`) with just a direct 125 MS/s pixel clock would probably keep us happy  for a few years :)
+(but I think once we're digging in there, "level 1" or even "level 2" would not be too much work...)
+Please spread the word and see if anyone is looking for work, I might also post it on some of the freelance programmer websites, or look locally here if I can pay someone internal.
+Cheers,
+Gary
+Thanks a lot for all the details Gary!
+I think levels 0 and 1 are already implemented with the current AWGs. Background info: the index of the awg data buffer for the value sent to the awg output are simply the most significant 14 bits of a phase register. So just load your custom waveform (I think there must be an example notebook in the folder, otherwise I can post the code) and set the frequency to 125e6 / 16384 / N. This should set asg0._ counter_step to 2^16, such that 2^14 times that value yields 2^30, the size of the asg phase register. Note that _counter_step is just the integer value in the register controlled by the frequency settling, so feel free to use both interchangeably.
+There is also a setting _counter_wrap that you can use to decrease the value at which the phase register is wrapped, in case you have a waveform of less than 2^14 points and want to achieve a frequency such as 125e6 / (less than 2^14) / N.
+If you want to be sure that the phase always starts at 0 upon wrapping (in above case it should, but just in case), set asg0._sm_wrappointer to False. Note that the same settings are available for asg1 too.
+If interpolation was desired one could approximate it by passing the data through a pid lowpass filter (though I agree interpolation would be a nicer feature).
+super cool, I'll take a look!
+Also, to let everyone one know, I have discussed with people in Julien Laurat's group very recently. They are trying to implement a module that would enable to perform multi-channel clock divisions. My understanding is that they want to be able to send various clocks to various DACs, with a sampling rate that would be adapted at anytime to the desired waveform characteristic frequency.
+They seem to be pretty decided and have invested already some time in understanding the pyrpl code. I guess this would be interesting if their project could not be totally "disconnected" from the main pyrpl branch. I have the feeling there is some overlap between your "STEP 2" and what they are trying to achieve.
+I sent them a message to ask if they could provide a better explanation of what they are trying to achieve in this thread...
+Intern from Julien Laurat's group here, hope I'm not too late ! Indeed as SamuelDeleglise pointed out we're trying to implement a module that generates sequences of clock signals of arbitrary frequency. The idea is to send tuples (f, n) to the RP, and generate a digital output composed by "n" periods of frequency "f". Then, by sending a list of these tuples we create a sequence of slower clocks with specified length and frequency. The output is connected to one of the GPIO pins on the board instead of the fast analog ports.
+Right now we're developing the Verilog code to transform this list of tuples into the digital signal. I guess the approach proposed by gsteele is more closely related to the ASG module though, as we only load the parameters for our digital signal and create it "in situ" in the FPGA, as opposed to loading a full waveform to the RP.
+I'll be glad to give more details if anybody is interested !
+Sounds cool! Indeed, I think the ASG is indeed what I need. Curious about the clocks though, could be useful too for other applications
+Cheers,
+Gary

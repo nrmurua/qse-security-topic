@@ -1,0 +1,16 @@
+(Note: this is a preliminary bug report, information is incomplete)
+With c940f10 and a WIP fix (will be disclosed later) for DRTIO, on Sayma AMC the CPU will always panic at (apparently) board_misoc::config::append_at() when data for the config key sysref_ddmtd_phase_fpga is absent.
+(to be elaborated)
+The calibration config values should be written properly to the SPI flash without panic.
+The firmware panics with the following serial log (NB the exception and the PC value where it is caught are always the same for the same piece of firmware):
+Output from llvm-objump:
+Stack overflow? The new firmware should detect those instead of corrupting memory. This may just be one such detection. @occheung
+Stack overflow? The new firmware should detect those instead of corrupting memory. This may just be one such detection. @occheung
+It would be useful to know the value of _sstack_guard in the elf file. That should be the only protected region in satman.
+Here's a small incremental input I can give this discussion at the moment:
+@occheung _sstack_guard of satman is 0x4002a000.
+Either the code should now panics at 0x4002a000, or the _sstack_guard was 0x40029000. The PMP region should only be 0x1000 large, otherwise we have an issue with the VexRiscv CPU / PMP config (again).
+I'm not familiar with the purpose of flushing L2 upon writing/erasing the SPI flash, and I wonder if it is a thing to "uninit" the stack guard in this situation.
+Ah I see the issue. So the firmware is small enough, which will unintentionally triggered the stack guard when flushing the L2 cache.
+Currently, the PMP in satman/kernel is enabled by locking the register in machine mode. It is not possible to turn it off.
+Some of the PMP regions in runtime can be turned on/off because it is enabled by switching to a lower privilege level (e.g. from machine to user). It was implemented for the spawned threads (libfringe).

@@ -1,0 +1,28 @@
+Description of the issue
+When using measurement outcomes with classical feedback, we often write circuits which correct a local / global phase conditioned on the measurement outcome. However, it seems to be that cirq.Simulator() drops global phase after measurement, which leads to inconsistencies.
+How to reproduce the issue
+For example, consider the following circuit which performs the inverse of an And / Toffoli gate using measurement based uncomputation.
+The circuit above should take an initial state |111>  to final state |110>, because:
+However, simulating the simulator drops the -1 global phase in step-2 and therefore the classically conditioned phase correction leads to final output being -|111> instead of |111>, which is wrong.
+The step-by-step simulation output is given as follows:
+Cirq version
+1.0.0
+cc @95-martin-orion @daxfohl @mpharrigan
+Does running with split_untangled_qubits=False fix it? My hunch is global phase gets lost in the factoring and merging of states.
+Does running with split_untangled_qubits=False fix it? My hunch is global phase gets lost in the factoring and merging of states.
+Simulator(split_untangled_states=False) resolves it for me.
+I think it's here: 
+If we are measuring all the qubits in the set, then it'll factor them all out and leave a global phase that it throws away.
+Can you try adding a and op_args.qubits to that condition, to make sure we aren't factoring out the last qubit? I think that might fix it.
+Sorry just realized I meant "and len(op_args.qubits) > 1"
+And I take it back. Looks like the factor method itself does not necessarily preserve global phase: https://github.com/quantumlib/cirq/blob/e362cb6fe2120a3a74a8feefc2c6e5957a219c13/cirq-core/cirq/linalg/transformations.py#L597
+(FWIW I'm not going to have time to work on this. Probably there are better ways to factor state vectors and density matrices. All the stuff I added to linalg in #4100 (comment) should probably be reviewed by someone with a better linalg background).
+Unless there is some extra context I'm missing that's not described here, I don't think there is a bug here.
+Measurement-based uncomputation uses measurement result to correct relative phases, not the global phase. The latter is unobservable. Therefore, -1|110⟩ is in fact a correct result for the circuit above. The phase becomes important when it is relative, so to confirm this we can apply the circuit to a state such as |000⟩+|111⟩ and verifying that we obtain |000⟩+|110⟩. You can prepare the GHZ state using a Hadamard and two CNOTs prepended before the circuit
+and we see that the relative phase is correct.
+Generally, phase corrections should be tested on superpositions, not on computational basis states, because in the latter case the corrections modify the unobservable global phase while in the latter they fix the relative phases.
+Isn't it true that most of the time the simulator will track global phase? or at least not randomly randomize it. I understand that it's not wrong in terms of observables; but for a software tool it would be nice to be able to test with basis states and to build confidence that it will also work with superposition, see https://algassert.com/post/1903 for example
+In a sense, global phase doesn't really exist, so one could argue that our simulator doesn't need to track it at all. Density matrix simulators don't. That our present wavefunction simulator does is an implementation detail which may change in future. Moreover, not making it a requirement enables optimizations such as the one that has apparently already been done for example here (link from Dax's comment above).
+It's not clear to me that testing with computational basis is fundamentally easier than testing with superpositions (my superposition might be someone else's computational basis). Perhaps we just need to add more constants to serve as a convenient supply of initial states for testing?
+I figured out how to fix it. Whether there's a bug in the quantum sense or not, there was definitely a bug in that the outputs of the factor_state_vector method did not kron back together into the original. That's plain linalg and should work.
+Turns out I double-dipped on the phase when factoring, so the linked PR fixes that. This ends up fixing the problem at hand too.

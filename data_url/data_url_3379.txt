@@ -1,0 +1,22 @@
+When I use local_forest_runtime on every 86th call of WavefunctionSimulator.wavefunction() program freezes, while when qvm and quilc are running in server mode my programs work as expected.
+Operating System: Kubuntu 19.10 x64
+Python Version (python -V): Python 3.7.5rc1
+Quilc Version (quilc --version): 1.13.1 [04c6168]
+QVM Version (qvm --version): 1.13.0 [a88eefe]
+Python Environment Details (pip freeze or conda list):
+This is most likely due to the underlying OS pipe buffers filling up. When local_forest_runtime spawns the quilc and qvm subprocesses via Popen, it passes subprocess.PIPE for both stdout and stderr. Switching those arguments to subprocess.DEVNULL resolves the problem for me.
+As a workaround you could try fnctl(2) with F_SETPIPE_SZ on the underlying file descriptors associated with the returned Popen objects' stdout / stderr attributes to increase the buffer size, or else Popen.communicate to periodically drain the buffers.
+For example, here is a quick hack that works on my laptop. You might have to change the timeout and/or number of iterations to perform between flushing the buffers to get the best results.
+See also
+http://man7.org/linux/man-pages/man2/fcntl.2.html (search "Changing the capacity of a pipe")
+http://man7.org/linux/man-pages/man7/pipe.7.html (search "Pipe capacity")
+@appleby do you think this is a bug in the implementation of with_local_forest_runtime or just a limitation of the OS? (i.e. should we close this?)
+Personally, I lean towards bug. As a user, I wouldn't expect things to stop working after 50ish calls to qvm/quilc. The problems is I'm not sure how to fix it in a backwards-compatible way. If we switch from PIPEs to DEVNULL, it might break things for anyone expecting to be able communicate to the subprocesses. I suspect very few people are doing that though, so maybe it's acceptable? We could always add another kwarg to local_forest_runtime and let the caller decide if the want PIPEs or DEVNULL I guess.
+Personally, I lean towards bug. As a user, I wouldn't expect things to stop working after 50ish calls to qvm/quilc. The problems is I'm not sure how to fix it in a backwards-compatible way. If we switch from PIPEs to DEVNULL, it might break things for anyone expecting to be able communicate to the subprocesses. I suspect very few people are doing that though, so maybe it's acceptable? We could always add another kwarg to local_forest_runtime and let the caller decide if the want PIPEs or DEVNULL I guess.
+By "communicate" with the subprocesses you mean "read the stdout/stderr buffers"? If we pipe to /dev/null the servers are still accessible, right? I think the main (only?) downside in piping to /dev/null is that you lose logs. Otherwise I think it's reasonable.
+By "communicate" with the subprocesses you mean "read the stdout/stderr buffers"?
+Yes.
+If we pipe to /dev/null the servers are still accessible, right?
+Correct, they should still be accessible on localhost.
+I think the main (only?) downside in piping to /dev/null is that you lose logs. Otherwise I think it's reasonable.
+Agree

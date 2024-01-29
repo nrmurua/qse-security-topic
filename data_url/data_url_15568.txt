@@ -1,0 +1,24 @@
+Two SparsePauliOps with different orders are judges as "not equal" as follows.
+output
+Is it better to return True for this comparison or mention the order dependency in the docsting of __eq__?
+@ikkoham also told me another case as follow. A redundant operator (coeff is 0) makes the comparison "not equal".
+If we need to compare two operator with different order and/or redundant operators, I think we need to call as follows. Is there any simple alternatives?
+I updated SparsePauliOp in #7656 as follows.
+I think this is another case of equality vs equivalence (which we discussed in an issue with @jakelishman but I can't find that discussion right now...). The conclusion, I believe, was that there's a difference between operational equality which tells us on a programmatic level if objects are the same and a functional equivalence which tells us if the objects behave the same/describe the same thing.
+For
+a and b are not the same on a programmatic level, but they are equivalent functionally. I think it would be good to keep this difference and keep __eq__ programmatic and possibly add equiv to check a functionaly equivalence. Only having one of them might not cover use cases of both physicists/applications and software devs.
+Imamichi-san and I discussed this issue. My opinion is this behavior is as intended but we need more documentation to __eq__ and I recommend to add the method equal_as_operator which behaves like np.allclose((a - b).simplify().coeffs, [0]) .
+Since we already have the equiv method in some places, such as quantum_info.Operator.equiv, what about calling it that? 🙂 I think that also already does what you're describing here.
+Julien, I think the discussion we had that you're thinking about is to do with ParameterExpression, or other forms of tree comparisons.  It doesn't entirely apply here.  I don't think there's any particular use for an equality check between SparsePauliOp that doesn't simplify and sort its internals before performing the comparison (perhaps sort/mutate a copy to avoid surprising mutation, but really it's probably better to bite the bullet and amortise that cost).
+I tries a dict-based simplify with rust and it succeeded to improve the performance. So, I want to move it forward.
+Then, I need to deal with this issue #7657 to pass  the unit test.
+As Julien suggested, there is a method to check the equivalence equiv, e.g., quantum_info.Pauli.equiv
+So, I'm thinking of the following plan. Do you have any suggestion?
+If necessary, I will add rtol and atol of np.allclose to SparsePauliOp.equiv.
+FYI SparsePauliOp.__eq__ uses the default rtol and atol of np.allclose.
+https://github.com/Qiskit/qiskit-terra/blob/77219b5c7b7146b1545c5e5190739b36f4064b2f/qiskit/quantum_info/operators/symplectic/sparse_pauli_op.py#L133
+So this will be a breaking change in regards of how we had things before? E..g this here that although its in the SummedOp docs, this nowdays produces a PauliSumOp underneath, using a SparsePauliOp, but it works just the same
+https://github.com/Qiskit/qiskit-terra/blob/56c2b86ea601e58ae53241c4f7086ecfb93363e3/qiskit/opflow/list_ops/summed_op.py#L218-L224 Or maybe the PauliSumOp compensates for what is under the covers so at that level no change is seen. Or maybe after the change the way PauliSumOp does equality can be improved?
+I made #7656 so that it won't break changes The summary is
+PauliSumOp.equals  used SparsePauliOp.__eq__ for equivalence check. It was a wrong algorithm theoretically, but it happened to work fine because SparsePauliOp.simplify sorted the operators (but, the API doc does not guarantee it).
+So I replace that part with the new SparsePauliOp.equiv in #7656 because I updated SparsePauliOp.simplify with a faster algorithm without sort. These changes do not break unit tests and they are also consistent with the API docs.

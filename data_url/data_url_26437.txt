@@ -1,0 +1,21 @@
+Hello,
+I am trying to build the latest version of CP2K on LUMI and experienced an error related to hip. I can't tell if it is a problem due to the libraries/modules used or it is related to a feature that was introduced recently (see 337eb80#diff-222702f28550f55c721d63d3f7a72952c48da6f11e7e6a42ac91d2c70f59d45c ).
+We get first a warning in src/offload/offload_runtime.h:
+And then the error:
+We did successfully compile and run an older version commit 9d075a87ba6edda76ea5a496699dead09fac0ad2.
+In case it can be helpful, here's the list of modules that are loaded:
+Looking at /opt/rocm-5.2.3/include/hip/ on LUMI it seems that hipDeviceSetLimit is defined only for nvidia_detail/nvidia_hip_runtime_api.h but not for the AMD architecture, whereas hipDeviceGetLimit is found in hip/amd_detail/hip_prof_str.h.
+The toolchain ran fine (without sirius) and using the latest cosma version built from source
+./install_cp2k_toolchain.sh         --enable-cray          --enable-hip=yes         --gpu-ver=Mi250         --with-cosma=/users/toccigab/scratch/CP2K_v0723/cosma/build/install --with-sirius=no
+Arch file from toolchain without -Werror flags.
+local_hip.psmp.txt.
+If anybody has some ideas on what might be going wrong it would be great. Thanks.
+Gabriele
+Actually the function is defined in hip on all platforms starting from rocm-5.3.0. LUMI system of course. The only way to fix this is to do a if statement.
+It is possible to solve this issue by adding && (HIP_VERSION_MAJOR >= 5) && (HIP_VERSION_MINOR >= 3) to
+
+it should be fixed by PR #2870
+This works now, thanks! Indeed, v5.2.3 is the latest rocm version on LUMI..
+glad it worked. A proper fix will be merged soon in develop.
+I tried to recompile with the latest changes in develop. Unfortunately, the change from && (HIP_VERSION_MAJOR >= 5) && (HIP_VERSION_MINOR >= 3) to && (HIP_VERSION > 50200000) does not work for the rocm version on LUMI which is 5.2.3. I managed to compile with && (HIP_VERSION >= 50300000). Since v5.2.3 is the last patch before the release of 5.3, && (HIP_VERSION > 50200003) should also work, I have not tested this though.
+@vdellabalda, thanks for your feedback. This is should now be fixed via #2894.

@@ -1,0 +1,31 @@
+Many of our recent papers including arXiv:1706.00023 and arXiv:1711.04789 have focused on simulating the electronic structure Hamiltonian in a basis where the Coulomb operator is diagonal. Thus, the Hamiltonian can be expressed as:
+\sum_{pq} T_{pq} a^\dagger_p a_q + \sum_{pq} V_{pq} n_p n_q
+where I have subsumed the usual "U_p n_p" term in the diagonal part of T_{pq} a^\dagger_p a_q.
+Anyways, this is clearly a very essential and important form of the electronic structure Hamiltonian. As we build more routines for compiling to chips it will be essential to use this form. Likewise, this form can be stored with less memory and mapped to qubits almost instantly. Thus, we should have a class specialized for this purpose.
+@idk3 @kevinsung @jarrodmcc thoughts?
+Naturally, this is a PolynomialTensor with keys (1, 0) and (1, 0, 1, 0). The memory footprint would be the same as InteractionOperator (N^2 + N^4 numbers); are you looking for an even more memory-efficient structure?
+The memory footprint really only needs to be O(N^2) not O(N^4). So yes, I am thinking of something even more efficient.
+Ok, then it should not inherit from PolynomialTensor. We can always map back and forth. What sorts of operations do want to perform? A specialized Jordan-Wigner, and perhaps Bravyi-Kitaev? Anything else?
+Jordan-Wigner from this representation is incredibly simple and we'll certainly want a special routine for that. But I also expect that we're going to want to have routines for compiling circuits that are based around this class.
+In fact, many of the things we may want to do with this class would perhaps be done more to the post-JW transformed version of this Hamiltonian. I wonder if we should think about a class to store those coefficients (since they are slightly different from the FermionOperator coefficients).
+At the very least, we'll want a class that stores the Hermitian matrix T_{pq} and the symmetric matrix V_{pq} as numpy arrays, right? What should it be called? What should the attributes corresponding to these matrices be called?
+Actually, another possibility is to use a dictionary instead and have the keys be tuples (p,q) where we assume p < q. That would use less memory and also make iteration more convenient.
+I actually think that the most natural way to write this class is probably to just have it store two N x N numpy arrays: one for V_{pq} and one for T_{pq}.
+Is it an implicit assumption of these papers that T_{pq} is real? It seems to me that's necessary for the kinetic term to have a nice Jordan-Wigner transformed form. If so, should that be an assumption of the data structure?
+In all the basis sets that we're currently aware of which give this form, that is the case. I think this can be an assumption of the data structure.
+Jarrod is right, adding a magnetic field would throw a wrench in things. I tend to agree with Jarrod that it costs us almost nothing to ensure it is Hermitian, but not necessarily real.
+Tpq only needs to be Hermitian but Vpq does need to be real (upper triangular - perhaps we could store Up as the diagonals of Vpq).
+@kevinsung real vs complex here doesn't actually change that much, only whether you transform to paired Xs and Ys connected by Z strings (terms XZ...ZX and YZ...ZY) or anti-paired terms (YZ...ZX and XZ...ZY).
+@idk3 thanks, I see. If T_{pq} has both real and imaginary parts, then the transformed term will involve both kinds of terms. The real part gives rise to the paired terms and the imaginary part gives rise to the anti-paired terms. That's not a big deal though; it's still easy to transform.
+I think U_p is the diagonal part of T_{pq}.
+@kevinsung actually U_p is just one part of the diagonal of T_{pq}. The kinetic operator also contributes to the diagonal. For instance, think of the Laplacian in real space.
+But in basis sets other than the dual basis, or when there is a magnetic field, U also has off-diagonal components. So to the extent that we care about separating components of the external potential the Hamiltonian should be
+\sum_{pq} (U_{pq} a^\dagger_p a_q + T_{pq} a^\dagger_p a_q + V_{pq} n_p n_q)
+@babbush It would be convenient for me to at least have a basic version of this set up, so I'd like to do that. Do you think T and U should be stored separately? For now I plan to have these matrices stored and provide a routine to convert to and from FermionOperators and a Jordan-Wigner Transform to convert to QubitOperators.
+When converting from FermionOperator we won't be able to tell whether to put coefficients into T or U. We should probably just store two matrices.
+No, don't store T and U individually. Just have a matrix called one_body and a matrix called two_body. one_body stores the coefficients of a^\dagger_p a_q and two_body stores the coefficients of n_p n_q.
+Actually, I'm going to work on other stuff first so if someone wants to jump on this go ahead.
+What should the class be called? DiagonalInteractionHamiltonian?
+That's a reasonable name.
+Well, it's really the two-body interaction that's diagonal and not the one-body interaction, so perhaps DiagonalPotentialHamiltonian or DiagonalCoulombHamiltonian or DiagonalTwoBodyHamiltonian would be more accurate?
+Ok I'm going to do this now. I'm going to call it DiagonalCoulombHamiltonian for now.

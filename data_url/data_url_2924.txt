@@ -1,0 +1,20 @@
+Suppose I have an invertible OP_TREE called op_tree and I create a circuit as follows:
+This creates an OP_TREE called identity which should have no effect, and then creates a circuit which performs it 100 times in a row, and hence also should have no effect. Now, suppose I execute the following code:
+This generates an initial state, runs the circuit, and asserts that the final state is equivalent to the initial state up to an absolute tolerance ATOL, elementwise. What is the smallest value of ATOL, if any, for which we should expect this to go through without raising AssertionError? I have an example with 5 qubits where this passes with ATOL=1e-3 but not ATOL=1e-4.
+Is this behavior unexpected? The reason I'm concerned is that I'm writing some code for Hamiltonian simulation and to test it I find myself wanting to simulate the circuits and check that the final states are correct. It seems unfortunate that I can't perform these checks with more than 2 or 3 digits of precision. Maybe I'm doing it the wrong way?
+Anyway, sorry I couldn't come up with a smaller example but the following code consistently raises AssertionError:
+@dabacon Does this seem like unusual floating point error propagation to you? There's like a thousand or ten thousand operations in the circuit, and we've dropped from 8 digits of precision to 3 digits.
+Maybe this behavior is related to the fact that the final state is not normalized to 1 up to numerical precision? After running the above example, executing
+gives something like
+Hmmm. Yes, normalizing the state should probably help a lot. Similar to physics simulations getting better when you enforce energy conservation.
+In the example I gave, normalizing the state makes it pass with ATOL=1e-4 but fail with ATOL=1e-5. By normalizing the state I mean adding the line
+before the assertion.
+It definitely shouldn't lose that much precision, I'll take a look.
+(Note that in the code
+can just be
+float32 accuracy is about 1e-7
+The circuit has 5 qubits and a depth of about 5000
+Worse case gate errors add, so this would be something like 1e-7 * (5000 * 5) = 2.5e-7 .  Of course in practice things are better because the amplitudes don't always add together.  Random walk considerations would argue something like 1e-7 * sqrt(5000 * 5) 1.5e-5
+I see this pass at about atol=4e-5,l but fails for worse when I add in state normalization per step.  Without state normalization per step it passes at atol of 9e-3 but fails for worse.  So adding state normalization definitely seems to help, and it gives about the right order of magnitude (the sqrt estimate is likely not quite correct).
+Will submit a pull request with the normalization.
+#306 should address the non-normalization issue and increase accuracy.  Let me know if you see numbers that don't make sense.

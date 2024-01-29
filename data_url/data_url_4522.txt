@@ -1,0 +1,18 @@
+We should verify the impact of the expand call in qibo.
+It looks like this call deteriorates our performance in comparison to a pure sympy implementation.
+Some information that I believe is relevant: I tried constructing a simple Hamiltonian for which the sympy.expand call is still non-trivial so that there is a difference between qibo and pure sympy symbols. The example I used is the following:
+where n is the number of qubits. This is a diagonal Hamiltonian but sympy doesn't know this since at this point Zs are just arbitrary symbols not associated to any matrix. Note that there is big difference symbol is defined as Z or 1 - Z. If 1-Z is defined as a symbol then sympy.expand will just return the same expression, while if Z is the symbol then it will actually expand everything and express it as a sum of Z terms, which for this example is quite heavy.
+I compared four different ways to define the Z symbol:
+and here are the results:
+from which I see the following:
+@stavros11 thanks for these tests. I assume that the sumpy implementation uses commutative=False by default, correct? If that's true then for other Hamiltonians that mix different operators this approach will not hold, do you know how this flag deteriorates the sympy performance?
+@stavros11 thanks for these tests. I assume that the sumpy implementation uses commutative=False by default, correct?
+Yes, that is correct, the default sympy choice is commutative=True, see for example here. Another way to see this is the following example:
+Indeed using commutative=True may lead to wrong results in some Hamiltonians and this is the reason I included it in Qibo, as some tests that had terms with terms like X[0] * Z[0] were not passing. This does not necessarily mean that we cannot improve our current performance though.
+do you know how this flag deteriorates the sympy performance?
+This is a sympy issue not related to us, as it can be reproduced without qibo. So I guess in order to understand why it happens we should look at the sympy.expand implementation. Intuitively I understand why expanding expressions with non-commutative symbols is more complicated and gives rise to more terms but I guess we need to look at how expand works to understand this better.
+Another approach we could take is to remove expand completely. Only removing the call does not work as the current parsing from symbols to the corresponding qibo Hamiltonian terms assumes that the sympy expression is expanded. But in principle we could think of a better way to do this parsing to avoid expanding.
+For example, for the Hamiltonian (1-Z1)^6(1-Z2)^6...(1-Zn)^6 that I used in the above example, if one needs to construct the dense matrix this can be done directly using matrix multiplications from this expression without expanding. The issues start when the user needs to trotterize, because for that we need to express the Hamiltonian as a sum of local terms. That being said, I am not sure if it makes sense to trotterize Hamiltonians such as this one since it contains n-qubit terms. If I am not mistaken trotterization is only useful for k-local Hamiltonians, mostly when k << n, as in this case we can exponentiate the 2^k matrix instead of the full 2^n.
+Ok, then from your summary, I see two conditionals that we could have in the code:
+In principle we could start by having manual flags (function arguments) to control both options.
+On the other hand, it sounds like both problems could be preprocessed automatically when the users passes the symbolic expressions. What do you think?

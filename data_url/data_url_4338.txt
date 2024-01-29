@@ -1,0 +1,26 @@
+Hi all,
+I have recently seen a paper where a method for constructing a QAOA without any optimization is proposed. I think that it would be useful to have this kind of approach in QIBO, just to have a method that always works, even though it could be not the best one. The paper is https://arxiv.org/pdf/2103.08619.pdf
+Let me summarize the proposal. They propose having the Schrödinger equation
+
+where H_B and H_P are as usually. Then, the circuit is created normally and the parameters for the problem layer are constructed in such a way that the result improves with every new layer.
+
+I think that this method should be easy to implement, and the main problem I see here is computing the conmutator between H_B and H_P, step II subfigure B.
+Is there any way to solve this issue? If that is the case, do you think it is useful to implement this method?
+I think that this method should be easy to implement, and the main problem I see here is computing the conmutator between H_B and H_P, step II subfigure B.
+Regarding this point, note that Qibo Hamiltonians support matrix multiplication using the @ operator. For example
+works and h will be a new Hamiltonian object with matrix given by the commutator [h1, h2].
+Note that currently this works for normal Hamiltonians but will not work with TrotterHamiltonian. It should not be very hard to implement for the latter case though.
+Hi @stavros11 ,
+thanks for your reply. Then we can implement the matrix one easily, and the problem would be the trotter case.
+How is the inner structure of a TrotterHamiltonian? I would say that we have a list of many pauli terms and we could do the conmutator for all of them. That would be N^2 terms, where N is the number of terms for the Hamiltonian, but many combinations could be zero.
+Do you want me to write the code except for the TrotterHamiltonian piece?
+How is the inner structure of a TrotterHamiltonian? I would say that we have a list of many pauli terms and we could do the conmutator for all of them. That would be N^2 terms, where N is the number of terms for the Hamiltonian, but many combinations could be zero.
+The structure of TrotterHamiltonian is more or less what you describe. More accurately it consists of small matrix Hamiltonian terms that act on few qubits so that we never have to construct the big 2^n x 2^n matrix. Currently this is stored in a dictionary where the keys are the target qubits and the value is the corresponding term. For example Ising on 3 qubits looks like:
+where h is a Hamiltonian object that corresponds to the Z1Z2 term (4x4 matrix).
+The main technical difficulty with implementing h1 @ h2 is that it would change the term structure, for example when the (0, 1) term meets (2, 3) a (1, 2, 3, 4) term which is 16x16 matrix would be created, etc. and then we would also need to handle the cases where the same qubit exists in both terms (eg. when (0, 1) meets (1, 2)). Of course it is possible to implement, just a bit less straightforward than the case where we have the full matrix where we just use matmul directly.
+By the way, if you have any idea that could simplify this let us know because the TrotterHamiltonian structure is quite "experimental" anyway.
+Do you want me to write the code except for the TrotterHamiltonian piece?
+If you mean the code for the QAOA optimization scheme, if you find it useful then it would certainly be good to have. For this you don't need to worry about the TrotterHamiltonian case because if you use the @ operator for Hamiltonian multiplication it will work automatically for Trotter when we implement __matmul__ for it.
+I understand, in order to perform all multiplications one should run over all possibilities and perform all little multiplications. That could be up N^(2 * m), where m is the max order of the hamiltonian, i.e., how many qubits are connected via hamiltonian terms. I do not know right now how to handle that in a straightforward way.
+I will try to write the piece of code and let us see what happens.
+I have opened a new PR from branch falqon to discuss this issue

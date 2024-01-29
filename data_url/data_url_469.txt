@@ -1,0 +1,67 @@
+I use XACC to generate QITE circuits, but for 3qubits these circuits can be hundreds or even thousands of gates long, far too long to run on real hardware.  I tried running these through QSearch within BQSKit and was able to get down to circuits with only 14 CNOT gates!  Right now I take my XACC QITE output and feed it to QSearch, as shown in the code below, but it would be great if this could be done automatically within XACC!
+Note, I adapted the code below from a larger code for brevity, so its possible there will be an error if you try to run it, but hopefully it at least shows the gist of what I'm suggesting!
+Thanks!
+#import libraries and functions
+import numpy as np
+import sys
+from scipy import stats
+import xacc
+import qsearch
+from qsearch.gates import *
+from qsearch.unitaries import *
+from qsearch.assemblers import *
+from qsearch import multistart_solvers, utils, options, leap_compiler, post_processing, assemblers
+from qsearch.defaults import standard_defaults, standard_smart_defaults
+import itertools as it
+import qiskit as qk
+from qiskit import Aer, IBMQ, execute
+from qiskit.tools import job_monitor
+def qsearch_synthesize(utry):
+"""
+Synthesis function with this tool.
+qk.IBMQ.load_account()
+unitary_sim = Aer.get_backend('unitary_simulator')
+qasm_sim = Aer.get_backend('qasm_simulator')
+qpu = xacc.getAccelerator('qpp')
+#system parameters
+N = 3
+Jz = 0.5
+mu_x = 0.7
+#temperature of initial thermal state
+beta = 2.0
+dbeta = 0.1
+H_string = f'{Jz} Z0Z1 + {Jz} Z1Z2 + {mu_x} X0 + {mu_x} X1 + {mu_x} X2'
+H_i = xacc.getObservable('pauli', H_string)
+qite_beta = beta/2.0
+nbSteps = int(qite_beta/dbeta)
+stepSize = dbeta
+#start from 011 state
+xacc.qasm('''.compiler xasm
+.circuit prep
+.qbit q
+I(q[0]);
+X(q[1]);
+X(q[2]);
+''')
+prep_circuit = xacc.getCompiled('prep')
+qite_buffer = xacc.qalloc(3)
+qite = xacc.getAlgorithm('qite', {
+'accelerator': qpu,
+'observable': H_i,
+'step-size': stepSize,
+'steps': nbSteps,
+'ansatz': prep_circuit
+})
+result = qite.execute(qite_buffer)
+qite_qasm = qite_buffer.getInformation('qasm')
+qite_circuit = qk.QuantumCircuit.from_qasm_str(qite_qasm)
+#Qsearch compile QITE circuits to smaller size
+job = execute(qite_circuit, unitary_sim)
+result = job.result()
+target_unitary = result.get_unitary(qite_circuit, decimals=12)
+qite_circ = qsearch_synthesize(target_unitary)
+fname = 'shortQITE_Jz_{}_mu_x{}beta{}db{}.qasm'.format(Jz,mu_x,beta,dbeta)
+with open(fname, "w") as wfile:
+wfile.write(qite_circ)
+As of commit 7fd953d, I have added an IRTransformation that delegates to the qsearch circuit synthesis strategy in xacc.
+Here's the simple 2 qubit deuteron example showing how you would use it. For QITE you can provide the qsearch optimizer at initialization, and the circuit at each iteration will be optimized with qsearch to find a potentially shorter circuit. Optionally you could run QITE without any optimization and extract the circuit after execution and optimize that programmatically. Note that all qsearch compilations are cached to $HOME/.xacc_qsearch_db/. You may want to clear directory that from time to time.

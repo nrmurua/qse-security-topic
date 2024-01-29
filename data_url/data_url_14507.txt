@@ -1,0 +1,28 @@
+At certain circumstances, Statevector.draw('qsphere') does not color the arrow-ball according to the resulting phase.
+However, at other circumstances, it does.
+This wrongly produces a visualization of |1> since the color matches the phase of 0.
+see:
+
+The color should match the phase at Pi to match the state -|1>
+Note that at other times, it's ok. For example:
+produces:
+
+The top image isn't wrong, per se, it's just fixed the global phase to 0 - it's showing the same state.  I'm not 100% sure why, but it was definitely a design choice: https://github.com/Qiskit/qiskit-terra/blob/5ea6e9557655b144228c29d7099375f5d2c91120/qiskit/visualization/state_visualization.py#L824-L827
+Thanks for your reply and code verification Jake!
+I think it's a weird choice (losing information...), especially when composer doesn't
+(I guess I will add it to here).
+In any case, how about adding a remove/keep global phase parameter with a default?
+No harm done and more power gained.
+Jake, seems the issue lies deeper...
+If you remark those 3 lines of code the global phase will still be removed!
+Apparently, the "state" which arrives to this function is already stripped of phase.
+Going deeper into the call trace, I find that in line 761 the state is first converted into a density matrix,
+then at line 766 decomposed into vectors (intrinsically without a global phase):
+Then in line 822 the state is being "reloaded" (without the phase) back from those vectors:
+So, I actually have 3 questions:
+Thanks!
+Sorry I didn't reply for a while.
+Adding a normalize_global_phase=True keyword argument would be a fine solution to this, though I think it might be slightly fiddly to do while keeping all the current behaviour.
+The updates in Update plots to work with quantum state classes #4324 made the plotting functions work for anything that Statevector or DensityMatrix will accept as inputs, which is a couple of things.  "Not fixing the phase" only makes sense for statevector-like inputs, so any change would need to make sure it could detect what things should be converted to statevectors and what to density matrices.
+There are two points at which the global phase was removed, likely because the update in Update plots to work with quantum state classes #4324 was just simplifying existing code that handled density matrices and statevectors separately, and the removal of global phase wasn't originally in the statevector path.  For input density matrices, fixing the gauge of the eigenvectors is still a necessary step there to avoid being dependent on the orthogonalisation routine (i.e. if x is an eigenvector, so is -x, and you can't necessarily predict which you'll get)
+Yeah, it probably should be standardised and controllable, but overall it's probably best not to confuse the interface - the plotting is quite a coarse tool anyway, and eigenvalue of 0.001 means that state participates with a probability of 0.1%, which seems pretty acceptable as a cut-off for "not really important", since it's barely measurable with current hardware.

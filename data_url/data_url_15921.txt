@@ -1,0 +1,26 @@
+In opflow, states, operators, and expectation value can have coefficients. For example the following expression has a coefficient of 2 for the state and a the measurement operator a coefficient of 3:
+which should evaluate to
+Depending on which expectation value converter is used, opflow gives 3 different results for the above expression, see the code example below.
+Note: This bug prevents the usage of AerPauliExpectation for gradients and the QFI and is related to qiskit-community/qiskit-machine-learning#59.
+All should give -12.
+What do you think this test case?
+https://github.com/Qiskit/qiskit-terra/blob/main/test/python/opflow/test_aer_pauli_expectation.py#L105-L108
+There are no sampling when one uses AerPauliExpectation. I think this is a bug in the spec 🤔
+This means
+This sqrt(2) is dropped in the current implementation. The important point is there are no interference terms (i.e. <Plus|Pauli|Minus> and <Minus|Pauli|Plus>)
+In this test case, (~StateFn(paulis_op) @ sum_zero).eval() is [0, 0, 1, 1].
+It is a specification that expectations are inconsistent (I don't think it's good, but spec bug not implementation bug.).
+For now, the bug itself will be fixed by my PR. But another specification issue (interpretation of SummedOp)  has not been resolved.
+@Cryoris Hmm, I'm wondering how it should be. What do you think this output should be?
+-12 or -6?
+Note: AerPauliExpectation().convert(obs) is not OperatorStateFn but CircuitStateFn.
+I think it should be -12. The state has a coefficient of 2 and since the state appears twice in the expectation value, the coefficient will be squared, hence 4. In general, that would mean
+Since opflow doesn't require states to be normalized we need to be careful upon handling these cases.
+I see. How about this case?
+is 1/sqrt(2).
+Should the output be 12 / sqrt(2) or 6 / sqrt(2)?
+In my above example, AerPauliExpectation() doesn't know what the state is, so this has to be done at a later stage, either by CircuitSampler or eval. But, the return type of AerPauliExpectation.convert() is CircuitStateFn. It conflicts with CircuitStateFn's eval definition, so there's no way...
+6 (-6) is correct for the current spec, which may seem strange. This inconsistency is a spec issue.
+For the above example I think it should be 6 / sqrt(2) since
+(though the name obs is misleading since it's not an observable but a state 😄).
+I agree it's a spec issue. Maybe one solution would be to have a new return type for AerPauliExpectation.convert().

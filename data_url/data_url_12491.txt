@@ -1,0 +1,46 @@
+Python 3.7
+Tensorflow 2.3.1
+Tensorflow Quantum 0.4.0
+Hi,
+I ran into something strange when I was trying to calculate errorbars on the estimators of some observables.
+It seems that there are differences between how the cirq.Simulator() object handles random numbers compared to how this is done in the default tfq.layers.Sample() backend.
+Expected behavior
+Calling tfq.layers.Sample() twice on the same circuit within a script should give me different bitstrings.
+Launching the same script multiple times where I sample from a circuit should give me different bitstring for each script.
+Actual behaviour
+Multiple scripts executed at different times gave me exactly the same set bitstrings. Also, reinitializing the sampling layer within a script can give the same set of bitstrings depending on what backend one uses.
+Here is a minimal working example illustrating the problem:
+I consider the following cases:
+1.) CASE=='tfq'
+Calling main() twice gives a different set of 100 bitstrings for samples_1 and samples_2 (only False is printed in the final line)
+2.) CASE=='tfq', two separate script executions.
+Again, different bitstrings for samples_1 and samples_2, but the two scripts give the same output:
+
+3.) CASE=='cirq'
+Calling main() twice gives exactly the same 100 bitstrings for samples_1 and samples_2  (only True is printed in the final line)
+4.) CASE=='cirq'
+Again, the bitstrings for samples_1 and samples_2 are equal, but now the two scripts give different output
+
+(All of this is unaffected by changing the random seed in Tensorflow between scripts.)
+From this I deduce that in TFQ, initializing the Sampling layer initializes a global random number generator once with a fixed seed independent of time (at which the script is executed), and this random number generator is reused for all subsequent calls. This would explain 1.) and 2.).
+Whereas with the Cirq backed, the random number generator is reinitialized when the Sampling layer is initialized, but the seed is now dependent on the time (at which the script is executed), which would explain 3.) and 4.).
+I fixed my problems by passing a seed to the cirq.Simulator() object that depends on time
+I this expected behavior with the way I coded this up? Is there a better way to sample bitstrings from the circuit and ensure that everytime I call the sampling layer I get different bitstrings?
+Best,
+Roeland
+This might have something to do with #534 . Would you be able to quickly run this same code using tensorflow==2.4.1 and tfq-nightly and see if you are still getting this error ?
+With tensorflow==2.4.1 and  tfq-nightly-0.5.0.dev20210428, changing
+to
+runs without errors, and gives
+1.) Same
+2.) Same, but different scripts now give different bitstrings, yay!
+3.) Same
+4.) Same
+Hmmmm that still seems like it might be worth investigating. I'm going to look into what we're doing with our randomness generation and see if we need to fix anything up some more.
+@therooler Could you try updating to the latest tf nightly (the one that includes #551) and give an update on the behavior you're seeing ? I'm hoping that this has solved the final issue with the bit strings here.
+Using tfq-nightly-0.5.0.dev20210504 I get the same behavior as in my previous comment.
+But this is what we expect right?
+1.) Within the same script, calling the sampler twice gives two chains of different samples.
+2.) Executing the same script twice gives different samples.
+So we never end up with the same bitstrings.
+Yes it is what we expect, just wanted to make sure the last changes hadn't re-introcued any bad behavior. I think this is safe to close now.

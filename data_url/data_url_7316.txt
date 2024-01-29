@@ -1,0 +1,24 @@
+Hello, I'm using your package to compute the steady state of a system that qutip in Python is having some trouble with. Then, with this steady state I'm trying to compute some correlation functions. However, each time I run my code I get different results.
+I'm finding the steady state using the iterative solver (does this have some random number generator?) If there's nothing random, why am I getting different results every time? The particular piece of code I'm using is:
+Hi @VolodyaCO
+Yes the iterative solver is using some random number generator, but the results on different runs should only differ slightly.
+Do you get completely different results or just small deviations?
+The other steady state solvers are deterministic and might lead to more reliable results, however they are very likely much slower.
+@ChristophHotter Thanks for answering so quickly. Is there a way to fix the random seed? In my case I'm computing the expected value of the number of phonons (which should always be a real number) <b^\dagger * b> (b is a boson destruction operator), as well as the expected values <(b^\dagger)^n * b^n> for n=2, 4. The expected values of all these quantities are very small (close to 0). Each time I compute the expected values I get very small values, but they differ a lot relative to each other.
+For instance, the real part of the expected value is sometimes 1e-5, and sometimes 2e-5. More importantly, the imaginary part is of the same order of the real part, which is bad because all of the expected values should be real numbers. When I try the eigenvector solver I get for n=4,2,1 these expected values:
+So, as you can see, the imaginary part is negligible for n=2,1, but it is not for n=4. This messes up my calculations completely. Not only that: the real part of the n=4 result is negative, but the operator is positive semi-definite. The same happened with qutip in Python (qutip actually does a tidyup, eliminating density matrix elements below a certain threshold, when I get rid of this threshold, I get the same results as in Julia).
+You can fix the seed with:
+But I think this will not fix your problem.
+The problem might be that you get to the Float64 accuracy  with 1e-12.
+You could maybe try to use steadystate.master.
+Yeah, it won't fix the problem. Also, the master equation takes very long. I will try changing the energy scale to see if I get better convergence. The steady state should be very similar, but hopefully if I use a larger energy scale I will see better convergence 🙏 I will get back to you. Thanks!
+No luck with changing the energy scale 😢 Is there any way to use BigFloats instead of Float64?
+@VolodyaCO This should work in principle, but there was actually a bug preventing it (the fix is coming though, see #316). You can just use Matrix{Complex{BigFloat}} (or whatever really) as .data in your operators. Note though that this will most likely kill performance, so it will be even slower than the master equation.
+Ok, I'll give it a try. Do I need to update my installation? (If I do, how can I do this? I'm relatively new to Julia, and don't know how to do these sort of things) Thanks @david-pl
+@VolodyaCO Yes you just need to get the latest version of QuantumOptics.jl (v1.0.1). It works the same way as adding the package (just type up instead of add). See also https://docs.julialang.org/en/v1/stdlib/Pkg/
+Sorry to answer so late. I've been a bit busy during the week. I'm doing some benchmarking (playing with the abstol and reltol of the iterative solver), because the eigenvector method did not work with BigFloats. I will report whether or not things get better soon, hopefully. Meanwhile, thanks for the help!
+So, I decided to use DoubleFloats.jl because BigFloats were taking very long. I was using this code to produce my steady states:
+Then, I computed the expected values, and again I get different results:
+for n = 4,2,1, as explained in this previous comment, for one run, and for another run I get different results:
+@VolodyaCO The difference in results is due to the randomness used by IterativeSolvers. As @ChristophHotter mentioned before, you can fix the seed to obtain reproducible results. Still, the accuracy required here may be too low even for DoubleFloats.
+Yes, this is unfortunate. I gave up and I'm trying different Hamiltonian parameters to try and get expected values that are not that small. Thanks anyway for all your help!

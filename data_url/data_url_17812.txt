@@ -1,0 +1,30 @@
+If I put a barrier after two-qubit gates (like cx, cz), the results with and without barrier are different. (seed is fixed). Not sure it is related to the issue #850.
+Nonetheless, this time, it happened for both cpp and python simulator.
+Here is the code snippet: (rotation angle is put randomly)
+results:
+c++ simulator
+python simulator
+The barrier should not affect the results
+None
+Yes I think this is expected. The barrier causes all measurements to be at the end. And the simulator has an optimization where if the measurements are at the end, it only simulates once, then samples the final statevector. However, if measurements appear in the middle, then the simulation is done for as many shots, and instead of distribution sampling, a state collapse due to measurement is simulated. These two processes are different, so the result slightly varies.
+(There is a separate issue that the transpiler should put measurements at the end when it can, which is the same as #666).
+So it means that the one without barrier might not put the measurement at the end in the qobj.
+Will the fix in the transpiler resolve this issue?
+Yes, the barrier ensures that no measurements get interleaved between the gates.
+Although semantically the two circuits are the same. It's just an order of writing the operations.
+is the same as
+but the simulator does not treat the latter as samplable.
+There is a conflict here between device vs. simulator optimality. On the device, you would want the measurement to be as early as possible. On the simulator, you want it moved to the end.
+@nonhermitian and I thought that a possible solution is for the compiler to include a flag samplable=True when this is possible. The simulator can use this to apply its sampling optimization. @chriseclectic do you agree with this?
+@ajavadia is correct. In one case the simulator is sampling, in the other it is simulating every shot. This means the rng process is slightly different between the two cases so even with the same initial seed the counts should be expected to different slightly.
+The C++ simulator checks the qobj to see if it can enable sampling, but it doesn't re-order any operations in doing so. If any non-measure instruction comes after a measure in the compiled qobj sampling will be disabled.
+@chunfuchen  Since the terra compiler currently greedily pushes measurements forward in a circuit, putting in a barrier before final measurements is the safest way to ensure the compiler leaves the measurements at the end of the circuit to enable measurement sampling.
+@ajavadia @chriseclectic Thanks for the clear clarification.
+Then, I have a question is that, to make codes can be run on a device and a simulator efficiently.
+I need to do:
+Is it correct? Or the barrier won't change the efficiency on running a device?
+@chunfuchen I think it's safe to always put the barrier in. As far as I know the IBMQ devices currently implement all measurements at the end of the circuit anyway.
+@chriseclectic Thanks!
+@ajavadia I know the reason of the difference, do you want this issue keep open after the fix in transpiler? I am okay to close it now.
+@kdk this is what you and I were talking about. I'll assign you as well.
+This is now fixed by #1705.

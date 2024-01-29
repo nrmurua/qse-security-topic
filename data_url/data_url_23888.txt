@@ -1,0 +1,25 @@
+@matthewware
+The first pulse in a qubit sequence is always followed with an unwanted delay. No delays exist in our configuration files.
+Our fork
+We're still on an older fork since we're still using pyqlab/qlab (for now).
+
+awgfiles.zip
+ChannelParams.json.txt
+I've got to run for the day but the short answer is I was able to reproduce this here with some different pulse parameters but haven't zeroed in on what's causing it.  My thoughts now are something in the APS2pattern generator.
+QGLdebugging.pdf
+You were able to reproduce this on our fork or the BBN master?
+It's on our master branch but it's my local copy with my configs.  I'll have time to try this on a couple other systems this afternoon.
+Hi @calebjordan
+Matt and I have been investigating and there seems to be a funny corner case in the QGL compiler logic. For now a workaround is to put a Id(qubit, len=0) as the first pulse in your sequence. Can you try and let us know if that fixes for you?
+I tried that before, and it does 'fix' things. However it means we can't use any of the built in Pulse Sequences for T1, Ramsey, RB. Although I guess I could loop through afterwards and prepend an identity before it hits the compiler.
+This also means that delay times for T1s, Ramseys, etc. have been off by 50ns for who knows how many experiments. Oops.
+@jaseung Is in the lab running experiments while I'm out of town.
+@gribeill Confirmed that if the slave trigger is longer than your first qubit pulse, the difference is padded with an Id
+I've created a new branch here: 19f9d0f that has a temporary workaround for this issue. If you get a chance, please try it out... alternatively you can make your slave trigger shorter than your qubit pulse and all will be well.
+For QGL experts, the issue is that inserting a slave trigger creates a PulseBlock = Pulse(q) ⊗TRIG(slave_trig). If the length of the pulse is shorter than that of the slave trigger, the scheduler will left-align the block and pad the pulse channel. We should discuss the correct behavior, as this is a breaking change... the fix linked above right-aligns the pulse block containing the slave trigger, and I am not sure this is the right way to do it.
+For reference, a related issue and a possible solution (aligning pulses instead of blocks) was suggested here #92
+I tried the workaround 19f9d0f that gribeill suggested on Jan 17. It seems to fix unwanted delay, but it creates another issue : the slave trigger doesn't start at t=0, i.e., another unwanted delay (plot on the right in page2 of 19f9d0f.pdf).
+I am wondering how things are going with fixing this slave trigger issue or near-term plan.
+I'd say the 'fix' is probably not what you actually want.  It's more of a minor hack to get the behavior Caleb wanted.  The issues has to do with how the pulse sequences are constructed as pulse blocks.  It might be good for us to decide what the right behavior is going to be before we change the PulseBlock abstraction.  So if we have a long slave trigger and short control pulses we'd like the slave trigger to control pulses to play irrespective of each other right?
+I agree with @matthewware. Digitizer and slave triggers (barring counterexamples) don't need to pad the other channels with Ids. However, we still need to ensure that the following pulses are synchronized. Before we think about this, is there a compelling reason for triggers to be longer than a few ~10 ns? I agree that this wouldn't be a robust solution - and a warning message is required - but I'm curious if that is the case.
+The only reason for my trigger being longer than 10 ns is that 10ns slave trigger can't trigger the slave APS2 slices. I was using 4 slices with first one as a master and the trigger line cascaded, and I varied the width of slave trigger to find the shorted length. As far as I remember, anything shorter than 20ns (or 30ns) didn't work.

@@ -1,0 +1,67 @@
+Hi,
+We would like to lock two cavities with one red pitaya. We use one output of the redpitaya to send a 20 MHz modulation to an EOM that phase modulates the laser beam that goes through the two cavities and then lock the cavities with this modulation. The issue is that when we demodulate the two iqs have a different phase between them that changes every time we load pyrpl. Is their a way to synchronize the two phases or do we have to change the verilock code ?
+Hi,
+there is a new branch https://github.com/lneuhaus/pyrpl/tree/syncronize-iqs that fixes this feature-request. After setting the frequecies to 20 MHz, call from any iq-module iq
+iq.synchronize_iqs() and the relative phase will be zero.
+Cool! Did you do that overnight?
+Yes 😄 but part of it was already there. Can you think of other modules that require synchronization?
+Still to do:
+Ill try to fix develop-093 asap so we can merge all these individual fixes together.
+Ok it's working great. Now we're wondering if we should pull it to develop 0.9.3 or make our own branch (We have already resolved the few conflicts and it seems to work fine with the current version of develop0.9.3) ?
+Regarding other possible improvements we're already thinking about the next step which would be synchronizing several iqs accross physically separated redpitayas (To lock 3 cavities using only one coherent excitation). For this to work, we will need:
+1/ to synchronize the clock signals of the 2 boards (I heard that it is possible with some physical connections)
+2/ The easy way to implement the synchronisation would be to transmit a trigger signal accross the boards (for instance via one of the digital IO of the boards). Hence, it would be nice if the iqs would have a "trigger input" that can be configured.
+That's not ultra critical at the moment (we can use a tilt locking technique instead), but it's probably a quite general improvement that many people could benefit from).
+I have simply pulled develop-0.9.3 into the synchronize-iqs branch in oder to keep debugging develop-0.9.3 as simple as possible. There was only a trivial conflict in modules.py. So I suggest you work with the synchronize-iqs branch for now and pull future changes from develop-0.9.3 into that branch.
+There should be a synchronize-iqs-call at startup and a gui button as well now. My latest commit to synchronize-iqs contains a recompiled fpga bitfile with develop-0.9.3 and synchronize-iqs changes together, but it seems there was no bitfile difference. So I am rather confident that your local fix is identical with mine.
+Once I will have had some time for fixing the develop-0.9.3 branch, I will merge everything together into the develop-0.9.3 and then the master branch.
+To your new feature request: This is indeed an upgrade that many people want, me included. It requires a bit of time, which I do not have right now but hopefully soon. If you want to start working on this, you are most welcome.
+For implementation, there are a number of possibilities:
+The best would be to directly implement a maximum number of wires for Redpitaya interconnection, since one will sooner or later want to share digitized analog signals among different redpitayas at the highest possible rate.
+Some code is already there, see e.g.:
+https://github.com/RedPitaya/RedPitaya/blob/v0.93/FPGA/release1/fpga/code/rtl/red_pitaya_daisy.v
+https://github.com/RedPitaya/RedPitaya/blob/v0.93/FPGA/release1/fpga/code/rtl/red_pitaya_top.v
+This could also be ported from SATA to other DIO pins i think.
+Another thing to keep in mind is whether this approach of 2) can be reasonably implemented without soldering, i.e. if it is possible to operate the ADC input (clocked on the crystal) and the rest of the RP (clocked externally) on two different clock domains without significant cost in performance with a properly designed interclock bridge. I think this should be possible!
+Sooner or later, this will be implemented!
+I think it is a good idea to use the synch register to also enable freezing the integrators (or even all gains) of the pid modules. That is, as long as the sync register bit for a PID module is set, either the I-, the P- or both gains are zero. This would allow to change the gains of multiple modules quasi-simultaneously. A longer-term upgrade would enable to set any set of registers in the same clock cycle, but that could be overkill w.r.t. the resourcecost-functionality-tradeoff.
+all features discussed here are implemented in develop-0.9.3 now, with the exception of synchronizing iqs over different boards (see #357).
+We don't see the synchronize_iq() function in develop0.9.3. Did you push your changes to origin ?
+sorry, forgot to push. it should be online by now, along with a few other bugfixes/features.
+Any objections if I delete the syncronize_iqs branch now?
+No I would say it's fine
+@lneuhaus @michaelcroquette @SamuelDeleglise this issue is particularly relevant to what I want to do as well. In short, I want to use iq demodulation for phase measurement with my RP board synchronized with 10 MHz reference clock from, say, a function generator. Could you make your exercise a little more instructional for me to follow how to do this?
+I find https://redpitaya.readthedocs.io/en/latest/developerGuide/125-14/extADC.html not operational and so are many RP docs. It is difficult for me to decode how to use the iqs module as well. Please help.
+What we have already done so far (by ascending order of difficulty):
+We have not yet tried to synchronize the boards with a 10 MHz reference (in fact our 125 MHz is generated thanks to some cheap evaluation board, such that it is not to constraining), all this will probably be documented in @michaelcroquette's thesis, stay tuned.
+What we have already done so far (by ascending order of difficulty):
+We have not yet tried to synchronize the boards with a 10 MHz reference (in fact our 125 MHz is generated thanks to some cheap evaluation board, such that it is not to constraining), all this will probably be documented in @michaelcroquette's thesis, stay tuned.
+@SamuelDeleglise thank you!
+Thanks in advance. Please help!
+I am talking about this one... I think the exe file is lagging far behind the current development.... Use the branch python3_only instead...
+
+What we have already done so far (by ascending order of difficulty):
+We have not yet tried to synchronize the boards with a 10 MHz reference (in fact our 125 MHz is generated thanks to some cheap evaluation board, such that it is not to constraining), all this will probably be documented in @michaelcroquette's thesis, stay tuned.
+@SamuelDeleglise thank you!
+There's a misunderstanding about how the IQ module works (and more generally all hardware modules featuring both "outpu_direct" and "output").... Here is the block diagram for the IQ module... "output_direct" is one output that can only be routed to the sumators of out1 and out2 (analog outputs of the redpitaya). "output" is the DSP output of the module, that can be sent to another module such as the scope or pid module for instance. The multiplexer where you get to choose what is routed to the output signal is only behind the "output" signal, not the "output_direct". Also, there's probably another misunderstanding when you are writing" bandwidth -18.97 to + 18.97, gain 10" a positive number in the bandwidth means a low pass filter, a negative number, a high pass filter. Two numbers!=0 mean that you are using a second order filter... In this case you are using a high pass and a low pass in series.... This is very weird.
+Finally, if you look closely the block diagram below, what you would like to set to non-zero is probably not the "gain" register but rather the "quadrature_factor", with the multiplexer set to "quadrature" and low pass filters set to 18 Hz (or [18 HZ, 18 Hz] if you prefer second order low pass).... Then you should inspect the signal with the internal scope of pyrpl (set input1 to iq0 for instance)... If you really want to have the signal outputed in the analog domain, use a pid module, where you set input to iq0, p gain to 1, i=0, setpoint=0 and output_direct to out1.
+
+This was a short debugging to help you get started, but at some point you will have to read the doc I am afraid ;-)
+Thanks in advance. Please help!
+@SamuelDeleglise really appreciate your help here. I surely got some important info to begin with.
+Finally, if you look closely the block diagram below, what you would like to set to non-zero is probably not the "gain" register but rather the "quadrature_factor", with the multiplexer set to "quadrature" and low pass filters set to 18 Hz (or [18 HZ, 18 Hz] if you prefer second order low pass)....
+Here is what I have tried:
+Then you should inspect the signal with the internal scope of pyrpl (set input1 to iq0 for instance)... If you really want to have the signal outputed in the analog domain, use a pid module, where you set input to iq0, p gain to 1, i=0, setpoint=0 and output_direct to out1.
+What does input=iq0 mean here? In future, I would like to perform iq demodulation on a signal that is input through in1 (ADC1). Doesn't output_direct = out2 in the iq0 module output the signal to out2 in analog? How is pid helping here?
+This was a short debugging to help you get started, but at some point you will have to read the doc I am afraid ;-)
+Could you please point me to the docs you're referring to. I'm following https://pyrpl.readthedocs.io/en/latest/gui.html but I couldn't find the necessary implementation details. I'm sorry for elaborate questionnaire but this would set me up with using the RP properly. Thank you so much!
+
+I think the main thing you are missing is the basic architecture of DSP modules and the distinction between their "output" and their "output_direct". The relevant section of the doc is
+Here ...
+Please, look carefully at the IQ module block diagram that I posted in this thread: there is no way to send directly the demodulated quadrature directly to an analog output because the module is not wired this way... On the other hand you can sent the demodulated quadrature to "output" THIS IS A DIFFERENT THING !
+The output of a module is a digital signal living inside the FPGA that you can monitor via the internal scope or connect to another module. Don't you have the possibility to set p.rp.scope.input1 = iq0 ? This would connect the "output" (not output_direct beware) of iq0 to the input1 of the scope
+I think the main thing you are missing is the basic architecture of DSP modules and the distinction between their "output" and their "output_direct". The relevant section of the doc is Here ...
+Please, look carefully at the IQ module block diagram that I posted in this thread: there is no way to send directly the demodulated quadrature directly to an analog output because the module is not wired this way... On the other hand you can sent the demodulated quadrature to "output" THIS IS A DIFFERENT THING ! The output of a module is a digital signal living inside the FPGA that you can monitor via the internal scope or connect to another module. Don't you have the possibility to set p.rp.scope.input1 = iq0 ? This would connect the "output" (not output_direct beware) of iq0 to the input1 of the scope
+Thank you very much @SamuelDeleglise! I believe I'm now a bit clear on how to use Pyrprl iq demodulation. Ultimately, I aim to measure phase difference between RP reference and in1 signals. Using appropriate filter bandwidth, I'm able to eliminate high-frequency component to see a LP-filtered quadrature signal at output that is sensitive to the in1 phase variation.
+How do I interpret the phase information from iq0 output data? How do I use this iq demodulation module and build upon to compute atan(Q/I)?
+If this is not a relevant query here, I would be happy to seek your suggestions in a different issue.

@@ -1,0 +1,19 @@
+I have spent the week-end on code refactoring. I hope to be able to issue a pull-request by the end of the week. I list here the main changes that are on-going + some that we need to make sure we agree upon:
+Main changes:
+Before: the gui was a layer completely disconnected from the redpitaya_module layer. So, to know which registers are displayed in the gui, one had to look in the redpitaya_gui.py file. Moreover; the names of the registers had to match in the 2 different places.
+Now:
+Registers handle their gui themselves:
+The Registers have a function create_widget() that automatically creates the widget according to the kind of register we have. Moreover, the set and get attributes of the Registers handle themselves the gui updating such that timers are not needed anymore to maintain the gui in-sync with the redpitaya.
+created a class BaseAttribute that is more general than Register:
+All the mechanisms that are expected to happen when the value of a register is changed (updating gui, saving the new value to a config file) is also sometimes needed for an attribute that is not directly a register (for instance scope.input1 was in fact a property that was modifying the register scope._ch1.input). For that reason, the set/get method hack described in 1 is implemented in an ancestor class of Register that is called BaseAttribute. Then the descriptor doing the trick scope.input1 --> scope._ch1.input is now a ScopeInputAttribute(SelectAttribute) that simply has custom methods get_value()/set_value(). However, the gui updating is done transparently as if it was a register and the create_widget method comes for free from the ancestor. These Attributes will be also useful to implement SoftwareModules that are not really mapping a module on the fpga, but which should be displayed as a widget in the gui, and should use parameter gui/saving mechanisms as if they were real modules (e.g.: curve fitting, or pyrpl_control)
+The list of Attributes that should be displayed in the gui are defined in a single place:
+ModuleClass.gui_attributes: a list containing the names of the attributes to display
+ModuleClass.save_attributes: a list containing the names of the attributes to save in the config file
+In principle, if the gui display is as simple as exposing the gui_attributes in the gui, the default ModuleWidget class can handle it. However, sometimes more involved stuffs have to be done (for instance, adding a plot window for the scope...). For this reason, the particular class of widget that should be created when calling module.create_widget is configurable in
+ModuleClass.widget_class
+--> This solves a problem that I encountered a lot with the previous version: how do I easily subclass a module_widget to add my custom buttons without messing up with pyrpl's source code?
+ModuleWidget instances are now accessed via module.widget (rather than at the same level before) which reduces the pollution of the redpitaya namespace.
+Now (after oral discussion with Léo), I think we are OK to merge Pyrpl and Redpitaya into one class, such that Attributes can be saved in the config file that is currently only accessible to pyrpl level. To let the user decide whether he wants to load only the redpitaya level or the full pyrpl high-level functionality, the constructor of the class should take an argument that will let him decide which modules to load. The high-level pyrpl functionalities will simply be implemented in a particular SoftwareModule. Of course, if the  user initializes the object with the name of a config-file, the list of modules to load by default will be read from the config-file.
+In case the high-level pyrpl_control module is loaded, it would be nice to export the attributes of this module directly to the parent object (should we call it Redpitaya or Pyrpl?).
+I guess once this is done, the smell of the code should be greatly improved...
+moved to #84

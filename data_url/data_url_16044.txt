@@ -1,0 +1,35 @@
+If a Gaussian pulse with amplitude > 1 is generated an error is generated.
+A minimal example:
+The pulses should be independent of the hardware backend, so there should be no arbitrary limitations on the amplitude. For spin-qubit systems the pulses are used to define gate voltages, which are natural to define in terms of milivolts with typical ranges -1000 to +1000 mV.
+On https://qiskit.org/documentation/tutorials/circuits_advanced/06_building_pulse_schedules.html the limit of 1 for the amplitude is mentioned, but without a reason why the limit is required at all.
+There are other pulses, e.g. the GaussianSquare, which have similar limits.
+There are several options:
+I would prefer the first option, but perhaps there are other considerations.
+@taalexander Could you comment on whether a PR removing the hard-coded limit on the amplitude would be acceptable?
+Hi @peendebak, we were having an internal discussion weighing the pros and cons this afternoon. We didn't come to a conclusion, but I'll get back to you early next week.
+@taalexander Any update on the issue? I would be interested in the discussion as well.
+The current approach to pulse generation is designed to model a black box Hamiltonian with a control term of the form $\hat{H}_c = \sum \omega_k \nu_k(t) \hat{H}_k $ where $|\nu_k(t)| \leq 1$. This plays nicely with numerical optimal control techniques, maintaining consistent scaled calibrations as hardware changes/is recalibrated and the reality that it is often very difficult to truly understand the signal that the qubit is observing due to a myriad of transfer functions and externalities in hardware setups (I do understand that with some more technologies or additional experimental effort this is less of an issue).
+For these reasons I am in favour of the current approach remaining. However, I do understand your needs and am open to ways we could work around them. Some ideas that come to mind are.
+I would encourage others that have this issue/thoughts to comment on this issue.
+I am also in favor of keeping the current unitless approach. That being said it would be good if the backends could communicate in the configuration the value and unit of the maximum pulse amplitude.
+The modelelling of the Hamiltonian gives some insight into the reasons of the limit.
+For spin-systems we use pulses for microwave channels and for gate channels. For the former the transfer functions are indeed hard to determine and we often work in dimensionless units. For the gate channels our AWG channels are connected to the quantum device via a bias-T. The bias-T combines the AWG pulses (fast timescale) with a DAC (slow timescale). This allows us to determine the amplitude of the AWG pulses in milivolts on the gates at the device level. (the impact of the pulses on the device gates on the qubit is more complex, although this can also be measured)
+I agree with the remarks above that we should keep the unit out of the pulses. For our system the Gaussian pulse would have unit mV for the amplitude, and seconds (or nanoseconds) for the sigma, but this will strongly depend on the application. The scaling is another discussion (although they are related).
+About the suggestions:
+1b. An alternative option would be to subclass the Gaussian pulse to remove the check (or remove the check on GaussianPulse and subclass to GaussianPulseOptimalControl).
+Adding a maximum pulse amplitude to the backend is a good idea. I guess these maximum values are already in the backends and it is a matter of exposing the values through an interface.
+One more consideration. We might want to use some form of pulse arithmetic, e.g. adding two pulses:
+If pulses are constructed like this, then the checks for the amplitude should be about the combined pulse, not the individual pulses. (pulse artithmetic is not possible in qiskit as far as I am aware, not sure it is on the roadmap either)
+Regarding the plotter, the v2 drawer available in next release will help you to modify vertical axes. Basically you can customize almost all appearance of the graph without codebase modification, i.e. You can create a callback function that can take some backend option and generate an axis object in the predetermined data format. Then you can create a new stylesheet with the callback. By setting the stylesheet, the graph is updated accordingly (I think having real-unit stylesheet is nice to have in qiskit).
+Because qiskit pulse is a kind of high-level programming language, these backend details should be abstracted at least in the program representation level and properly handled on the back end side. However, I think having builder utility function for unit-unit less value conversion is still worth having, see implementation of qiskit.pulse.builder.seconds_to_samples. With this, you can write as follows
+I think pulse arithmetic is possible (also worth having for some special cases). Qiskit pulse doesn't allow time overlap of instructions, but these pulses are just an operand of it. So the pulse arithmetic doesn't violate this overlap constraint in principle. The downside of this is conversion of ParametricPulses into Waveforms, which drastically increases data volume of the qobj to be submitted.
+@taalexander The discussion above did not reach a conclusion yet. Although the various options for scaling and plotting could help, we feel that we really should define our pulses in the coordinate frame that is natural for us.
+We decided on subclassing the pulses, e.g.
+That works well, except for one other location where we encountered the hard-coded limit:
+https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/pulse/library/waveform.py#L93.
+This is harder to subclass, since the Waveform is used in all kinds of places.
+Although we are still in favor of removing the hard-coded limit, an alternative would be to make a class attribute to disable the check, e.g.
+If that is an acceptable solution I can make a PR for that. I created #6345 to check the impact of removing the amplitude limit on the various unit tests.
+Hi, @peendebak I believe this is an acceptable solution. My apologies for the delay in my response, my focus has been lower in the software stack recently.
+One more consideration. We might want to use some form of pulse arithmetic, e.g. adding two pulses:
+Completely agree, please see #5977 where we're starting to put some of this machinery in place.

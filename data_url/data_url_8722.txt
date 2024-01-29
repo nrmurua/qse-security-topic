@@ -1,0 +1,24 @@
+There is a race condition in the way classical channels are handled in Simulaqron that causes BrokenPipe errors.
+It happens when node A sends two classical messages to node B in succession.
+So, in node A we have:
+A1) sendClassical("B", "msg1")
+A2) sendClassical("B", "msg2")
+And in node B we have:
+B1) msg1 = recvClassical()
+B2) msg2 = recvClassical()
+We have close_after set to the default value False in all calls.
+The following sequence of events takes place:
+In step A1, node A tries to connect to node B. This fails because node A has not yet created a listening socket. A keeps retrying.
+In step B1, node B creates a listening socket "s" and waits for incoming connections. An incoming connection from A does indeed arrive, and node B accepts it which creates a connection socket "conn" (in addition to the listening socket).
+In step A1, node A finally connects successfully and sends msg1.
+In step A1, node A closes the connection to B.
+In step A2, node A tries to connect to node B to send the second message msg2. This succeeds, because node B is still in step B1 and has not yet closed the listening socket for the first message.
+In step B1, node B, receives msg1 from node A. After receiving msg1, node B closes connection socket conn (in function closeClassicalServer) but the listen socket is not explicitly closed. The listening socket which is still open still has a pending incoming connection from event 5 above.
+In step B2, calls startClassicalServer again for the second incoming message. This creates a new listening socket "s" for the same port. This evidently has the side effect of causing the first listening socket which was never explicitly closed to be closed implicitly. Whatever, at this point node B gets a BrokenPipe error because the pending connection failed to complete.
+Simulaqron PythonLib should not be creating new listening sockets for every received message. There should only be one listening socket, and it should be used for the lifetime of the node.
+Note: if I set close_after to False in sendClassical and recvClassical, we run into another bug. We get stuck in an endless loop "App Alice: Could not open classical channel to Eve, trying again.."  This is because PythonLib cannot handle having two simultaneous TCP connections to two different neighbor nodes (e.g. Eve having two connections, one to Alice and one to Bob) if close_after is False.
+In general, the handling of sockets for classical messages is in need of some cleaning up.
+Actually, the listening socket is probably closed when "s" goes out of scope when startClassicalServer exits the function. But still, the net result is the same. By this time, node A has already started sending msg2 and has already connected to this listening socket before it was closed. Thus, node A will get the BrokenPipe when the listening socket (which was intended for msg1 but which accidentally used for msg2 as well) gets closed.
+PS: All this opening and closing of sockets probably makes the protocols run quite slowly. We should make close_after=False the default and fix the code so that it can handle multiple simultaneous connections to multiple neighboring nodes.
+@AckslD If you would like me to give shot at fixing this myself, feel free to assign the issue to me. Or assign it to yourself if you prefer handling it yourself. If the former, it appears that there is no unit test library for pythonLib... is that correct?
+This is an issue with the Python API and not with the SimulaQron engine itself. I will be moving this issue over to the CQC-Python repo.

@@ -1,0 +1,30 @@
+The implementation of InverseCancellation make a strong assumption that
+pairs of inverse gates will at least share the same name.  This does is not a
+problem when gates are self-inverse, or rotation gates that only differ on
+their rotation angle, e.g., PhaseGate(np.pi / 4) and PhaseGate(-np.pi / 4).
+However, one exception to this assumption is the pair TGate and TdgGate.
+The following test will fail:
+The culprit line is in the _run_on_inverse_pairs:
+https://github.com/Qiskit/qiskit-terra/blob/1a1235a7206bdf293d153d285f932e80151e9cb4/qiskit/transpiler/passes/optimization/inverse_cancellation.py#L127
+We could modify the code to handle pairs that do not have the same name. However,
+IMO it will not worth the trouble, and we will end up with an inefficient solution.
+A better solution would be require a preciding canonicalization pass, or add
+canonicalization rules to instructions/gates. I think its well known that in
+qiskit-tera, there are various (maybe too many) ways of expressing the same
+intent. Another that would break this code example: we can express a tofolli gate
+as MCXGate(3), CCXGate, or XGate().control(3).  They all cancel, but they
+not share the same name.
+(Maybe this suggestion should go on a different enhancement issue)
+Regarding your comment about the equivalent ways to express a Toffoli gate (as MCXGate(3), CCXGate, or XGate().control(3)), perhaps a possible solution is to add them to the equivalence library?
+https://github.com/Qiskit/qiskit-terra/blob/a34644f109e0940a3cb6b8e50cc9cd604ad28cae/qiskit/circuit/library/standard_gates/equivalence_library.py#L731
+In addition, in the equivalence library there are the following equivalences for the T and Tdg gates:
+https://github.com/Qiskit/qiskit-terra/blob/a34644f109e0940a3cb6b8e50cc9cd604ad28cae/qiskit/circuit/library/standard_gates/equivalence_library.py#L499-#L511
+so perhaps you should add a basis translator pass before InverseCancellation?
+https://qiskit.org/documentation/stubs/qiskit.transpiler.passes.BasisTranslator.html#basistranslator
+I would advise against these options. It might be wrong, but I always thought about the equivalence library as a lookup table (database) used by passes that lower the level of abstraction. For example, translating a Toffoli instruction into a sequence of Clifford+T. Therefore, I would not add equivalences within the "same abstraction level".
+Equivalence and canonicity serve different purposes. The former allows us to choose one, among various forms, which helps us achieve some goal. Qiskit-terra uses the equivalence library (mainly) to translate between basis; the goal here is to lower the circuits. We use canonicalization when our goal is to make optimizations more effective. We achieve that by selecting one of the equivalent forms as the canonical one. Hence, all passes that look for specific patterns will only need to focus on the canonical forms rather than all forms (including the basis translator).
+Also, applying the basis translator before this transformation will make it less efficient and effective. (Here, I'm assuming the basis translator also lowers the circuit.) For example, it is harder to figure out that we can cancel adjacent Toffoli gates if they are in their Clifford+T form than the "Toffoli" form. (We could use the basis translator to do canonicalization, but I tend to prefer passes with restricted scopes.)
+TLDR: For historical reasons, there are various ways of expressing the same gate within (more and less) the same level of abstraction. It is good to promote one of them to a canonical form.
+We could modify the code to handle pairs that do not have the same name. However,
+IMO it will not worth the trouble, and we will end up with an inefficient solution.
+For sake of the correctness, I added this approach in #7383 , though I agree this still leaves open the question of how this pass should best be integrated into a compilation pipeline. Can you open an enhancement issue around having a canonical representation prior to optimization?

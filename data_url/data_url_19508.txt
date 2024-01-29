@@ -1,0 +1,21 @@
+I am opening this issue to discuss the custom operators needed for applying gates. I will start with a quick summary of the approaches that are currently implemented (using tf primmitives) and then discuss how I think we can improve using a custom kernel.
+Assume that we have a 5-qubit state and we want to apply a one-qubit gate to the 3rd qubit. gate is a (2, 2) tensor. Current implementations are able to apply any m-qubit gate to an n-qubit state for arbitrary m, n (m < n), but let's keep it simpler here for the sake of the example.
+state is a tensor with shape 5 * (2,) = (2, 2, 2, 2, 2). The gate can be applied using a single einsum call contracting in the 3rd index: tf.einsum("abcde,Cc->abCde", state, gate).
+This is algorithmically equivalent to einsum but uses tf.matmul (initially because tf.einsum had some gradient issues). In order to use matmul we have to reshape the state properly so that the gate is applied to the proper target qubit. For the example (state is again a tensor with shape (2, 2, 2, 2, 2)):
+Some disadvantages of these approaches are the following:
+Regarding the custom operator implementation, I have in mind the following (at a very high-level):
+This applies a general rotation (non-sparse gate) and the total memory required is 1.5 * state vector (buffer is half state vector). This is assuming that indexing happens in a smart way and without having to cast the indices subspace0, subspace1 in memory. Another advantage of this approach is that for sparse gates (eg. if gate[1, 0] = 0) we can avoid the buffer at all.
+In order to do this we need:
+Regarding benchmarks (once we have a candidate implementation), I believe the easiest way is to compare with a simple einsum/matmul implementation such as the code I wrote above (just for >25 qubits). We should have at least equal performance for non-sparse gates but improve a lot on sparse gates.
+Let me know what you think.
+Concerning the binary generation, here some tests:
+The implementation is similar to #74 . I didn't try pure fortran/c code but I expect similar performance to numba. I believe we can use numba instead of an extra library to compile and manage.
+@stavros11 I have updated the previous table with a cffi implementation, The C implementation (which matches exactly the numba code) is much faster than numba, so at this point we should have a library of pure C operators.
+Thank you for these tests. Yes, I agree that all loops over the 2^nqubits states should be done in C if needed as it will be a big bottleneck if done in Python. Do you think we need to use additional interfacing libraries such as cffi apart from the Tensorflow ops?
+Regarding binary, I am not sure if using it is the most efficient approach. My main concern is that we will have to cast it to Tensorflow as a tf.int64 tensor in order to do the jj calculation from the Fortran code. This will use a lot of memory as binary is a (2^nqubits, nqubits) tensor (like having nqubits different state vectors).
+For one-qubit gates (perhaps can also generalize to controlled) we can use the algorithm from the qHipster (Fig. 2) or LaRose's (Fig. 7) paper. This updates in-place and without using additional matrices for indices. I did a quick implementation using ctypes and the following C++ code:
+and CPU performance for single one-qubit gate application is comparable to tf.einsum (which is not good):
+But ctypes is probably not the best way to interface with C++. I just used it for a quick test and mostly to make sure that I understand the algorithm correctly. Do you think we can do something like this using cffi or TF ops + Eigen and get better performance?
+@stavros11 thanks for the check. In PR #81 I implement a C library with CFFI which computes the binary mask (the resulting object is a matrix of np.uint8, but still a 2**qubits*qubits array), please have a look.
+Concerning your apply_gate, we should probably try to implement as a custom tf operator. If the CPU implementation is acceptable we can port to GPU and check.
+Closing given that #90 has been merged.

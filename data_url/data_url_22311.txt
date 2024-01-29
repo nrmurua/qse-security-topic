@@ -1,0 +1,26 @@
+I'm using the (1.1+11.g6a1706b) gateware on windows (but noticed this for 1.1 as well) where if I'm using an SPI line set to active low. If I choose that channel, it goes high then goes low before the sclk starts and the data transmits. It then goes high again as you expect. However, after about 1.5 seconds it goes low again. If the channel is not selected, it just goes high before the data is transmitted and then goes low after about 1.5 seconds as well. Is it not set to remain on after the data has been transmitted?
+I have no idea what you are referring to. Let's start with: What is "an SPI line"? What is "that channel"? What do you mean by "remain on"? Could that "it goes low" be related to another experiment (e.g. the idle kernel) taking over? Is it actually driven low or is it just floating low?
+By SPI line, I mean the 4 wire SPI that we have with the CS polarity set to active low. By channel I'm referring to selecting the chip select line. What do you mean by floating low? On the scope you can see a distinct edge as it goes from high to low.
+It's probably the idle kernel taking over as I don't have another experiment running, but that shouldn't make a difference if it's set to just stay on, right? If it's the idle kernel taking over the CS must be set to pulse instead of turn on and off. The idle kernel we have doesn't turn any TTLs off.
+Does the coredevice actively drive it low or is it high-impedance? Transitions to high-impedance are much slower.
+If e.g. the idle kernel resets everything, then the SPI RTIO core is offline and cs_n is high-impedance. If this is what you are seeing, then either add pull-up/downs or don't reset the spi core/keep it online.
+Our idle kernel is just
+So I don't think the other ttls are being reset.
+On the scope, just writing some bits over where the yellow is the sclk and the green is the chip select, 
+Zooming out, you see that it the CS goes low after 1.5 s or so.
+
+Seems like the same issue we had with #449, where we had pulse for some duration that wasn't completed before the next experiment or idle kernel started. Is the CS set to stay on after the end of data transmission?
+@jordens Are you aware that a RTIO reset (which on 1.x is done at the start of a new experiment, and at the start of the idle kernel) pulses the reset of your complete SPI core? If you want some register values to persist across RTIO resets, you have to put them into the rio_phy domain instead of rio.
+@sbourdeauducq That seems to imply that e.g. in-flight DDS transfers or sensitivity changes on TTLs are forgotten/broken/interrupted by new experiments starting.
+Do we reset stuff preemptively on the suspicion that i might help or do we actually need to reset RTIO?
+FIFOs are flushed, so yes, but you've already seen the consequences of this when an experiment doesn't sync at the end. See the comments in the "inter-experiment seamless handover" issue.
+@r-srinivas Does this commit fix the problem?
+@jordens Note that the TTL PHYs already close the gate on RTIO reset but keep other state (level, OE) intact.
+@sbourdeauducq Yes. See my comments in that issue. The resetting we do in 1.X is not good. The consequences of having an experiment that does not sync at the end are an intrinsic caveat of the design. It's not even a bug. I would not try to battle or hide it, just properly educate users.
+The fact that gates loose state currently is something that I would consider a bug.
+It's not a bug, the code assumes that the gate is normally closed, and reset restores that state. Experiments could otherwise start with a gate open and get unexpected overflows.
+Sure it is. This is inconsistent. If you can leave an output high and hand it over like that, you should be able to leave a gate open and hand it over like that. The way you do it you can not continuously leave a gate open.
+There is no support anywhere for continuously open gates.
+That's a different issue. And anyway. There is support for long duration gates.
+@sbourdeauducq Looks like that commit worked. CS stays high after the data is transmitted. Thanks!
+Will that commit be in the release branch as well?

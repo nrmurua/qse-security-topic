@@ -1,0 +1,52 @@
+See newhopecrypto/newhope-usenix#1 - same symptom:
+Here's the advice YASM assembler gives:
+@cryptojedi can I hope that you'd help with this issue?
+Working on it
+Excellent - I'm glad to hear this.
+The problems you reported are easily fixed, but there
+seem to be more issues under OSX and I don't have a system to test on.
+@cryptojedi I realize that some platforms are not as common as others. I'll be happy to test for you whatever experiment or change you may need to validate. My platform is MacOS Mojave 10.14.1 (and High Sierra 10.13.6) with Xcode-10.1, plus Macports-installed Clang-7.0, GCC-8, and YASM-1.3.0 and NASM-2.14 assemblers (in addition to the one provided by Xcode).
+Here are some CPUs I can test your changes on (reported via botan cpuid):
+Could you apply the same fix (newhopecrypto/newhope-usenix#1) here please? It compiles fine on MacOS with the latest Xcode.
+Also, is there a difference in the actual code between this repo and https://github.com/newhopecrypto/newhope.git?
+this should be fixed in newhope-usenix. What's the remaining issue?
+No, no remaining issues. I was mistaken - avx2 in the .zip file from the NIST site does not compile on MacOS, but avx2 from this repo compiles and runs fine. Thank you!
+An unrelated question. NewHope was originally designed as a Key Agreement protocol, later adopted for KEM as per NIST submission requirement, correct? I basically need a Key Agreement rather than Key Transport (when one party essentially tells the other what their shared key will be). Could you show how I can use the existing code from this repo to implement a Key Agreement?
+Thanks!
+If you want a contributory KEM, i.e., a KEM in which neither party can choose the final session key...
+Basically, yes.
+And ideally, something with HMQV flavor, where the parties are implicitly authenticated - but that's a different story.
+...then the CCA-secure variant of NewHope as submitted to NIST will be just
+fine: the public key of Alice gets hashed into the "pre-key" K, see line
+4 of Algorithm 20...
+Thanks - let me check that algorithm, and get back to you.
+@cryptojedi I checked it, and unless I'm missing something, that doesn't seem sufficient. Even though Alice (or Bob) in the above example is not expected to be able to invert the hash, she could (after spending huge amount of computing time) find a peculiar public key that hashes to what she'd want. Not a common or an easy attack, but still a concern.
+Compare this approach to a classic KEX, like EDH/ECEDH - in order to fudge the result, Bob would have to come up with the right g^y in real time, because he cannot know in advance what kind of g^x would be thrown at him. In other words, with KEX as long as at least one party is "good" ("honest", not subverted, etc.) the resulting shared key is "good". I don't think this property holds for KEM, does it?
+I agree that contributory KEM is better than a traditional Key Transport, but I'd like better assurance that neither party can have too much influence over the final key.
+It really shouldn't be; if you assume an attacker who can compute hash preimages, you have much bigger problems.
+No, it's not about the attacker being able to compute pre-images - it's about the attacker willing to invest significant time to search for a something that would hash into something "close enough". As an example of what's possible - think BitCoin mining.
+Another possibility - the attacker compromises RNG on, e.g., Alice's computer, so it produces, e.g., only 2^16 different values. What I'm driving at - when one party has complete control over the outcome, there's a problem (for me).
+Indeed, what you're pointing to is the difference between a non-interactive key exchange (NIKE) and a KEM. No KEM would be able to resist the "attack" you're describing.
+Which is why I'm trying to find/build a KEX (NIKE) from the given primitives. ;-)
+The only post-quantum NIKE that can be considered practical is CSIDH
+Am I correct that it has great (aka small enough ;) key sizes, but is extremely slow?
+Are you concerned about covert channels?
+Yes I am (among other things).
+A broken RNG on either side is also a problem for classical (EC)DH
+You have a point here.
+The only post-quantum NIKE that can be considered practical is CSIDH ... It is much slower
+than, say, lattice-based KEMs, but you can do a key exchange in less than a second on large CPUs...
+Thank you! You gave me excellent pointers, and I'm now following them.
+BTW, optimized CSIDH on a good modern/recent Intel Core i7 completed in about 240ms for p503, but took 1,300ms for p1024 (this was unoptimized code - pure C). We'll see if it can be improved.
+In principle you can also do a NIKE using lattices, see
+https://crypto.stackexchange.com/questions/48146/converting-newhope-lwe-key-exchange-to-a-diffe-hellman-like-algorithm/
+And that page says:
+...achieving similar security as regular Ring-LWE encryption / key exchange schemes would result in keys that are around 20 - 40 times larger than in Ring-LWE based schemes. So something around 20KB - 40KB could be expected...
+What is your estimate on the performance/time this NIKE-from-NewHope would require? Also 20-40 times longer...?
+Be careful with the code that's online, it's heavily non-constant-time
+and thus vulnerable to timing attacks
+Thank you, very good to know.
+It so happens, that one particular application I have in mind is not a subject to timing attacks. But in general it pays to be aware.
+they do also have constant-time code, which is about 6x slower.
+Being 6x slower than, say, 1.3 seconds would not be acceptable.
+Any guesstimate on the expected performance of NewHope-based NIKE (with keys being 20-40 times larger)? And that was (if I understood that stackexchange post correctly) a *non-*authenticated KEX, so authenticating it would cost extra, right?

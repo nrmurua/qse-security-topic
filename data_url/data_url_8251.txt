@@ -1,0 +1,53 @@
+Hello,
+I noticed that vector_to_operator stopped working after updating to 4.5.
+Simple code that gives error:
+The code works fine with nb_qubits=2, but not with 4, 6 etc
+The error is:
+File "qutip\superoperator.py", line 279, in vector_to_operator
+q.data = sp_reshape(op.data.T, shape[::-1]).T
+File "qutip\sparse.py", line 135, in sp_reshape
+return zcsr_reshape(A, shape[0], shape[1])
+File "qutip/cy/spconvert.pyx", line 254, in qutip.cy.spconvert.zcsr_reshape
+Exception: Total size of array must be unchanged.
+Thanks for raising this issue. I investigated a bit and it seems that you want to convert a tensor of n-qubit state to a density operator?
+Consider the following two definitions of vectors with the same data (but different dim) which we would try to convert into an operator.
+The code when we define the vector as a ket with dim [[8], [1]] runs fine but the tensor representation with dim [[2, 2, 2], [1, 1, 1]] fails.
+I will look into it more but does converting your vector to a proper ket solve your issue?
+As a minor note, as of qutip 4.5 you can achieve the tensor product basis state creation simply with
+Interesting observation, the vector_to_operator seems to expect an "operator-ket" class, as seen in the examples:
+http://qutip.org/docs/3.1.0/guide/guide-states.html
+In the code, it expects the dimensions of the operator("op") should be:
+op.dims = [ [[rows], [cols]], [1]]
+This is probably to keep in line with the way operator_to_vector sets the dimensions. I am not sure what the expected behavior is supposed to be with a "ket" instead of a "operator-ket". You are correct to think that this behavior changed in release 4.5 as the shape passed to the sp_reshape function in vector_to_operator changed from:
+n = int(np.sqrt(op.shape[0]))
+shape = (n, n)
+to
+shape = (np.prod(q.dims[0]), np.prod(q.dims[1]))
+The first preserves the correct "size" (which is later used in the check which throws "Exception: Total size of array must be unchanged.") but the latter one does not for kets.
+Maybe we should return the shape assignment to the previous one ?
+@Francesco-Benfenati: can you tell us what the expected behaviour from your test case is?  Are you intending to create a superoperator, or are you intending to create a a density matrix?
+As a note: qutip.vector_to_operator is part of the implementation of superoperators.  The "vector" in the name refers to the idea that a superoperator in a Hilbert space can be represented as a vector on a different Hilbert space which comprises of two copies of the original space tensor-producted together.  It doesn't refer to a "vector" in the sense of a "ket".
+The difference was introduced in c62a8e9, which is the amalgamated commit encompassing all the discussion in #1098.
+qutip.vector_to_operator expects to receive an argument whose dims parameter is of the form [operator_dims , [1]], where operator_dims is the dimensions of a regular operator (for example [[2], [2]] for a single qubit Hilbert space, or [[2, 2], [2, 2]] for an operator acting on a Hilbert space with two qubits in.
+The exception occurs because vector_to_operator attempts to access the two elements of the operator_dims array to discover the output shape.  Since there is an insufficient number of lists for it to access, it just ends up reading the dimensions of the first two elements of the tensor product, and np.prod (used to calculate the output shape) doesn't complain when passed scalars.  Notice that running the code with nb_qubits = 1 will cause an IndexError, as there are insufficient tensor-product elements.
+The immediate solution for your code is to use qutip.ket2dm, which converts a ket into a density matrix.  I think this is what you're actually trying to do.
+For a fix, there are two points:
+Yeah, I agree, if we go with the first option for the fix, it would probably be instructive to add some more documentation about the operator-ket class, and the correspondence between superoperators and the vector notation. I think it's a little ambiguous right now (particularly the difference between operator-ket and ket)
+Hi, thank you all for the answers, and sorry for the delay.
+I understand there is some confusion because what I'm trying to do doesn't really have a physical meaning, I simply wanted to convert between matrices and vectors because I'm looking for computational gains by doing so.
+If this was numpy, I would simply use numpy.reshape.
+I guess it actually makes sense if this is not a permitted operation in qutip, I was just exploiting the operator_to_vector function for a different reason.
+@quantshah
+Thanks, I tried the code, but even the test_vec implementation fails with error
+File "qutip\superoperator.py", line 278, in vector_to_operator
+shape = (np.prod(q.dims[0]), np.prod(q.dims[1]))
+IndexError: list index out of range
+@jakelishman
+Thanks for the tip for the tensor product basis state creation.
+It's not a density matrix that I want to do, I just wanted to reshape the array.
+As a side note, I notice that I have a very large computational cost when I work with dense matrices and state vectors, as you do when you simulate a quantum circuit with parametric rotations on each qubit, and this is due to the fact that qutip uses a sparse matrix representation. If I do the same operations with numpy I get a large computational gain, because the arrays are dense. Is there any way that I don't know about to save the Qobj data in dense form?
+Right now there's no way to make Qobj use a dense representation, but that is something that's been discussed elsewhere.  If you just want to use qutip functions to build up a system then do the heavy lifting using numpy, you can convert a Qobj to a dense array with Qobj.full (e.g. qutip.qeye(10000).full()).
+Your question certainly did spot a place where the error message could be improved, though!
+Just noticed this thread.
+I can take a detailed look, perhaps with @arnelg as we recently updated the superoperator functions in 4.5.
+My initial reaction is this is "off label use" of vector_to_operator. If so, then we can update the docs to make this point clear.

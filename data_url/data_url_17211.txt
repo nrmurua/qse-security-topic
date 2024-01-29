@@ -1,0 +1,21 @@
+Since Terra 0.9.0 the way to find out the used Qiskit-packages has changed. In version.py, the method _get_qiskit_versions() is called, which calls _minimal_ext_cmd to get the pip freeze output to parse for the used qiskit package versions. The call to this function raises an OSError because subprocess.Popen has returncode 1.
+Traceback (most recent call last):
+File "./docs/example_qiskit_entangle.py", line 20, in 
+from qiskit.validation.base import Obj
+File "/var/jenkins_home/workspace/SDK_dev/venv/lib/python3.6/site-packages/qiskit/init.py", line 47, in 
+from qiskit.providers.basicaer import BasicAer
+File "/var/jenkins_home/workspace/SDK_dev/venv/lib/python3.6/site-packages/qiskit/providers/init.py", line 19, in 
+from .basebackend import BaseBackend
+File "/var/jenkins_home/workspace/SDK_dev/venv/lib/python3.6/site-packages/qiskit/providers/basebackend.py", line 23, in 
+from qiskit.version import VERSION as version
+File "/var/jenkins_home/workspace/SDK_dev/venv/lib/python3.6/site-packages/qiskit/version.py", line 117, in 
+qiskit_version = _get_qiskit_versions()
+File "/var/jenkins_home/workspace/SDK_dev/venv/lib/python3.6/site-packages/qiskit/version.py", line 86, in _get_qiskit_versions
+reqs = _minimal_ext_cmd(cmd)
+File "/var/jenkins_home/workspace/SDK_dev/venv/lib/python3.6/site-packages/qiskit/version.py", line 41, in _minimal_ext_cmd
+raise OSError
+This happens on our Debian Jenkins environment, where by default the environment variable HOME is set to root directory. Further the Jenkins user is not running under root. We suspect that the pip freeze command uses the HOME directory somehow and fails because it has no rights on the root directory.
+What we did in our investigation to make it work on our environment, we set 'HOME' to a writeable directory for the Jenkins user and had to add environment variable 'HOME' to the env parameter of subprocess.Popen (in function _minimal_ext_cmd),
+I'm not sure what's going on with pip --freeze here. I tried HOME=/ pip --freeze from within my terra venv (on mac) and it seemed to work okay.
+It's a bug that we raise OSError here. We should include at least stderr and the return code.
+I agree this is a bug, it's my mistake I actually realized this yesterday after #2652 merged that we don't have any error handling. Nothing should raise an exception from the version module because it gets executed at import time, we should catch it and make it non-fatal. Having the pip versions in qiskit_version is not critical so if pip fails for whatever reason we should just ignore it and move on. I'll push a patch up to fix this shortly.

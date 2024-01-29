@@ -1,0 +1,19 @@
+I'd like to run RI-RPA calculations on a system involving Zr, C, O, H. The BASIS_RI_cc-TZ does not contain either TZ or QZ basis sets for zirconium, so I'm guessing that this means I will have to parameterize them myself. How should I go about this?
+The BASIS_def2_QZVP_RI_ALL does contain a QZVP basis for Zr but it appears to be overcomplete because the PBE SCFs often do not converge...
+You may try the basis sets in cp2k/data/BASIS_ccGRB_UZH. You can optimize RI basis sets yourself. Check the manual and get some inspiration from the respective regtests. Probably, you will have to experiment a bit with the parameters and the number of basis functions for each shell to obtain a good accuracy for Zr.
+Thanks.
+It could very well be something with my input file, but I'm consistently getting segmentation faults, both when using a CP2K 2023.1 Singularity image as well as an easybuild install, and on multiple clusters.
+As opposed to the regtest you mention, the input structure contains a minimal cluster of ~60 atoms which are representative of the electronic structure found in the material that I want to study.
+which yields
+If you have a look at your output, you see that you ask for too much memory (available memory: 3153 MB, request memory: 3500 MB). You have the following options:
+For more information where exactly the crash occurs, you may add the keywords TRACE and TRACE_MASTER in the GLOBAL section.
+I also noticed that the available memory was lower than the max memory, but when I reduce the max memory in the input file, the available memory also goes down, which is really weird. Any ideas?
+I have just double-checked it. The behavior is odd and needs a patch. If I read the code correctly, you ask for 3500 MiB memory and you have only 350 MiB of memory available. Within the RI-methods, the requested memory is only used to replicate a rather cheap matrix for efficiency. But it is of importance for the optimization of RI basis sets and the non-RI-MP2 implementations.
+Have you already tried TRACE/TRACE_MASTER? Because the output files become huge, only the last few lines are of importance.
+Are you sure that you cannot reduce your reference system? Beware that you have to run this system several hundred times and optimize ALL RI basis sets.
+Only 350 MB per process available? That can't be right, where are you getting this from? I'm running on a 128-core node with 256 GB of memory. Plus I assumed that by setting the GROUP_SIZE keyword, he would make groups of processes share memory in order to increase the effective amount of memory per process...
+It's difficult to reproduce the electronic density around the Zr atoms with a smaller cluster.
+Is it possible to use the full Zr basis during evaluation of the integrals while using the existing RI bases for all the other elements? It might not be that much of a performance hit because there's relatively little Zr atoms in the full periodic structure...
+Concerning the missing RI basis sets for Zr and other atoms:
+The simplest option is to use the automatically generated RI basis sets following the method of this paper https://pubs.acs.org/doi/full/10.1021/acs.jctc.6b01041. To do so in CP2K, you have to add the AUTO_BASIS RI_AUX SIZE in your &DFT input section (SIZE = SMALL, MEDIUM, LARGE). The basis sets so generated are accurate, although slightly less efficient than optimized ones.
+Note that you can use automatically generated basis sets for only some atomic kind, by overwriting it in the &KIND section (here for oxygen):

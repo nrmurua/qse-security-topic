@@ -1,0 +1,12 @@
+Foreign-allocated wavefunctions currently rely on the trivial-garbage:finalize mechanism to free their memory when the corresponding QVM object is reclaimed. This is problematic for a number of reasons:
+IMHO, the most portable and simplest way of solving this problem is to create a foreign memory pool that persists across requests. If, for instance, several consecutive QVM requests have the same qubit count (a likely scenario), then the same foreign array is reused for the wavefunction. If the qubit count changes, we may free the previous memory and allocate a new chunk but if the count is constant there is no need to free/malloc/realloc, which results in a per-request speed-up.
+Alternatively, we could catch the error signaled by malloc when memory runs out and trigger a full garbage collection then. The disadvantage of this approach is that the system may run very slowly due to earlier memory allocations (and associated disk swapping) for a long time before malloc actually fails.
+Memory pools are a reasonable choice for current qvm-app, where you select the allocation strategy at startup, then all qvms use that allocation method for the lifetime of the process. For qvm-app-ng, however, a caller can choose between native/foreign allocation on a per-request basis, so another approach might be needed; otherwise a single large foreign allocation will hold on to memory in the memory pool that never gets released for native-mode requests.
+That's not to say memory pools aren't the way to go for qvm-app "classic".  This is just a note-to-self, to reconsider this for qvm-app-ng.
+Thank you for your insight into qvm-app-ng, @appleby. Do you think restricting the pool just to foreign allocations (i.e., persisting/recyclable across requests) is viable in the new qvm-app?
+I don't think so, but I might be misunderstanding what you have in mind. I'm assuming the memory pool only knows about foreign allocations, and only recycles memory for other foreign allocations. So for example, suppose
+And assuming that the 32q wavefunction is a significant fraction of the total memory available, then the second request (IIUC) would fail. Whereas if foreign memory was immediately freed after each request, the second could succeed.
+The memory pool could still work, but I think would need some way to coordinate with and take into account interleaved native allocations.
+You're totally right.
+You're totally right.
+There's a first time for everything 😂

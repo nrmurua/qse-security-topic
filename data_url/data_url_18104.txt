@@ -1,0 +1,55 @@
+When using multiprocessing in python3, the program crashed.
+When using multiprocess to launch multiple jobs on local_qasm_simulator, the program crashed. (for both c++ and python simulator, and c++ simulator is built from source codes since I would not get c++ simulator if I pip install qiskit.)
+error trace:
+Here is codes:
+Running without crash.
+No idea.
+Above codes work well on macOS 10.13, Python 3.6.3, qiskit 0.5.4 (from pip)
+https://stackoverflow.com/questions/35879096/pickle-unpicklingerror-could-not-find-mark
+@chunfuchen pip install doesn't download the simulator binary on your Ubuntu 16.04?
+@ajavadia Is there any manual way to lookup if I install through pip? like I should get a binary in the installed qiskit? I use the API available_backends(compact=False) to check it, but only python simulators are there.
+@nonhermitian but my codes did not do anything about pickles, right? I do believe underly qasm_simulator uses concurrent processes. Furthermore, if I commented on the execute and get results from qojb, everything works fine (actually, it does nothing)
+Or is it a wrong way to launch multiple qasm simualtor?  I know that I can submit a bunch of circuits through execute but this is a simplified example of my complex example.
+Furthermore, this simple example works for macOS 10.13, with Python 3.6 and qiskit 0.5.4.
+Thanks.
+Well the issue appears to be with the pickling of stuff that gets passed to the new processes.  Indeed, I have tested it on my mac, and it works just fine.  That suggests some other issue.  Looking at the error, it appears you are running Py35.  What version of Py35?  What happens if you try it in Py36?
+Is there any manual way to lookup if I install through pip? like I should get a binary in the installed qiskit? I use the API available_backends(compact=False) to check it, but only python simulators are there.
+Yes that command should show it as available if it installed correctly.
+@atilag can you please look into this?
+I have tried this on Ubuntu 18.04 and saw a similar output once, out of a handful of runs, but most of the time the whole process just hangs. The system monitor shows that nothing is actually running, and your left with a bunch of zombie processes at the end.
+My guess is that using futures to call an async running process is problematic.  I have seen similar issues when doing an async run on a function that calls the multiprocessing library.  Why it works on OSX and not Linux is unclear.
+I thought about this some more, and I do not understand why you need to use the ProcessPoolExecutor at all.  When you spawn a new async job it is already running concurrently / parallel, whatever you want to call it.  Why not just spawn a bunch, and check their status, and then do get results when all done.  Like this:
+Setting the shots to be large, and looking at an activity monitor will show you that it is using all your cpus.  You can of course modify this to restrict the number of simultaneous async calls to a fixed number.  In general, that should not be the cpu count returned by the multiprocessing library as that number also includes hyperthreads that really do no good. I should also mention that this example should really have a timeout so that the while loop exits after some point in time if a job is not a success.
+@nonhermitian I was using Python 3.5.2 (built-in from Ubuntu 16.04), and I just tested on Ubuntu 16.04 with Python 3.6.5. I observed the same issue you mentioned.
+@ajavadia If I am on Ubuntu 16.04 with Python 3.6.5, the c++ simulator is available. I notice that there is no compliled binary file in my installed qiskit package when I use Python 3.5.2
+Here is the filelist for both installations (both on Ubuntu 16.04)
+Python 3.6.5
+Thanks.
+@chunfuchen, try my above example and see how it works.
+@nonhermitian Thanks. The above example works.
+The reason I would like to have a ProcessPoolExecutor because my real subroutine is much complicated than the example above, here is my real problem. https://github.com/QISKit/qiskit-acqua-tutorials/blob/master/chemistry/h2_iqpe.ipynb
+Each subroutine has 2 major stages:
+As you can see, for one molecule, we might want to test with different atomic distance, which results in the different qubit Hamiltonians and more classical computations. I would like to speed up the time in preparing that classical information, circuit compilation, etc.
+Maybe using futures to parallelize the job with async computing is not a good idea; but such parallelization is helpful to maximize cpu usage for all other classical computations.
+Thanks.
+@chunfuchen, looking at your notebook, I think it can be refactored to work in a similar manner as what I suggested.  The point is your jobs are already in parallel when dispatching multiple async jobs.
+@nonhermitian maybe I do not express my problem well. Let me express the problem in general.
+I have a hybrid algorithm (classical + quantum), and it is an iterative process where two parts (classical + quantum) are dependent on each other. That is, the classical part needs results from the quantum part to update parameters and vice versa. The computation flow of this hybrid algorithm could be C-> Q -> C -> Q -> C -> Q -> C. (C means the classical part and Q means the quantum part)
+Now I would like to run this hybrid algorithm in parallel which can overlap CPU computations for classical parts and the qiskit circuit compilation.
+E.g., two concurrent processes:
+C1-> Q1 -> C1 -> Q1 -> C1 -> Q1 -> C1
+C2-> Q2 -> C2 -> Q2 -> C2 -> Q2 -> C2
+Thanks.
+Why not do the classical parts in parallel, then spawn multiple async processes for the quantum parts, then do parallel classical and so on.  Maybe not as efficient as doing it the other way for processes where the runtimes are significantly different, but my guess is a solution to the original issue posted here is something non-trivial to understand.  It might be worth sending to stack exchange to see if someone who has more experience in the depths of futures can solve.
+@nonhermitian Then, we need to split the algorithm into the small parts in order to execute them in parallel.
+People usually first develop their algorithm in a sequential manner and then since there is no dependency for each instantiation of the algorithm, they just use multiprocess to parallelize them at the level of an entire algorithm rather than go into the algorithm and split them for parallelization.
+Anyway, I will post the question in the stack exchange.
+Thanks.
+I think the answer to this is to have the ability to run a job without doing an async run.  In your case, you need to wait for the results before the next classical step.  As such, you do not need the async features.  @ewinston is it possible to call a job / backend without going through the futures module?
+This is just a guess but does it work to use the same executor that the backend is using to do your async? That is use local_qasm_simulator._executor.
+@nonhermitian Yes it is possible to run a job non-async although it is backend dependent; Instead of calling backend.run(q_job) call backend._run_job(q_job) which should work for qiskit-core local backends.
+@ewinston Nice.  I am willing to bet that that is what is needed in this case.
+When checking job.status['status'] in comparisons it may be better to use the enumerated type, JobStatus, rather than it's description string since the later is more likely to change.
+Ok, I think this must be related to the fact that we are using an internal ProcessPoolExecutor for local jobs, and the code is creating another ProcessPoolExecutor on top of it, so there must be something that the Python interpreter doesn't like here, indeed, I know it uses Pickeling/Unpickeling to pass parameters between different processes.
+@chunfuchen as we are already handling every execution asynchronously, if you just call execute() n times, you'll get n jobs each one executing in parallel (through our internals ProcessPoolExecutors())
+I am closing this as I agree with Juan.

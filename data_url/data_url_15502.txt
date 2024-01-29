@@ -1,0 +1,23 @@
+Two Z gates on the same qubit make the identity, not a single Z gate
+Ideally, it should return
+No response
+Thanks for the report - it's good to know the limitations.
+This isn't a supported operation as part of this convenience initialiser - we don't perform operator compositions as part of the object creation.  It would be slower for normal uses if we added checks for this, so I don't think it's something we'll want to support.
+Hmm this is definitely not great though. In case the composition check is too expensive we could maybe check if an index is repeated and raise a warning.
+That's essentially the same thing, and I'm not sure it's something we should support - it costs too much for non-bug use-cases because we also need to build up a set to check index uniqueness.  I'd just document "the qubit indices must be unique" and leave it at that.
+It shouldn't cost too much... it's just a single if statement in your loop on line 659, adding the same cost as checking if the index is too big which you seem to deem worth it
+Ah, okay... warning on [("ZZ", [0,0], 1)] is just a single if statement, but warning on [("Z", [0], 1), ("Z", [0], 1)] would require building a set. Still though, it's only linear in the number of qubits, and I would guess that both the string manipulations and the PauliList creation are more computationally expensive
+In your first case, it's not just a single if; we'd need to keep track of which indices we'd seen before to distinguish ("IZ", [0, 0]) from ("Z", [0]) - we can't just use "I" as a test for "no value", because it's a valid value of itself.  If we were to use a single if, we'd have to add another iteration through the list of components to replace the missing-value sentinel with "I" before building the string.  The problem is that it costs everyone, even people who aren't using buggy behaviour.  It's less about specific algorithmic complexity, and more about constant factors - most of the operations of SparsePauliOp are handled in C code, so bits where we have to do Python iteration are relatively slow.
+(The second case should already be supported, and it means addition - that's definitely already part of the documented behaviour of the operator.)
+We're kind of required to do the size check, because Python would raise an exception if we didn't with a message that would be very surprising to the users, but yeah, it's slightly arbitrary what we test for.  I'm not opposed to input type checks overall, but Python's sufficiently dynamic that there's always a way to mess things up, and testing for everything makes things slow by a thousand papercuts for all users.  For things like this, I feel like the chance of it happening by accident is sufficiently small that the better trade-off is to document against it, but elide the check.
+we'd need to keep track of which indices we'd seen before to distinguish ("IZ", [0, 0]) from ("Z", [0])
+We can kinda ignore it though because ("IZ", [0, 0]) would actually give the right result anyway, so there is no need to warn. But I see your point about a thousand papercuts.
+(The second case should already be supported, and it means addition - that's definitely already part of the documented behaviour of the operator.)
+Ah yes, my mistake. Then it really is fixable by adding a single if statement, if you agree with my comment above.
+That's a good point that it doesn't actually affect the outcome.
+My personal view is still that the best course of action is to document the behaviour as "repeated indices within a single item overwrite previous occurrences" to avoid doing the test - I'm generally in favour of setting up the interface to avoid needing additional checks that affect speed for correct usage.  I think if we made it "warning on repeat", the warning message would end up saying "repeated indices are ignored", so it seems sensible just to document the behaviour and make it not a warning, but a feature - it's a valid convention, and lets us skip tests.
+That said, I don't feel particularly strongly about it, so I'll leave it to Julien (@Cryoris) or Ikko (@ikkoham) to make the final API decision, who use this code far more than me.
+Initialization with the same index should not be allowed and should be explicitly compose (@).
+The issue is whether to check for errors (/warning) or just document it.
+Since this is a difficult behavior for users to find wrong cases, I think it would be better to make it Error. I don't think it would be that so costly to check if it is already assigned (i.e., not I) here.
+I agree raising an error would be good. For performance we could also add a do_checks flag or so that is True per default but can be turned off if you know that you're strings are valid? 😄

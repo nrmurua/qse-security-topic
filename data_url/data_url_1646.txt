@@ -1,0 +1,29 @@
+Description of the issue
+On certain environments (e.g. Windows 3.8 builds in CI and @dstrain115  reported seeing these on Linux python 3.9) check/pytest results in a ton of DeprecationWarnings related to pb2 files. We should resolve these.
+Upgrading grpcio-tools is not really an option otherwise we'll break Tensorflow Quantum.
+The following error is thrown if we compile the pb2 files with gprcio-tools==1.38:
+This is because TFQ uses protobuf 3.9.12 - which is a hard dependency on their Tensorflow version 2.4.1 as far as I understand.
+Oh the way to repro this, if someone's up for it:
+Use a linux machine!
+Specifically we are looking for these changes:
+
+As protobuf throws a DeprecationWarning if the pb2 does not use the  _internal_create_key method: https://github.com/protocolbuffers/protobuf/blob/a1d8f8f96900468f09ced2ce9d23dea5a1bc070c/python/google/protobuf/descriptor.py#L328-L329
+@balopat Wow nice! This was the original source of the error we found over in TFQ.
+Here's why I think it's happening: Here's the original piper sync that brought in the _internal_create_key entry: protocolbuffers/protobuf@b99994d#diff-36475d83594de2ba8efd80eb6c5c276cce4f5553871d53a433d03d2f503088a8 which was present in protobuf >= 3.12.0-rc1
+My guess is that these pb2 files were compiled using a protoc release older than 3.12.0-rc1 (maybe 3.9.2). This is currently an ongoing issue in TensorFlow to update proto dependencies everywhere: tensorflow/tensorflow@bd3e005 . Currently what they are doing is rolling with 3.9.2 protobuf and protoc (https://github.com/tensorflow/tensorflow/blob/v2.5.0/tensorflow/workspace2.bzl#L564) with some patchwork that get's support up to somewhere around 3.11 and 3.12 (with 3.14 not working on platforms other than just windows).
+So, In order to get rid of this error, my guess is that Cirq needs to re-generate these pb2 files with a newer (and specific) version of protoc, maybe for sanity sake we try 3.12 (https://github.com/protocolbuffers/protobuf/releases/tag/v3.12.4) on the nose to maximize compatibility chances ? protoc --version
+TFQ inherits all of these troubles from TF by depending on TF and protoc on both C++ and python levels, we also don't precompile our pb2 files and include them in the repo and instead opt to build them each time like how one might do with bazel/blaze.  Here are some dependencies we also inherit on the python side that might prove troubling:
+Here's a table I generated for libprotoc version vs grpcio-tools versions for reference:
+After some digging with @MichaelBroughton we found the following situation:
+During testing the PYTHONPATH has the virtual environment (with protobuf 3.13) and also a generated environment from bazel.
+The TFQ failure is due to the fact that during the bazel test session, bazel has protobuf version 3.9.2 in the bazel-out directory.
+The reason for the protobuf 3.9.2 being in there is due to the pauli_sum_proto rules - in https://github.com/tensorflow/quantum/blob/master/tensorflow_quantum/core/proto/BUILD#L1.
+The first version where this DeprecationWarning was introduced was 3.12.x - i.e 3.11.4 is the last version that worked with the old format.
+Confirm seeing a large number of these warnings from tests that import cirq after upgrading it to 0.12.0.
+Edit: May have been unrelated to the upgrade. Previously I ran my tests with an ini file that ignored them. In any case, the warnings are indeed produced when running tests that import cirq using python 3.9 on Linux.
+Note that #4751 will temporarily hide the deprecation warnings so they stop swamping our test outputs (BTW: other deprecation warnings appear to have sneaked into the crowd, e.g. from quimb). However, let's keep this issue open until a proper fix is possible (i.e. until upgrading protoc no longer breaks TFQ compatibility).
+For the record, this issue is no longer a TFQ issue. The remaining proto deprecation warnings are coming from the v1alpha1 protos that need to be re-generated internally using our gapic tools. The fix for this will involve someone going through the internal build instructions for the py_gapic rules we need and then copying the built artifacts out into Cirq.
+@verult This issue would be resolved (in part by) the GAPIC regeneration.
+From @MichaelBroughton: "Once GAPIC is resolved this is done"
+GAPIC code was updated in #5139. Can someone check if this is fixed?
+Verified in local tests that the proto warnings no longer show up, so going to close this.

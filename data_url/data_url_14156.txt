@@ -1,0 +1,28 @@
+Previously, IBM provider used to offer U gates u1, u2, and u3 as basis gates. Now, the target class includes information about backend instructions, properties and more. Additionally, the backend default is also included in the target and u gates are allowed to be registered to the default for the backward compatibility in 
+When creating the backend default, instruction names and theire qubit arguments are mapped to the schedule through instruction_schedule_map, resulting in the inclusion of U gate instructions in the target.
+We can exclude U gates from inst_map by skipping registering u gates.
+You need to add more background for discussion. I had related discussion with @mtreinish but maybe it was offline and I don't remember the details.
+Currently you are updating circuit scheduler with #10564, and the legacy ScheduleConfig object consisting of inst map and meas map will be replaced with Target. This means, for backward compatibility, Target must gain a capability of creating an instance with user provided inst map and meas map, which is not the supported case of Target.from_configuration because it doesn't create new instruction entry with a schedule in the inst map. So we decided to update Target.update_from_instruction_schedule_map method instead.
+This will allow circuit-pulse scheduler to use Target, instead of the legacy config object.
+Problems of using the update_from_instruction_schedule_map method are:
+Current implementation of the method is (pseudo code):
+This means, necessary gates such as SX and RZ are also ignored because they don't exist in the empty Target that we want to deal with. We should relax this condition to copy them from the inst map, but this also allow U1, U2, U3 schedules to show up in the created Target. This will create an edge case; if a user reuses this Target object for compilation, circuit might be accidentally decomposed with U gates and fail in backend execution.
+We should properly handle three situations:
+This is the case of U1, U2, U3. Entries are not reported in circuit domain thus not in the created Target.
+These schedules can be accessed through the legacy attribute backend.defaults().instruction_schedule_map.
+This is the case of SX, RZ. Entries are created in the Target with calibration information.
+User can get schedules from the Target.
+Custom defined gate (not in basis gates) or basis gates with updated calibration.
+This schedule must be registered in the Target because the entry is intentionally added by the user.
+In the current implementation we cannot distinguish (1) and (2) only with the inst_map (i.e. without backend configuration), which is the situation of converting the legacy ScheduleConfig into Target.
+Roughly speaking, I think there are two approaches:
+(1) Permanently removing U1, U2, U3 from inst map.
+(2) Make update_from_instruction_schedule_map method basis gate aware, and let users provide basis gates.
+The approach you are proposing is one of the implementations for (1). I think there are several patterns to realize (1) and (2). Can you summarize the implementation and write pros/cons for each? @to24toro
+If we can skip registering these U gate such as U1, U2, U3  in backend.defaults().instruction_schedule_map, we can prevent their inclusion in the Target during the update_from_instruction_schedule_map process.
+Pros:
+Cons:
+Pros:
+Cons:
+TBH, I don't have a super strong opinion on this. I'm still confused why the backend is returning calibrations for U1, U2, and U3 at all if they're not supported operations. This does seem like something that is backend specific, because  if the InstructionScheduleMap that backend.defaults().instruction_schedule_map is returning is not representative of what the backend actually is using. I guess what I'm saying is that feels more like a custom concern for specific IBM backends and the ideal solution for me would be to update https://github.com/Qiskit/qiskit-ibm-provider/blob/main/qiskit_ibm_provider/utils/json_decoder.py#L43 to exclude u1, u2, u3 in the generation of the PulseDefaults object if they're not needed/used anymore.
+That all being said, I'm not actually too concerned with adding a basis_gates or use_instructions option to Target.update_from_instruction_schedule_map, yes it's another option on the method but I can see a general use case if you only wanted to partial update a Target from an InstructionScheduleMap for like one or two gates. It does put the burden on users to know how to do this though, and that might be a big ask. Maybe instead of an inclusion list what about an exclusion list, so Target.update_from_instruction_schedule_map(..., ignore_instruction=['u1', 'u2', 'u3')). Maybe adding both options to let users selectively filter how they update the target from an instruction schedule map is the best path forward here.

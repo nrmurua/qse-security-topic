@@ -1,0 +1,21 @@
+Users may encounter several conceptually distinct classes of irrecoverable errors while using Covalent:
+Task runtime exceptions that occur in an executor backend while running a task. These failures may reflect oversights in the workflow's business logic and would normally be printed to stderr if a workflow were run locally rather than dispatched to Covalent.
+Task-specific exceptions from Covalent itself, resulting from an abnormal interaction between the Covalent dispatcher and an executor backend, such expired AWS credentials or a temporary loss of network connectivity.
+Errors pertaining to an overall workflow and not any specific task, such as failure in postprocessing.
+Server errors not specific to a workflow, for instance, resource starvation or loss of connection to the database.
+Covalent does store all of these types of errors. However, it is not easy for users to retrieve or distinguish them.
+There is also a design defect in how each task's stdout and stderr are returned to the dispatcher. As explained in Covalent issue #1380, when multiple tasks run concurrently, the log output for one task may be inadvertently attributed to another task.  The proposed remedy for this is discussed in that issue.
+Main objectives for this issue:
+Corresponding to each of the above classes of irrecoverable errors, we will implement the following error handling rules:
+The two types of errors are mutually exclusive from Covalent's perspective; if the dispatcher cannot communicate normally with the executor backend, it cannot extract any task output.
+When task-specific errors occur, the lattice-level Result.error will summarize the failure by enumerating the node_id and name for each failed task.
+Acceptance Criteria
+ DB schema is updated to v13:
+ The UI displays errors for each failed electron.
+This can be accomplished by modifying covalent_ui/api/v1/routes/end_points/electron_routes.py: When the "error" detail is requested of an electron, the response shall concatenate both the electron's stderr and error.
+ Define TaskRuntimeError exception in covalent/_shared_files/exceptions.py. This is to be raised by each executor plugin's implementation of run() if the task experiences an unhandled exception in the executor backend.
+ Base executors are modified in base.py: (Async)BaseExecutor
+ Local and Dask executors are adjusted:
+ execution.py reflects the new error handling methods:
+ Unit tests achieve 100% patch coverage.
+ Add basic functional tests to check reporting of both task runtime errors (task raises an exception) and task-specific errors raised by Covalent (e.g. bad executor).

@@ -1,0 +1,28 @@
+Describe the bug
+When using blockade_subspace, the rydberg_corr function has bugs for Op.X and Op.Y
+The rydberg_corr function returns a correlation matrix. Theoretically, the correlation matrix should have diagonal entries always equal to ones (i.e., diagonal = [1,1,1...1]), since X*X=I, Y*Y=I and Z*Z=I. When using the full Hilbert space registers, this is indeed the case. However, when using the blockade_subspace registers, the diagonal entries of the correlation matrix (for X and Y) are not always equal to ones (e.g., sometimes the diagonal entries are approximately [0,1,0,1,...]).
+To Reproduce
+Expected behavior
+When using blockade_subspace, the correlation matrix (for Op.X or Op.Y) should have diagonal entries = [1,1,...,1].
+Screenshots
+If applicable, add screenshots to help explain your problem.
+A Pauli-X Correlation matrix obtained by full-Hilbert-space registers (Correct one)
+
+A Pauli-X Correlation matrix obtained by Blockade subspace registers (Wrong one)
+
+Version Info
+Additional context
+I think there are two ways to fix this
+I think this is not necessarily be fixed by #373 I think the symbolic expression should at least guarantee the diag component is correct, but I could be wrong. I need to take a deeper look into this.
+I think the issue is here. The problem is at intermediate points of the calculation for off diagonal observables you might activate a register that doesn't obey the Rydberg constraint, as such when you search for that Fock state in the subspace you get -1.
+This is an issue when dealing with subspaces in ED methods. individual operators might create intermediate states that do not live in the subspace, but after applying the entire chain of operators will you get a valid state again.
+you might fix the diagonal part of the correlation function symbolically, however the off diagonal correlations will not be correct because of this issue.
+Would it be possible to prevent the projection back to the subspace before applying the second operator?
+EDIT: A short term but not necessarily the best solution would be to implement suggestion 2. its not ideal because it requires an SVD but its an OK patch for the short term. if I have time I can try to implement this for YaoSubspaceArrayReg
+The issue is that when using a local operator, sometimes the intermediate state falls outside of the Blockade subspace. Effecitvely the current implementation measures pBpAp where p and A/B are the operators is the projection operator onto the blockade subspace, but this is incorrect we need to measure pBAp so one needs to build build the AB blocks directly using the Yao API.
+I propose we include the following operators:
+where:
+Z: Pauli-Z
+X: Pauli-X
+Y: Pauli-Y
+and the subscripts correspond to which levels are coupled inside the qubit/qudit

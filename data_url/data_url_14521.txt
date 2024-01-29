@@ -1,0 +1,21 @@
+When generalizing this tutorial on using the DynamicalDecoupling transpiler pass, including other sequences involving gates that are not native to the backend (i.e., YGate()) fail when run on an IBM backend (or transpiled and scheduled for one). Two solutions are presented here that attempt to address this: using the .to_gate() method to construct a Gate from a QuantumCircuit that is effectively a YGate() (which fails), and using Pulse to create a schedule that can be added as a calibration to the 'y' gate.
+results in
+Similarly, attempting to send the job to the backend via
+results in the following IQX error
+The DynamicalDecoupling would nominally add Pulse schedules for non-basis gates I think (the following code below shows how).
+The first attempted solution (which does not work), creates a Gate from an equivalent QuantumCircuit:
+checking that this Gate is equivalent to the YGate() provided by the circuit library,
+returns
+However, now
+returns
+and there does not appear to be a method to add a matrix representation to a Gate.
+The second attempt works but requires a detailed knowledge of Pulse, which seems like an unnecessary hurdle for a user simply wanting to implement dynamical decoupling (this includes detailed knowledge of how the backend works as well). First, when calculating durations, let the transpiler passes know that a 'y' gate duration is the same as 'x':
+Next, create a Schedule in the Pulse builder that implements the 'y' gate in terms of the 'x' gate, and add it as a calibration:
+which can be scheduled and run on an IQX backend.
+Nominally I think the latter approach should be added for Gates in Qiskit's circuit library (or at least the single qubit ones) inside the DynamicalDecoupling pass (or another one that explicitly does this, similar to RZXCalibrationBuilder). In general I think functionality that allows a user to specify the matrix representation of what they wish to achieve to the gate itself (such as with PulseGates). A similar issue to this has been noted with respect to interleaved randomized benchmarking in Experiment, where the user cannot specify the desired Clifford element of PulseGates.
+I think it's expected that the code in "how can we reproduce the error" should fail; it explicitly tries to use a YGate on a backend that doesn't support it.  The general fix would be to make it easier to pass the dynamical decoupling sequence through the basis translator, but I'm not really sure that makes any physical sense; surely your choice of dynamical decoupling is going to strongly depend on the available gate set of the hardware backend?
+I think the interesting thing here is that Qiskit knows that the YGate() used in the DD sequence here corresponds to the 'y' instruction I added to the instruction_schedule_map (as also in the error received in "How we can reproduce the issue?").
+Of course that's correct that your choice of DD sequence is going to depend on the available gate set, and I think making a transpiler pass that can make sense of easily-expressible gates for DD in terms of pulse gates would be valuable (as with the calibration builders). For example, a simpler case is the Xp-Xm DD sequence IBM uses in experiments such as QV 64 and scalable error mitigation is not easily implementable because this is not exactly equivalent to the [XGate() XGate()] in the DD tutorial. The Xp corresponds to the 'x' instruction, but the Xm would be the 'x' instruction with negative amplitude, which could compensate for amplitude calibration error. The point of this issue is that this should be more easily done in Qiskit.
+To summarize, what I would like to do is:
+From this it should be apparent how to proceed with YGate()s and so on.
+A little update: I brought up dynamical decoupling again in an open Terra meeting today, essentially asking for comments on your needs and how we can / if we should implement them.  We agreed to move further discussion here.

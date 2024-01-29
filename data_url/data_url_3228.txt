@@ -1,0 +1,16 @@
+This does not parse:
+But this is OK:
+python -c 'from pyquil._parser.PyQuilListener import run_parser; run_parser("DEFCIRCUIT FOO:\n    NOP\nFOO")'
+Was this fixed @ryankarle ?
+Also thought this was resolved by Quil 1.1. Reopening until we know this isn't an issue
+This might be non-trivial to fix. pyQuil happily parses a DEFCIRCUIT that has no qubit variables. The issue comes when it tries to parse the instruction FOO above. There is no grammar rule that says parse a bare name. The closest we have is the gate which requires qubit variables to match. In fact, this is how a circuit application is handled -- through the exitGate() function in PyQuilListener. FOO 1 looks enough like a gate that we just pass it on as if it were a gate, except that we also place the restriction that it have arguments (see Gate).
+So I dunno how we can fix this. The quilc parser must deal with this somehow. I guess Lisp is just better, eh? Maybe we can lift the restriction above. Since the qubits argument to Gate() doesn't have a default value, if it is the empty list, then we have manually provided an empty list and maybe that should be OK. Then circuit applications would Just Work.
+I'd like to add my opinion that I don't like that the body of a DEFCIRCUIT can reference static qubit literals at all. I'd strongly prefer FOO 1 to account for all of the qubits touched by FOO: the qubit 1, and only qubit 1.
+@notmgsk should we give this a go again?
+A basic issue is that pyquil has no distinction between gate applications and circuit applications (everything gets parsed into Gate objects), and resolution is done by name via global lookup tables like QUANTUM_GATES.
+For example, one easy way to allow for nullary circuit applications in the parser is to change
+to
+in Quil.g4, and correspondingly remove
+from Gate.__init__.
+But this is a bad idea, because we should be enforcing the non-nullary condition for gate applications.
+The way that the quilc parser addresses this is to actually do two passes. The initial parsing produces an "unresolved application" object. A second pass resolves applications to gate applications or circuit applications, depending on the presence of suitable DEFCIRCUIT etc. The resolved objects are tagged with some important information: a pointer to their corresponding gate or circuit definitions. This is an additional level of detail that pyquil does not maintain (in pyquil, a Gate instruction has only a name, with no explicit reference to its corresponding definition).

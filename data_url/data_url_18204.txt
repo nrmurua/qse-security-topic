@@ -1,0 +1,68 @@
+Let's have a discussion about what we would like to change in the overall structure of the code.
+Some of the things to consider:
+Non-Python code:
+@diego-plan9 and @atilag's suggestion is to have src/python/ for python components and src/core/ for non-python components.
+Full integration tests
+These are a few tests that touch on many parts of the SDK and exercise as much of the toolflow as possible. Should they be included under test in a separate directory? There may be some overlap between this and the examples/python directory.
+Benchmarks for profiling
+These will be used as benchmarks to profile the speed of various components. Useful, for example, to evaluate a new mapper implementation or to evaluate the speed improvement of a c++ implementation over a default python.
+Please discuss in the comments.
+I like qiskit/ more than src/. Fits better with the current directory structure, and also when I write from qiskit import QuantumCircuit it feels more in line with the directory structure.
+I like qiskit/ more than src/. Fits better with the current directory structure, and also when I write from qiskit import QuantumCircuit it feels more in line with the directory structure.
+I like it as well - the src/core and src/python was mostly about presenting the structure rather than setting in stone the actual name of the parent (src) folder. Users cloning the repository will need to tweak slightly their workflow regardless of the structure we chose, though, as it will no longer be possible to just clone the repo and execute import qiskit from the root repository folder - but I feel we can work on the assumption that the users that clone the repo should be "power-users" and familiar with Python to alleviate it (as it is mostly a matter of modifying the PYTHONPATH or cd into the right directory).
+Full integration tests
+I have no strong opinion - probably depends on the amount of them we expect in the short-mid future, but yes, making the easily isolated (either on a separate directory, or just on a separate file) sounds very handy for tooling purposes.
+Benchmarks for profiling
+Good point! It feels part of a bigger discussion (ie. the introduction of a benchmarking mechanism as whole), but do you have a more specific proposal or idea already?
+Assuming it will take a form along the lines of  "a Python module + a set of qasms/qobjs", maybe taking the chance to introduce a resources folder (test/resources?) would be a good option - we are actually using "resources" (loosely defined as "non-code files that are needed by the tooling surrounding the sdk") already for the tests (test/python/qasm, test/python/*.dat, test/python/*.txt) and it would make it more general.
+Thanks for the suggestions @diego-plan9.
+How about the following structure?
+Regarding test directory structure proposed by @ajavadia , sounds like test/functionality are the unit tests that every component should run independently of other components, right?. This usually goes into a test directory in each of the components, for example:
+qiskit/python/transpiler/test qiskit/python/backends/test ...
+This way it's clear that tests in there are unit tests for this very component.
+So for integration tests (the ones that test toolflows, and different component interaction), feels like having a qiskit/test/ directory could be a good place. Benchmarking tests and regression tests usually involve many other components, so I agree with Ali that we should be placing them as subdirectories of the regression tests, something like: qiskit/test/benchmark and qiskit/test/regression.
+For example, how successful were we in reducing the depth of the circuit, or in reducing qubit usage
+Could this be considered as a variation of regression tests?. We can set the criteria in the tests to decide whether a new change in the transpiler is improving or degrading current performance, and tweak this criteria to tune the results, so I would say that they may be considered regression tests.
+In a more broad view, this is what I think could be a more complete directory structure:
+├── doc                     <--- SDK Documentation
+├── qiskit                   <---- Root dir for all supported languages/bindings
+│   ├── core               <---- Native code for max performance parts
+│   │   └── test           <---- Unit tests for core component
+│   │   └── examples <---- Examples on using this component
+│   ├── python
+│   │   └── backends <--- backends component
+│   │   │   └── test      <----- unit tests for backends component
+│   │   └── transpiler  <---- transpiler
+│   │   │   └── test      <---- unit tests for the transpiler
+│   │   └── another_component
+...
+│   │
+│   ├── test                        <---- Integration tests (they involve many components interaction)
+│   │   └── benchmark       <---- benchmarking tests (they usually involve many components)
+│   │   └── regression        <---- regression tests (they usually involve many components)
+├── tools                 <---- Helper tools, and out-of-the-SDK stuff
+Part of this is already done. It is still confusing to me that src is the entry point for the CPP simulator instead of the Python code. I would find a way of renaming the src folder, if possible.
+Regarding the structure of the tests, I agree with @atilag in that unit tests should be close to the functionality they are testing.
+Finally, the majority of the tests we have are actually integration tests and we could reduce the number of them without reducing the code-base surface we are testing.
+I personally prefer that we keep only the python code under qiskit  directory because it is the namespace of the python package. While it's simple enough in the setup.py to map a namespace to a different directory I've always found that more confusing that just making it the same thing. Then we keep the non-python parts of the codebase under another directory. We could use src (and then have subdirectories there for the individual components) or some other name as long as it's purpose was clear.
+As for the testing directory, splitting things up by categorization of testing makes a lot of sense. But I'm not a fan of having test subdirectories for each directory in the python tree. It complicates test discovery unnecessarily, and there isn't anything to be gained by having things split up. I've always just mapped the source directory structure in the tests directory.
+I'm also definitely a fan of including the tests directory in the python package, that way when we publish an sdist on pypi it includes the tests. This is useful for packagers because when they download the tarball they'll be able to verify their packages work by running the tests. (instead of having to also clone the repo to get the tests) It also just feels right to include them in the python package because it's code we're building.
+The pattern I've used in most of my projects (and seen in basically every other python project I've contributed to or worked with) is to have a unified test directory that splits things up by class of testing.
+For example using @atilag example above it would become something like:
+├── doc <--- SDK Documentation
+├── qiskit
+│ │ └── backends
+│ │ └── transpiler
+│ │ └── another_component
+...
+│ │
+│ ├── tests
+│ │ └── benchmark
+│ │ └── regression
+│ │ └── unit
+│ │ │ └── backends
+│ │ │ └── transpiler
+│ │ │ └── another_component
+│ │ └── integration
+This has the advantage that all the testing is in one place, it's simple to see what the tests are doing and what it's testing. It also makes discovery simple, you want to run unit tests just run discovery on qiskit.tests.unit or for regression tests run discovery on qiskit.tests.regression If we used the structure with test subdirs all over the place we end up having to manually construct a test suite (still using discovery, but just a place to aggregate all the various locations tests live)
+I am going to close this as when get aer out the src will go and then i think there are other places chasing the test.

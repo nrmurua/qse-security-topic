@@ -1,0 +1,32 @@
+When using a RAM profile to run a frequency sweep on a AD9910, the output power of the DDS channel is dependent on the RAM step size.
+We prepare and than load RAM profile 0 with 3 FTW values and loop over different values for the step argument of the set_profile_ram method of the AD9910 class, see code.
+For step sizes (smaller and around the maximum allowed step size of 2**16), the RF amplitude is very small. Increasing the step size (even beyond the 16-bit value it can have) results in higher power outputs. But increasing it beyond the maximum value of a 32-bit integer decreases the power again:
+
+The green trace is a TTL that marks the start of each frequency ramp and the yellow trace is the DDS output. Integer values for the step sizes are (25000, 50000, 250000, 25000000, 10**10).
+We checked, that the frequency values are applied correctly, but the change is not visible in this image. Also the step value is set correctly, which is the maximum value of around 260us for most of the above values.
+I am suspecting, that there might be a an error in creating the first part of the 64-bit word used in set_profile_ram, when the supplied step argument is not a 16-bit integer. Maybe writing the combined values causes some overflow into other registers.
+Manually casting the value of step to np.int16 results in a compilation error, however.
+The power of the DDS does not depend on the step argument of set_ram_profile for a frequency ramp using the RAM functionality.
+Power during a frequency sweep depends on the step argument.
+@pmldrmota: Possibly of interest.
+I did some more testing with the current master:
+The issue is still present with the code from @JKiethe.
+The amplitude seems to be related to bits 61:56 of the register 0x0e to 0x15 in RAM mode. They should be open according to the manual page 60.
+Writing 1s there via
+produces the following result for timestamps np.array([1, 2**4, 2**8, 2**12, 2**16-1]). The rest is equal to @JKiethe's example:
+
+This stills seems off for 2**16 - 1. In addition the behavior changes when using a different profile (e.g. profile 7). Will try tomorrow with #1584 applied.
+I'd be surprised if #1584 would change the behaviour, but we could try masking the high bytes as follows to make sure that the bits 63:56 stay open:
+Unfortunately, I currently don't have a setup for testing this at hand.
+Looking at Table 5. Data Source Priority in the AD9910 datasheet, I believe that in your case, the ASF is provided by the bits in the active single tone profile register! As these bits overlap with the step size, it wouldn't be surprising if the amplitude is affected by the step value.
+Proposed solution: By setting the osk_enable bit in the CFR1 register whenever using the RAM with destination not equal to RAM_DEST_ASF, you can control the amplitude using the set_amplitude method.
+I'd be surprised if #1584 would change the behaviour, but we could try masking the high bytes as follows to make sure that the bits 63:56 stay open
+Yeah I applied #1584 nonetheless since it just improves the usability of RAM. We ended up asserting step < 2**16 to make the user aware of a unsuitable step size.
+Looking at Table 5. Data Source Priority in the AD9910 datasheet, I believe that in your case, the ASF is provided by the bits in the active single tone profile register!
+This seems to be the real issue here. By tracking the relevant bits by hand I came to that conclusion but could not wrap my head around why the chip would use the single tone amplitude during RAM .... well, seems like it's behaving exactly as it should :D
+Proposed solution: By setting the osk_enable bit in the CFR1 register whenever using the RAM with destination not equal to
+RAM_DEST_ASF, you can control the amplitude using the set_amplitude method.
+Sounds good to me. Regarding the orig code of this issue and for anyone stumbling upon this:
+@spomjaksilp and @pmldrmota Thank you for investigating this and finding the solution!
+I will try out the code snippet, once there is some free time on the machine.
+(Another comment for people using ARTIQ-5 release: The arguments manual_osk_external=0, osk_enable=1, select_auto_osk=0 for set_cfr1 do not exist. But you can probably get around it, by manually calling write32 and inserting the code of set_cfr1 of the newest commit. I did not test this however.)

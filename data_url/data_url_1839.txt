@@ -1,0 +1,14 @@
+The state_vector method in StateVectorTrialResult includes a copying of the state vector to resolve issue #3101:
+
+This eliminates the issue of mutating the state vector, but can significantly increase runtime for large circuits without a clear indication of the root cause. We should force users to explicitly make a copy of the state if they need it, either by renaming the method to state_vector_copy or by removing it altogether and requiring users to copy the final_state_vector field.
+Related: qsim issue 237
+For the final simulator state it's not clear why it needs to copy at all (Think @95-martin-orion commented on this in original PR not sure why I ignored it).
+ref #3115
+Discussed at Cirq Cynque: 1. let's go without copy. 2. make a note in the release notes about potential breakage here.
+From cirq sync:
+Let's do it!!
+@95-martin-orion I just remembered to mention: I noticed an unnecessary sv copy introduced in https://github.com/quantumlib/Cirq/pull/4533/files. While that PR made sweeps more efficient, it inordinately makes an unnecessary copy of the state when running simulate: simulate calls into this new function, which creates the SV and calls the base implementation. The changes to the base implementation in that same PR then copies the state for each paramresolver (which in this case there's only one) and runs on it. Thus we end up with two copies of the initial state vector when we only needed one.
+One solution is to have the base implementation skip copying the state for the last paramresolver, and just use the provided state directly. Officially this would be breaking since simulate_sweep_iter is public.
+I just remembered to mention: I noticed an unnecessary sv copy introduced in #4533...
+Kind of tangential to this issue, but I support the solution you've described. What happened to initial_state prior to your changes? It looks like it was consumed (and possibly mutated?) by simulate_moment_steps, but that conflicts with it being reused for every parameterization...
+With #5324 merged, all that's left for this is to complete the deprecation and switch the default to copy=False.

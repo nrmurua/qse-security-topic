@@ -1,0 +1,27 @@
+Before raising this issue, I have already checked that I am:
+Running a QAOA problem using the OpenQAOA workflow as described in this notebook will require web authentication twice before executing the run. For reference, see the attached screenshot.
+This happens because DeviceAzure, which is defined in src/openqaoa-azure/openqaoa_azure/backends/devices.py, has a method called check_connection, that is called twice, once from within the workflow and the other time from within the backend object.
+Steps to reproduce the behavior:
+Upon executing the above steps, the web authenticator should only prompt once for device authentication
+
+@vishal-ph I would like to take a stab at this issue. Could you assign it to me?
+NOTE: - Please branch out from openqaoa/dev and will make the PR into openqaoa/dev. Thanks
+Hi, @vishal-ph. I was trying to reproduce the issue with steps described above. My code is below
+and my results after the execution code above is the following:
+
+I have only changed timeout from 300s to 3 to skip long waiting for authentication. As you can see internally the authenticator throws an exception after some period of time. May I ask you to provide code to be able to reproduce this issue locally?
+The next thing regarding
+This happens because DeviceAzure, which is defined in src/openqaoa-azure/openqaoa_azure/backends/devices.py, has a method called check_connection, that is called twice, once from within the workflow and the other time from within the backend object.
+I found that method check_connectioncalled withing workflow here https://github.com/entropicalabs/openqaoa/blob/dev/src/openqaoa-core/openqaoa/algorithms/qaoa/qaoa_workflow.py#L218 and probably you meant this call https://github.com/entropicalabs/openqaoa/blob/dev/src/openqaoa-core/openqaoa/backends/basebackend.py#L563 inside QAOABaseBackendCloud but I can't find any reference to it in steps to reproduce.
+So please give more details to have a more clear picture of what is going on.
+@TerraVenil, thanks for taking a look at this issue! Regarding your questions:
+Let me know if you still have questions or something is unclear! Thanks
+Judging from your screenshot, it seems your CLI is not set up with Azure credentials. To access the devices from Azure and use them with OpenQAOA, you must first set up Azure CLI. Instructions to do that can be found here. In case, the issue is something else, please let me know!
+I have installed Azure CLI and also provided the correct resourceId and location. Screenshot demonstrated that Azure Quantum iterates over a list of credentials to find the most appropriate to current user setup. So now I intentionally skipped the step of az login to reproduce an issue when to authenticate a user an interactive browser session required in Azure that corresponds to InteractiveBrowserCredential or DeviceCodeCredential. And from the screenshot we can see that eventually if you don't specify any login information Azure Quantum will throw timeout exception that an seen for both InteractiveBrowserCredential and DeviceCodeCredential. Question how you were able to achieve two sequential requests from a web authenticator still open :)
+For the second part of your question, you can look here and notice that the check_connection method of the device object verifies if connections to both provider and QPU are made, and returns True if both self.provider_connected and self.qpu_connected are True, or if self.provider_connected is True and self.device_name == ""
+As you rightly pointed out, the check_connection is in the qaoa_workflow.py and basebackend.py. However, I think we can add conditionals, in the backend file that first check whether the device.provider_connected and device.qpu_connected are already True and skip check_connection if that's the case.
+To understand if we necessarily need this check I have created small unit test to demonstrate such case
+Do we really expect that the user(is it a normal/obvious/intuitive scenario?) before using QAOAQiskitQPUBackend would call check_connection on DeviceAzure? Of course we should protect code from different scenarios but for example I could't find any similar workflow in existing unit tests base. Just to be sure that we are adding a useful feature. Thanks!
+Ok, I found place where we want to avoid additional call to check_connection because obviously it was done before in scope of compile method and created PR.
+@Q-lds or @vishal-ph please assign this issue to me. Thanks.
+Fixed this issue in PR #249

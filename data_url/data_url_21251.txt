@@ -1,0 +1,19 @@
+Sayma AMC firmware would report failure for SYSREF trying to reach DDMTD phase target, and/or trying to align to RTIO TSC phase.
+Recently, since I've been testing Sayma for consistency across multiple power-cycles, I've observed that Sayma AMC can occasionally emit the following errors on the log upon power-cycling or reloading the FPGA (artiq_flash start):
+These errors would happen randomly. Besides, the RTIO TSC alignment error might not even happen even after SYSREF fails to reach the DDMTD phase target. Due to my lack of readings into the code and DDMTD mechanism at this moment, I cannot tell whether or not the SYSREF is properly aligned to the RTIO TSC when SYSREF reports DDMTD alignment errors.
+I went further to have the firmware print the delta value when measuring the DDMTD phase, and usually it would fail when the minimum delta only reaches around 7, while it would pass at 0-2 normally. Again I currently don't know the implications yet.
+Note: this is a slightly-modified gateware based on c224827 to fix some DRTIO transceiver errors and add a hardcoded SERDES TTL output driver.
+Since we've seen issues surrounding UltraScale Xilinx instances before, I've tried to review the requirements for instances used for DDMTD on Sayma RTM (e.g. MMCM) and SYSREF sampler on Sayma AMC (e.g. ISERDESE3), but they seem to have been met by our code already. It is unlikely that the UltraScale instances are causing the occasional errors.
+It might be possible that certain design flaws are present in the DDMTD core itself. From my early understanding of DDMTD, the down-converted clock signals   need to be deglitched by one of the following methods:
+The method chosen currently seems to be "first edge", as in the following code excerpt:
+
+There's already a self-test of the DDMTD core built into the firmware and run automatically, which should be able to detect problems due to glitches.
+@HarryMakes This paper has a bit more detail than the one you mentioned.
+https://white-rabbit.web.cern.ch/documents/DDMTD_for_Sub-ns_Synchronization.pdf
+Hi all, I have a question regarding the difference between AVG_PRECISION_SHIFT and SYSREF_SH_PRECISION_SHIFT as shown below:
+
+
+Values of RAW_DDMTD_N_SHIFT, DDMTD_DITHER_BITS and DDMTD_N_SHIFT for reference:
+
+If my understanding is correct, jdcg::jesd204sync::measure_sysref_sh_limits() is relevant in SYSREF<>RTIO alignment for finding the SYSREF S/H average limits (in DDMTD phases). It measures DDMTD phase values via jdac_common::measure_ddmdt_phase(). Subsequently, the mean values are used for calibrating the target DDMTD phase for SYSREF for HMC7043 to slip ("coarse delay control").
+While there doesn't seem to be connection between the precision required for measuring the DDMTD phases (AVG_PRECISION_SHIFT) and the precision for averaging the measured S/H limits (SYSREF_SH_PRECISION_SHIFT), is there a specific reason these two should be set up this way? To me, the array of measured values should be bitshifted to the left enough before averaging, if that makes sense. Thank you.

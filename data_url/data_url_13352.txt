@@ -1,0 +1,23 @@
+Mitiq 0.11.1
+Braket SDK 1.11.0
+Yes, I looked at the open issues.
+Hi! I'm trying to run a six qubit circuit with Mitiq on the Rigetti Aspen-10 machine available through AWS Braket. Following the structure of the example notebook here, https://mitiq.readthedocs.io/en/stable/examples/braket_mirror_circuit.html, I found I had to develop a slightly more complicated workflow. Since we can't just select the best pair of qubits, I decided to offload place and route to the Quil compiler running at the machine by sending a circuit with the minimum number of shots, reading the compiled result from the task result, and parsing that back into a circuit that I can send in a verbatim box (if it already executed on the device, I know the connectivity is going to work out and a Rigetti engineer has already decided it's the best qubit set to use!).
+When I do this, some of the gates come back with floating point arguments, and some come back with exact values, eg for a few gates on qubit 21 and then a CZ between 21 and 36 (connected on the chip), it might read,
+What I've found is that if I put rx(qubit#, np.pi/2) back into my circuit to be executed in a verbatim box, the ZNE factory folds this as a V gate, as it is the sqrt(X). However, the Rigetti machine has a limited gate set; it recognizes only a few gates, I believe it can be summarized to: Rx(±n*pi/2), Rz(theta), CZ, CPHASE(theta), and XY(theta). Those are going to be the native gates allowed in a verbatim box as described here: https://docs.aws.amazon.com/braket/latest/developerguide/braket-constructing-circuit.html, which keeps the compiler from optimizing away the folded gates. Folding the X(±pi/2) gate into a V or Vi gate breaks the verbatim validator, preventing me from running the folded circuits.
+Additional Python Environment Details (pip freeze or conda list):
+(let me know if this is necessary, should be isolated between Mitiq and Braket)
+Thank you!
+Hello @eth-n, thank you for your interest in Mitiq!
+If this is a bug report, please provide screenshots and/or minimum viable code to reproduce your issue, so we can do our best to help get it fixed. If you have any questions in the meantime, you can also ask us on the Unitary Fund Discord.
+Thanks @eth-n.
+You should be able to run by using this quick-and-dirty compiler:
+Specifically, use ckt = Circuit().add_verbatim_box(compile_to_rigetti_gateset(ckt)) in your rigetti_execute_repro function. Can you try this and let me know if it works?
+(You may need to add some compile instructions to the compile_to_rigetti_gateset function, or can remove ones unnecessary for your example - at your discretion.)
+We can probably fiddle with
+
+to return rx instead of v. The only concern is there may be some cases where you actually want it to be v instead of rx.
+Okay, very interesting. I thought I had it covered but I think I see where that step can fit in. Here's more explicitly how I'd set up the pipeline, it might inform an agreed upon design:
+So I wrote the second quick-n-dirty compiler for the folded circuit before sending it. A few things come up.
+Edit: Further testing has revealed that the Aspen-10 device is having issues with verbatim_box, the instruction that disables the cloud-based compilation layer for any gates within the box. The Braket team is investigating the problem.
+Happy to help diagnose if you'd like to post in the Mitiq channel at http://discord.unitary.fund. This seems unrelated to the original issue, though, of unitary folding preventing a circuit which did run from running.
+This issue had no activity for 2 months, and will be closed in one week unless there is new activity. Cheers!

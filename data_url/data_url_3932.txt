@@ -1,0 +1,102 @@
+This issue aims to highlight the need for new ways to describe quantum operations and, particularly, a way to do so that allows parametrizations.
+Some proposals for QASM-like languages that support such gate-definitions already exist. An example of which is Cross et all, OpenQASM, even though their approach in building all gates from a parameterized native-gate set may take this idea beyond the scope of this issue.
+Finally, I should point out that this capability could integrate well with the functionality proposed in issue #265, allowing the compiler to manage the waveform definitions used for a specific program. I believe @wvlothuizen also had some ideas on this that may be worth sharing.
+This issue aims to highlight the need for new ways to describe quantum operations and, particularly, a way to do so that allows parametrizations.
+Some proposals for QASM-like languages that support such gate-definitions already exist. An example of which is Cross et all, OpenQASM, even though their approach in building all gates from a parameterized native-gate set may take this idea beyond the scope of this issue.
+Finally, I should point out that this capability could integrate well with the functionality proposed in issue #265, allowing the compiler to manage the waveform definitions used for a specific program. I believe @wvlothuizen also had some ideas on this that may be worth sharing.
+In OpenQL, one can write:
+k.gate(name, qubit operand vector, classical operand vector, duration, angle)
+E.g.
+k.gate("rx", [0], 0, (np.pi)/4 )
+as in tests/test_controlled_kernel.py
+Similarly with ry or rz.
+Is this what is desired?
+I would like to revisit this issue to introduce a use-case, which I believe should form the basis of discussion for potential implementations. Having read @jvansomeren answer, it may already be possible to specify these operations, in which case a part of the problem would have been already solved.
+Here is the proposed use-case:
+We want to provide support for arbitrary-angle rotations Ry and Rx. However, it is important to understand that we have a limited number of waveforms (a specific waveform is required per rotation angle supported) available per program that is run. Therefore, we could support arbitrary rotations through a special case of gate decomposition, that could translate any rotation-angle into a set of available rotations.
+An example of this would be to have a native set of rotations composed of:
+{180, 90, 45, 22.5, 11.25, 5.625, 2.8125, 1.40625, 0.703125, -90, -45, -22.5}
+and decompose a rotation of RX(318.2) into:
+180+90+45+2.8125 or, to improve on circuit depth, into:
+-45+2.8125
+which, in both cases, would result in an approximation error of 0.3875 degrees.
+This, of course, would only support arbitrary rotations up to a small error in angle, which would be (at most) the smallest angle rotation supported. However, I believe this is a fair constraint and one that we can live with. Furthermore, potential issues in circuit depth could be addressed with intelligent changes to the native set of rotations (for example, increasing the number of supported negative-angle rotations).
+To introduce a discussion on this topic, I would like to ask the following questions. Hopefully, @jvansomeren and @wvlothuizen can give some input.
+After discussion, two ideas were raised that I believe should be noted:
+Let me try to sketch an algorithm
+that as far as I know is optimal, i.e.
+minimizes the approximation error and minimizes the number
+of gates in the decomposition,
+assuming the target angle is an arbitrary value, each with an equal probability.
+Given a compile-time known angle,
+assume it is in degrees; if not, it can be converted to/from radians;
+assume it is in the range -180 <= angle < +180; if not, it can be converted into this range.
+Then a rotation in X or Y over this angle
+should be decomposed into a series of rotations in X or Y over primitive angles
+where those rotations over primitive angles are supported by the platform;
+when it is not possible to exactly do this decomposition,
+there will be an approximation angle error left at the end;
+the absolute value of this approximation angle error should be as minimal as possible.
+To maximize the fidelity of the result, the following options could be taken:
+Assume primitive rotations are available with a primitive angle (pa)
+that have a value +/- 2^(-k) * 180 for k=0 till k=N
+(e.g. for N=5 we have primitives for +180, +90, +45, +22.5, +11.25, +5.625,
+and -180, -90, -45, -22.5, -11.25, -5.625);
+with this binary division we get the best compromise over all angles in the given range
+of a minimal approximation angle error and a minimal number of gates in the decomposition.
+Do we believe this thesis or need it be proven?
+For example, 174.375 can be decomposed into +180 and -5.625.
+The algorithm for this decomposition, represents the angle
+as a signed integral binary value multiplied by the smallest positive primitive angle (ppa, 5.625 in the example);
+the number of digits in this value is N+2 (we have 2x(N+1) primitives, so we need 1+(N+1) bits);
+for N=5, this amounts to 7 bits, of which the first indicates the sign;
+0 represents 0, and +180 cannot be represented in this system.
+Example binary values and angles:
+The algorithm scans the binary value from left to right
+and divides it in sequences of 1 valued binary digits;
+when we assume a positive angle, the first bit is 0;
+we then search for the first 1 bit and then for the last 1 bit of that sequence of only 1 bits;
+when the first is for 2^F and the last for 2^L, we decompose the angle initially
+into (2^(F+1) - 2^L), subtract this from the target angle value and loop again,
+searching for the first 1 bit, etc.
+As optimization, when F=L, we only decompose into 2^L.
+So 0011011 decomposes into (2^5-2^3) + (2^2-2^0), i.e. 32-8+4-1=27 ppa.
+With negative angles we get a similar algorithm,
+e.g. by negating the angle first, and then negating all primitive angles in the result.
+We have to take care of the 180 special case here, because it cannot be represented in 7 bits.
+So 0111111 (+174.375) decomposes into +2^6-2^0, while we know that +2^6 x ppa = 180.
+And 1000001 (-174.375) would be decomposed into -2^6+2^0.
+Is this an acceptable algorithm?
+Assuming this algorithm is what we want,
+we need to define how to configure the available primitive rotations.
+The current form of the configuration file doesn't specify the angle with each primitive.
+We could add two attributes there: the dimension (X or Y) and the angle (in degrees?).
+The implementation of the angle decomposition could then probe the configuration for the presence of primitive rotations and find the maximum N value for which all primitives are available.
+Subsequently, the implementation would execute as above, and create gates
+by finding the gates in the configuration with matching primitive angle.
+For backward-compatibility, we could create a table inside the implementation that knows the names of the rotation gates until now and maps these to the primitive angle they implement; when the new attributes are not present with a gate in the configuration file, the gate there gets a second chance by a lookup into this backward-compatibility table; when that also fails, that gate definition in the configuration file is not taken into account as a potential primitive rotation gate by the algorithm.
+An algorithm that on average leads to a smaller circuit depth (because of expanding to less gates) is the following:
+Assume that the fixed-angle primitives have rotations (for X) of
+180, +/-60, +/-20, +/-6.666, +/-2.222 +/-0.7406, i.e. 180 x 3^(-k) for k=0..N.
+The smallest primitive angle thus is 180 x 3^(-N).
+First convert the parameter angle to an equivalent one in the range [0,2x180>.
+Then round the parameter angle to the nearest multiple of the primitive angle.
+The resulting angle can then be exactly represented in N+1 ternary digits (0, 1 or 2),
+where the last digit represents a multiple of the smallest primitive angle,
+the one before it a multiple of 3 times this smallest primitive angle etc.
+For N=5 we could have a representation 0 1 2 2 0 1,
+and the primitive angle is +0.7406 (180 x 3^(-5)).
+Then convert this representation from using the digits 0, 1, and 2
+to using the digits 0, 1 and -1 by replacing each 2 by 3-1, i.e. replacing the digit by -1
+and adding 1 to the digit before it.
+012201 then becomes: 1 -1 0 -1 0 1
+Any overflow is discarded (which means subtracting 2x180).
+Then the angles for the primitives of which the combination approximates the original are:
++180 -60 -6.6666 and +0.7406
+As far as I see leads this algorithm on average to an expansion with less gates for a given
+maximum approximation error than the binary algorithm above.
+Also it uses less primitives (i.e. code words) to reach the same.
+The idea behind this is that in the binary system there were alternative gate sequences that
+led to the same approximated angle with the same error, so there was redundancy.
+In the ternary system, there is no redundancy, so it is a more efficient encoding.
+There is, at this point, no longer the need for the functionalities described in this issue

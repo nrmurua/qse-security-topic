@@ -1,0 +1,57 @@
+The latest numpy enables extra_link_args in your site.cfg. Hence the setup.py files should not set those values.
+For instance qutip/fortran/setup.py:
+should be
+as newblas can be given options through the site.cfg.
+I do not get a build failure under NumPy 1.10.1.  What was the particular error message?  Any changes would also have to be backward compatible with earlier NumPy versions.
+If you have extra_link_args in the site.cfg, then a double keyword argument
+happens when reading the options for the blas library.
+If you use openblas, add this to your site.cfg
+[openblas]
+extra_link_args = ... whatever ...
+and the error will happen.
+The error is this
+TypeError: config.add_extension() got multiple values for keyword argument
+'extra_link_args'
+2015-11-08 21:12 GMT+01:00 Paul Nation notifications@github.com:
+I do not get a build failure under NumPy 1.10.1. What was the particular
+error message? Any changes would also have to be backward compatible with
+earlier NumPy versions.
+—
+Reply to this email directly or view it on GitHub
+#392 (comment).
+Kind regards Nick
+Does this change break when using extra_link_args on NumPy ≤ 0.10.1? Also, should extra_link_args here be allowed to override site.cfg? It might be good to do a newblas.update() to allow users to explicitly pass compile args for qutraj_run that differ from site.cfg.
+No, see this commit
+numpy/numpy#5597
+which enabled it.
+Hence, it will be a problem for future numpy versions as well.
+Sure you can do whatever you want with the options, or you could do a
+double option,
+opts = get_info('lapack_opt',0)
+opts2 = get_info('qutip',0)
+opts.update(opts2)
+or something alike, that should be your decision.
+The above would enable a specific [qutip] block in the site.cfg which
+localizes settings ;)
+2015-11-08 22:06 GMT+01:00 Chris Granade notifications@github.com:
+Does this change break when using extra_link_args on NumPy ≤ 0.10.1?
+Also, should extra_link_args here be allowed to override site.cfg? It
+might be good to do a newblas.update() to allow users to explicitly pass
+compile args for qutraj_run that differ from site.cfg.
+—
+Reply to this email directly or view it on GitHub
+#392 (comment).
+Kind regards Nick
+Ah, thanks for the link! It seems like having a [qutip] block in site.cfg would be a rather good thing going forward, if only to match the way NumPy is now going as of the Issue that you linked to. In the meantime, though, perhaps we should raise a DeprecationWarning if the user specifies arguments which will be ignored or overwritten with this change?
+I also like the idea of having a site.cfg file.  However, one thing that has been mentioned on and off for a while is making the mcf90 module an independent package from qutip.  This can be addressed in another issue, but this would also remove the need for such a modification directly to qutip itself.
+Given that the number one point of pain in installation that I have seen has been getting FORTRAN up and running, I think it could make sense to split off mcf90. It's extremely useful, but large parts of QuTiP are also useful without it.
+Neither Rob or I wrote the mcf90 module anyway (it is @arnelg 's hard work).  So at least I think that making it more independent is the way to go.  Of course @jrjohansson and @ajgpitch may have other thoughts.
+For me there are three main points here:
+and just default it to False. I have no comments on whether this should be preferred or not, or whether you will split it up.
+I thought we had resolved the installation issues with the Fortran side by making the MC solver a optional (default to False).
+I am not that I have fully digested everything in this thread, but @zerothi seems confident that there is just some small change that we need to improve integration with the latest Numpy. Its not clear to me what are the risks or other downsides.
+I think there are two separate issues here.
+As for the fortran module, it's true that the it adds a lot of build complexity, but most users do not need it and can easily install qutip without it. There is a case for removing it from qutip and put it in a separate module, but think this should be low priority, since it would require non-negligible amount work, would break backwards compatibility (it should bump next release to 4.0), and does not really provide any new features (other than a less complex code base). There might users who rely on it and for them it might be annoying if we remove it. So I would vote for postponing it until there are very strong arguments for removing it.
+As for the topic of this issue, I think that qutip should follow the lead of NumPy, even if it breaks backwards compatibility in the configuration methods, so that users that are familiar with NumPy and related projects does not have any surprises when using qutip. Also, if I understand correctly, this would mostly change how one configure and build against blas libraries such as openblas? Then I guess it would not effect the typical user that just download and install the package with standard configuration (no site.cfg file), and it should be safe the follow the advice of the OP.
+Ok, it seems like there is a consensus to implement a change of some kind. Does anyone feel confident enough to make a pull request?
+Done

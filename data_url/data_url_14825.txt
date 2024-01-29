@@ -1,0 +1,23 @@
+qiskit 0.44.1
+python 3.11.5
+When routing a non-native circuit to a physical layout, some operations, such as Barrier and Delay are added to all qubits in the backend. This can be an issue if some of these qubits are marked as faulty, and should instead be excluded.
+The following circuit
+where the coupling map of the backend does not include the [0,2] edge
+returns
+with a Barrier applied on all qubits in the backend, including the idle ones (here 4 to 6) and potentially those that are not operational.
+Operations should not be applied on non-used qubits.
+If any of the additional qubits is non-operational, the circuit will not run on the backend where those qubits may not be defined.
+If any of the additional qubits is not in use, it will not be marked as idle, negating the fix in  Qiskit/qiskit-ibm-provider#725 to avoid padding on idle qubits.
+I'm not clear how your example is showing a bug? That output looks like exactly what I'd expect.
+sorry, the image does not show it. The unexpected (at least for me) behavior is:
+Updated description with a more self-contained example
+So IMO the root of the issue here is that barrier has a dual meaning depending on the layer you're looking at it. In Qiskit it's primarily a compiler directive to treat parts of the circuit separately (and a visualization tool). So it's never specified in the target and is treated as available on all qubits. But on the IBM backends they have semantics beyond just Qiskit's definition. This normally isn't a problem but in the case of non-operational qubits being raised here we have a conflict between the definitions because Qiskit doesn't know that barrier can't exist on some qubits. Qiskit models non-operational qubits by having indices in a Target that don't list any supported instructions. For example, see:
+
+which is testing transpile() works with one non-operational qubit 4 on a simply synthetic 5 qubit Target example.
+Normally in this scenario I'd say it's the providers job to filter the barrier out because it's a custom backend specific constraint we're not capable of modeling in qiskit's target model. But I don't think the provider has enough context on the source of the barrier to know the correct behavior in this situation either. Like for the barrier in the issue's example it is inserted by the transpiler (by the BarrierBeforeFinalMeasurements pass) and would be safe to filter. But if it's a user inserted barrier like if you added  qc.barrier() before the qc.measure() then something (probably the provider or the backend itself) should error because it's invalid user input.
+I think the best path out of this is to avoid having the transpiler insert barriers for it's output. The only place it does that now is the BarrierBeforeFinalMeasurements pass, which is run before routing. The intent behind that was to prevent a the routing pass from inserting swaps to use a qubit after final measurement. Basically to avoid the transpiler from taking:
+and inserting a swap like this:
+(for an extremely contrived example). The barrier blocks swap insertion after the final measurements.
+But, I'm not 100% convinced we need to protect against that situation though with mid-circuit measurements now being a thing (when the pass was added it wasn't available on hardware). So it might be fair to just remove that pass from the preset pass managers (and likely update 2k tests that assume it's there). The other approach I've explored in the past is to just have the transpiler remove any barriers it inserts (see: #10323 ). But this gets tricky as when there is a mix of barriers that the user inserted and those the transpiler inserted they can get merged in certain contexts and recovering that was where I stopped on the PR.
+For a short term solution (as the above musings will likely take some time to implement or verify it's soundness) we could make BarrierBeforeFinalMeasurements "target-aware" and then it doesn't insert a barrier on a qubit that doesn't have any operations. It's kind of hacky and seems fragile to me (it's also sort of changing the semantics of Barrier), but I think it should be safe in this use case and not break anything else using the pass or Barriers otherwise.
+I managed to figure out a pattern that works for #10323 so once that PR merges it should fix this because the transpiler won't be output any internally generate barriers anymore.

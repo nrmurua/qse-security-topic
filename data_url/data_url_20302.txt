@@ -1,0 +1,23 @@
+See #171 for when this was originally added to liboqs 0.1.0 in 2017.
+After looking into this, some questions: What'd we think would be most valuable (& how do we want to display it)?
+a) a full Valgrind output (as originally done in #171) or
+b) only the peak (memory consumption) numbers (my preference)?
+A further question pertains to the way Valgrind gets run: I'd deem --stacks=yes most valuable but that had also not been done in #171. Why? Another option would be to report (additionally) --pages-as-heap=yes results.
+Examples:
+--stacks=yes:
+--pages-as-heap=yes:
+for comparison the output of not passing any of these options to valgrind at run-time (#171 version):
+--stacks=yes:
+--pages-as-heap=yes:
+Does someone understand the results of --pages-as-heap=yes? https://valgrind.org/docs/manual/ms-manual.html claims it to be more accurate but I can't see how Kyber could possibly utilize so much (more) memory (than McEliece). Unless we can understand this, I'd leave this option away.
+Final question: Where do we want to run/report this: As part of CI output or as part of (then incorrectly named) speed (performance) testing/visualization? My preference would be the latter, preferably creating new JSON entries for maxHeap, maxStack, maxUsageInstructionCount (the time(i) field above as a good proxy representation for algorithm complexity): Not as detailed as #171 but easier to digest.
+As usual, all opinions welcome.
+Does someone understand the results of --pages-as-heap=yes? https://valgrind.org/docs/manual/ms-manual.html claims it to be more accurate but I can't see how Kyber could possibly utilize so much (more) memory (than McEliece). Unless we can understand this, I'd leave this option away.
+Silly me, I now do (understand): This was due to Kyber running under pthreads and McEliece being excluded from that... Numbers become (much) more reasonable/explicable when disabling this. However, memory usage then becomes dominantly reported in dl_main (loading auxiliary runtime objects). Thus, Valgrind option --pages-as-heap=yes indeed is misleading and will not be used.
+Answers to remaining questions still solicited.
+Thanks Michael.  Sounds like --stacks=yes at peak makes the most sense for now.
+Regarding where to put the these tests, our options with be either test_kem, speed_kem, or a new mem_kem.  Despite the effort of creating and maintaining a new executable, maybe it should be a new mem_kem: since both test_kem and speed_kem do more than just run a single execution, there would be a risk of other things being counted towards memory usage (for example, as you found with the pthreads issue).  A standalone mem_kem would ensure it's "pure".  (Although maybe inspection of the test_kem code would show it's possible to create a sufficiently "pure" execution path within it.)
+Regarding reporting, yes I think we'd want to do it as part of the benchmarking platform, rather than the CI platform.  (Well, we'd probably want the CI to actually execute it so that it's being tested on a regular basis, but we wouldn't actually try to report the numbers from the CI.)
+Although maybe inspection of the test_kem code would show it's possible to create a sufficiently "pure" execution path within it
+That's what I also think: Please check PR #853 . If OK & merged, will run test_sig/kem with valgrind --stacks=yes within "speed"  (maybe consider renaming "speed" to "benchmarking"?) generating new JSONs.
+First proposal online at https://test.openquantumsafe.org/mem_kem_series.html; this is not yet showing results for ref or sig code; this is using separate test runs with file-stored intermediate keys and secrets as discussed in #853 (comment) . If OK @dstebila, will change the liboqs PR and create PRs for the speed data collectors and visualization.

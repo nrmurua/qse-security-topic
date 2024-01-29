@@ -1,0 +1,123 @@
+Hey!
+So for the last few days I have been trying to integrate liboqs and this version of OpenSSL in Python 3.8.11.
+This is basically what I am doing:
+Now when I compile Python, it finds that custom openssl installation, I added the paths to my PATH as well.
+However, when I then use Python, every SSL connection (even the ones without PQC) are getting an error with SSL "UNEXPECTED MESSAGE".
+Example:
+I was wondering if anyone could give me pointers, or get me on the right path, on how to fix this?
+Thank you!
+Can I assume that this is potentially because you can't just integrate the library? You have to make changes in the Python source code as well?
+Hi Sebastiaan, we have not at all tested whether compiling Python against an OQS-enabled OpenSSL yields post-quantum support in Python or not.  For OpenSSL-reliant applications, sometimes it's really easy (if memory serves, Apache and nginx just basically worked), sometimes there's a small patch (e.g., wireshark), and sometimes it's a massive undertaking (e.g., OpenSSH).
+I'd personally start by taking a look at the file and line number mentioned in the error message "_ssl.c:1131": What file is that? Is that provided by python? If it has a file named "ssl.c" what is it's relationship to openssl? Which code provides the TLS/SSL logic? If it's (oqs-)openssl, things may be simple, if python does its own crypto (?) things look bleak. To judge this seriously, one would need to know a bit more about python. Do you, @LeShadow ? I never tried to build it :-(
+@baentsch I don't really know the ins and outs of Python, but I should have looked at the file (that you mentioned) first before posting here! I was a little bit lazy and my apologies for that!
+I would like to try to figure out if I can make Python work with oqs-openssl, so I might give it a go. If I have any findings, or any progress, can I let you know anywhere?
+Current "findings" so far:
+If we run the tests, after compiling Python 3.8.11, then we get the message I mentioned earlier.
+Strace doesn't really show us what is going wrong, but I am also not the best at interpreting that either.
+Example strace:
+Now I created a very simple python script that basically just tries a connection to one of the test servers, like this:
+Now, instead of getting the above error, we are getting the following error:
+I looked at how Python is implementing Openssl, and if we look at the following line: https://github.com/python/cpython/blob/f4c03484da59049eb62a9bf7777b963e2267d187/Modules/_ssl.c#L960
+Then we see that it is using SSL_do_handshake, which it inherits from the included openssl/ssl.h file. (If the function returns a 0, it is apparently also a failure)
+So we know that Python does not use its own implementation of the do_handshake-function, so the next step is to understand why the handshake goes wrong.
+Like I said before, I am not the best at this, but I like challenges! So Tomorrow or Tuesday, I will continue 😊
+@LeShadow Thanks very much for your interest to merge liboqs and python as well as your analysis above. The error message in your latter try above (assuming you correctly built and linked liboqs and oqs-openssl (in)to python) looks very familiar in an OpenSSL setting: It always happens when client and server don't agree on the KEM group to be used. When trying to contact "https://test.openquantumsafe.org:6017" a client needs to request "saber" (as per the algorithm/port mapping table at https://test.openquantumsafe.org) to establish a connection. By default, an OpenSSL client (such as python in this case) only requests the use of classic crypto KEM groups, so the error is expected.
+There are two ways to change this: One is to change the list of default KEM groups (of which "saber" in this example needs to be a member) requested by the client. This is done by setting "saber" as part of OQS_DEFAULT_GROUPS configure parameter. This requires a re-build of oqs-openssl but no code change to the client (python in this case). It is a very limiting approach for trying different algorithms, though.
+The second option is much more flexible, but possibly requires a change to the python client source code: In this case, the OpenSSL function SSL_CTX_set1_groups_list needs to be called with such a KEM groups list (again, containing "saber" in this example). You may want to check the python source code whether it already contains a call to this function and thus permits setting the KEM groups (and ideally, exposes this to users of python such as to allow you to request "saber" explicitly when contacting port 6017 of our test server).
+Now, when reading the python SSL documentation it might be such that the function SSLContext.set_ecdh_curve might already provide this capability: It might be a bit surprising as OQS algorithms are not ECDH algorithms, but historically, the TLS 1.3 concept of KEM groups (which OQS uses) has its roots in the TLS1.2 concept of different (ECDH) curves. Long story short: You might want to try calling SSLContext.set_ecdh_curve("saber") before trying the SSL handshake. (python urllib.request.urlopen permits setting such "SSLContext") -- and things just might immediately work: In case I'm not clear, the suggestion is to amend your code above as follows:
+Good luck with your further tests! Please let us know how they go.
+@baentsch Thank you for your explanation! I will have a look at it tonight, with your input!
+Just to clarify how I built liboqs and oqs-openssl:
+I have a directory /opt, in there I have cloned both liboqs and openssl in respectively:
+In /opt/liboqs I used the following commands to configure and compile liboqs:
+mkdir build && cd build && cmake -GNinja -DOQS_DIST_BUILD=ON -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=../../openssl/oqs .. && ninja && ninja install
+In /opt/openssl  I used the following commands to configure and compile oqs-openssl:
+./Configure shared linux-x86_64 -lm --prefix=/opt/openssl_installed --openssldir=/opt/openssl_installed && make -j && make install
+Afterwards I executed /opt/openssl_installed/apps/openssl speed oqssig to verify it was working.
+I will continue this evening and let you know what I can find!
+Small status update:
+@baentsch
+After a few days of being ill, I thought I'd continue on my journey to get this to work!
+So, first I discovered that the version of Python that I was compiling (3.8.11) didn't have the same implementation of SSL (or not entirely the same, there are differences on how things are defined or executed) as the current version (which is Python 3.10.2). So I was also looking at the wrong code in Github to understand errors etc...
+So I compiled Python 3.10.2 with the oqs-openssl, as described above, and now I get a different error.
+For a test connection on port 6058, which uses p256_lightsaber instead of saber, I get this:
+This error is caused in the following function (can also be found here):
+I went to the include files for oqs-openssl, and behold, that is defined in obj_mac.h (here). So now I am trying to figure out why it can't find that group, yet it exists. Maybe I am missing something? I'll keep you posted!
+To be continued...
+EDIT:
+I also did a test by selecting the very last group in obj_mac.h in a clean openssl installation, just to see if it would try to get that group to decide on a curve. This does not seem to work either, it errors out on the same line as before. (Group I tried is uacurve9, line 5195 in obj_mac.h)
+EDIT 2:
+I did an strace of the execution of my script, and saw the following:
+You can see that Python loads the wrong SSL libraries. So I will need to fix first :).
+My apologies for all the confusion, my mistake!
+@baentsch
+My initial assessment was wrong, because of the following reasons:
+(in my explanation, every time I say a function name, the name is clickable!)
+Now I tracked down why it kept saying "UNKNOWN GROUP", which is an error thrown on that line.
+If we have a look at that function again, _ssl__SSLContext_set_ecdh_curve:
+The line where I say, THIS LINE, calls the openssl function EC_KEY_new_by_curve_name. Now this function contains the following:
+We can see it calls EC_GROUP_new_by_curve_name which in itself contains:
+As we can see, this function depends on curve_list, which is a defined list of curves that can be used by OpenSSL in all its functions. Since saber is missing from the list (can be found here), this is why it will always say "UNKNOWN GROUP" when we try to use saber, by using set_ecdh_curve.
+I would like to see if we can get past this, but at this moment my knowledge is quite limited on how we can achieve this. Maybe you have an idea, or anyone else for that matter, that might get me on the right path?
+Edit: Credit where credit is due, I managed to get to this conclusion after long searching with help from a friend, @AtomicNicos
+Thanks for this summary. The moment the code goes down the "EC" (elliptic curve) API route, things are doomed as OQS crypto does not provide EC curves (but TLS 1.3 groups -- which in TLS 1.2 were identical with EC curves, admittedly). My hope had been that the Python code just uses the higher-level OpenSSL EVP TLS APIs (under "the hood" of which we hide OQS crypto in oqs-openssl).
+However, this now interests me a bit: Could you share where you obtained the python code from, what --beyond liboqs and oqs-openssl-- you compiled (and how/config options, platform, compiler, etc) and how you integrated oqs-openssl in order to trigger the tests above? I'd like to understand why Python uses these comparatively low-level APIs (and whether there may be a way around them).
+@baentsch
+I have to apologise again, with all my focus on trying to set that ecdh curve, I forgot to test if it would work without setting the curve. My apologies for wasting your time before on this.
+So I wrote a small script that checked which key exchange algorithms worked without any issue when using the urllib library in Python.
+This is the list of signature algorithms and key exchange algorithms that worked without any issue:
+What I did to get Python (3.10.2) to work with oqs-openssl and liboqs is the following:
+(At this point, my oqs-openssl is installed in /opt/openssl_installed/)
+To make this work, since I compiled liboqs and oqs-openssl with shared libs, I copied /opt/openssl_installed/lib/* to /lib/x86_64-linux-gnu.
+And then I used the following script, copied to /opt/python310_installed/bin, to test every connection (command: ./python3.10 main.py):
+Now, this is all built with shared libraries.
+If you want to do it with statically linked OpenSSL Libraries, instead of changing line 211->217 in Modules/Setup, change line 211 (the correct path to your openssl installation) and then line 220->226 into the following:
+@LeShadow Thanks very much for this very positive update! Also thanks for the build instructions. The test code looks good, too (iterating over the interop test server's assignments.json): At first glance, then, all NIST level 1 hybrid KEMS and all QSC sigs work out of the box. This begs the question: What's happening with the other KEMs? I'd have expected plain QSC KEMs to work with a higher likelihood than the hybrid versions... Did they wind up in the "bad_dict" (presumably not output)? Any common error messages showing why this may be so?
+@baentsch I will do more tests, and see where I need to tweak the build. I will keep you in the loop!
+If I can get it all working, is it something that might be put in the liboqs-demos repo or can I blog about this? (ofcourse mentioning the entire project that your team has been working on for so long!)
+@baentsch it seems that every error is the same: ssl.SSLError: [SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] sslv3 alert handshake failure (_ssl.c:999)
+Any input from you maybe? (In the meantime, I am going through the source codes again to try to figure this out)
+It looks like the problem lies with oqs-openssl I think?
+(Port 6006 equates to the signature algorithm ecdsap256 and the Key exchange algorithm frodo1344shake)
+After some more reading of the source code, I discovered that this is happening because of the following situation:
+On line 295 from ssl/t1_lib.c, a list of default curves is being defined (OQS Hybrid ones).
+When openssl or Python for that matter (as I did a test with openssl and with python) make a connection, they will assume they have to use one of the KEM's defined in that default list. Only when you define -curve (which we can do with openssl s_client, but we cannot (yet) with Python), then it won't throw the error, but it will work out of the box.
+So a temporary fix for Python would be is to alter ssl/t1_lib.c and to add all other Kex's to the eccurves_default[] list.
+Result with ./openssl s_client -host test.openquantumsafe.org -port 6006:
+Now the results with Python, after the change to openssl, are what we were looking for! Although we had to adapt the default list, so maybe we need to find a better solution, but if we adapt the defaults list I spoke about earlier, this is our result:
+Is there anything else you can think of that I could look at to improve this?
+Edit: I added an updated script, with the little counter :):
+Since this was for Python 3.10.2, and the Modules/Setup file is slightly different in 3.9.x and 3.8.x, I will try to build those two as well in the coming days!
+@LeShadow Thanks again for keeping up the work. Your results are expected, indeed: The situation where one cannot pass the -groups parameter (i.e., call SSL_CTX_set1_groups_list) is exactly the reason why we introduced the OQS_DEFAULT_GROUPS build option: I assume you used that in your build and did not alter ssl/t1_lib.c as per this:
+So a temporary fix for Python would be is to alter ssl/t1_lib.c and to add all other Kex's to the eccurves_default[] list.
+(Historical side note: (EC)"curves" were the only entities that could be configured in TLS1.2; with TLS1.3 this changed to the more general "groups" concept (that both EC and OQS use) -- hence the somewhat "overloaded" --but outdated-- term "curves").
+Is there anything else you can think of that I could look at to improve this?
+Yes, introduce an option to set the specific group to be used: The approach above has the big drawback that openssl always transfers during the handshake the huge list of groups (2 bytes per group) - pretty inefficient. So, a) either introduce by PR to Python-ssl the option to configure the group one wants to use or b) introduce to (oqs-)openssl a more dynamic option to do so, e.g., by environment variable. I think I'll go about "b)" anyway as I have the same issue in another integration case (msquic) where I don't want to submit to a pretty one-sided Microsoft legal document (giving one the "privilege" to contribute code for free to that poor company.... :).
+Maybe together we could try "a)", too, as adding this functionality to Python (basically a way to call SSL_CTX_set1_groups_list) does make sense in general, e.g., if a user wants to specifically request more secure key exchange algorithms --classic or quantum-safe.
+If I can get it all working, is it something that might be put in the liboqs-demos repo or can I blog about this?
+Most definitely. You could do a blog at any venue of your liking (LinkedIn?) and we'll gladly create a back-link to that from www.openquantumsafe.org. I'd definitely (also) invite you to do a PR to the oqs-demos project in which it's shown how such integrations are done and also bring them in the form of an easy-to-use/readily-built docker image: That way the more deeply interested person can learn how to integrate OQS and the not so technically adept person can simply run things. In this case, an OQS-enabled python3 ubuntu image could indeed be pretty interesting to quite some "pythonistas" not overly motivated to compile everything... You might want to have a look at this PR how this can get started.
+Second thought: We could introduce the "groups-setting" mechanism (option a above) into this oqs-demos image until upstream Python picks it up.
+@baentsch
+Thank you for your feedback on my findings. Based on your feedback, I would like to propose that a patch is created for Python (with first a focus on version 3.10.2, the first version I got it all working on) where a function is added on SSLContext objects, much like set_ecdh_curve(), one that could bare the name set_group() maybe?
+I think this is the most sensible thing to do in this instance, since this would potentially prepare Python already for the arrival of a version of OpenSSL with Quantum Resistant algorithms in the future? If the patch eventually works, this could be a something that can be picked up by upstream Python later on as well.
+I can generate the oqs-demos docker images afterwards as well and make a PR to the respective PR.
+What do you think? If this path is one you'd agree with (and @dstebila as well?), I'd like to take this on as well :)
+That sounds like a great plan forward. Please let me know if I can be of assistance in some area. Otherwise I'll keep watching out for the PR.
+Regarding the "dockerization" please take a look at our examples and create separate README.md (for explaining the general integration & building the docker image) and USAGE.md (explaining how to use the imagem e.g., if there'd be runtime config params): The latter file we then also post on hub.docker.com, e.g., oqs-nginx.
+Final comment:
+that could bare the name set_group() maybe?
+Please consider the name set_tls_groups_list(string), possibly set_tls13_groups_list as that's (a colon-separated list of KEM group names) what the openssl function SSL_CTX_set1_groups_list takes as parameter. Again the suggestion to first implement this API as a python code patch in the docker image before submitting a python upstream PR.
+@baentsch I will gladly move ahead with this plan!
+I'll have a look tomorrow on how this can be accomplished and will let you know of my progress. (I will also create a docker image with the python code patch first before submitting a python upstream PR.
+Is this to work in tandem with #352 or separately?
+Is this to work in tandem with #352 or separately?
+Both options will work independently: The default group list set via API will rule. If not set(table) via API, #352 will provide a (re)solution.
+@LeShadow FYI, as #352 has landed, if you now re-build (oqs-)openssl, all you need to change in your test code above to successfully exercise all algorithms is if kexalgo != "*": os.environ["TLS_DEFAULT_GROUPS"] = kexalgo (right before the urllib.request.urlopen('https://test.openquantumsafe.org:' + str(port) call). I also tested this successfully with a stock python3 (alpine docker image): Works like a charm, no need to compile python.
+@LeShadow Another FYI, I added the above-mentioned Dockerfile in https://github.com/open-quantum-safe/oqs-demos/tree/mb-python/python: If you want, feel free to build on this to include your python upstream patch. I won't work on this further (or merge to main) as I only used it as a "test bed" for #354 and keep looking forward to your PR as discussed above.
+Would you be OK with closing this issue then?
+@baentsch hey, my apologies, been offline for a little bit due to social obligations!
+That sounds great, awesome job on #354 and #352! I am looking forward to build on your work to create the python upstream patch.
+Would you like me to open a new issue to track work on the patch for Python, or should I just open a PR/issue when the patch is ready?
+I am looking forward to build on your work to create the python upstream patch.
+Would you like me to open a new issue to track work on the patch for Python, or should I just open a PR/issue when the patch is ready?
+It may be sensible to track this via an issue in oqs-demos pointing to this discussion thread so no context gets lost.

@@ -1,0 +1,49 @@
+Hello,
+When I import cirq on my computer locally, I am able to run simulations and all of it works fine. However when I put the same folder onto the cluster, I find that I get an error referring to circular imports. Both computers are running the same python version, 3.7.4, but the error persists if I switch my cluster environment to run python 3.8.1.
+The error is:
+Traceback (most recent call last):
+File "CircuitTester.py", line 4, in 
+import cirq
+File "../cirq/init.py", line 38, in 
+from cirq import (
+File "../cirq/value/init.py", line 33, in 
+from cirq.value.duration import (
+File "../cirq/value/duration.py", line 21, in 
+from cirq import protocols
+File "../cirq/protocols/init.py", line 16, in 
+from cirq.protocols.apply_unitary_protocol import (
+File "../cirq/protocols/apply_unitary_protocol.py", line 31, in 
+from cirq import linalg
+File "../cirq/linalg/init.py", line 29, in 
+from cirq.linalg.decompositions import (
+File "../cirq/linalg/decompositions.py", line 251, in 
+@value.value_equality(approximate=True)
+AttributeError: module 'cirq.value' has no attribute 'value_equality'
+When I was using 3.8.1, the error message was identical, except for an additional note specifying that the issue was likely caused by a circular import.
+Does anyone know what might be causing this?
+Thanks!
+This is definitely a circular import issue.  I suspect the Python configuration for your cluster hooks the Python imports in a way that conflicts with Cirq's import hook (see https://github.com/quantumlib/Cirq/blob/master/cirq/__init__.py#L17, https://github.com/quantumlib/Cirq/blob/master/cirq/_import.py).  This may be something that should be fixed in Cirq.
+Can you give the results of running the following code locally and on the cluster?
+Hey Casey,
+On the computer where things are working, I get:
+[<class '_frozen_importlib.BuiltinImporter'>, <class '_frozen_importlib.FrozenImporter'>, <class '_frozen_importlib_external.PathFinder'>]
+<class '_frozen_importlib.BuiltinImporter'> True
+<class '_frozen_importlib.FrozenImporter'> True
+<class '_frozen_importlib_external.PathFinder'> True
+and on the cluster I also get:
+[<class '_frozen_importlib.BuiltinImporter'>, <class '_frozen_importlib.FrozenImporter'>, <class '_frozen_importlib_external.PathFinder'>]
+<class '_frozen_importlib.BuiltinImporter'> True
+<class '_frozen_importlib.FrozenImporter'> True
+<class '_frozen_importlib_external.PathFinder'> True
+with regards to your import hook point (which I admittedly know very little about), I was having an issue with cirq/init.py in the line
+from cirq import _import
+where it was saying that importlib had no attribute abc, but I was able to solve it by following the directions in https://stackoverflow.com/questions/39660934/error-when-using-importlib-util-to-check-for-library.
+Did import importlib.abc solve it?  I was expecting the cluster output to be different so I'm not sure where the issue is.
+yeah, I was surprised to see it was the same.
+The _import issue was solved before these circular import issues came up.
+I have some more questions to try and debug this.  Can you give some details about your setup?  Any python packages installed for managing execution on a cluster or is Python running on just one node?  Can you reproduce this on another machine?
+the job scheduler is slurm, but the same issue happens whether I use the scheduler, or just get an interactive node and try to run stuff.
+One difference is that on my office computer, I just have all of my packages installed and then run stuff directly in the terminal, while with the cluster I'm using an Anaconda virtual environment, could that be causing any differences?
+You could clone the conda environment to your computer.  If that reproduces the error, send me environment.yml so I can take a look.
+As a temporary fix, try creating a fresh Anaconda environment for the cluster.
+I debugged this with Dripto.  It is not a bug in Cirq.  His local additions to the Cirq source code likely caused this.  If others have similar circular import issues, running python dev_tools/import_test.py can help pinpoint the problematic import.

@@ -1,0 +1,19 @@
+From @eggerdj on PR #3463 which introduces Parametric Pulses:
+Is there some way around this structure? I'm thinking of the following scenario:
+External party, named ABC, wants to use Qiskit and provide their own pulse shapes. It would be a lot nicer if, a user of ABC, in his application, could do
+where ABC.parametric_pulses.py contains the parametric pulses defined by ABC, without having to manually register the parametric pulse names in this Enum class. Is something like that possible?
+The goal of this feature is to replace manually entering new parametric pulses into the mapper in assemble.
+As an end-user looking at doing exactly this, I'd be interested in this functionality. If there is no registration decorator, where would we need to plug into/overwrite this functionality? qiskit.qobj.converters.pulse_instruction.ParametricPulseShapes, AFAICT? https://github.com/Qiskit/qiskit-terra/blob/6dbf9dd06b52e4530747bae0af69d728f011f431/qiskit/qobj/converters/pulse_instruction.py#L31-L40
+Yes, I think you have the right idea. This would likely need to be modified into a registry, that registers standard pulses.
+Hacky and haven't fully tested it, but looks like the following also temporarily does the job (not as good as registering)
+This does seem like a good solution 👍.
+follow-up. The above ^^ method doesn't work b/c of the enum lookup in qiskit.assembler.assemble_schedules::_assemble_instructions(): https://github.com/Qiskit/qiskit-terra/blob/ff5fede2dadf338e7ba36a3efcbf4df6b0e651aa/qiskit/assembler/assemble_schedules.py#L179-L180
+Per https://docs.python.org/3/library/enum.html#programmatic-access-to-enumeration-members-and-their-attributes, looking up an enum this way (by passing the instruction type i.e. value) is only available for native enum members. So the remedy is to create a new replacement enum with your custom value, and then overwrite the ParametricPulseShapes above. However, due to the assemble_schedules() method being compiled at import time due to pervasive use of from ... import ... syntax, a much more hacky temporary solution is required:
+Hope this helps people in future!
+Found a better solution than above. Unfortunately it involves an extra python library, but it's a one-line solution, so...
+It uses https://pypi.org/project/aenum/
+Did this requirement get subsumed in Pulse Builder?
+@jwoehr, I don't think so. Pulse Builder still doesn't cover e.g. a linear ramp parametric pulse defined as e.g. y = m*t + b. I've been using my workaround to add this functionality.
+@jwoehr, I don't think so. Pulse Builder still doesn't cover e.g. a linear ramp parametric pulse defined as e.g. y = m*t + b. I've been using my workaround to add this functionality.
+Thank you, noting that, @drewrisinger
+I believe this to have been obsoleted by #7821 and follow-on work.  @nkanazawa1989, could you check, and close this issue if so?

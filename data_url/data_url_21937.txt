@@ -1,0 +1,18 @@
+Might also be underlying #940.
+Reproducible on the SYSU target. An idle kernel does not appear to be necessary; I can make the error appear by interrupting one regular kernel with another regular kernel (e.g. running artiq_run while another instance was already running).
+KC705 is also affected.
+I guess what happens is simple: there are events programmed far into the future by the first kernel (since the LED frequency is low). When the second kernel takes over, the value of now_mu given by break_realtime is the value of the RTIO counter plus some delta, which is less than the timestamp of some already programmed events.
+We should be able to fix that either:
+Or just maintaining a counter somewhere in the runtime that records the maximum timestamp seen.
+No, the runtime is slow enough already, and this would not work with DMA.
+Pinning the timestamp (now_mu) to the timestamp CSR would also make it survive kernel evictions/crashes.
+The timestamp CSR does not necessarily contain the highest value submitted.
+It might be good enough though (and simple and quite consistent with the current break_realtime behavior within a kernel).
+Yes. Pinning now to the CSR might also be a speed advantage (#636). The only issue might be atomicity. But it would be an improvement in any case.
+No, the runtime is slow enough already, and this would not work with DMA.
+This would work with DMA of course, since the kernel knows how long every DMA trace is already.
+Pinning now to the CSR might also be a speed advantage (#636).
+Right now LLVM is free to eliminate consecutive loads and stores to now with no function calls in between, so this will have to be somehow preserved. I don't think it can do that for an integer cast to pointer. We might need to write a custom LLVM pass. And since the CSR is 64-bit, then every store to it will have to be followed by another store that commits the new value, so it looks like this will be strictly slower.
+The commit part can be done by the gateware when one given 32-bit part of the 64-bit word is written. LLVM would have to know about this, though.
+Maybe just use the timestamp csr instead of the global and drop the kernel protocol to store/load now. That would be a start.
+#636

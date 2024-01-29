@@ -1,0 +1,35 @@
+The core device log now contains errors particularly relevant to the user (asynchronous RTIO errors: busy and collision).
+I propose that the core device implements a logging server, to which the master connects to stream log messages and add them to its own logging (similar to how e.g. controller logging works), so that they appear in the dashboard and other places.
+Sending those messages through the session interface while a kernel executes is not a good idea because asynchronous RTIO errors can appear after the kernel has terminated (though the race window is small). Further, having important core device messages (not just about asynchronous RTIO errors) more visible will help users identify problems faster. DRTIO will bring a bunch of high-priority core device errors as well, e.g. if a link drops.
+LGTM
+Can you outline the way you would like to see this feature added to master?
+The master already has a log server, so the cleanest way to do this is to have the core device use it. But the core device does not know the master address and requiring the user to program it would be unfriendly. So I suppose that the master should have an asyncio task that establishes the connection to the core device, by looking up core in the device database. It should handle device database reloads nicely (restart the task if the core device address has changed), keep retrying the connection to the core device when it fails (same logic as in ctlmgr), and have TCP keepalive enabled.
+Maybe the protocol can be shared with the existing log server, only the connection establishment code would be changed.
+Maybe the protocol can be shared with the existing log server
+Which protocol?
+https://github.com/m-labs/artiq/blob/master/artiq/protocols/logging.py
+I don't understand what you mean by sharing, then.
+The bytes on the socket can be the same, once the socket has been connected in some way (client connecting to master, or master connecting to core device).
+And maybe the hacks in logging.py to inject messages into the master logging can be shared too.
+I don't think we should share that. The core device doesn't have a logging server, it has a management socket. Also, the master should waste time doing this reformatting and not the core device.
+Fine.
+If we want to be strict about the architecture, the log forwarding component should be a controller. One practical advantage of this is the controller can be run stand-alone, which comes handy when using artiq_run. But then it would be nice if the master ran ctlmgr for local controllers, or if there were some new component that easily started the master and ctlmgr. That component could potentially start the dashboard too.
+If we want to be strict about the architecture, the log forwarding component should be a controller.
+Sounds good.
+One practical advantage of this is the controller can be run stand-alone, which comes handy when using artiq_run.
+How do artiq_run and artiq_ctlmgr fit together? Does this mean artiq_run would output log messages? That would be quite excellent and something I wanted for very long.
+Tooling to properly sequence and control the startup of all the components (master/dashboard/run/ctlmgr...) would be great. For both use cases, GUI/master or CLI/run. Even if there would be some refactoring of components.
+How do artiq_run and artiq_ctlmgr fit together?
+They would not - what I'm proposing is that you'd run the logging controller on one terminal, and artiq_run in another.
+Tooling to properly sequence and control the startup of all the components would be great
+Yes. This bumps into typical software crappiness though, for example fork() would be useful to make the artiq_master command return as soon as a master is in the background and ready to accept connections. But it doesn't work on Windows and on Linux it messes up Python's asyncio (https://bugs.python.org/issue21998). So developing this isn't trivial due to all the hacks and workarounds that need to be done.
+Let's go with the controller+ctlmgr solution. A simple session program that starts master/ctlmgr/dashboard should be relatively straightforward; instead of messing with fork() or other problematic functions, the session program could capture the master stdout for a message that indicates readiness.
+@whitequark What is left now is having aqctl_corelog connect to the management socket and print the messages from there, and a clean solution in the runtime to stream the log messages to the management socket. Can you help with that, especially the latter task?
+I recall working out some elegant solution for that, one that would work just as well even for the phaser. Let me try and see if I can dig that out.
+What does this have to do with the phaser?
+s/phaser/satman/
+A user running ARTIQ Dashboard remains blithely unawares of RTIO Collisions (eg #765) since  artiq.frontend.aqctl_corelog is not yet implemented. @whitequark How's your search going for the elegant solution? :)
+@jbqubit Oh, I've figured that out long ago, and actually I already have an implementation. I think I'll push it tomorrow.
+@whitequark Cool! Thanks. :)
+@whitequark Nice. This works great with Log in ARTIQ Dashboard. 👍
+@jbqubit Yes, I specifically made sure that it integrates well with the dashboard.

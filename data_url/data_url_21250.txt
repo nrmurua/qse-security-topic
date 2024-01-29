@@ -1,0 +1,22 @@
+The Kasli-Oscillator output is not deterministic when using update intervals that are an odd multiple of the 25 MS/s update rate.
+When pulsing the Kasli-NCOs with update intervals of odd multiples of the 25 MS/s sample rate, the phaser output is non-deterministic between timeline jumps. This implies such pulses are not reproducible between experiments.
+Attempting to produce a 1 us pulse (the 25 times the sample interval) stochastically produces the two waveforms in the table below. Changing the pulse duration to 24 or 26 times the sample interval deterministically produces a single waveform.
+The following code produces both waveforms:
+This behaviour should be documented. Currently, the documentation only points out that the Kasli-NCO is updates at 25 MS/s and that delays are deterministic. This suggests that behaviour would be deterministic when the Kasli-NCO settings are updated at 1/25 us intervals.
+As it turns out this is not related to even multiples. Using  20/25 us or 30/25 us intervals is also non-deterministic.
+Yes. The latency of parameter updates is deterministic, but not matched. In fact, it was explicitly agreed that latencies between parameter updates would not be matched, as clearly state in the docs. Obviously any update would have a sample interval granularity but you are updating two parameters (amplitude and clr). The data processing is pipelined and depending on the timing, parameter updates affect different samples. I haven't constructed the exact case you are seeing but, as pointed out already and clear from a fundamental understanding of sampling, you need to align your updates if you don't want to see that effect. If you want to align updates, you need to figure out the differential latency and ensure that the sampling interval falls deterministically.
+The ratio of 1:9 is not immediately obvious to me, sure it's not 2:8? Also please do double check that this isn't some floating point issue in delay(): replace the critical ones by integer delay_mu().
+Again, I would recommend you stop trying to ram your analysis home and instead try to accurately describe the facts first. It'll save you time.
+any update would have a sample interval granularity but you are updating two parameters (amplitude and clr)
+Thankyou for the insight. Do I understand you correctly that set_amplitude_phase is not an atomic operation?
+you need to align your updates
+Indeed, one needs to align the updates with the NCO update cycle. That is why all updates are written at a multiple of the update interval. This issue only uses a single kasli-NCO, unless set_amplitude_phase is not atomic, I would expect the output pulse to be identical.
+sure it's not 2:8?
+The statistics might well be 2:8. 1:9 was an estimate.
+Also please do double check that this isn't some floating point issue in delay(): replace the critical ones by integer delay_mu().
+using delay_mu with the appropriate integers still gives non-deterministic output.
+Thankyou for the insight. Do I understand you correctly that set_amplitude_phase is not an atomic operation?
+Depends a bit on your definition of atomic. The following is true: set_amplitude_phase() can in principle affect the sample stream at three different instants. From a cursory reading, I think clr and frequency are the same latency, but amplitude should be 6 cycles later, i.e. for n=5 either 1 or 2 samples depending on alignment. And phase is one cycle after frequency.
+Indeed, one needs to align the updates with the NCO update cycle. That is why all updates are written at a multiple of the update interval.
+Not frequency alignment but also (and specifically here) phase alignment.
+It may be true that the sample-to-RTIO-counter alignment is in fact deterministic, but I haven't checked. Then ensuring that the relevant part of your timeline is aligned to the 5 RTIO-cycle beats would be sufficient and you would not need the frame alignment measurement.

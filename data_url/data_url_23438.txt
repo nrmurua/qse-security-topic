@@ -1,0 +1,47 @@
+We definitely need to fill in the doc in the guide before adding features or things.
+The reason for p1 is that it can be hard to figure out by using qcodes, what things do and why they are here or implement a certain way.
+See f.ex #223.
+And see f.ex https://github.com/qdev-dk/Qcodes/issues/124#issuecomment-215392928.
+Yes, I would love to see a big picture explanation on the qcodes magics 😍
+And it will be very crucial in getting new users on track.
+I guess @alexcjohnson is the only one who can do this at the moment?
+I'm hoping @giulioungaretti can write it with me kibitzing, that way he learns the code better, we get a chance to talk about what might want to change, and we make sure that the explanations are clear to at least 2 people.
+yeah @alexcjohnson  that is a good idea. Maybe it would be nice if you could  start with an overview of the current design  main ideas, so it's also easier to just start diving into the code for everybody.
+Then I will update and deepen as I go, what you think ?
+Actually, I would say that I will take for ever for me to figure out a lot of whys just looking at the code.
+The what is rather easy, but there's a lot of decisions that were taken which I think I can't get from the code.
+First list of why for @alexcjohnson
+General:
+ps, Some of these whys could also be extracted from the code, but I think it neater if we start with this maybe dumber/verbose approach and slim it down later
+pps: 🍦 🍦 🍦 🍦 🍦 🍦
+A Parameter is the interface to some state variable(s) of your system. Any quantity you want to set or measure as part of an experiment loop should be a Parameter. Most often aParameteris connected to anInstrument` but they can also be independent, like "meta-parameters" that measure various values from various instruments and do some calculations to return a higher-level result.
+Why a class rather than a property: Parameter combines the actions (get and/or set methods) to use it, plus information (label, units...) that associate meaning with the Parameter (and can be copied to the data structures we make from them). It also handles functionality like validating setpoints, creating sweeps, and (via DeferredOperations) callable calculated values. A property would handle get and set but would be awkward with the rest. There's also a philosophical argument that Python properties, as they look like they're just attributes, would not be expected to do something as active (and potentially time consuming) as calling out to hardware.
+A Parameter that is connected to an instrument may have its get and/or set commands defined by a command string (to be sent to the instrument's communication channel) rather than writing a completely new method. This means most parameters (anything that maps directly onto an instrument command) can be defined just be a self.add_parameter call in the instrument constructor.
+A Function is the interface to some instrument capability that does not relate to a single state variable - like reset, or trigger. A Function only has one operation it supports: __call__, and it can't be used (directly) as a data source, so you might ask why you'd make a Function and not just a method of the instrument. In fact, there isn't a hard distinction between the two, but Function is primarily intended for actions that map directly onto instrument commands, so you can use a command string and avoid writing a new method at all.
+Function does support callables for commands, but if you need to make a callable anyway you're probably better off just making a method in the first place, you don't gain much by wrapping it in a Function. Also, Function only supports a fixed number of positional arguments and no kwargs. But one thing you gain from a Function over just a method is simpler argument validation: just specify a Validator object for each argument, and avoid the boilerplate of type and value testing.
+Command is not really intended for end users - just used internally by Parameter and Function to abstract the creation of a callable from an input command that may either be a callable already, or a string, and if it's a string it may have other pieces for pre- or post-processing.
+Nice! Will start expanding on this soon.
+two more  things that can be useful  (maybe even to sketch ?)
+Also, do you think you can sketch a class diagram of some sort ?
+Alright, let me try to describe some of these data and control flows.
+This makes a local instrument. So if you say instrument = MyInstrument(*args, server_name=None, **kwargs) the normal things happen:
+This makes a remote instrument. So if you say instrument = MyInstrument(*args, server_name=<'' (default) or 'some_string'>, **kwargs) things are more complicated:
+Before you run a measurement loop you do two things:
+When you run the loop, there are several arguments that determine if and how extra processes get used:
+The first thing the loop does is check if there's another background loop already running. If there is, this one blocks until that one finishes. This allows cheap queuing - you lose the benefits of running the measurement in the background (the main process is blocked by this) but you can sequence a whole bunch of loops in one execution cell, like we used to do with nightsweep procedures in Igor, and each one will run in turn.
+Next ActiveLoop.containers() inspects all the measurement actions to create the necessary DataArray(s) to hold the data we will generate. Uses attributes .name or .names to determine how many arrays and what to call them, and optional .shape or .shapes to figure out if the values that are going to come back from .get() are single numbers or arrays, then adds a dimension for this measurement loop (if there are nested measurement loops, ActiveLoop.containers() gets called recursively). For now we need to know the exact sizes of the parameters and the measurement loops, although the numpy.ndarray to hold this data is not created right away. Later on we should only create an array of the right dimensionality, and expand it as necessary to hold whatever data arrives.
+Now we construct our DataSet by passing all of these DataArrays to new_data. Assuming
+data_manager is not False, the new DataSet is created in PUSH_TO_SERVER mode. In this mode (see DataSet._init_push_to_server()), the DataArrays are not initialized - meaning we do not create a numpy.ndarray in them at all, so they do not take much memory and cannot actually hold any data. Instead, we ask the DataManager to copy the new DataSet to the DataServer, where it is created in LOCAL mode which does create the appropriate numpy.ndarrays, allocated to the full size, and filled with NaN. If instead data_manager=False, the DataSet is created in LOCAL mode and initialized right away. After this, the loop itself doesn't care whether a DataManager is being used, the DataSet handles that.
+Next, if you're using background=True, the measurement process is started. This ends up copying all the parameters that are involved in the measurement (which is one reason it's important these are all proxies) as well as the DataSet to the new process. If background=False, the measurement loop starts and blocks the main process.
+At the beginning of each level of the loop, the loop actions are 'compiled' into callables, so that each time through the loop you only need to call each of them, all the branching logic is done already. Compiling consists of:
+Then the measurement loop starts and at each step we:
+For measurement actions:
+All measured and set values go through this routine to get entered into the DataSet. You could imagine having the setpoints already there, but this way we ensure that the stored data is what actually happened, not what we planned to happen, as well as supporting adaptive sweeps.
+If you used a DataManager, DataSet.store proxies this call to the DataServer, where the exact same method call is made but on a LOCAL mode DataSet.
+A single DataSet.store call can enter data in multiple DataArrays, as long as all of this data corresponds to the same array indices. Note that these indices need not be complete; For example, say you have one parameter 'a' than returns a scalar, and another 'b' that returns a 1D array, and you measure both inside a 1D loop. The array for 'a' will be 1D, and 'b' 2D, but the loop will make calls like:
+data_set.store((3,), {'a': 9.9, 'b': [1, 2, 3, 4, 5]})
+ie enter 9.9 in element 3 of array 'a', and fill row 3 of array 'b' with the given 1D array.
+Finally, subject to rate limiting, DataSet.store writes the updated data to disk.
+DataSet.finalize() is called at the very end of the measurement, to ensure the DataSet is marked complete and any last data is written to disk.
+ActiveLoop.run() returns the DataSet it created. It is in somewhat of a different state depending on the flags you run with:
+@alexcjohnson  re: Instrument, do you think you could write a little extra after the proxy feature was added ? Like any gotchas, or what gets proxies where ?   (kind of a slightly longer of the pull request message in #244.

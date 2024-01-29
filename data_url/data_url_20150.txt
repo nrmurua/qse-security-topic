@@ -1,0 +1,27 @@
+Automated tests have identified a few instances of potentially non-constant time behaviour in SIKE. The tests produce a lot of false positives, so there's a good chance that these are benign, but I'm not expert enough to evaluate them. Help appreciated!
+Tagging @bhess and @christianpaquin
+I forwarded this to the SIKE library dev; waiting for review.
+Thank you for the report!
+This won't be an issue since the Fp^2 inversion is done on the public curve Montgomery coefficient.
+This is currently in review with the SIKE team.
+Thanks for taking a look.
+This won't be an issue since the Fp^2 inversion is done on the public curve Montgomery coefficient.
+It's ever so slightly more subtle, no? I agree that it's safe to perform non-constant time operations on the public curve Montgomery coefficient "A". The issue here is that just before Line 590 we have A presented as (A24 : C24). Line 590 computes 1/C24 in variable time, and it's not obvious to me that it is safe to leak C24.
+Thanks for taking a look.
+This won't be an issue since the Fp^2 inversion is done on the public curve Montgomery coefficient.
+It's ever so slightly more subtle, no? I agree that it's safe to perform non-constant time operations on the public curve Montgomery coefficient "A". The issue here is that just before Line 590 we have A presented as (A24 : C24). Line 590 computes 1/C24 in variable time, and it's not obvious to me that it is safe to leak C24.
+Hi @jschanck, thanks again for the report.
+Regarding the above comment, the values in the projective representation [A24+:C24] \equiv [A+2C:4C] (where a = A/C is the public Montgomery curve coefficient) are the actual output of the 2^e-isogeny computation algorithm as per SIKE specification (see Algs. 17 and 19 of https://sike.org/files/SIDH-spec.pdf), so no extra harm in leaking C24. What is happening at Line 590 is that we are already doing the job of converting from [A24+:C24] into another suitable representation of the curve coefficient.
+Automated tests have identified a few instances of potentially non-constant time behaviour in SIKE. The tests produce a lot of false positives, so there's a good chance that these are benign, but I'm not expert enough to evaluate them. Help appreciated!
+The Ladder function indeed leaks the number of leading zeros of "m". For the particular case of the usage at Line 1434, the scalar "m" has the form m=1/(a_0 + sk*a_1) where sk is secret and a_i's are public. The leading zeros of "m" could potentially be used to leak information about "sk" although I don't know how to do it right away. The Ladder function is now improved at microsoft/PQCrypto-SIDH@c59a5e1.
+Thanks @jschanck for reporting it.
+Thanks for the update on the Ladder issue, @geovandro.
+I'm not sure that I've gotten a satisfactory answer regarding the variable time inversions.
+Let's focus on Line 590. You write:
+the values in the projective representation [A24+:C24] \equiv [A+2C:4C] (where a = A/C is the public Montgomery curve coefficient) are the actual output of the 2^e-isogeny computation algorithm as per SIKE specification (see Algs. 17 and 19 of https://sike.org/files/SIDH-spec.pdf), so no extra harm in leaking C24.
+This is obviously true for the call to 2_e_iso in Encaps (Alg 23 line 4), but not obviously true for the call to 2_e_iso in KeyGen (Alg 21 line 4), which is our concern in Line 590. The public key does not reveal C24, and C24 depends on (nominally) secret data.
+If I've followed correctly, the value of C24 that Alice passes to fp2inv_mont_bingcd on Line 590 is equal to 4 * R.Z ^ 4. None of the arguments I've heard so far explain why it's safe to leak information about R.Z.
+To be clear, I don't see a threat here. But I want to know whether this is a provably safe deviation from constant time discipline, or if there's an additional computational assumption here.
+Sorry for not going into the technicalities in my previous reply.
+Note that Algorithms 17 and 19 output the projective version of the Montgomery coefficient "a" in the form (A24+,C24) because they are built on top of Algorithm 13, which computes individual projective 4-isogenies. The output of Algorithm 13 in turn is meant to be public. If you do some calculations, you will find that an adversary with possession of (A24+,C24) can retrieve R.X^4 and R.Z^4, where R.x :=R.X/R.Z is the affine abscissa of the previous (secret) kernel point of order 4. Recovering the correct R.x involves a fourth root extraction, and each one of the 4 possible roots will give a valid solution R.x' for a previous kernel (each one on a different 4-isogenous curve), so the adversary cannot distinguish among them and guess the right R.x. In the end, the adversary is trying to brute force to get to the correct isogeny with the information at hand.
+OK, that's enough for me to close this issue. Thanks @geovandro.

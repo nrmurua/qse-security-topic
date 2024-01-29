@@ -1,0 +1,27 @@
+The MockModel is now a subclass of ServerManager. Is this necessary?
+The result is that most methods of a MockModel do not work as expected.
+One can use the .ask and .write methods, but the other attributes of a MockModel are not updated. For example
+After setting gates.chan0 the model in the server is updated, but the model._gates and model.gates_get('c0') are not.
+Haha, you found the shortcut I took here :) A comment in the code:
+I suppose after starting the server I should mask or delete these attributes on the local copy...
+Anyway, this architecture is just a simple way to put the model into a server process so a single model instance can be queried from any instrument server process. It was designed to mimic as closely as possible a real communication channel to physical instruments, so it's as good a test of real instruments as possible. If your goal is to make a simulation, that's as fast and clean as possible, you're probably better off building it all into one Instrument - I know @damazter has done this, perhaps he wants to share the details?
+Yes, I Have indeed implemented a simulation in QCodes. I would be happy to answer any questions regarding how this works. But I am not clear here what the question is.
+Maybe it's straightforward - it's just the only example we have of running a simulation is my MockModel and MockInstrument setup, which as I said is built more for testing the framework than as the right way to run a simulation for its own sake, so it would be great if we had an example showing the latter!
+I guess all you need to do is make an instrument with settable parameters for all the system state variables, and gettable parameters for the simulation outputs... where these get_cmds are mapped to run the simulation?
+yes,
+the parameters take the form of ManualParameters
+Then it is possible to make functions corresponding to the numerical work to be done which can then either be implemented as a get_cmd of some parameter, or as function directly (but the latter will not work with a loop)
+An I guess it is important to keep the __init__ empty of numerical work for pickability reasons. For the rest its quite straightforward.
+One subtlety with this kind of work is that some function return non-pickable objects, which then cannot be called from the main process. I got around this by making a dictionary of all such objects and refer to them by strings, as often I don't need the object, but only a reference to it.
+For concreteness sake: if you have 2 giant matrices which are therefore non-pickable and you want to diagonalise one of the two, you need to call a function diagonalise(matrix) which cannot be done so you want to rewrite your instrument to call  diagonalise(name_of_matrix) instead.
+@alexcjohnson @damazter  I think the problem is here:
+Most of the time I use the model through the attached instruments. But to develop (test, solve bugs, etc.) the model I need to see what's going on inside (e.g. at the server side).
+I am not sure putting the entire model into an Instrument will help me. Right now I have virtual versions of the IVVI and Keithley drivers (subclasses of MockInstrument). This allows me to test all my code on a virtual system. How would I connect the virtual instruments to a model build on an Instrument class?
+@peendebak Thanks for the info! That is indeed one of the uses I had in mind for MockModel and MockInstrument - not a simulation for its own sake, but a simulation of actual experimental code - so we should make it work right for what you need rather than changing over to a single Instrument model like @damazter has been using.
+Probably the easiest would be to
+@alexcjohnson  Sounds good. Making something like model.setattr is not that hard, I think something like the ask method in the ServerManager will work.
+It would be nice however if we make this completely transparent. This means we would have to override the model.__getattribute__ (but not on the server side) and pass everything to the server. Is something like that possible?
+It would be nice however if we make this completely transparent.
+possible, but that's what I had in mind with the comment above:
+things you would expect to work, like model._gates[1] = 5 would still fail unless we do something super fancy
+In #182 I added a get_attribute function for the MockModel. It would be nice if we could also add a set_attribute and call function, but I have not figured out yet how to pass that through the queue.

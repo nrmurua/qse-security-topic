@@ -1,0 +1,40 @@
+Hi,
+I wanted to construct a QAOA circuit for Traveling Salesman Problem using QUIMBs built-in function circ_qaoa. But the function does not contain the external magnetic field term or the linear term (h_i \sigma_z_i).  Is there a way to construct the QAOA circuit for such problem?
+Hi @Next-di-mension, the circ_qaoa function is pretty simple, if you look at the source and also have a reference for the desired circuit, then you should be able adapt it to construct the quimb circuit quite easily.
+Thank you for your reply. I modified the circ_qaoa circuit a bit, here is the modified code:
+here I added the diagonal terms/ external magnetic field term h_i \sigma_z_i terms. Is this correct modification?
+I don't know what the actual circuit is, do you have a reference? But yes that adds essentially a per site z-field (which the QAOA ansatz exponentiates into a rotation).
+@jcmgray  thanks for the reply.
+First I converted the TSP objective function to QUBO and then to ising hamiltonian. My Hamiltonian is of this form:
+-1282.5 * IIIIIIIIZ- 1282.5 * IIIIIIIZI- 1282.5 * IIIIIIZII- 1268.5 * IIIIIZIII- 1268.5 * IIIIZIIII- 1268.5 * IIIZIIIII- 1290.0 * IIZIIIIII- 1290.0 *IZIIIIIII- 1290.0 * ZIIIIIIII+ 606.5 * IIIIIIIZZ+ 606.5 * IIIIIIZIZ+ 606.5 * IIIIIIZZI+ 606.5 * IIIIIZIIZ +... so on + constant . This is a 3-city problem that requires 9 qubits. I also have one constant term in the hamiltonian.
+so with the above modified circuit, I optimized the tensor network and I got some values of $\gamma$ and $\beta$.
+For energy evaluation, I modified the energy(x) function as follows:
+but when i use the code
+to sample the solution strings, it is not giving the correct result.
+I'm afraid I can only really help with quimb specific implementation things. Maybe some things to troubleshoot:
+Thank you for your reply.
+I'll check these two things. Just one thing, the energy(x)  function defined in optimizing QAOA circuit energy for MAXCUT sums up the local_expectation of pauliZZ terms present in the hamiltonian of MAXCUT. If I extrapolate this point, does summing up the local expectations of all the gates present in the cost hamiltonian of a particular problem, here say TSP will give me ground state energy?
+Hi, also if you look at the QAOA ansatz, it is something like this:
+$|{\bar{\gamma}, \bar{\beta}}\rangle = U_B (\beta _p)U_C (\gamma _p) \cdots U_B (\beta _1) U_C (\gamma _1) |{+}\rangle$
+with
+$U_C (\gamma) = e^{-i \gamma \mathcal{C}} = \prod \limits_{i, j \in E(G)} e^{-i \gamma w_{i j} Z_i Z_j}$
+and
+$U_B (\beta) = \prod \limits_{i \in G} e^{-i \beta X_i}$
+here in the code, shouldn't there be a factor of 2 and a negative sign in rzz term, like it's there in rx term?
+I'll check these two things. Just one thing, the energy(x) function defined in optimizing QAOA circuit energy for MAXCUT sums up the local_expectation of pauliZZ terms present in the hamiltonian of MAXCUT. If I extrapolate this point, does summing up the local expectations of all the gates present in the cost hamiltonian of a particular problem, here say TSP will give me ground state energy?
+I'm not totally sure what you mean by extrapolate. But in general if you have hamiltonian of terms like:
+$$H = \sum_i h_i$$
+the energy of a given state (e.g. a quantum circuit) with respect to it is
+$$\langle\psi|H|\psi\rangle = \langle\psi|\sum_i h_i|\psi\rangle = \sum_i\langle\psi| h_i|\psi\rangle$$
+This only gives the ground state energy if $\psi$ is the exact groundstate, which for a circuit requires A) that the circuit is expressive enough, and B) that it has been fully optimized. For up to 20-30 qubits you can generally find the exact (i.e. an explicit vector rather than a circuit) groundstate via diagonalization, which is a useful check I was referring to above.
+shouldn't there be a factor of 2 and a negative sign in rzz term, like it's there in rx term?
+Currently the way rzz is defined in quimb is with that 2x already inside, whereas the rx, ry, rz gates don't have it... this is an unsatisfactory inconsistency (that would be good to change at some point), but it does mean the QAOA circuit as written is correct.
+Thank you very much for your reply, I was not aware of diagonalization. This gives a clearer picture!
+by extrapolate I mean if I have the Hamiltonian like:
+$H$ = $\sum_i h_iz_i + \sum J_{ij} z_i z_j + c$
+if I want to find the expectation value of $H$ w.r.t $\ket{\psi}$ then it will be like:
+$\bra{\psi}H\ket{\psi} = \sum_i h_i\bra{\psi}z_i\ket{\psi} + \sum J_{ij}\bra{\psi}z_iz_j\ket{\psi} + c \bra{\psi}z_iz_j\ket{\psi}$
+So here I can use the local_expecation to calculate each z and zz term expectation value.
+Yes, quantum mechanics is linear like this. When I wrote $\sum_i h_i$ above (which I didn't mean to confuse with the single field coefficients, sorry for the clash of notation) I meant each term $h_i$ can itself be an arbitrary operator.
+I'll just note in the specific example you gave that if you meant $+c$ simply as a constant offset then the relevant expectation is $c \langle \psi | \mathbf{I} | \psi \rangle = c \langle \psi | \psi \rangle = c$ from normalization, and does not involve $zz$ terms.
+Oh yeah, thanks for pointing that out, It was a typo.

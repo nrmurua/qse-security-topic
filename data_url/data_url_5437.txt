@@ -1,0 +1,12 @@
+I'm trying to simulate a Cirq circuit via the Python interface without reading in circuits/grids/orderings from files. I can run the QFlex Cirq example to get the expected output. I modified this example to the following which creates the grid and circuit without reading them in from files:
+The output below shows that no amplitudes are returned from sim.compute_amplitudes:
+I think _Map_base::at indicates a memory leak? Any ideas what is going on here?
+As far as I can tell, the only notable differences between this and the config_small example are the shape of the grid (the example is square, while this is a single line) and the depth of the circuit (the example has a handful of gates per qubit, while this only has one). I'll take a look at this tomorrow and see if I can narrow down possible reasons that might cause an error.
+Out of curiosity, what is the ordering generated for this circuit? You should be able to check with these additions:
+When I add
+after creating the circuit, the output is ['# approximate fidelity: 1.0'].
+I tried increasing the circuit depth and changing the grid to 2x2 instead of 1x4 but still have the same issue.
+I see the same failure when running 2x2 circuits with the CNOT gates removed. Have any of your tests included CNOTs or any other two-qubit gate?
+This appears to be a bug in core qFlex behavior, as the same issue appears when running via the C++ binary: if a qubit is not acted on by at least one two-qubit gate, the simulation will fail. I'll work on fixing this, but until then you can work around this by adding back-to-back CZ gates on pairs of qubits if one or both of them do not otherwise have a two-qubit gate. (For most circuit I don't think this will be an issue - lone disconnected qubits don't contribute to the complexity of a simulation.)
+The root cause of this bug occurs during the flatten_grid_of_tensors step: if a qubit has no interaction with any other qubits, it will flatten down to a rank-0 tensor (i.e. a scalar). This wreaks havoc with certain tensor-cleanup methods.
+PR #274 addresses this issue.

@@ -1,0 +1,15 @@
+The circuit DAG describes which gates should be performed in sequence to implement a circuit, and makes explicit dependencies on qubits and classical bits. But the multi_graph in the DAGCircuit contains edges that are not necessarily a dependency.
+From test_dagcircuit.py (slightly modified) we have
+and we would expect a dependency from clbit0 to the second to last measure operation (where it is written. But instead there is an edge from clbit0 to the x gate.
+I would expect there not to be a dependency on clbit0 in the x operation.
+This function in DAGCircuit adds all classical registers involved in an operation to the dependencies
+In the example clbit0 and clbit1 are in the same register, which is why they are both added as dependencies to the x-gate by this function. I'm not sure why all c-bits are added as dependencies. Probably that should be removed.
+In my pull request #378 I encountered this bug, which fails my test.
+@ajavadia @ewinston can you confirm this is a bug and not the expected behaviour?
+Hopefully, this will be addressed in the coming DAG refactor.
+@eddieschoute This is the result of OpenQASM defining conditionals as comparing the value of a classical register to an integer (see figure 7 in the OpenQASM paper). According to this definition, this isn't a bug. All bits of a register participate in a conditional, so you see edges coming from all clbits to the conditional gate.
+That being said, we are re-evaluating this and may change the OpenQASM convention. Then, you will be able to define conditionals on single bits, and the dag will become more relaxed. But until then, this is the expected behavior.
+There is a separate issue that the tests are confusing, because it looks like single clbits are being compared, which is not the case. Notice that in the tests we have:
+In the last statement, condition=('cr', 1) just means compare the value stored in register 'cr' against the integer 1. It does not mean select the 1st bit of 'cr'.  It is confusing then that the variable is called clbit1. It just syntactically looks like the a register and its index, but that's not what the condition arg expects. I will fix this test, and then I think we can include #378 as well.
+I have clarified the source of confusion in the tests via #1043.
+Closing this, and we will discuss what to do with conditionals on single clbits separately.

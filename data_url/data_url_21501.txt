@@ -1,0 +1,68 @@
+Artiq hardware signal output/dashboard updates freeze/drop out for about 5 seconds every 30 seconds when RPC is used.
+MWE (after TTLS, DDSes are initialized separately)
+If "while True" is used above instead the pulses loop successfully.
+Otherwise, every 30 seconds the pulses disappear for about 5 seconds, then return. If the TTL is overridden using moninj then the pulses are unaffected. If DDSes are used, they freeze at whatever frequency/amplitude they are set to at the end of the while loop.
+During the signal drop out, datasets can be updated/deleted but the update doesn't show up on the dashboard until the dropout is over.
+This duty cycle is consistent in other experiments as well (about 35 second totals), but if a loop without check_pause() is initiated then the hardware output is maintained indefinitely.
+Most relevant hardware has been checked/swapped:
+Artiq 3.7 on Windows 7, KC705 directly connected to PC via ethernet cable.
+MWE
+Does this really need to involve the core device/kernels? I suspect not.
+What happens with:
+If the TTL is overridden using moninj then the pulses are unaffected.
+What does that mean? If the TTL is overridden it shouldn't pulse.
+Windows 7
+Are you running antivirus software on that lovely system?
+Does this really need to involve the core device/kernels? I suspect not.
+Yes, trying your example yields the same results; every 300 counts we get a dropout.
+What does that mean? If the TTL is overridden it shouldn't pulse.
+Yup. That was behavior as expected, sorry for not being clear.
+Are you running antivirus software on that lovely system?
+We have whatever antivirus protection is standard here at NIST. I should add that the computer that we tried swapping to (and later swapped back from) was a brand new Windows 10 computer with barely anything else on it so I would hope that this is not being caused by a virus or anything similar.
+Does this really need to involve the core device/kernels? I suspect not.
+Yes, trying your example yields the same results; every 300 counts we get a dropout.
+OK and that happens without a dashboard connected? And with just the minimum number of components i.e. only the master and one submission via artiq_client; no other requests or connections to the master, no controller manager, etc.
+Does it also happen with artiq_run?
+OK and that happens without a dashboard connected? And with just the minimum number of components i.e. only the master and one submission via artiq_client; no other requests or connections to the master, no controller manager, etc.
+Does it also happen with artiq_run?
+We tried with no dashboard using artiq_run and the test code works fine; we also tried a more complicated script and that works with no dropouts as well.
+@sbourdeauducq any ideas for what we can try next?
+Obviously you should install an operating system.
+Short of this, are you able to try with the antivirus disabled? They tend to cause this sort of random I/O performance problems and check_pause does perform I/O (via the IPC named pipe and possibly the log).
+Have you tried without the dashboard connected and just a submission via artiq_client as suggested?
+Other than that, add timed prints at various place inside the check_pause code to see where the blockage is.
+Short of this, are you able to try with the antivirus disabled? They tend to cause this sort of random I/O performance problems and check_pause does perform I/O (via the IPC named pipe and possibly the log).
+Unfortunately I do not think we are able to disable the antivirus. We have allowed openocd and python connections through the firewall and this has not helped.
+Have you tried without the dashboard connected and just a submission via artiq_client as suggested?
+I used the command line with artiq_run and things worked fine, so it seems like connecting the dashboard causes the problem, as you suspected:
+OK and that happens without a dashboard connected? And with just the minimum number of components i.e. only the master and one submission via artiq_client; no other requests or connections to the master, no controller manager, etc.
+Does it also happen with artiq_run?
+We tried with no dashboard using artiq_run and the test code works fine; we also tried a more complicated script and that works with no dropouts as well.
+Other than that, add timed prints at various place inside the check_pause code to see where the blockage is.
+I've modified the code as follows:
+When there are no queued experiments, it always prints "Point 1" up to "Point 7", even during the dropout. When there is another experiment queued after, it prints "Point 8" as well (as expected). So it appears to complete the whole block before stopping?
+We have allowed openocd and python connections through the firewall and this has not helped.
+OpenOCD is not involved in this issue.
+I used the command line with artiq_run and things worked fine, so it seems like connecting the dashboard causes the problem, as you suspected:
+artiq_run is a simple single-process program which does not use the master/worker.
+When there are no queued experiments, it always prints "Point 1" up to "Point 7", even during the dropout.
+OK, put some more around the IPC code, which is probably where the problem is. Again, this likely would not be an issue if you were using an operating system.
+We are now using a Windows 10 computer but the problem has persisted. I have a new MWE which doesn't even involve the scheduler.
+The code below runs fine on anaconda prompt but when run on the dashboard, it stops outputting every ~30 seconds for ~5 seconds. After the code resumes, the outputs for the last 5 seconds appear all at once.
+Maybe the code is still running in the background, only the log isn't updated in real-time. Try writing to a network socket to confirm.
+This was supposed to prevent this issue:
+
+We've found that the issue is related to the file size of dataset_db.pyon. With a blank dataset file, the issue is unnoticeable/gone.
+Our original file size was 19 MB which caused 5 second dropouts every 30 seconds. I eventually cut it down to 3.11MB, and we still have some dropouts (>10 ms long every 30 seconds). While we will be more cautious with how and which data are saved going forward, it is conceivable that the files could begin to get larger.
+Is there any way to avoid this issue?
+Saving changes to dataset_db.pyon isn't done efficiently at the moment. Something like sqlite (+ tracking the changes) would probably solve it, though it's a bit heavy-handed to use SQL for just a key-value store. Do you know better alternatives?
+Or we can make the datasets a full SQL database. If there's a use case for that...
+I think we will have to discuss this a bit more within our group to figure out what is appropriate going forward. My last thought about this right now is: What is it about the dashboard that causes the issue to manifest (or increases the impact of the issue) compared to when the anaconda prompt is used?
+@dhslichter may follow up later.
+If by "anaconda prompt" you mean artiq_run, that's because it does not periodically save the dataset db file.
+Maybe use this: https://github.com/jnwatson/py-lmdb
+Implemented.
+Packages availble for Nix and and Conda.
+Needs packaging of py-lmdb for MSYS2.
+@jwu-ions please test and see if this resolves the original issue
+LMDB migration all done, assuming this fixes the original problem.

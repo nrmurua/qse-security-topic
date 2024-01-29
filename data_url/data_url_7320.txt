@@ -1,0 +1,38 @@
+Hi,
+Is there any way to use timeevolution.schroedinger_dynamic with a Hamiltonian whose coefficients are only known at certain, sampled times ? I used cubic spline interpolation to build a function suitable for qo.jl's Schrödinger simulation, but given that I sum several operators to build this Hamiltonian, each step of the simulation takes a while because it has to build it again at each time. QuTiP's sesolve supports this functionality, do you have any plans for this in the future ?
+Here's a snippet of my code for building this Hamiltonian after interpolating the coefficients in interp_coef, which contains each pair (coefficient, operator), the first being a function of time.
+Thanks a lot for any insight you might have on the problem, this is the main bottleneck in my project.
+Could you share a little more of your code? It looks like interp_coef is defined globally and maybe that's also impacting performance. You could try something like:
+and then pass a lambda to the timeevolution function, ie. t -> f(t, interp_coef), that might speed things up a little?
+E: It should also be possible to add what you're asking about (ie. defined steps where things are sampled) I think, I would be happy to try!
+Hi,
+To clarify: do you want to precompute a list of Hamiltonians at given discrete times and access it, or are you looking for a more efficient way to do this via interpolations?
+Thanks for the quick replies ! The thing is, I'm currently working on a python library (pulser) and we're evaluating different Schrödinger solvers to use in our code for simulations. We used QuTiP before but we were wondering if Julia would be more efficient. We use PyJulia.
+@alastair-marshall : interp_coeff isn't actually global, I'll share more of the code. There are several workarounds used to work with PyJulia, since you can't write code like x + y for two qo.jl Kets x, y because they're wrapped in PyJulia, so I have to use Julia's Base.sum(x, y) as a workaround.
+I have a pulse sequence that's sampled into coefficients for transition operators in the Hamiltonian : all this pre-processing is done in Python, I only build the quantum objets in qo.jl via Pyjulia. Here's more of the code.
+I'm pretty sure PyJulia isn't causing that much of a performance drop. It's surely not helping though. I also don't use global variables in any heavy calculations in the code (terms is defined locally).
+@david-pl : I'm looking for an efficient way of simulating with interpolations. If it were as easy as QuTiP, it would be perfect, but if there's a workaround I'd love to try it out. Thanks a lot.
+The thing is, I'm currently working on a python library
+Ah, that makes it more tricky. The essential problem is the same: your function f(t) needs to be optimized. I would suggest to write a wrapper function in pure Julia for everything that's time-critical and call that from Python. Something like this perhaps:
+I had to guess some stuff from your code so no guarantees. This assumes that terms has two entries containing a list of functions for the coefficients and a list of operators, respectively.
+Does this have to be generic or does the Hamiltonian have a specific structure that might allow some more optimization? If it's always a bunch of constant operators multiplied by time-dependent coefficients we would be much better off by changing the way the derivative is computed since we could update the state vector directly instead of rebuilding the Hamiltonian every time. How common is this problem?
+What's the size of your problem? Do you have to use sparse matrices? The code above will probably be slow for sparse matrices, so try to use dense ones.
+You may also want to consider moving the interpolating bit to Julia using Interpolations.
+Thanks a lot for the detailed answer, I'll try this as soon as possible.
+The Hamiltonian is indeed only made of constant operators multiplied by time-dependent complex numbers : it's the Ising Hamiltonian with time dependent fields and sigma_x,y, z operators. I'm sure only updating the state vector would work great. Is there any way to do this in qo.jl already ? If not I can come up with a quick fix for my own code.
+Our system is an array of qubits of size anywhere from 2 to 30 atoms, and QuTiP is failing us at the ~25 atom mark, which is why we turned to Julia. We don't have to use sparse matrices.
+I thought about doing everything in Julia, including the interpolation bit, then calling it all, but I hoped I could get a decent improvement without changing all our Python code. I'll try your suggestions ! Thanks again.
+Is there any way to do this in qo.jl already ?
+Yep, you can do it with LazySums and update the factors in-place:
+Maybe you can even do it directly with PyJulia like this? It will avoid allocating new matrices and solving the Schrödinger equation should be fast. I'm not sure in how far performance is hurt by the fact that the function you pass is in Python though.
+We don't have to use sparse matrices.
+I think you really do for 25-30 atoms 😅 Anyway, this shouldn't matter with the LazySum approach because you don't update matrices in-place.
+Thank you ! This LazySum trick was absolutely what I needed. I didn't know about lazy evaluation, but this is what I had in mind. I'll try it out and update you !
+Well, this was indeed what I needed, after adding several tricks to get PyJulia to work as I want it, this lazy evaluation method was the way to go. Thanks a lot @david-pl. Maybe this would still be a good idea to implement this feature in QuantumOptics much like in QuTiP ?
+Great to hear this worked for you!
+Maybe this would still be a good idea to implement this feature in QuantumOptics much like in QuTiP ?
+Hm I don't know... It's quite literally the five lines of code in my previous comment and it's just a matter of writing a properly optimized function that goes into schroedinger_dynamic (you don't actually need any of the other stuff from the pulser_schroedinger wrapper function). I'm not sure if it's really worth to provide a whole separate time evolution function for that as it's quite specific. Also, this method is as efficient as it gets, so we won't gain anything in terms of performance.
+How common would you say this problem is? Maybe it would suffice to write a nice example showcasing how to use LazySums for Hamiltonians of that structure and adding it into the documentation (eventually also showing how to interpolate the coefficients). What do you think?
+I'd say this is a fairly common problem, at least when using real sequences that you have to sample and plug in to your simulation. In my case it was a laser sequence acting on a neutral atoms array that was sampled. As you say, maybe just writing the example would be instructive in the tutorial, I read it and saw the LazySum part but didn't quite make the connection with my problem.
+I figured the documentation of time-dependent solvers was in a bit of a poor state altogether, so I improved it. I added a new section detailing the usage and some brief tips on performance. Also, I added the LazySum method as example for problems with a Hamiltonian of the specific form you also have. It's all here: https://docs.qojulia.org/timeevolution/timedependent-problems/.
+I guess this solves this issue.

@@ -1,0 +1,19 @@
+Dear all,
+I have got the following issue on Piz Daint CPU partitioning:
+It happens in the middle of SCF with OT for a periodic Hartree-Fock calculation with one of the recent trunk versions. It's a huge calculation (256 nodes, 2 tasks per node) and I can't reproduce it on the smaller scale.
+The problem is unfortunately rather persistent for large systems. I was able to cure it by setting the following section in the &GLOBAL:
+&FM_DIAG_SETTINGS
+ELPA_FORCE_REDISTRIBUTE .TRUE.
+&END
+as discussed, the solution might be to check the distribution prior to passing it to ELPA and automatically do a redistribute if necessary
+seems we already have a check, but obviously something seems to go wrong:
+
+@rybkinjr is there a chance you can rerun with PRINT_FM_REDISTRIBUTE = .TRUE. (without ELPA_FORCE_REDISTRIBUTE) to see whether matrices got redistributed prior to the call?
+ok, with my patch I get the following before crash:
+Indeed, a column of zero width. It looks like the reason is that the matrix is distributed onto 682 processes, whereas we have 1296.
+No, that in principle is fine: to avoid zero-width columns, the matrix is redistributed to fewer processors than available. With Scalapack it would be redistributed to 8 processors even.
+The problem seems to be that the calculation for which there are no zero-width columns does not match what the redistribution ends up to be in the end. Here it should redistribute to 660 processes, rather than the 682.
+ok, I think I got one issue (will fix tomorrow): 
+Here we don't pass along the old block size which makes cp_fm_create chose the optimal one.
+This is fine for the ScaLAPACK case where we anyway redistribute for the optimal size (which matches the optimal block size). But in the ELPA case we don't necessarily have the blacs optimal block size, meaning we're calculating the maximum number of processors such that no processor has 0 columns, but possibly for a different block size. Indeed, when I hack in another debug output, in the routine to find non-zero column width distributions, I get:
+So, we get a valid distribution for a block size of 11, but the final block size will be 13, leading to processors without work.

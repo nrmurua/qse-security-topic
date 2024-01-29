@@ -1,0 +1,15 @@
+gives
+<frozen importlib._bootstrap>:671: ImportWarning: QiskitLoader.exec_module() not found; falling back to load_module()
+Run the above
+no warnings
+No response
+What version of Python?
+It's interesting because that code hasn't changed since 0.21.x, and I've never seen the warning. But reading the python docs on Loader  the load_module() method I used to implement the import redirect for aer has been deprecated since 3.4 and exec_module() is the recommended path forward: https://docs.python.org/3/library/importlib.html#importlib.abc.Loader
+I'll take a look into this and see if I can adapt how we're using load_module() to the newer interface.
+3.10.5
+Oddly enough it only happens if I first import mthree before grabbing the backend.  I updated the issue.
+But if I explicitly import AerSimulator before calling mthree there is no error again:
+fixes it
+So it looks like it boils down to grabbing Cython extensions and then the FakeBackend.  Ie this causes it:
+We do some trickery in Terra to make qiskit.providers.aer import paths work now that Aer doesn't inject itself into the namespace. If the first time a given module is seen is with the qiskit.providers.aer name it will trigger an import warning due to the deprecated code Matthew's accidentally used, as shown above. If the first time we see it is as qiskit_aer, then we we do see a qiskit.providers.aer name, the loader short-circuit returns the imported module without triggering the deprecated code.
+The solution is what Matthew had above - we should be using exec_module rather than load_module, and it's fixable within Terra.

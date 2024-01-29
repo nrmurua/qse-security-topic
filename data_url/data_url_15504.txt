@@ -1,0 +1,8 @@
+Some test modules (maybe just one) take a long time to import. I've generally noticed that test discovery in stestr (which scans the test/python directory and imports every module named test_*) has been getting increasingly slow lately. When working on #7912 in particular I found that importing test.python.providers.test_fake_backends alone takes 13sec to import. I assume this is ddt and other module level processing that is happening when it is imported. This is problematic especially when importing this one file takes ~20% of the time a full test run takes for me locally. There are likely other offenders in the test suite causing a similar slowdown.
+python -c "test.python.providers.test_fake_backends"
+The import should be faster
+No response
+Taking a quick look at this most of the time is being spent dealing with pulse defaults. Importing test.python.providers.test_fake_backends:
+
+is spending most of the time constructing the pulse objects for the default calibrations in the Target. We either need to speed this up or subclass InstructionProperties for the fake backends to lazy load pulse calibrations on first access so we only take the performance hit when we're using it.
+Probably we need to solve it more at the source, otherwise we're going to make life more difficult for downstream providers as well - they'll be forced into a design model where they (at least) construct their Backend instances lazily when requested through get_backend, rather than letting them build a cache on Provider instantiation.  Probably that's not so huge, but it's an annoyance in the path of BackendV2 adoption.

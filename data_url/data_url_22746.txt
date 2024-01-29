@@ -1,0 +1,62 @@
+master...fallen:influxdb_bridge
+The full change rate of the parameter db will be more than we want to archive. We could simply use a few entries to control it. A list of regexps or globs history_filter to limit the logging by parameter name (probably something like the gitignore style precedence rules and syntax) and a history_rate rate limiter.
+Also, the schema (ha!) should be changed a little looking at influxdb 0.9: series name should be "lab-name.parameter" (e.g. "rfjunction2.parameter") and then using tags for the parameter name and the only column should be "value". And afaict things like arrays might break the current implementation as json will not immediately be able to serialize them.
+Finally, could the influxdb_bridge be just a concurrently running experiment in its own queue or does that break?
+Should be fine to run it from the ARTIQ scheduler.
+Isn't it the job of InfluxDB to average/decimate samples before archiving them?
+If the problem solved by the rate limiter is the parameters changing too fast for the slow HTTP-based InfluxDB interface, we can use an asyncio queue with a limited size for the parameter change requests and simply drop those that overflow.
+There is no special notion of archived data in influxdb. All data is live. Influxdb helps you a lot with automatic decimation. That might be sufficient for rate limiting but I don't know whether you can decimate 0.1 second data to 1 minute data every minute.
+The HTTP interface should easily outpace what you can push into it from artiq. The problem that would be solved by rate limiting is disk space, data ceess time and all that follows.
+Ok, let's leave it out for now then.
+Are the schema and filtering good in the code that I just committed?
+The InfluxDB bridge is run standalone and retries failing connections to the master, like the controller manager does (no running via the scheduler).
+Ack to skipping rate limiting.
+fd3fefe#diff-51a2e7de448f443f4bb9b3c1b72f48aaR85
+I am pretty sure that the appropriate schema is "{},parameter={} value={}".format(self.table, k, v).
+This can only really log floats and strings. Booleans will error and integers will end up as floats.
+Do I see that right that the filters are exclude-only? I can see use-cases that require inclusion filters. I was thinking of something like this:
+... or (sign, pattern) tuples in self._patterns.
+fd3fefe#diff-51a2e7de448f443f4bb9b3c1b72f48aaR85 works fine here (and is what the influxdb command line client sends)
+How will booleans error? They are represented as 1.0/0.0. Strings won't be forwarded.
+fd3fefe#diff-51a2e7de448f443f4bb9b3c1b72f48aaR105
+Re L85: You can send/write all kinds of things. But it is not the appropriate schema.
+Re L10: Ack. But it is at least ugly that bools and ints end up as floats. And the lack of array support breaks things like reference histogram logging.
+I'm not sure how you would display a histogram history in tools like Grafana. What about making them results as well and archiving them in HDF5?
+The schema is equivalent to INSERT {table} {key}={value}.
+It is not about displaying it but querying the histograms from the last hour and working with that set of reference histograms.
+Sure. As I said: It is a valid but inappropriate schema. The syntax is measurement[,tag_key1=tag_value1...] field_key=field_value[,field_key2=field_value2] [timestamp]. The pdb key should not appear as the field_key but as a tag's value. This is crucial to efficiently range scan by pdb key.
+How would you store a history of arrays nicely in InfluxDB?
+Another advantage of using the HDF5 outputs when doing serious data processing is floats are stored using their bit-exact representation and do not lose precision from the conversion to/from decimal representation that comes with the InfluxDB protocol.
+Pyon serialize them.
+The imprecision of floats is a given. Hypothetically making it more imprecise by one epsilon is completely irrelevant.
+Strings are limited in length to 64K. Is that OK?
+A problem with your schema is you cannot have parameters of different types. You get errors like:
+write failed: field type conflict: input field "value" on measurement "lab" is type float64, already exists as type string
+Ah. Then "{},parameter={} {}={}".format(self.table, k, type(k), v) or the like if that is possible?
+Otherwise, i am fine with just supporting floats and ints for now. Might add arrays/bools later.
+64k strings is ok.
+All done.
+Yeah!
+I got it to work in the penning lab. Easy setup and pretty looking plots.
+Nice!
+Since InfluxDB is implemented as a frontend device it could have a ddb.pyon
+entry and be managed by artiq_ctlmgr.
+On Tue, Aug 18, 2015 at 1:42 AM, Robert Jördens notifications@github.com
+wrote:
+Yeah!
+—
+Reply to this email directly or view it on GitHub
+#51 (comment).
+You can certainly run it from the controller manager (which is pretty agnostic of what it runs), but I'm not sure what feature that would add.
+It may be that the InfluxDB database is running on a remote machine.
+Letting its startup/shutdown be handled by the controller manager means
+it's one less thing a user needs to worry about starting up along with
+artiq_master. Clearly, this isn't a high priority.
+On Tue, Aug 18, 2015 at 7:25 PM, Sébastien Bourdeauducq <
+notifications@github.com> wrote:
+You can certainly run it from the controller manager (which is pretty
+agnostic of what it runs), but I'm not sure what feature that would add.
+—
+Reply to this email directly or view it on GitHub
+#51 (comment).
+The user already needs to integrate the controller manager with the machine's boot scripts. The influxdb bridge is just another entry. Note that the bridge automatically retries connections to the master like the controller manager does.

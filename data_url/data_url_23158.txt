@@ -1,0 +1,35 @@
+you want to know whether lock has succeeded
+maybe rather implement a promise:
+https://en.wikipedia.org/wiki/Futures_and_promises
+https://pypi.python.org/pypi/promise
+It looks like this library is more mainstream (it is actually a backport of a standard library in python 3.2):
+https://pypi.python.org/pypi/futures
+I could pip install it without problem in my python27 environnement today.
+---> OK, actually after taking a closer look, the concurrent.futures library is actually implementing all the multiprocessing logic, but their promise implementation is not as powerful as in the promises/A+ specifications. The one you proposed is apparently fully compliant with them.
+It looks like promises following these specifications can do a lot of very cool stuffs like realizing an infinite chain of actions without blocking the main loop. This looks powerful but not so trivial to fully understand...
+More infos:
+https://promisesaplus.com/
+http://stackoverflow.com/questions/26839229/using-concurrent-futures-future-as-promise
+I have spent quite some time this week reading about and experimenting various options to deal with asynchronous operations. I think the reason why promise.A+ is not implemented in the standard python library is that the pythonic way of chaining asynchronous functions together is to use coroutines instead.
+I will try to write general specifications for our asynchronous methods (such as run_single or lock), as soon as I get more familiar with all this. In the mean time, a nice introduction to coroutines is given in this presentation:
+http://www.dabeaz.com/coroutines/Coroutines.pdf
+For now, lock() is using the async_utils.sleep method to write the locking sequence as a single loop. A future enhancement would be to improve that loop.
+@SamuelDeleglise: Maybe you wants to make a suggestion for a function Lockbox.lock_async (without touching other parts of the API since we do not want to risk falling back into re-implementing past functionality)?
+OK, I have looked into the code, it requires only minor modifications I believe.
+Essentially, this requires to move the event-driven logic that is in goto_stage_next inside a LockFuture object (Another benefit of the Futures is to confine in them all the event-driven logic).
+I will try to be careful not to break anything, eventhough I need to make the lock() function become a simple wrapper around lock_async() to avoid having duplicated code (of course I will start by simply renaming lock in lock_obsolete).
+I was actually about to start implementing this, but I cannot run the Lockbox (on both python 2 and python 3). I believe the reason is when you start with an empty config file, you get a RecursionError at start up.
+OK, it's now fine with your lateset commit
+Indeed, there was a bug I was working on since I didnt know you'd code today and try to keep the 2 machines I work on synchronized.
+You should really only look into lock(), the other methods have been erased since they were obsolete.
+If you rename lock() there is a high chance I'll undo your changes, best would be to use a new name. Or pick another branch. If this takes more than 30 min, maybe we should postpone it because I really dont want to break anything now.
+OK, then let's say I let lock(**kwds) as it is now especially if you are doing experiments at the same time.
+I will make a function lock_async(**kwds) and lock_new(**kwds) that should eventually replace lock(**kwds). I think I still need 15 minutes or so. Is that OK?
+I have commited the proposal on "refactor_register_lockbox_async".
+It works in the big lines, but it's hard for me to test all the corner cases since some stuffs seems not completely solidified on the lockbox itself.
+In addition, regarding the protection that you added:
+The current logic would be to cancel the _lock_future (wherever you set the value self._state_change_time in the current implementation).
+If you like, we can quickly go through the proposal on monday
+Ok lets do that on Monday and see if it is a 'usine de gas' or straightforward.
+OK, it's 'usine à gaz' by the way ;-p (I am not saying it is one of course...)
+For now, i advocate to keep the current implementation as I have not encountered any bugs

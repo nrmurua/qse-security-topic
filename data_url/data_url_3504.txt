@@ -1,0 +1,37 @@
+Hi,
+Is there any way to tell the compiler not to use any certain qubit (say qubit 4 in 9q-square-qvm) during compilation while using
+P = Program(...)
+qc = get_qc('9q-square-qvm')
+ep = qc.compile(P)
+Regards
+Mahabubul
+Though it's not especially pretty, one way is to modify the NxDevice object attached to qc. For instance:
+will delete the central node, named "4", before calling the compiler.
+I'm unhappy with this solution because it permanently harms the device field: you can't toggle the qubit back on and have its associated edges reappear. Still, it'll do what you ask in a pinch.
+Some further information: the compiler does support this, and you can toggle the behavior by adding the key-value pair "dead": True to the ISA descriptor of whatever qubit you're working with. What's missing is an easy way to access this feature through pyQuil.
+``from pyquil import Program, get_qc, list_quantum_computers
+from pyquil.gates import *
+#p = Program(X(0), CNOT(0,1), CNOT(1,2))
+p = Program(X(3), CNOT(3,1), CNOT(3,7), CNOT(3,6), CNOT(3,5), CNOT(1,7))
+print(list_quantum_computers(qpus=False))
+qc = get_qc("9q-square-qvm")
+#print(qubits(qc))
+qc.device.topology.remove_node(4)
+compiled_code = qc.compile(p)
+print(compiled_code)
+result = qc.run_and_measure(p, trials=10)
+print(result[0])
+print(result[1])
+print(result[2])
+['9q-square-qvm', '9q-square-noisy-qvm']
+PyQuilExecutableResponse(attributes={'native_quil_metadata': {}, 'num_shots': 1}, program='PRAGMA EXPECTED_REWIRING "#(0 1 2 4 3 8 6 7 5)"\nRZ(-pi/2) 6\nRX(pi/2) 6\nRZ(pi/2) 6\nRZ(-pi/2) 1\nRX(pi/2) 1\nCZ 1 4\nRX(pi/2) 1\nRZ(-pi/2) 1\nRZ(0.6919624591943907) 4\nRX(pi/2) 4\nRZ(pi/2) 7\nRX(pi/2) 7\nRZ(2.6517940941334945) 7\nRX(pi/2) 7\nCZ 7 4\nRX(-pi/2) 4\nRX(pi/2) 7\nCZ 7 4\nRX(pi/2) 7\nCZ 6 7\nRX(pi/2) 4\nCZ 4 1\nRZ(-pi/2) 8\nRX(pi/2) 8\nCZ 8 7\nRZ  1\nRZ(2.6517940941335016) 4\nRX(-pi/2) 4\nRZ(pi/2) 4\nRZ(-pi/2) 6\nRX(-pi/2) 6\nRZ(pi/2) 6\nRZ(0.6919624591943929) 7\nRX(-pi/2) 8\nRZ(pi/2) 8\nPRAGMA CURRENT_REWIRING "#(0 1 2 7 3 8 6 4 5)"\nHALT\n')
+[0 0 0 0 0 0 0 0 0 0]
+[1 1 1 1 1 1 1 1 1 1]
+[0 0 0 0 0 0 0 0 0 0]
+@mahabubul92 Hey!
+So it turns out there's another device-type object that needs to be updated. You can do something very hacky like this:
+Yuck!
+I might propose that QVMCompiler.quil_to_native_quil() create the TargetDevice when it's called, rather than when the QVMCompiler object is instantiated. That way, changes to the device would be reflected in the TargetDevice.
+Alternatively you could just quickly create a new qc with the topology you want.
+One last note: there is a private function that will help: pyquil.api._quantum_computer._get_qvm_with_topology
+we're considering making that function public since it solves lots of these sorts of issues

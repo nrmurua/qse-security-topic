@@ -1,0 +1,8 @@
+For large circuits with many observables, I've noticed that stim.Circuit.shortest_graphlike_error uses a lot of RAM. For example, running stim.Circuit.shortest_graphlike_error on the following circuit uses around 20GB RAM after 30 minutes: graphlike_search_uses_20gb_ram_after_30_mins.txt.
+On the one hand, it makes sense for memory usage to increase while it runs a search because it's doing a Dijkstra search which has a queue of events to process which grows as you run.
+On the other hand, 30 minutes and 20 gigabytes??. It definitely sounds like a bug, just not like a memory leak bug.
+I think this isn't a bug in the code; I think it's doing what it's supposed to it's just very slow because of the case you're applying it to.
+The dem has ~700K instructions. Of those, ~50K are error instructions annotated with an observable flip. These errors are what seed the search. For a given seed (A, B), a Dijkstra search is being done that tries to find a path from A to B that has a different net observable flip than the edge between A and B had. These searches are all done interleaved, so that the first to finish stops all the others from bothering looking further.
+The underlying issue here is that 50K searches over a graph with 700K edges is a rather lot of work, especially when the inner loop has an allocation in the middle of it to keep track of the edge observables making the constant factor bad.
+I see makes sense, thanks for looking into it
+There's definitely a certain irony to the fact that if it just randomly guessed a part of the observable to flip and focused on that part, it'd probably get the right answer pretty fast. But it could easily miss the actual shortest error when doing that.

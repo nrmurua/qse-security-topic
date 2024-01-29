@@ -1,0 +1,50 @@
+Computing the dipole moments for larger systems (~178 Au atoms) during the real time propagation after initial delta-pulse kick always results in segmentation fault, while for the smaller systems (~114 Au atoms) everything works well. When the dipoles are not computed and printed the real time propagation runs fine also for the larger system.
+Coordinates.txt
+Input.txt
+Output.txt
+run_script.txt
+I am a bit confused because the source directory states cp2k-2023.1 and your output file states version 9.1 . Is that a mistake? Is it possible for you to compile 2023.1, i.e. the latest stable version?
+Can you maybe also check whether the error occurs with a smaller system?
+I can reproduce the issue with cp2k-2023.1 as well as with the current cp2k trunk version. It seems the runs always segfault around line 252 qs_moments.F. Maybe, @edditler could have a look?
+I'm sorry for the confusion. I've run it originally on compiled version on CSCS cluster and then on local machine with the latest precompiled version from the CP2K website to check if it is version or cluster related problem and to get more information about the error. I'm including the output files for the cp2k-2023.1
+Output_cp2k-2023.1.txt
+run_cp2k.txt
+Can you maybe add the TRACE keyword to the GENERAL section and post the last roughly 200 lines of the respective output? I just want to make sure that it really fails in that routine.
+Sure here is the output:
+and here is larger section of the output:
+output_TRACE.txt
+Can you add the following line after the call to dbcsr_get_block_p in l. 252 of qs_moments (before the line with the assignment where it segfaults) and recompile:
+CPASSERT(found)
+CPASSERT(ASSOCIATED(mint(i)%block))
+It could be that the segfault is caused by a not found block.
+I've tried, now the block is:
+However, in this case I have a problem already with the compilation:
+Apparently, I had a different version of the file in mind. The second line should be
+CPASSERT(ASSOCIATED(mint(i, j)%block))
+instead
+This time the compilation was successful, but the cp2k run stopped exactly at the same step:
+Was there a different error message than before? To which line/junk of code is the backtrace pointing now?
+Does the error also occur with a smaller system? In our regtests we do not find anything in that direction.
+I've tried several smaller systems with 24, 88, 114 Au atoms and everything works well. However when I move to larger system (178 atoms in this case) I get this error.
+The error message with the adjusted line in qs_moments:
+Now, the other spot fails. Can you add the lines
+CPASSERT(found)
+CPASSERT(ASSOCIATED(mint(i)%block))
+before line 688. If I am not mistaken, that spot is only a single loop, so only one index.
+The corrected block in the qs_moments is:
+During the run the cp2k fails with:
+If line 688 is the now first CPASSERT, then for whatever reason, the given block is not available. That requires more investigations.
+Thank you very much for your help. If there would be something I can do to help you, please let me know.
+Hello,
+Because I need the calculation of the dipole moments during real time propagation for my research project I looked more into the code. I have found that the moments(i)%matrix has the same shape as an overlap matrix - when overlap matrix is sparse the moments(i)%matrix is sparse in the same way. For small systems code works well because the overlap matrix is not sparse and all the atom pairs are maintained. However when one moves to larger systems some elements of the overlap matrix are left out so one has also sparse moments(i)%matrix. Then when the function build_local_moment_matrix tries to initialize the blocks, some of the blocks are missing and therefore assignment mint(i)%block = 0._d results in segmentation fault. I believe, there are two solutions:
+to
+and then change lines 736-750 form
+to
+It seems that with this correction I can get through this part of the code. I haven’t done the proper test so far, if everything else works well. Before doing so I wanted to ask you if you think these changes are reasonable or I should also check and change some other parts of the code?
+I would also suggest including to the tests system with two small molecules separated by larger distance to check for the problems connected with sparse matrices.
+Thank you for any suggestion,
+Vladislav
+Dear Vladislav,
+Thank you for looking into this issue. I think the second solution sounds promising. I do not know whether you have to change something elsewhere. I think you can interchange both branches (first check presence of the block, then the order of the atoms to keep it simpler).
+Do you mind preparing a pull request with the code change and an additional test? Please apply these changes on top of the cp2k/master branch and do a few more tests (at least with your system). Feel free to ask questions about the submission procedure.
+Thank you very much for the suggestions. I'll try that and check the full calculation thoroughly if there are no other problems and then I can prepare the pull request.

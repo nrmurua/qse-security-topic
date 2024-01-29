@@ -1,0 +1,48 @@
+Description
+When submitting a call with 400 asynchronous problems, the system stops receiving the response to some problems. response.done() returns consistently false while qubist reports completed.
+can also reproduce it for consecutive calls with 16 async problems. qubist shows complete, response.done() shows false.
+I am having a hard time recreating the behaviour. My script:
+Output:
+Versions:
+@conta877  is running in a juypyter notebook, it could be that has something to do with it.
+at %60 5 minutes after qubist reports the last complete.
+changes from @arcondello are answer_mode: 'raw' and all qubits are used and default to 'DW_2000Q_2_1'
+so another twist... 2000Q_5 is not having the same issue
+Can you try with just DW_2000Q_2_1, but otherwise the same as mine?
+halts
+I can confirm, when I ran
+it timed out after 10 minutes, so it is not environment specific. Qubist reported all jobs completed after about 4 min.
+This happens probably due to high load on DW_2000Q_2_1.
+When I run the test script, all jobs finish, just not within the (arbitrary) 10min window.
+It is not the jobs not finishing (they do eventually), it's that they show completed in qubist minutes before they return client-side
+in some cases even when there is noone else on the system (no load) the objects take forever to receive the done status. minutes after qubist (sometimes hour)
+If it's only minutes, than: exponential back-off. (capped at 60sec poll interval)
+if 60sec is max poll interval - then it is not exponential back-off
+unless it does single instance and waits another 60 to poll the next one.
+It is. It starts with 1s delay between polls, and increases exponentially until 60s.
+To be clear, each submitted problem backs off individually or all problems submitted to the same sampler poll on the same schedule? Because if it's the former then I don't understand why it would sometimes be much more than 1 min late.
+Polls are batched according to the min ETA time (with an algorithm that is too complicated for the end result, but that's another story), but there's also a limit on number of concurrent polling workers.
+I see, so the expected behaviour would be that the max number of concurrent polling workers would return each minute?
+No. And details are gruesome and really not interesting, but if you insist.
+Two polling workers are grabbing jobs from a priority queue, where jobs are ordered by ETA. Up to 100 jobs are batched IFF they all are within a specific time window (2 sec by default). Each job has an associated ETA (set to what server returned initially; but ignored if server and client time drifted by too much), and it is polled at approximately that time. Each time SAPI returns a pending status for a job, ETA is postponed by an exponentially increasing delay (up to max 60 sec).
+For only 1k jobs, the results should all be available within minute(s) of completion. Although, we shouldn't forget about the answer download -- which is done by a separate worker (pool of 5), but without batching. This could actually add a few minutes, but I should test this.
+My recollection was that 'raw' vs 'histogram' didn't affect the behaviour which would imply to me that download was not the main bottleneck, @conta877 can you confirm?
+@randomir  is there a max on number of polling workers?
+@arcondello  we did not specifically test for 'raw' vs 'histogram' but your last example above is default to histogram and a tiny problem - so i don't think its the download time.
+This is an issue how ocean handle the response for 1000 theards
+As workaround you can reduce no of simultanous threads.
+Below code is working
+import time
+from dwave.system import DWaveSampler
+sampler = DWaveSampler(qpu=True)
+for i in range(100):
+responses = [sampler.sample_ising({0: .1}, {}, num_reads=500)
+for _ in range(10)]
+It might be the case some workers die if it took longer to complete some jobs
+@conta877, yes, see my previous comment (two polling workers).
+@hemantbpawar, workers are not dying, otherwise results would not eventually become available.
+I can't confirm that they all eventually become available... i have given up most of the time after 40minutes.
+Ok, so it seems like SAPI is returning wrong ETAs. I just got now + 30min for a bunch of jobs.
+Just for the record, I'm (still) against the whole ETA idea. 😞
+It's really hard to estimate when a job might get executed, given all the rules we have. And in the end, to ensure reasonable performance on the client side (when ETAs are wrong), we'll have to cap that estimate too... 😕
+Closed by above

@@ -1,0 +1,64 @@
+I am testing the performance of mutual TLS connection with hybrid certificates on AWS EC2. The certificate chain of a test group is created in this way:
+The signature algorithms used by RootCA, SecondCA, and ThirdCA are the same.
+I create many groups with different hybrid algorithms: rsa3072_dilithium2, rsa3072_dilithium2_aes, rsa3072_falcon512, p256_dilithium2, p256_dilithium2_aes, p256_falcon512, p384_dilithium3, p384_dilithium3_aes, p521_dilithium5, p521_dilithium5_aes, p521_falcon1024.
+I first start the sever on AWS EC2 instance:
+openssl s_server -key $1_test/server/server.key -cert_chain $1_test/secondCA/demoCA/secondCA.pem  -cert $1_test/server/server.pem -accept $2 -CAfile $1_test/client/client_chain.pem -verify_return_error -Verify 2 -state -WWW 
+Then I will run s_client on local to test the connection:
+openssl s_client -key $1_test/client/client.key  -cert $1_test/client/client.pem -connect ec2_ip:$2 -CAfile $1_test/rootCA/demoCA/root.pem -verify_return_error -state
+The connection tests using s_client are ok for all groups. Therefore, I think the created certificate chain should be right
+Finally I run s_time on local to test the performance:
+openssl s_time -key $1_test/client/client.key -cert $1_test/client/client.pem -connect ec2_ip:$2 -CAfile $1_test/rootCA/demoCA/root.pem -new
+The performance test using s_time for RSA combined algorithms are working well. However, many problems for P256 combined algorithms.
+I am not sure the problems happans because of my mistakes or it is the problem of s_time function. Thanks a lot if anyone would like to help me!
+Thanks for this error report. Weird indeed. Some questions, if I may:
+Looks like one has to debug into this: I don't recall us having done substantial client-auth testing...
+Thanks for this error report. Weird indeed. Some questions, if I may:
+Looks like one has to debug into this: I don't recall us having done substantial client-auth testing...
+Thanks for your help! I will clarify the question one by one
+For generating certs, I run the shell file named environment_generator:
+To use the file, you can run ./environment_generator ALGO_NAME (i.e. ./environment_generator p256_dilithium2). The password for the key and the cert will be 123456
+For starting a server, here is the shell script named start_server:
+To use the script, you can run ./start_server ALGO_NAME PROT  (i.e. ./start_server p256_dilithium2 4433)
+For starting a client, here is the shell script named start_server:
+The MY_IP inside needs to be changed to the public address of the server. To use the script, you can run ./start_client ALGO_NAME PROT  (i.e. ./start_client p256_dilithium2 4433)
+For starting a test, here is the shell script named start_test:
+The MY_IP inside needs to be changed to the public address of the server. To use the script, you can run ./start_test ALGO_NAME PROT  (i.e. ./start_test p256_dilithium2 4433)
+Thanks for the additional information and scripts above. I get somewhat different results:
+p256_falcon512 works
+The performance test using s_time for RSA combined algorithms are working well.
+?
+Side notes:
+--> If you agree to the above (?) the only question remaining is what causes the consistent "write session ticket" error (that does not occur when feeding your scripts with "rsa:3072"): Will look into that next...
+Thanks for your reproduction test.
+If you agree to the above (?) the only question remaining is what causes the consistent "write session ticket" error (that does not occur when feeding your scripts with "rsa:3072")
+I agree with your result. However, if I test on localhost, all groups including rsa3072 combined algorithms are all showing "write session ticket" error. If I am using simple rsa3072 or p256 certificate I will get no error.
+Moreover, if I put sever into AWS VM, p256_falcon could finish the test with no error message and other groups will have the problems I mentioned before. It may be because of  AWS networking issues.
+I am very glad to provide you with my VM information if you need it, but here I couldn't upload the key pair because I couldn't upload pem files. I have created a public repository and uploaded my EC2 key pair, you can access it by using:
+ssh -i "openssl.pem" ubuntu@ec2-3-0-114-247.ap-southeast-1.compute.amazonaws.com. However please tell me when you need to use it because the server keeps turning down most of the time and I will start it if you need it for testing.
+Thanks for confirming that
+When/if I understand the "write session" error, I'll then test on an AWS VM of my own first and will let you know my experiences -- possibly coming back with a request for access to your VM if I cannot reproduce things otherwise... Please let me know which AWS VM type you are using.
+I am using the Ubuntu Server 18.04 LTS, x86, AMI ID: ami-07315f74f3fa6a5a3.
+From https://wiki.openssl.org/index.php/TLS1.3:
+If a client sends it's data and directly sends the close notify request and closes the connection, the server will still try to send tickets if configured to do so. Since the connection is already closed by the client, this might result in a write error and receiving the SIGPIPE signal. The write error will be ignored if it's a session ticket. But server applications can still get SIGPIPE they didn't get before.
+I think we're seeing permitted behaviour with the write session ticket "error message":
+The question remaining in my mind is why the pure RSA:3072 test doesn't show this message -- but then again, the messages could be short enough to permit sending the session ticket right along with the handshake completion message -- which is something that longer certificates/certificate processing (QSC+classic crypto) arguably make less likely.
+I'll try to see how the behaviour on an AWS VM differs, but so far, no real fault is visible. For the "relative value" of the "write session ticket" message also see this code comment...
+Finally and FWIW, just add the s_server option "-no_ticket" to your "start_server.sh" script and the error is gone :-)
+Now completed testing on an AWS VM: Absolutely the same behaviour: No other error than the by now known "session ticket" one and absolutely no error if passing "-no_ticket" to the s_server command.
+Maybe you ought to start another AWS VM and see whether things occur on that one again.
+Platform I used (uname -a): "Linux ip-172-31-40-63.us-east-2.compute.internal 5.10.93-87.444.amzn2.x86_64 #1 SMP Thu Jan 20 22:50:50 UTC 2022 x86_64 x86_64 x86_64 GNU/Linux").
+Suggest to close the issue.
+Thanks for your test. I just start another AWS VM but the connection test still shows the same problem. May I ask how you set up your VM and what is your security group? Also, can I try to ssh to your AWS VM and run the test again? I suspect my Internet may be a reason for the error.
+I didn't set up a special security group (normal SSH access). The AMI is amzn2-ami-kernel-5.10-hvm-2.0.20211103.1-x86_64-gp2. I'm using that VM for other purposes, but I could set up another VM to give you access to (and repeat the test) using your AMI. Edit: Looks like your AMI isn't available to me, but I can get a generic Ubuntu 18 LTS on x86_64...
+May I clarify that you put the server on VM and run the test client on your local computer (not run both server and client on VM)? Because if you test in this way you should have a security group that enables a port for Custom TCP.
+If the test is conducted in the same way I did, then I appreciate it a lot if you could set up a Ubuntu 18 LTS on x86_64 VM and give me the access. If the test on your side is conducted successfully but failed on my side then I will be sure that it is my internet problem.
+May I clarify that you put the server on VM and run the test client on your local computer (not run both server and client on VM)
+Sorry for being unclear: I put client/s_time and server onto the VM. Hence no external port open. Did you also test that way?
+Nope. In my initial question, I put client/s_time on my local computer and put the server on VM because I am trying to simulate a real environment test. Would you mind testing again in this way and see if the same error happens?
+Ah, now I get it. Yes, in such setting, more and more "error in SSLv3/TLS read client certificate" error messages appear (more and more, depending on the size of the certificates).
+However, this clearly is not an issue of OQS-openssl as the same issue appears if you use 8k RSA keys and standard/unmodified openssl:
+Client:
+Server:
+-> You may want to consider opening an issue to the main/upstream OpenSSL project.
+However, I'm not totally convinced that this is a real error: The client sees a correct handshake completion and kills the connection. If this is too fast for the server to properly recognize full arrival of all data (the client cert has been validated according to the logs, so all necessary data must have arrived), then this is probably at most a state engine transitioning error when closing out a terminated connection.
+But then again we put a lot of time into reproducing things, so it might be worth while creating an issue with complete "reproduction" instructions (./envgen.sh rsa:8192 && ./start_server.sh rsa\:8192 4433 > log 2>&1 on the server side, ./start_test.sh rsa\:8192 4433 on the client side; using openssl 1.1.1 on x86_64 ubuntu18).

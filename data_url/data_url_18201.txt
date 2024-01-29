@@ -1,0 +1,24 @@
+This issue is regarding the way we expose simulator backends to the user. From a user's perspective, it would make sense to group these simulators by functionality. This is separate from how they are actually implemented "under the hood". Functionally, we have the following simulators:
+a. There are currently 3 implementations for qasm simulator: python, c++ and an external one by projectq. We should make the c++ one the standard local_qasm_simulator, and call the others local_qasm_simulator_py, local_qasm_simulator_projectq. There isn't really any reason for the latter 2 to be exposed through get_available_backends(), but someone who knows they absolutely want to use one of them can know they exist through documentation.
+b. For the local_qasm_simulator, if there are no intermediate measures, then the compiler should be smart and not call local_qasm_simulator many times. Instead, it should call the local_wavefunction_simulator, then sample the output wavefunction to produce the counts histogram. Similarly, if there is an intermediate measure but that qubit is not modified later (it can be a control), then the measurement should be commuted to the end and the whole simulation, again, only done once.
+c. For the local_qasm_simulator, if the circuit is entirely made up of CNOT, Hadamard, Phase, the compiler should be smart and call the local_stabalizer_simulator which is much more scalable. Similarly for a Clifford-dominated circuit with some Ts, it should call the local_tgate_simulator.
+This is a summary of some discussions with @jaygambetta, @awcross1, @levbishop. Everyone, please comment if you have any thoughts, and feel free to correct any mistakes by editing my comment.
+@ajavadia i think the current Clifford vs stabilizer needs some thinking. I think we want to have two. One does the tableu and one does the vector for the stablizer (current).  I am also not sure we need to return counts for this unless it is used by the local_qasm_simulator.
+For the snapshot in wavefunction I am a little confused. I am assuming it means that we are saving  the wavefunction at the points in time when snapshot qr->sr. Does this map the full quantum state to the sr label or can i select a register. If i select a register is it a reduced state?
+For projectq maybe we should make it just local_wavefunction_simulator_projectq as the part that turns it into a qasm simulator is the slow part and im not sure that they support if and reset anyway.  (@ewinston is this correct). It is really a wavefunction simulator.
+Also i think this makes #244 obsolete so we could close that issue.
+@jaygambetta ok updated my comment with your suggestions about clifford and stabilizer.
+@chriseclectic: does the #save command in you simulator record reduced states, or it has to be for the full qubits? (see jay's comment above)
+Probably hard to do without separable states, in which case the syntax should become snapshot sr
+Also with the snapshot extensions we should also add it to the unitary. Also what happens if i dont put a snapshot in?
+If you use the save command and the appropriate config option to return the saves states the output from the C++ simulator will return information about the full state vector (across all registers) regardless of which registers the gate is defined to "act" on. This was done to make it compatible with QASM since you can't have a QASM gate definition that doesn't act on a quantum register.
+How the snapshot is returned depends on your config settings. Currently it can be returned as
+The clifford simulator currently returns its internal representation of tableaus in the form :
+So the stabilizers and destabilizers are each a list of length num_qubits, and in each are binary vector for the X and Z.
+Here is an example for the qiskit simulator:
+The output is
+For the clifford simulator:
+returns
+@jaygambetta I believe that is true about the projectq simulator.
+I think values (like in the saved_quantum_states) should be strings. There is no difference and we will be allowed to use symbols, such as pi.
+PS: complex number are not supported in JSON. Another reason to make them strings?

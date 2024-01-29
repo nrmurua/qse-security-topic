@@ -1,0 +1,190 @@
+TTLOut RTIO output events are present in RTIO log but not being executed by hardware.
+Running the attached experiment, expected output is not observed when some TTL output events are added. Replacing this line with an equivalent length delay recovers expected behavior.
+Originally I found this when using zotino.load() (which pulses ldac for 16 mu), however this error is independent of zotino.
+ttl4 and ttl5 are connected to scope channels 1 and 2 respectively.
+This is the expected output:
+
+This is produced when:
+self.c.pulse_mu(16)
+is replaced with
+delay_mu(16)
+When self.c.pulse_mu(16) is called, some TTL output events are not being executed, even though they are present in the rtio_log
+
+rtio_log.txt
+Changing the timings causes the number of missing events to change.
+Operating System: Linux
+ARTIQ version: ARTIQ v5.0.dev+488.g4cc9bd33
+Version of the gateware and runtime loaded in the core device:
+[     0.003928s]  INFO(runtime): software ident 5.0.dev+488.g4cc9bd33;ptb
+[     0.010383s]  INFO(runtime): gateware ident 5.0.dev+488.g4cc9bd33;ptb
+Hardware involved:
+Kasli V1.1
+DIO
+I have built the gateware using the PTB variant with the most recent commit on master branch.
+There are not enough SED lanes for this sequence. If you had looked into the board log, you would have seen this:
+Try increasing the number of lanes or reordering events in the kernel to reduce the number of lane changes.
+Ah yes, thanks. My bad, I see this error clearly now.
+Is there a way to make this more obvious? At the moment, unless I am checking for it in the board log, this can happen and cause otherwise-silent failures. It seems to me that this would be an easy place for other users to trip up as well. Is the user expected to monitor the board log output at all times for errors like this?
+Is there a way to make this more obvious?
+Yes, but considering limited resources this is not something that we will implement in the short term.
+Is the user expected to monitor the board log output at all times for errors like this?
+In a normal installation with the master, aqctl_corelog is running and this and other errors are reported to the dashboard.
+In a normal installation with the master, aqctl_corelog is running and this and other errors are reported to the dashboard.
+This does not appear to be the case:
+
+We have been having a similar silent failure issue here too, and have just finished a simple example.  My example is not as simple as @tballance's example though.
+Is aqctl_corelog running?
+I haven't used SED, but I don't see the flaw -- where are the reorderings in the for loop requiring lane changes?  Obviously one lane is occupied by the a.off() from the first pulse on a.  Is the issue that b is being turned on at the exact same time that c is turned off from the previous loop?  Simultaneous events are sort of an important feature and if that imposes a major cost on SED lanes...
+There is a lane change every time the falling edge of c coincides with the rising edge of b. And the falling edge of a, placed early 100µs into the future, blocks one of the lanes until it is executed.
+This is an important corner case to know about, since simultaneous pulses are a rather standard thing we do in the lab all the time.  However, it would seem to me naively that in the present case, one would change lanes for every time that the falling edge of c coincides with the rising edge of b, but that one could essentially toggle between filling events in just two lanes to accomplish this (with a third lane blocked due to the falling edge of a until it occurs, at which point is becomes available again).  Am I missing something?  Is the issue basically with the algorithm for lane arbitration, that the system always looks to the next open lane, and if it comes around to the first lane (with the a pulse still not complete) it decides to give up and throw an RTIOSequenceError?
+Dan, no exceptions are thrown in this case, but an error is logged on the core log. I was missing the core log because I was using artiq_run and assumed that an exception would be thrown.
+I would be for adding this as an exception, however I completely agree with Sebastien's point that it is not high priority (don't expect anyone wants it enough to pay for it?).
+As Sebastien points out, if you have the aqctl_corelog correctly set up, then you see these errors in the dashboard.
+Thinking about it, I too don't quite get why this is failing.
+According to lane_distributor.py:
+Each iteration of the for loop should require a lane change, but I don't see why this should cause the system to run out of lanes, because successive lanes should not block each other (with the exception of the initial lane containing the pulse(100*us)).
+Is there something I am missing about this?
+The question is, if one switches into a lane that is itself not valid, does it throw an error and give up or does it go to the next lane down the line?  One has to limit the total number of lane attempts, so as to prevent an infinite loop scenario, but the limit should be at least as many lane attempts as there are existing lanes.  Is it currently failing simply if the next lane one encounters is also blocked?
+As long as this is already reported on the dashboard when running with a master, I don't think the artiq_run case needs to be addressed urgently.
+I would be for adding this as an exception
+This isn't an exception for performance reasons. When this error becomes known, the CPU has begun executing the rest of the kernel code already, and in the case of a DRTIO system it can be many hundreds of nanoseconds later (it is detected on the satellite). Making it a precise exception means taxing every RTIO event submission by hundreds of nanoseconds. Unlike underflows it should be completely deterministic, so I believe this is an acceptable compromise.
+Another option would be to add "barriers" in kernels, that wait for all possible errors that could have occured, and report them as exceptions. But that's somewhat complicated to implement and also to use.
+Asynchronous exceptions have a lot of concurrency issues and are a no-go IMO.
+(don't expect anyone wants it enough to pay for it?).
+Unfortunately this is the case for many small ARTIQ issues. Fortunately, we can self-fund some of those from the hardware sales via M-Labs/QUARTIQ.
+Am I missing something? Is the issue basically with the algorithm for lane arbitration, that the system always looks to the next open lane, and if it comes around to the first lane (with the a pulse still not complete) it decides to give up and throw an RTIOSequenceError?
+The rules are pretty simple:
+A more optimal (in terms of lane utilization) scheduling algorithm may or may not be doable, but it has higher risk of causing FPGA timing problems. Note that the choice of the next lane depends on the choice of the current lane, so there is a pretty tight timing window to run the full algorithm (a few RTIO cycles) it we don't want to degrade RTIO throughput for everything including DMA. But, a more optimal algo can be implemented with "just" an array of 61-bit comparisons that can be done in parallel, one for each lane, followed by a priority encoder - so maybe it can be squeezed. Note that latency compensation has to fit into the timing budget as well, see the source code of the "lane distributor" for details.
+Each iteration of the for loop should require a lane change, but I don't see why this should cause the system to run out of lanes, because successive lanes should not block each other (with the exception of the initial lane containing the pulse(100*us)).
+That 100us pulse is key to the problem. If you remove it there is no more error. Write down what the system does according to the rules above and you will see the problem.
+@tballance Could you write up the important points in this issue and submit a PR against the manual, please?
+@sbourdeauducq Thanks for the clarification, I see the issue clearly now:
+I was incorrectly assuming the lane distributor would iterate across all the lanes before raising the sequence error. This is not possible for good reasons, so instead it only checks the next lane.
+Each successive iteration of the for loop causes a lane change, and when the 'next lane' rolls over to the first lane which has the 100*us pulse in it, there is a sequence error.
+Could you write up the important points in this issue and submit a PR against the manual, please?
+Will do.
+Will do.
+Thank you!
+@sbourdeauducq is there a good reason to not make this generate an imprecise exception? I.e. make it so that after the RTIO core has determined there was a sequence error, the /next/ RTIO event raises an exception? (i.e. the flag that signals a sequence error is also present in the RTIO status register that is checked after each event submission)
+The advantage to this is that the thread of execution will obviously die when a sequence error happens. The behaviour at the moment IMHO breaks the Artiq real-time contract  - events execute on time if there is no exception. This is a bit confusing (as seen in this issue), but is also a problem for automation: when things are running automatically and producing log output themselves it is easy to miss sequence errors that occur for only some parameters (e.g. at the edge of a scan range).
+The down side is that one would only get the exception raised if one submits at least one event ~>1us after the problematic event. In most cases this is true, but we could also keep the current behaviour, so one gets something in the core log, as well as an exception in the kernel if one continues to submit events.
+If you agree something like this sounds sensible I am happy to implement it.
+A barrier type of construct as explained above is preferable.
+Also, there can perhaps be an implicit barrier at the end of every top-level kernel, if that helps.
+@sbourdeauducq the case of multiple simultaneous RTIO events is a very common one, and since one will often turn on some kind of long pulse in a parallel block with a number of shorter pulses, you would see the same kind of behavior that was initially reported here.  My thoughts are as follows:
+A silent failure of the RTIO engine to output the desired pulses is a very problematic behavior, as it can be extremely difficult to notice and debug, and waste enormous amounts of time as a result.  While the sequence error would have been reported in the log if running from a master instead of artiq_run, I feel (as I think @cjbe does above) that a kernel must be declared to have failed and execution be stopped if any of the RTIO events are not output as guaranteed.  From my perspective, this need not be an exception/stoppage in exact real time, but the barrier construction you propose would be suitable -- one would then know absolutely (and be forced to act to repair) when a sequence error or other RTIO error occurs in a kernel.  I like the idea of an implicit barrier at the end of every top-level kernel.
+I understand the complications, particularly with time costs, for doing more complex lane arbitration.  If it would be possible to do lane timestamp comparison with all lanes in one step, then a very naive algorithm of just choosing the lowest-numbered available lane would probably work OK.  This will of course tend to fill the lowest-numbered lanes until they are full before moving to higher-numbered lanes, but it's not clear to me that this is necessarily worse than an algorithm that tries to equalize the number of events across lanes, since once a lane is full it just doesn't take events and they will be pushed to another lane instead.
+A very simple arbitration that would fix the initial problem would be that if one is in lane n and encounters simultaneous events, check lane n-1 and then lane n+1.  In the case of a number of pairs of simultaneous events such as here, this will have the effect of toggling back and forth between two lanes, rather than running along the entire list until you hit a blocked one and get a sequence error.  You could also expand search in both directions (n-2, n+2), and one could set a parameter in a register somewhere that dictates how far to search -- how many lane checks are acceptable -- before a sequence error is thrown.  This way different users could tweak this to reduce the risk of sequence errors, at the cost of RTIO throughput, if they so choose.  Just a thought.
+@sbourdeauducq my worry with your barrier suggestion is that the user has to be pretty competent to use this successfully (i.e. they have to insert the barriers at sensible points themselves). I think the barrier on exiting the main kernel function won't help too much. Consider this example:
+Unless the user is smart about it (i.e. manually inserts barriers), they only get an error telling them something went wrong with the sequence when the main kernel finishes (this may be many minutes / hours after something went wrong). Additionally, the data being posted by RPC to the master may be being used to monitor / update some measurements. Again, here data collected from completely invalid RTIO sequences can be distributed without obvious notice.
+IMHO when RTIO events go missing this is catastrophic, and one wants to stop doing damage ASAP.
+Having an exception raised as early as possible to the error occurring, i.e. at the next RTIO input / output event submission after the error occurred, seems to be more foolproof, and easier to reason about.
+I agree with @cjbe that "catastrophic" is the correct word to describe RTIO events going missing, nothing less.  I am not quite clear on what the issue is with asynchronous exception-raising, because it seems that the current sequence error warning is already being sent back up the chain asynchronously.  It doesn't matter to me if changing this to an imprecise exception would mean non-determinism in when exactly the kernel stops, but something needs to occur that both a) forces the kernel to halt, and forces the user to correct for the exception, within a reasonable amount of time (ms even) and b) gives some reasonable guide to what exactly in the kernel code caused the issue.  There must be some log/backtrace that still exists for RTIO sequence errors with SED, no?
+The "barriers" idea works, but couldn't one use a similar mechanism to just throw an exception if something has been reported (or don't, if nothing has been reported), and proceed otherwise?  One could perform such a check at every RTIO event submission, and then use a full "barrier" at the end of each top-level kernel, as insurance vs. corner cases that happen at the very end of a kernel.
+The current solution with the log, even if it does not have excellent UX, is actually more reliable than the other proposals:
+While the sequence error would have been reported in the log if running from a master instead of artiq_run
+Note that it is also reported with artiq_run if you are looking at the log through some other means (aqctl_corelog or artiq_coremgmt).
+Additionally, the data being posted by RPC to the master may be being used to monitor / update some measurements. Again, here data collected from completely invalid RTIO sequences can be distributed without obvious notice.
+Maybe there can be another implicit barrier before each RPC?
+I expect the cost of a barrier should be ~10µs, so, it is small compared to the RPC execution time.
+Ack on the concurrency issues, this is subtle.
+Maybe there can be another implicit barrier before each RPC?
+I expect the cost of a barrier should be ~10µs, so, it is small compared to the RPC execution time.
+Meaning 10 us of processor time?  Just checking that this does not force us to lose a ton of slack, because these are errors that occur when RTIO events are being placed in lanes, not when they are being output, right?
+I think there should also just be an explicit barrier method available (call it rtio_check() or something) that can be called by a user at a defined location.  For example, one of the major goals of the Zynq development with regard to clocks is to be able to run with indefinite (or quasi-indefinite) top-level kernels, and likely with only rather sparse RPCs as much of the processing of results would be handled on the core device.
+Meaning 10 us of processor time? Just checking that this does not force us to lose a ton of slack, because these are errors that occur when RTIO events are being placed in lanes, not when they are being output, right?
+Yes, but you'd only use barriers infrequently.
+Yes, but you'd only use barriers infrequently.
+Meaning that this is processor time, we are not giving up all our slack to wait for the barrier, correct?  Once per iteration of the experiment would be plenty to have a barrier in my book.  The main point is that the kernel needs to be able to send a signal that things are broken in the RTIO, in a loud enough way that the execution is stopped and requires user intervention to address the issue.  If the barriers come every few milliseconds or so, then this is fast enough that quitting the kernel and going to an idle kernel to save a potentially unhappy ion would still work.
+Maybe there can be another implicit barrier before each RPC?
+My worry is that the system will continue running in a corrupt state until the RPC - in our experiments there is typically 100ms - 10s between RPCs. This is long enough that, for example, a collision / sequence error in a ttl.pulse() could leave a signal on that damages hardware if left on for this long.
+(Consider a 10W microwave pulse that damages hardware if left on for more than ~ms being left on for a second due to a missing 'off' RTIO event).
+If this is detected promptly, one can call a rescue function and save oneself from most of these problems without having to rely on everyone guarding (and recognising!) critical sections.
+Raising an exception on the next RTIO event delays the error reporting indefinitely, or the error may even not be reported at all. For example, if the error occurs from the last event submission in a kernel, then it goes completely unreported.
+I imagine we would keep the current core log messages as well, so in the majority of cases the core log records an error, and a subsequent RTIO event submission raises a sequence error. In the corner case of the last RPC in a kernel raising this error the user can call rtio_check() to explicitly test for errors.
+Asynchronous exceptions without precautions (for which Python does not provide appropriate constructs) have concurrency bugs. For example, if the error appears after the kernel has already terminated by itself, then there is nowhere to raise an exception.
+Indeed, but we would not run in to that here. If the last RTIO event in a kernel produces an error state, this wont be raised until the next RTIO event submission by the next kernel. This is not dissimilar to the issues that the RTIO engine already handles (e.g. that the now pointer might be in the past).
+Some sort of explicit barrier API seems quite attractive to me, as we could use the same interface to allow the user to make RTIOUnderflows asynchronous in order to increase throughput (cf. our Zynq discussion a while back, where it seems like the roundtrip latency would be a significant bottleneck for the otherwise much higher event rate).
+(Consider a 10W microwave pulse that damages hardware if left on for more than ~ms being left on for a second due to a missing 'off' RTIO event).
+This only concerns this specific example, not your general point, but: I definitely wouldn't trust the core device/… system as it currently is with any safety-critical decisions! Clocks sometimes have glitches, DRTIO links might come and go (we know that there is a rare issue with data corruption and/or the aux state machine somewhere!), and, more to the point, non-recoverable CPU panics are quite frequent and the compiler is far from bug-free. Any system to avoid equipment damage really ought to be implemented as an out-of-band interlock circuit.
+Some sort of explicit barrier API seems quite attractive to me, as we could use the same interface to allow the user to make RTIOUnderflows asynchronous in order to increase throughput (cf. our Zynq discussion a while back, where it seems like the roundtrip latency would be a significant bottleneck for the otherwise much higher event rate).
+Good idea.
+There is still an issue with the event backpressure (if the RTIO core's buffers are full), but that can be solved in the same was as it is solved in DRTIO, with a local token counter.
+This only concerns this specific example, not your general point, but: I definitely wouldn't trust the core device/… system as it currently is with any safety-critical decisions! Clocks sometimes have glitches, DRTIO links might come and go
+There were some discussion about implementing some safety mechanisms in the gateware (e.g. maximum duty cycle on TTLs) but we didn't purse it.
+(we know that there is a rare issue with data corruption and/or the aux state machine somewhere!),  and, more to the point, non-recoverable CPU panics are quite frequent and the compiler is far from bug-free.
+Can we get proper reports including minimal repros for those various bugs?
+I have played around with triggering an exception to halt execution during submission of an output event after a sequence error has occurred:
+https://github.com/tballance/artiq/tree/sequence_error_exception
+It does this by latching the asynchronous sequence error flag in gateware, reading it out along with the normal underflow/overflow status registers and raising an exception if necessary. The latch is reset on core.reset(). This way, whenever the asynchronous sequence error flag is set, an exception will be triggered on submission of the next rtio_output event.
+(I haven't propagated this behavior to the DRIO slaves yet)
+Although I agree that this is not an ideal way of dealing with this, I think it is nonetheless valuable since it removes the possibility of 'silent death' in the vast majority of our use cases.
+Using my previous example
+Without exception:
+Execution continues until the user picks up on the messages generated in the core log
+
+With exception:
+Exception is thrown and execution is halted.
+artiq.coredevice.exceptions.RTIOSequenceError: RTIO sequence error has occurred, before 2067197437664 mu, channel 5*
+
+The 'silent death' is a real problem for us because of how we are running our kernels in our use case:
+we generally have one big kernel which is continuously and autonomously running for > 30 mins.
+If a sequence error occurs
+Does anyone else see value in this interim solution?
+IMO the external hardware safety aspects of sequence errors, underflows, overflows, etc would be better dealt with with a watchdog/handshake/checkpointing API/architecture. The meaning of safety is much more complicated and in general not fulfilled by than demanding that events are executed. Usually your kernel is complicated enough that you can't or don't want to guarantee it's safety throughout its lifetime but you can only guarantee safety at certain instants. Having these checkpoints combined with some watchdog pattern would allow the representation of sufficiently complex "safe states" and would mesh well with e.g. the idle kernel (or another faster mechanism within a kernel) rescuing the system.
+One issue with exceptions (whether due to underflows or raised by barriers) that may well be problematic for any attempt to rapidly react to "uncommon" state is the fact that they are slow to handle (#948).
+If error checking becomes optional by requiring explicit barriers I'd expect a lot of verbose barriers to be added through the code. I'd rather not have to sprinkle them and instead just make the exceptions asynchronous (report the status asynchronously and by default check on each rtio call). I'm fine with allowing the status checks to be switched off/on explicitly and adding explicit checks as barriers. The problem with async exceptions raised so far seems like it can be handled (part of the clean up after a kernel or as part of the idle kernel).
+IMHO when RTIO events go missing this is catastrophic, and one wants to stop doing damage ASAP.
+Having an exception raised as early as possible to the error occurring, i.e. at the next RTIO input / output event submission after the error occurred, seems to be more foolproof, and easier to reason about.
+I agree. A core design aim of ARTIQ is hard determinism. Missing RTIO events break this. The certainty and transparency of a hard, immediate stop is an excellent interim solution.
+This way, whenever the asynchronous sequence error flag is set, an exception will be triggered on submission of the next rtio_output event.
+The @tballance patch looks to be a path to implementation of that interim solution based on the example. I advocate for this approach.
+Does the number of SED channels also limit the number of parallel TTL input gates?
+I think explicit safety considerations (e.g. microwaves left on too long) are best dealt with by out-of-loop interlock mechanisms, as @dnadlinger has suggested.  It's entirely possible to write a valid kernel that outputs all desired RTIO events, and that if executed properly would cause damage to an experiment.  You're just one typo away from this (1*ms turning into 1*s, say).  If that's the only barrier you have to trap damage, watch out.  To me, the essential issue is that if RTIO fails to output all pulses with their exact timing, this must raise an exception.
+@sbourdeauducq do you still have misgivings about having RTIO calls automatically check for errors and  then report them asychronously?  Having a global on/off switch for these checks, plus the ability to add explicit barriers, as suggested by @jordens, seems to cover most use cases and avoids excess verbosity.  Perhaps the on/off switch can also have a third option of "only at kernel completion" for checks, if preferred.
+Microwaves or high current could left on too long would be well covered within artiq with a checkpoint/watchdog/handshaking pattern.
+What about:
+Microwaves or high current could left on too long would be well covered within artiq with a checkpoint/watchdog/handshaking pattern.
+Agreed, but as you say this is a more complex undertaking and would represent a separate contract item most likely.  My goal with this discussion is not to develop/implement a generalized checkpoint/watchdog/handshaking architecture, but rather to have some (potentially optional) mechanism for guaranteed hard kernel stop when RTIO fails to meet its real-time guarantees.  These goals are not in conflict (or subset/superset).
+What about:
+Is this for any kernel or only for top-level kernels?  For low-level kernels only this might lead to too much waiting (we wrap some short single pulses or few-pulse sequences in kernels for sideband cooling, for example, and they get called dozens of times in a row).  For top-level kernels only we have the issue that @cjbe presented where sometimes the top-level kernel runs for hours.  How much time are we talking about, ballpark (recognizing this will be hardware-configuration-dependent) -- is this ~10 us of slack killed per kernel?  More?  Less?
+Yes.  Does this mean checking on every RTIO call to see if an asynchronous error has occurred?
+Yes.  However, given the potential timing issues if this holds for every kernel, as described above, perhaps one can set an explicit option/flag for kernels that causes them never to wait (no barrier at end).  One would set this flag for kernels where speed is essential, such as my sideband cooling use case, so you don't kill your slack.
+Yes.
+I'm still not quite clear on how making underflow asynchronous helps out here, unless we are catching underflow exceptions (or some equivalent but simpler mechanism, based on @jordens point about the slowness of exceptions in #948)?  Otherwise the asynchronous underflow still will end up getting caught by a barrier and killing the kernel.
+Is there an issue with making an API that has an explicit barrier function in it that users can place where they like?  This would give the user much greater flexibility in figuring out where to sprinkle barriers.  When combined with the ability to flag individual kernels as being barrier/non-barrier kernels, and a global on/off switch, covers all use cases from my point of view.
+Is there an issue with checking for asynchronous errors on each RTIO call, as in the example from @tballance?  Or would this be used but we have the barriers at the ends of kernels as a backstop?
+Is there an issue with checking for asynchronous errors on each RTIO call, as in the example from @tballance? Or would this be used but we have the barriers at the ends of kernels as a backstop?
+The run-time cost for this check is negligible (one comparison), so in my opinion this check is always desirable (since I always will want to stop the kernel in a sequence error has occurred).
+I think it could also be valuable to add a barrier function to provide a guarantee that no sequence error has occurred up to a point in time. In my use case, however, I don't think that I will end up using this very often.
+Is this for any kernel or only for top-level kernels?
+The top-level kernel.
+For top-level kernels only we have the issue that @cjbe presented where sometimes the top-level kernel runs for hours.
+We don't have this issue; the kernel would be interrupted immediately by the comms CPU.
+Does this mean checking on every RTIO call to see if an asynchronous error has occurred?
+No. The comms CPU does the checking and kills the kernel immediately (going back to the idle kernel) if an error occurs.
+The corner case here is what to do if the error occurs in the idle kernel. Restart it?
+Is there an issue with checking for asynchronous errors on each RTIO call
+Yes, the timing between the error occurring and the error being reported becomes messy as it depends on what the next RTIO calls are.
+Does this mean checking on every RTIO call to see if an asynchronous error has occurred?
+No. The comms CPU does the checking and kills the kernel immediately (going back to the idle kernel) if an error occurs.
+Am I understanding correctly that this will now be a new role for the comms CPU, which is to periodically poll some register which asynchronously reports RTIO sequence errors and RTIO underflows, and to kill the top-level kernel and go to the idle kernel if an error is found?  How often would this polling happen?
+The corner case here is what to do if the error occurs in the idle kernel. Restart it?
+When the top-level kernel is killed, are the SED lanes flushed of their contents before the idle kernel runs?  If so, then if the idle kernel causes an sequence error when run with empty SED lanes, restarting it will not help, you'll just end up in an infinite loop.
+Am I understanding correctly that this will now be a new role for the comms CPU, which is to periodically poll some register which asynchronously reports RTIO sequence errors and RTIO underflows, and to kill the top-level kernel and go to the idle kernel if an error is found? How often would this polling happen?
+It's already doing it to print the error in the log.
+When the top-level kernel is killed, are the SED lanes flushed of their contents before the idle kernel runs?
+No but calling core.reset flushes them.
+No but calling core.reset flushes them.
+OK, so as long as you start your idle kernel with this then you should have empty SED lanes for your idle kernel.  The behavior of a faulty idle kernel is tricky, since it runs without requiring a master or a PC connection -- how do we handle errors thrown by an idle kernel now?  If the idle kernel has a sequence error (or other flaw), what is the current thing that happens?
+It's already doing it to print the error in the log.
+Ack.  Main question is -- how often does this polling happen?
+If the idle kernel has a sequence error (or other flaw), what is the current thing that happens?
+Error in the core device log.
+Ack. Main question is -- how often does this polling happen?
+Quite often for local channels, and more infrequently for DRTIO, but why is that relevant?
+Quite often for local channels, and more infrequently for DRTIO, but why is that relevant?
+Just interested in numbers here, because this determines what the lag would be for killing a kernel and going to the idle kernel.  As long as this total latency is on the ~few ms timescale from error occuring to idle kernel starting, I think we're OK.
+If the idle kernel has a sequence error (or other flaw), what is the current thing that happens?
+Error in the core device log.
+And then does the core device attempt to restart the idle kernel?  If so, is there any regulation of the number of attempts?

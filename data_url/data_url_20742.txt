@@ -1,0 +1,31 @@
+One of the requirements is that code should not branch based on secret data, and, similarly, not do memory accesses based on secret data.
+A first intuition may be to pass an uninitialized secret key to the API functions and check that valgrind does not output any [..] depends on uninitialised value(s) errors. This has (at least) two problems:
+An alternative approach would be to have two randombytes functions, i.e., something like randombytes_public and randombytes (to error on the side of caution, I'd default to the assumed-secret variant). Normally they would both link to the same function, but when running this check the secret variant would not initialize the buffer.
+This still leaves open the rejection sampling issue. It seems there is no way around manual inspection in these cases. We could whitelist the lines in which these issues occur, and then filter them out of the valgrind output.
+Valgrind has support for suppression files, but the suppression rules seem too generic for our purposes. For example, consider the rejection sampling in Kyber, which triggers the following valgrind error and corresponding suppression rule
+We could have a file with all whitelisted files and lines, but that quickly becomes a hassle to keep up to date when the line numbers change.
+We could also include inline suppression markers (similar to #noqa), and then use this to filter valgrind output. Such markers are perhaps easily overlooked when doing code review, so we would probably want to search for these automatically and highlight them as part of the CI output (through a webhook and a comment on the PR?).
+@mkannwischer and I briefly discussed this, but figured it would be worthwhile to hear some more thoughts on this before implementing anything concrete.
+Perhaps this is just too complicated to do completely automatically as part of CI. The script(s) that run these checks could perhaps just be run before merging a PR as part of the 'check the PR' workflow (which we also need to establish). The valgrind issues that pop up then are then easily determined to be valid or not.
+Good points. I agree that this is going to result in manual effort anyway, and having randombytes_public then indeed only complicates things for users without gaining us much.
+What I was hoping to achieve with whitelisting markers is that it could be an error in the CI process if there are valgrind errors on places where markers are not present, essentially formalizing requiring a comment at the respective spots in the code (and, informally, requiring a bit more explanation than a simple PQCLEAN_SECRET_ACCESS_OK). That may indeed not be worth the extra complexity either.
+@cryptojedi working with colleagues to get a better version of ctverif that works more automatically and has fewer false positives/negatives.
+In libsecp256k1 we've used valgrind for constant time testing for years and recently made it part of CI (after I got tired of other contributors being unable to remember that we had this tool and should be using it. :P).  I have yet to encounter a single false positive in our configuration other than just valgrind not working at all (we have, however, been struggling a littl with compilers making code actually non-constant time).
+To accomplish this, we make use of the valgrind memcheck instrumentation in a test harness to explicitly mark secret memory:
+https://github.com/bitcoin-core/secp256k1/blob/37dba329c6cb0f7a4228a11dc26aa3a342a3a5d0/src/valgrind_ctime_test.c#L47
+This avoids any problems with having a test with undefined behaviour the compiler might decide to get clever with.
+We also use the instrumentation to construct a declassification function to mark data that through cryptographic magic has been rendered no longer secret:   https://github.com/bitcoin-core/secp256k1/blob/37dba329c6cb0f7a4228a11dc26aa3a342a3a5d0/src/secp256k1.c#L225
+In particular, we use declassification on some intentional benign/theoretical non-constant timeness-- e.g. a nonce ending up as zero with probability 1:2^256 and needing to be rejection sampled.
+I also made some custom patches to valgrind to expand the set of detected operations, but they're not really relevant for us-- they might be relevant to you-- in particular, stock memcheck doesn't protest about tainted memory going into a division operator.
+I just stumbled across your repository randomly while googling to look for reasons why GCC 10+PPC64LE+ Os optimization = valgrind puking all over everything.
+Hi @gmaxwell, I saw your post here and tried applying your technique to FrodoKEM which is included in PQClean (although I applied it in a slightly different version for now).  See https://github.com/microsoft/PQCrypto-LWEKE/compare/master...dstebila:ds-valgrind?expand=1.  Does that seem like the right application of your technique?
+@dstebila  (sorry for the reply delay)  That looks correct, is it working usefully for you?
+One thing to watch out for is that the -O0 may actually cause the compiler to emit branches where it wouldn't otherwise or vice versa.
+@dstebila (sorry for the reply delay) That looks correct, is it working usefully for you?
+Yup, it successfully identified something that I knew had a secret dependent branch and our proposed fix seemed to pass it.
+One thing to watch out for is that the -O0 may actually cause the compiler to emit branches where it wouldn't otherwise or vice versa.
+Right... but as I understand it, all optimization levels may or may not generate some code.  So I'd have to run Valgrind for all the optimization levels I envision the code being used with in order to have assurances at each of those levels?
+And on all compilers and all target architectures that you expect to have assurances of.  :(
+On the plus side, if it's an outright bug in your code it's more likely to trigger a failure in many configurations vs if its a case of the compiler being overly clever which might just trigger on one platform.
+Given that you can't test every conceivable configuration (especially not future compilers that don't exist yet) if you test the most likely setups you're at least testing something that matters to some users.
+I'm glad that it's also working for you!

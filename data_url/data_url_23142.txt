@@ -1,0 +1,30 @@
+After spending again the last 3 days refactoring the AcquisitionModules, I think the mist in my mind around _setup() and setup_attributes somehow disappeared:
+Right now, there is a distinction between module.setup_attributes = d and module.setup(**d). In the later case,  _setup() is called whereas in the former it is not.
+---> I want _setup() to be called in both cases (basically make the two codes equivalent). Would this be OK for the lockbox as well?
+I explain below why I want this behavior, and after that, what obscur historical reasons led us to this weird situation.
+Basically, I think the point of having a _setup() function is to perform some "post load initializations". Let's say, I want to load the na in some state with whatever number of points, I immediately need to perform some array initializations with the right size. This should be done in _setup(). I would say it makes no sense to allow the module to be in an undefined state where the attributes have been set, but _setup() has not been called.
+Also, the whole idea of the _callback_attributes is to force the "post load initializations" when a crucial attribute (such as na.points for instance) is changed on the fly, in the gui for instance. This is completely coherent with the previous logic.
+Up to now, this was the case for historical reasons (basically, in some cases, we were using _setup() for something else than just initializing the module after load. For the scope, for instance, this was the function that was launching the acquisition).
+Now, this has been clarified, the acquisition is launched by explicitly calling scope.curve_async(), such that there is no need to keep the weird intermediate state where the module has been loaded but _setup() hasn't been called.
+I think apart from the instruments, _setup is never used any more. However, just as an alternative possibility, one could completely get rid of _setup by defining some kind of state attributes, such as
+trigger_armed or setup_was_called or current_averages or the like. Setting this attribute to True or 0 could accomplish the same as a call to the previous _setup function. The problem with including _setup at the end is that it would force us to call super(ThisModule, self).setup_attributes in a derived class at the end of setup_attributes.setter. Placing the equivalent attribute at the end of the _setup_attributes list would allow for more flexibility.
+as an example, look at lockbox/signals/input.py for the attributes of IqModule, which take care of their own setup when their values are changed.
+Probably many instruments don't need anything more than just changing their attributes individually, or the logic is simple enough to just modify the setter, but I believe it is important to provide a general framework to perform a general initialization after changing an attribute or loading a new state. It is quite flexible, basically, you don't need to subclass every single attribute, you can simply chose which attributes are triggering the setup function by putting them in the _callback attribute list.
+Moreover, the logic of doing this initialization only once when changing the attributes "in block" is taken care of (by disabling the _callback_active in setup).
+If we would get rid of this feature in Module, I would have to redevelop it in exactly the same form in the AcquisitionModule....
+Did you ever redefine the setup_attribue.setter in a derived class ?
+After conversation:
+I have implemented the following in refacor_register_submodule_attributes:
+the default behavior of attributes is callback=False (I think the negation no_callback make things more cryptic...). Also, I have chosen the default behavior to be False, because in the vast majority of cases, this is the preferred behavior, which means, we would have to manually add callback=False in many places, but I am open to discussions on that.
+I renamed the flag _callback_active into _setup_ongoing which is probably more explicit.
+Since the setter of setup_attributes is equivalent to setup(**kwds), I moved the code that was previously in the setter into the definition of setup() (in ModuleMetaClass). This way, the manipulation of the flag _setup_ongoing is done in only one place; in the function setup as it should. In particular, I commented the following lines in _create_widget(), It seems to still work fine, in spite of what's written in the comments, but let's keep the commented lines there until we are sure everything is OK).
+I have browsed through all modules except for lockbox and submodules and checked that callback_attributes was only used in AcquisitionModules and Asg.trigger_source. For some reason, I could simply remove it from Asg.trigger_source without noticing a problem, I added a commented line:
+# callback=True) for some reason, this doesn't seem to be needed anymore... that we can remove once we are convinced it is fine.
+I still didn't try to launch unittests, but in first approximation, things seem to work fine by hand. I will maybe give a shot to the unittests tonight...
+OK, the old unittests in test_scope, test_spec_an, test_na are passing...(still on refacor_register_submodule_attributes)
+can we rename
+callback -> call_setup ?
+Done
+One last thing to do to make the AcquisitionModule fully ready for the release (except for taking a day on documentation) is to solve the problem with the performance of iq.setup() because right now when the spec an is not in baseband it cannot acquire faster than 300 ms per curve....
+the past commit should contain the modifications to filtermodule. are you sure that is still a problem? which operation takes so long?
+No you are right it is working fine now

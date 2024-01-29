@@ -1,0 +1,70 @@
+Users cannot run multiple processes, each of which submits some jobs.
+As a user, I want to run multiple processes to submit the jobs in parallel. However, they will hang in mac.
+You can argue that (#567) the user would better assembly multiple circuits and send them in one job, then the qiskit will internally use the PoolExecutor to handle them.
+However, as a general tool, qiskit should not impose restrictions on how the users run it. The users should have the options to decide whether or not to submit the jobs using multiple processes.
+To fix the hang bug, simply change the code as follows.
+->
+In the original code, the executor is shared by multiple job-submitting processes. Some process cannot be joined even if it has finished its work because the underlying executor is still busy.  In the patch, the executor is made process-local, i.e., each process owns an executor. So, the process can be joined after it finishes its own work.
+This is only a patch for mac. For Linux, the executor is the ProcessPoolExecutor, which needs to be explicitly shut down using executor.shutdown() before the job-submitting process is to be joined. Otherwise, it will still lead to another hang.
+To achieve this, qiskit needs to provide the 'session' APIs so that each job-submitting process opens a session upon start and closes the session upon join, where the session close can trigger the executor.shutdown().
+Anyway, the original code of Localjob looks like a code smell.
+@liupibm would it be possible to implement the changes without modifying the public API?
+@delapuente thanks!
+for mac, the above change of LocalJob is enough and it does not modify the public API.
+I only care about mac in my problem settings.
+@ewinston and I talked about this some. The temp solution is all jobs use Threadpool. However, the real fix is likely a qiskit wide gobal executor pool. However, we really need to have a discussion with the aqua team to see how to best address what they need.
+I think @atilag was also thinking about a possible fix.
+@nonhermitian @delapuente
+thanks, the temp solution looks good to me, at least much better than the original one since it leads to hang in mac.  For this reason, can we temporarily apply the patch to terra?
+With this patch, I already observed at least 2X speedup of the optimizer by using multiple job-submitting processes (i am part of aqua team).
+Moreover, for the general users (rather than aqua), terra should not impose restriction on how they use the tool. As a general tool, terra should not hang if invoked by multiple processes.
+@liupibm The way to test using the same executor as terra would be to submit to the one contained in LocalJob. So you would do something like
+from  qiskit.backends.local.localjob import LocalJob
+executor = LocalJob._executor
+Currently, for linux, this gives you the ProcessPoolExecutor. Because that depends on python's multiprocessing module this has the restriction that submitted jobs must be picklable as discussed.
+@ewinston the pool has the serious limitations that the jobs must be pickable.
+For this reason, I did not use the pool in my code.
+Instead, I used the multiprocessing module which does not suffer from this restriction.
+besides, I balance the workload among the multiprocesses to simulate the pool behavior.
+thanks, the temp solution looks good to me, at least much better than the original one since it leads to hang in mac. For this reason, can we temporarily apply the patch to terra?
+Just to confirm, @liupibm, do you mean forcing all jobs to use the ThreadPoolExecutor? @nonhermitian @atilag are we good with that?
+I was thinking about implementing our own Threadpool natively, so we can bypass GIL restrictions. Qiskit will use some sort of queue to send whatever we need to run concurrently (jobs, compilations, etc). Of course, this will be a global shared queue for everything Qiskit. I'd create an issue so we can have a discussion there about possible implementations.
+@delapuente I am speaking only as a Mac user.
+currently, in mac, terra already uses threadpoolexecutor.
+if sys.platform in ['darwin', 'win32']:
+_executor = futures.ThreadPoolExecutor()
+else:
+_executor = futures.ProcessPoolExecutor()
+What I proposed is to make the executors private to each job-submitting process, rather than shared between all processes.
+@atilag this sounds like a nice idea.
+I wrote a fake pool using the multiprocess mainly for workload balancing (attached).
+However, it does not allow the jobs to be submitted on the fly.
+multiprocess_pool_with_pickle.py.txt
+We can think more about this once you open a new issue.
+But the temporary patch I proposed above already solved my problem in Mac, can you accept it so that I can move forward on the aqua side? The patch does not impose any change on the APIs.
+Once terra has the 'ideal' version, we can still switch to that ideal version.
+I like the idea of improving the flexibility of parallel jobs although we maybe should investigate further whether something exists already that allows circumventing the GIL.
+For example one short term solution of getting around the picklable issue @liupibm is to increase the number of objects which can be serialized, for instance like with the python dill package.
+@liupibm as far as your code doesn't break any of our supported platforms (Linux, Mac, Win64), I'm ok about merging your temporary fix. Once we have discussed our concurrency strategy, we will code a proper implementation and this patch will be removed. @ewinston @nonhermitian any thoughts?
+@atilag sounds good,
+what command should I use the to run the tests?
+I can test them on linux/mac/win64.
+Sounds fine to me.
+@ewinston I tried the dill and pathos and ran out of luck. maybe because our object is a bit complex.
+@liupibm When you submit the pull request it should already get tested on all the platforms. It would be good if you could add a small parallel test code which requires this change to work.
+@ewinston thanks, will do it.
+@liupibm, before merging, let me clarify what's happening: our LocalJob class in Mac already uses a ThreadPoolExecutor for submitting jobs. But it crashes when you use execute() with the following code (as in #567 but in Mac):
+You argue that it is crashing because the ThreadExecutor embedded in the LocalJob class is being shared among threads AND processes, so Python is not able to join some processes because, although they are doing nothing, they are still waiting for the thread executor to finish tasks, even those not running in the current process. Am I right?
+But if so, that should introduce a delay in execution, making all the process to wait until the last task is completed. How could it be crashing? What kind of crash are you receiving?
+Talking with @ewinston, there is no reason why all platforms can not just use _executor = futures.ThreadPoolExecutor().  That small modification should probably be done first (I can do it), in a different PR, and then this fix can be simplified without the need for extra work on Linux.
+You can argue that (#567) the user would better assembly multiple circuits and send them in one > job, then the qiskit will internally use the PoolExecutor to handle them.
+Indeed, I think that this should be the target method.  Timing by the backend people show that submitting multiple circuits in a single job is much much more efficient, on hardware at least.  Thus, that should be the target workflow.
+@nonhermitian Actually that's not quite what I had in mind. Rather that other people trying to do something parallel simply try to use the same LocalJob._executor instance for their executor. However @liupibm said he tried this and it didn't work for him.
+Doesn't using Liu's suggestion (temporarily perhaps) mean that some people will be able to take advantage of ProcessPoolExecutor which may matter for local simulators?
+@delapuente @ewinston Let me clarify a little bit.
+#567 is a crash related to the pickling errors. The pickling errors occur when we use the ProcessPoolExecutor  or ThreadPoolExecutor modules, but won't occur when we use the multiprocessing module. I do not know the reason, but this stackoverflow post seems to give the answer: https://stackoverflow.com/questions/27318290/why-can-i-pass-an-instance-method-to-multiprocessing-process-but-not-a-multipro
+The current issue #772 is about the hang, rather than the crash.
+If all the job-submitting processes share the global underlying pool executor, the processes cannot join. Again I am not sure why this happens. To me it is like a bug of Python. This post may give some clue. https://stackoverflow.com/questions/21641887/python-multiprocessing-process-hangs-on-join-for-large-queue.
+As for my temporary fix upon Linux, I did not really try it on Linux. What I did is to switch Localjob.py to use futures.ProcessPoolExecutor() in mac. It does not work. But If I do the extra work to shutdown the ProcessPoolExecutor, everything is working well.
+my fix cannot not pass some of the tests.
+closed.

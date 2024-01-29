@@ -1,0 +1,39 @@
+I'm aware of the following antipattern - in 3.0. using old methods like EVP_sha3_256() instead of fetching a digest object via EVP_MD_fetch and using a fetched object gives a performance penalty. See https://github.com/openssl/openssl/pull/20354/files#diff-86fbd44f96c9f78b9c4a27d8b5fb9d83aa787b9a7d92c6774d9172c5952b791f for example. If it is the case (and looks like it is), it's worth fixing
+Originally posted by @beldmit in #1426 (comment)
+Reference to AES added as per #1428 (comment)
+@beldmit Are you aware of how much performance this costs? If I get it right, it would mean adding "state" to (re)using Digests and AES (to stop OpenSSL re-searching and re-creating the corresponding EVP objects), right? Somewhat along the lines of what we already do for XKCP.
+Right,it just eliminates search/recreate. Didn't measure it myself, but it's a relatively expensive operation
+it's a relatively expensive operation
+I can't help it, but the scientist in me wants numbers. So here we go:
+
+If this is only due to the difference in the way algorithms are fetched, this indeed is a bummer (aka an issue worth while tackling).
+Speaking frankly, I'd run a test under valgrind --callgrind in some more or less realistic scenario.
+run a test under valgrind --callgrind in some more or less realistic scenario.
+ACK. Just wanted to quickly get beyond
+Didn't measure it
+Contributions very welcome. Or are you indeed not at liberty to contribute?
+I don't have any problems with contribution beyond the capacity ones :).
+Is there a initializing and deinitializing function to place fetching in?
+AFAIK only for the ..._inc_... variants. I was just about to do a KISS version (not thread safe) using static initializers to see whether this really brings the >20% it looks like...
+I can draft a KISS version, I think
+I can draft a KISS version, I think
+That'd be very welcome! When I did just this quick hack, no significant runtime change materialized in speed_common (run linked against OpenSSL3.2.0-dev), but maybe I misunderstood what'd be required (?):
+original: 194 passed, 484 skipped in 742.97s (0:12:22)
+patched: 1 failed, 193 passed, 484 skipped in 430.60s (0:07:10)
+The failed test is code_style:
+strawman_fetch.txt
+It's a quite ad-hoc patch without any attempt to optimize and free fetched objects.
+The test is done against OpenSSL 3.0.8 on F37 laptop
+Impressive improvements visible also on my machine: Thanks! Do you want (have time) to make this into a PR?
+Sure. But again, I don't understand how to properly format my changes and how to properly initialize and free the variables.
+Yikes -- now I understand it: Calling EVP_sha3_256 really creates an EVP_MD object that royally sucks (and keeps doing so as it's used again and again). Just changing this to EVP_md_fetch is all that's needed. Amazing (that this is hidden underneath the "old" API).
+Out of curiousity: What spoke then against implementing (in OpenSSL3)
+??
+Sure. But again, I don't understand how to properly format my changes and how to properly initialize and free the variables.
+Formatting: Just run astyle  --options=.astylerc src/common/sha3/ossl_sha3.c on the new files.
+Initialize/free: Well, that'll require the addition of new functions to the API I'd gather. But maybe someone else reading along has a better idea.
+Out of curiousity: What spoke then against implementing (in OpenSSL3)
+??
+No idea. Probably it's worth asking upstream this question. The only version I have that currently old method are detected compile-time, and the change you suggest makes necessary run-time checks if the object is fetched.
+Is this resolved by #1431?
+I think yes.

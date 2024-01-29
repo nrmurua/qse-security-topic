@@ -1,0 +1,30 @@
+The experiment below successfully goes through the n_scan_points for loop a random number of times (of order a few dozen), then terminates with the following error message.  I'm running 1.0rc2 on linux.
+I ran into a similar error as well with the following experiment,
+With the error message,
+Restarting the FPGA seemed to fix it. Not sure what caused it.
+When you get this kind of error, it is helpful to examine the coredevice log (via artiq_corelog).
+I think we should do this automatically.
+Okay, it's not quite the same. I just get a reset error when calling self.core.comm.close(), which I guess is different from what Dave got.
+Causes the error.
+Restarting the FPGA doesn't fix my problem.  Running corelog after the error spits out:
+@r-srinivas What do you expect closing the core device connection from a kernel to do?
+@dleibrandt Just went through >700 iterations without any problem (using ARTIQ 2.0/master). Is your network generally working well?
+@dleibrandt Are you able to reproduce the problem? With 1.0rc3? Can you monitor the connections with wireshark when it happens?
+The problem is still present with 1.0rc3.
+Wireshark seems kind of complicated to set up, so here are some simple tests for now:
+My setup currently has the the the computer's ethernet port going to a switch (dlink dgs-2205).  Other ports of the switch are connected to the local network and the FPGA.  Disconnecting the local network from the switch doesn't fix the problem.  Plugging the FPGA directly into the computer's ethernet port (bypassing the switch) does fix the problem (I just ran 1000 successful iterations).  Getting rid of the switch and plugging both the computer and the FPGA directly into the local network doesn't fix the problem.
+So there seems to be a problem related to the NIST network.  Any ideas?  Perhaps the simplest fix is to get a second ethernet card in my computer?
+tcpdump -s0 -w kc705.pcap ip host YOUR-KC705-IP-OR-HOSTNAME should do it. You can load that kc705.pcap into wireshark and/or send it to us.
+OK, I just emailed the dump from the above command to @jordens and @sbourdeauducq.
+FWIW we are using a TPLink TL-WR841N here (and OpenWrt), the KC705 is on one port and the control PC on another or over WiFi.
+Looks like the jumbo frames are a problem. But I don't know yet who is to fault or what the best solution is. Disabling jumbo frames on that interface on windows should be a workaround.
+Jumbo frames are definitely going to break in LiteEth, which uses this for sizing the packet buffers:
+https://github.com/m-labs/misoc/blob/8c0e0ff43d8937aac2a71fb4eca077b0795825dc/misoc/cores/liteeth_mini/common.py#L7
+Cc @enjoy-digital
+Shouldn't the maximum MTU be discovered automatically first even when jumbo frames are enabled on the interface?
+that relies on everybody doing the right thing
+For this to work, it seems the core device should send back an ICMP Type 3 message upon receiving a jumbo frame. Right now liteeth corrupts jumbo frames, and upper layers drop them (silently).
+It doesn't drop them. It actually acks first 1475 and then 2935 octets of the 4395 octet frame and then the TCP machinery times out and picks up again. That's wrong and also costs 200 ms on every kernel upload. The fact that the difference between the first two acks is 1500 could hint towards some wrapping. There is probably another bug that then -- in some cases -- causes the second ack to not appear and lwip to reset the session.
+The connection should not fail anymore. But it's not sending back ICMP frames yet when the MTU is exceeded, so there may still be a significant latency increase when jumbo frames are enabled.
+If the control PC's operating system honors TCP MSS, then there should be no latency increase (MSS was also broken before this patch).
+1.0rc4 is in conda and should fix this.

@@ -1,0 +1,54 @@
+Currently, if_else, while_loop and for_loop are represented in drawings as black boxes.
+Additionally, the tested condition is not explicit in the drawing.
+I propose adding a more explicit representation.
+In the figure below I propose two alternatives, so that we can choose one or discuss an even better option.
+
+@jakelishman as discussed on slack
+@gabrieleagl I've thought about this a bit as well. I feel like your Idea 1 will work and provides the best option. For the mpl drawer, it might not require changing the wire spacing, and the text drawer already adjusts wire spacing to fit other text between gates.
+I believe it would be possible to adapt the current _multiqubit_gate code in the mpl drawer to create the boxes. I also think it would be possible to recall _get_layered_instructions followed by creating a new instance of MatplotlibDrawer for the bodies of the ControlFlow methods. I was thinking of seeing if I can work up a basic demo this weekend.
+The text and latex drawers may require a bit more work, since there is not as much flexibility with the spacing and fonts.
+Here's a not-ready-for-primetime demo for the mpl drawer with an 'if'. This took a bit less than 50 lines of code, so no major restructuring of the drawer is required. This should work with any arbitrary circuit inside the 'if', and should also work with any of the other ControlFlowOps.
+To-dos:
+
+Oh, this looks great as a start, thanks so much Edwin!
+For your sanity: I think drawing the box around the clbits is the more sensible way to go - control-flow may well act on the bits that it's conditioned on, and it'd start getting really confusing trying to do something sensible if the block's condition was on a clbit that's above (in the drawing) another clbit it acts on.  Instead, to show the condition better, perhaps we don't draw the condition at all (in the normal mechanism), and instead write some representation of it up above the blocks? I think that'll be easier to make things like paired "if" and "else" blocks look better - we could do something like write the condition, then have a big brace coming out from it to hold the two blocks, so it's clear they're from the same condition.
+One more thing to consider:  I think we'll still want a sensible way of showing qubits/clbits that are unaffected by the blocks, much like opaque instructions currently do in the drawers.  We can probably do that by drawing some sigil where the input wires cross the block delimiter, or perhaps better, we could try to not draw the wires at all within the block?
+Thanks Edwin!
+I don't want to over-complicate, but the most clear option to me would be:
+
+When we move from the if_else to the loops, setting filled vs empty circles on the vertical wire, is no longer an option to indicate if the qubit is tested to be 1 vs 0, as conditions may depend on the loop variables. So we can either plot the formula, or simply indicate the qubits and discard the formula.
+For homogeneity, we can do the same for if_else, without putting filled/empty circles.
+
+What do you think? Jake?
+I'm keen to stick close to what Edwin thinks is reasonably implementable here, because we 100% do not have the resources to make Qiskit's visualisations "perfect".  We've generally maintained the position that we would support a more full-featured visualisation package being responsible for the best drawings, and that Qiskit's internal support is just best-effort.
+As a direct response: I think drawing the box around all the affected wires (both qubit and clbit), and not doing something different between qubits and clbits is the best way forwards.  There are many edge cases, such as blocks that aren't on visually contiguous qubits/clbits, that are already considered for opaque instructions (i.e. we draw a box from the top-most qubit to bottom-most clbit and label unused wires), and I think it will be simplest to stick close to that type of approach.  It will also mean that if a control-flow block contains one of these opaque instructions, we won't suddenly end up with the case where an opaque instruction is sticking out of the surrounding control-flow box.
+I agree that writing out the condition / loop indices above the box(es) will probably be the neatest (and easier to implement).
+@gabrieleagl I thought of something similar to your top drawing, but I think it's probably simpler and more easily readable if we just put the condition for the IfElseOp in text at the top. And for the loops that would work as well. More demos to follow.
+Ok. Here's a first semi-working version of an If. The following circuit generates the drawing,
+
+If you change line 16 to  qc2.x(0).c_if(cr, 4), you get
+
+So the IfElseOp box scales to accommodate whatever circuit is inside.
+Here's what's left for the If/Else,
+For the future, there are the ForLoopOp and WhileLoopOp. These come with some new issues.
+The future plan is
+This looks great, thanks Edwin.  For how to handle wrapping: my initial reaction is that we could just count these boxes as "atomic", and force them to start a new line if necessary.  If they're still too long for the line length, then we could just extend the line - I think it'll be pretty hard to read if we split the boxes.  I'm completely open to whatever you've got in mind too.
+I don't have preferences on box shape or colour, provided that the colour is distinguishable, controllable in user stylesheets, and for our default style probably just uses an existing colour.  Your picture looks like it matches all those points.
+In your "box scaling": your box seems to scale horizontally but not vertically.  Is that just because you built the IfElseOp manually, and it explicitly blocks on qr[2] even though it's not in use?  Good if so - that looks like expected behaviour.  For a full set of tests, you might want to use the control-flow builder interface to construct things, since it's the way people will generally build up their circuits, and it should be easier to work with.  For example, your code would look like:
+Your plan sounds sensible to me.
+Great job @enavarro51 - I love it!
+For the problem of breaking lines, another option could be to make two boxes on the two lines, and finding a way to mark that it's a continuation (such as a double or dashed line on the right side of the box on the first line, and a similar double or dashed on the left of the second line).
+One possibly hard test case, that you didn't mention: a gate that is both quantum-controlled and classically-conditioned.
+Ok, Team. I now have nested if/else working down to whatever level. There are still some spacing issues, but now this circuit,
+generates this in main,
+
+and this with the new stuff,
+
+Still more to do before a PR, but progress.
+So this crazy circuit,
+produces this crazy drawing
+
+The first if is nested 5 deep. There is no limit to the depth. The colors cycle through a group of 4 (thank you @jlapeyre for the idea).
+The plan is now to do 2 PRs. The first will be a number of structural data changes that alter 200 lines of the mpl drawer code, but should function exactly as the current main. This was discussed with @jakelishman  and is being done to simplify the review process, since these changes are almost all simple like changing self._data to node_data in many places.
+The second will be a WIP PR for the actual if/else functionality. The big missing piece right now, other than more testing, is how to wrap the if/else boxes.
+I think this was closed via #10207 Let me know otherwise.

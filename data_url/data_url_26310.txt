@@ -1,0 +1,50 @@
+Hi everyone , as suggested in the issue #2968 and also as requested by one of my customer I've tried compile the cp2k version 2023.2 but in the compilation I think I've found also here some bugs into the toolchain. Before describing all the bugs that've run into I give you some of the specs of my machine and all the software that has been used in order to run the toolchain.
+CPU: Intel(R) Xeon(R) Silver 4210 CPU @ 2.20GHz
+Core(s): 20
+Socket(s): 2
+Core(s) per socket: 10
+Thread(s) per core:  1 (Hyperthreading is disabled)
+GPU: 4 x Nvidia Tesla V100-sxm2-16gb
+OS: Rocky Linux release 8.8 (Green Obsidian)
+GCC Compiler: gcc-8.5.0 --> OS package
+CMAKE: cmake-3.20.2 --> Installed by the toolchain
+OpenMPI: ompi-4.1.4 --> Compiled with: gcc-8.5.0 + cuda-12.0.0 + hwloc-2.9.0 + pmix-4.2.2 + gdrcopy-2.3.1 + ucx-1.14.1 + ucc-1.2.0
+FFTW: fftw-3.3.10 --> Compiled with: gcc-8.5.0 (single precision)
+Plumed: plumed-2.9.0 --> Compiled with: gcc-8.5.0 + ompi-4.1.4 (The verison above) + libtorch2.0.1noabi
+CUDA: cuda-12.0.0 --> Installed from the official Nvidia website
+Nvidia driver version: 525.60.13
+otherwise I get this error:
+(This is the firs linking error but the logs continue, let me know if you need the full log).
+The error doesn't go away if I use these variables (used to fix this problem in the version 9.1):
+Variable used in the old version:
+How can I also tell to the installer to install cp2k in a custom path and not in the same directory? Like the --prefix=/my/custom/path for the cmake (I've tried using the variable CURRENT_DIR but it didn't work)
+Does the set of MPI_LIBS (or OPENMPI_LIBS) include -lmpi_cxx? You may check tools/toolchain/install/toolchain.env for this. If I am not mistaken, there is no test using the OpenMPI installation from the host system.
+Yes it does, into the file toolchain.env are declared both variables with value:
+This is the script used to install superlu.
+Namely, the cmake call is:
+
+The assumption here is that the env variables are injected to get the proper OpenMPI, i.e.
+export CC=mpicc
+export CXX=mpic++
+export FC=mpif90
+Could you inspect the cmake.log file and check if it is taking the right OpenMPI wrappers and flags?
+Hi @alazzaro and thanks for the reply (@mkrack  thank you too for your reply). Has you said I've tried compiling it by inject the variables you said:
+But the error is the same, I also checked that my OpenMPI libs have the correct definitions he complains about, so for example the first definition that it doesn't find is ompi_mpi_cxx_op_intercept but by doing this:
+I can see by the command used on top that the definition in this library and this also works for all the other missing definitions.
+The complete output of the cmake.log is this:
+The only doubt I have in this log file is this variable OpenMP_EXE_LINKER_FLAGS='' that isn't set and maybe it is needed for linking the libs so I can give it I try. Also If you notice something I've missing in the log let me know It.
+Thanks for the logs. I wonder if by setting CMAKE_EXE_LINKER_FLAGS you overwrite the other MPI linker flags. The OpenMP variable is unrelated in this context.
+Another test would be to change the installation script and add VERBOSE=1 to the make line. Then we should see which command is giving the error.
+Finally, you can compile the library by yourself (without the toolchain) and pass it to the toolchain...
+Here I am with other infos. I was able to override the CMAKE_EXE_LINKER_FLAGS in order to link the openmpi lib path using this string -Wl,-rpath -Wl,/my-path/ompi-4.1.4_nccl_pbs_ucx14_gdr/lib and I wasn't unable to override the variable OpenMP_EXE_LINKER_FLAGS  (I don't know why it doesn't read that variable). But even with these changes the error persist and in the verbose output of the make command the first command to fail is this one:
+I was leaving the manual compilation as the last thing to do because I thought It would be interesting and better to fix the toolchain but in this case as you suggested and until a solution comes up I think I will try to compile SuperLU by myself. If I'll find a solution I will let you know here and also if someone else has other ideas are welcome.
+Thanks again!
+OK, so it uses g++ instead of mpic++, but I think this is fine. Then you are linking:
+so it missing the C++ MPI library. I can assume cmake doesn't include it, so you have to force it. Please note that this C++ binding (which is now deprecated) is requested by OpenMPI itself.
+I suggest to really compile the library outside the toolchain.
+Here I am with some news! After I've solved different bugs into the toolchain I've managed to get the arch files I needed but now when I'm using the command: make -j 20 VERBOSE=1 ARCH=local_cuda VERSION="ssmp sdbg psmp pdbg" 2>&1 | tee make.log after few steps this command fails with this error:
+Note that cuSOLVERMp is still pretty new...
+If you don't need it then simply remove --with-cusolvermp=install from your toolchain command line.
+If you do want to try it then have a look at this script, which I've been using for installing cuSOLVERMp and its dependencies.
+Yep @oschuett, I found that the problem was that so for now I removed it and I also saw that in the version 2023.2 there isn't a script that installs it so that was the main problem. Thanks also for giving me the script I will try it for sure!
+Today I will also update this issue with the main problems I've faced in the tool chain in order to make this usefull also for other users and maybe also to improve the code ;)

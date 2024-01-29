@@ -1,0 +1,14 @@
+I have  time-dependent collapse operator that the time dependent part is matrix format.how should I write this ?
+my collapse operator is consist of expm(f(t))
+Right now, QuTiP doesn't support passing c_ops as an arbitrary function to mcsolve.  @Ericgig might have more ideas for other things you may try, but in general to us mcsolve you need to have your collapse operators as constant matrices multiplied by time-dependent scalars.
+Depending on your collapse operators, you may be able to move to an interaction picture such that the collapse operators lose their time-dependence, or move to being scalars multiplied by constant matrices.  Otherwise, if your system size  and available memory permit, you can use mesolve to directly solve the Lindblad master equation for the full density matrix rather than single trajectories.
+c_ops don't support arbitrary function, and there is no easy way to go around it for mcsolve. The main runner of the evolution is in cython and rewriting a python mcsolver would probably be easier than to try to force it.
+In one of my old PR: #1123, I believe mcsolve and mesolve accepted arbitrary function for c_ops but stochastic was still in progress. You could try that, but there is no guaranties.
+Otherwise, the next major release should accept functions, but it's still far away.
+mesolve is probably the easiest way.
+How can I use QobjEvoFunc to write collapse operator with time dependent operator?could you give an example?
+@Ericgig
+With that branch, you can pass any function that take time and a args dict that return a Qobj as a c_ops:
+It slows down the solver a lot...
+Another approach, if your system size is not too large, is to express your time-dependent operator a time-dependent linear combination of the basis operators on the system's Hilbert space. For example if you were looking at a qubit, you would write expm(f(t)) = sum a_i(t) * sigma_i. Then you can pass vectorized coefficients in the form [[a_i_list,sigma_i],...]. This should be much faster.
+It's ideal if you can do this analytically, but it would be sufficient to pre-compute the collapse operator at each timestep (which will be expensive for large systems) and then project them onto your operator basis. The relaxation generators are usually Hermitian, so you can find the projections onto the Pauli basis by examining the matrix elements, rather than computing lots of inner products.

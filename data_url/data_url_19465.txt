@@ -1,0 +1,23 @@
+We believe that the inclusion of an annealing simulator in the first release of Qibo is a good idea.
+One possibility is to implement the QUBO graph and then proceed with the following algorithms:
+The DWave Ocean SDK provides a C++ library for simulated annealing called neal, which uses samples with QUBO and Ising. There are other libraries such as sqaod which may be relevant for benchmarking.
+Let me try to summarize the discussion we had this morning.
+We are planning to implement in Qibo an Adiabatic Quantum Computation algorithm based on the Adiabatic Evolution presented by JI.
+This is one of the possible approaches for quantum annealing, it is very close to what quantum hardware is designed to do. This approach is not public available in other libraries. Public libraries implement classical annealing algorithms (see post above).
+Implementation
+For this first implementation in Qibo our target goal is:
+While point 1 is simulation specific, points 2 and 3 can be reused on real quantum hardware, i.e. for large number of qubits we use the quantum hardware to perform time evolution while the classical computer optimizes the scheduling. The point 3 is also interesting because allows us to perform an adiabatic evolution using quantum circuit hardware (instead of annealing), so this seems more like shifting the "simulation" to a real device emulation (i.e. circuits simulating time evolution).
+Practical implementation suggestion
+Please correct me if you see some misinterpretation or wrong assumption.
+Thank you for the great summary. I agree with both the general points and the practical implementation for Qibo. As a start, I did a simple integration of Schrodinger's equation using RK4 in numpy. I hide the code in a spoiler because it is a bit long but it should be possible to execute it if you copy/paste:
+This follows JI's slides and defines H(s) = (1 - s)H0 + sH1 where the "easy" Hamiltonian H0 is the common sum of X and the "problem" Hamiltonian H1 is the classical Ising (sum of ZZ). I use a linear scheduling s(t) = t / T but this can be easily changed.
+I integrate the time-dependent Schrodinger equation using two different ways (RK4 and multiplying with the propagator exp(-1j dt H)) and keep track of the norm and H1 energy for both evolutions as well as the overlap between the two evolutions. The main observations so far are:
+If you agree, I could start by implementing a Qibo model based on this simple RK implementation written in Tensorflow instead of numpy. Then we can continue with some benchmark and check other integrators that are more accurate or easier to parallelize for GPU.
+One last note is that in the script I calculate the Hamiltonian as a (2^N, 2^N) array and take dot products to the state vector. For many qubits it will probably be more efficient (and will use less memory) to do this as a sum of local terms to avoid creating huge matrices. For example the H1.dot(psi) for the Ising Hamiltonian could be calculated as sum(ZZ.dot(psi)) where our custom operators can be used for Z.dot(psi). This can be generalized for any local Hamiltonian and may also be useful for the VQE.
+Thanks for the snipped, the structure is pretty much clear and follows what we have discussed, so I agree in porting this interface to QIbo.
+Concerning performance, your script requires just 0.5s on my CPU to evaluate the rk4 and 2s for the exponential solution, so we may provide as option both solutions.
+The main difficulty of this algorithm is to find the proper ODE solver, which maintains quality and is parallelizable.
+Here some references collected by Artur:
+Fundamentals on QA:
+QSA vs CA:
+Implementations:

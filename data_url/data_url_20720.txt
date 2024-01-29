@@ -1,0 +1,20 @@
+Dear all,
+According to Section 5.6 of https://link.springer.com/chapter/10.1007/978-3-031-37679-5_18, the use of fmla results in bitflips.
+This is a strong evidence that the signature produced could be different from the reference implementation at a very small probability.
+Generally speaking, while implementing Falcon, one should not change the computation of floating-point arithmetic.
+The correct way to test the implementation correctness of Falcon is to test if all the functions using float compute exactly the same results as the reference implementation. Otherwise, if one of the floating-point numbers is different (with different least significant bits) from the counterpart in ref., there is a very small probability of having a different key pair/signature than the reference implementation.
+Below I elaborate for the key generation and signature generation:
+(i) In key generation, one has to solve the NTRU equation. Falcon uses a tower-like solver based on the field norms of cyclotomic number fields. After finding a solution from the smaller field, Falcon applies Babai's reduction over C and reduces the coefficient sizes. For this step, Falcon assumes that the multiplier for reducing should fit into int32_t and rejects the key pair otherwise. Take a look at this line https://github.com/PQClean/PQClean/blob/master/crypto_sign/falcon-512/aarch64/keygen.c#L3159.
+Now the multiplier is computed by applying complex FFT. If the result of FFT is changed, even slightly, this could lead to different rejection criteria of key pairs while solving for the equation. I have once replaced the complex FFT with my big-integer-based FFT and obtained a different key pair out of many key pairs (if I remember correctly, 2^50 ~ 2^54, I used multiple random sources for each of the implementations to isolate the consumptions of randomness).
+(ii) In signature generation, essentially Falcon samples integers with probability computed by floating-point arithmetic. So changes of the least significant bits of floating-point numbers only say that there is a very small probability that the integers sampled will be different.
+For (i) and (ii), a possible way to identify an instance is to craft some very specific random sources leading to different accepting criteria of an event. This can be done by first dumping all the floating-point numbers and constructing a small state machine generating a periodic sequence iterating through the mantissa of the first floating-point number with a different counterpart from the reference implementation. I did this some time ago. It was time-consuming and boring. I suggest people implementing Falcon simply follow the computation order of floating-point arithmetic from the reference implementation.
+If you really want to find an instance, I can try to craft a random source if I have time (I recently don't have time, not sure about  year 2024).
+Sincerely,
+Vincent Hwang
+Thanks for the report.
+I'm not exactly sure what the impact of these bit flips is rather than spurious, slightly different outcomes. Do we leak information about the secret key? Get invalid signatures?
+There is a very small probability that the key pair and signature will be valid but different. Regarding security, I don't think there is much impact.
+So the question here is for users, do they care about having an implementation computing the same thing as the reference implementation? If it is fine for a user to use an implementation with correct sign-and-verify functionality with comparable security, then it should be fine to use the aarch64 implementations.
+But if one wants an optimized implementation of computing the same thing as the reference implementation for many key pairs and signatures, then one should be warned that there is a very small probability that the aarch64 implementation will compute a different thing.
+Vincent
+Ack. I think that you're touching a little bit of a fundamental question surrounding the Falcon reliance on FP, because there are other differences between platforms (e.g. rounding behavior) that can cause such problems...

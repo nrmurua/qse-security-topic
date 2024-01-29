@@ -1,0 +1,61 @@
+The notebook should run smoothly after many hours of measurement
+The notebook hangs, or even the whole chrome tab crashes. Maybe also what happened in #175
+For the tab crash I had a hard time to reopen the notebook, as this java widget, or any cell or whatever had a lot of negative delay messages.
+When the notebook finally loaded after many trials and waits it was super slow, scrolling was a pain, I could resolve this by restarting the kernel and clear output.
+I also see my notebook slowing down when reusing it for longer times, so I end up making copies or from now on clearing outputs.
+operating system
+Win 7
+qcodes branch
+Merged Master with merlins instruments, array_ids
+NO plotting enabled
+Just for clarity... javascript, not java  The easy thing to try here is to limit how much text the subprocess widget retains; give it 2k lines or something, should be enough for anything real you want to see there, and later we can log this output to a file or something in case you want to go back and see all of it.
+I dont really think the log output should go into that widget at all, I'd rather see a independent log-server collect, filter and take care of all the logging information, that would also help a lot with multiprocessing logging, the main process shouldn't have to take care of that, or am I wrong?
+That aside, the only thing that outputs in there is the negative delay message, QCoDeS/Qcodes_loop#13, #116, What is it actually used for, and why do I get it in my measurements? I'm more than happy if the measurement goes faster than what it expected :)
+Fine with javascript :)
+Negative delay means things took longer than they should have, so we don't have time to wait for the requested delay. Looks like there are only two places this can come from:
+Hmm, it would be swell if the negative delay message told where it was coming from, wouldn't it!
+Anyway, it's bad that you're getting deluged with such messages, but good that this is the only thing you see in that widget. If you don't care about this issue you can certainly silence them (and we should make that a config option, though I'd prefer to sort out the root cause of these!) but there are many other things that can pop up in that widget, like real errors that happen in a subprocess, and I don't think it would be a good idea to hide those away in a log file that most people will never look at.
+Negative delay means things took longer than they should have
+Haha i thought it was the opposite. So there is an additional slowdown somewhere, that might then be related to #187 ?
+Is this then only related to the actual setting of a parameter?
+Does it also come on getting a parameter?
+Does the overhead on setting/getting add inside of the expected delay, or outside of that?
+Where do I put the max_delay?
+Is there a difference in setting delay=0 and delay=0.0001 for the message? I sometimes use very small delays.
+Usually all my delays are set to 0 most of the time.
+The log server I'm dreaming of has a Gui where I can filter for debug levels, module parts, drivers, error types or something else, it can just open up in a new window :) but thats not the point of this issue I think.
+if delays are zero it doesn't do any waiting, OR checking how long things really took... so this message shouldn't have any way to pop up. But a very small nonzero delay is dangerous because it will try to hit that exactly and complain if it goes over.
+In the parameter constructor (ie add_parameter) if you include a delay you can also include max_delay - or after the fact you can do param.set_delay(delay, max_delay)
+so the max_delay is a per parameter thing?
+Now I have a very fundamental question on the delay now, how is it implemented?
+is it 1 or 2?
+i.e. is the time it takes to set(x) included in the delay or is it not included?
+I think it should not be included.
+FYI:
+I just had this again, the ipynb file went to 21MB on disk, when I finally got where I could restart and clear output it went back to 30KB
+ipynb file went to 21MB on disk
+all negative delays? I'm implementing a limit in that widget now...
+I dont think so, as I commented out that line (182) in helpers.py
+Mh, 21Mm does not sound toooo crazy. This is strange indeed.
+not in pure size, but chrome somehow cant handle it, whatever is in there. I'll save the notebook file next time
+I dont think so, as I commented out that line (182) in helpers.py
+Ok, well, I'll continue and limit that widget anyway - also I'll make it so if you minimize it, it doesn't automatically reopen when stuff shows there, I'll just somehow indicate that there are new messages.
+Now I have a very fundamental question on the delay now, how is it implemented?
+in Loop the delay is in addition to everything else that happens, so scenario 1. Well, at least in addition to everything you as a user asked for, including time taken to set and get params. It does check the signal queue during that time (how it receives abort signals) and once we implement a monitor, that will happen in this time too.
+In a StandardParameter, the delay includes the communication time, so scenario 2. That's because this was primarily made for stepped parameters (where a single set is broken up into many hardware calls to make a linear ramp). There you want to ensure you get one step per delay time, regardless of how long the comm takes in any given instance. I suppose there could be an argument that if the parameter is not stepped, this delay should be after the comm has finished, so that you're sure the instrument has already done its thing and this time is available as settling time...
+Ok, well, I'll continue and limit that widget anyway - also I'll make it so if you minimize it, it doesn't automatically reopen when stuff shows there, I'll just somehow indicate that there are new messages.
+That would be great, maybe you can also limit the server list in the title of that widget? it sometimes gets a big big, as I have a server per IP instrument...
+I dint get the delay thing completely yet. So there are two different delays, Where do I define the loop and the step delays?
+Isnt everything in my instruments a standard parameter, which would always be scenario 2?
+so if I do
+Is that delay 0.1 now a scenario 1 or 2, it sounds like it is 1, right?
+Yes, I think you've got it:
+Ok, sounds good.
+But how does this:
+But a very small nonzero delay is dangerous because it will try to hit that exactly and complain if it goes over.
+then come in? if it is just an additional delay, it shouldn't matter how small it is, no?
+Unless it's so small that you can't even reliably check if the signal queue is empty in that time. I don't know whether there are things that can slow this down, I would think that normally this is well below 1 ms but I've never measured it (and we probably need to check different operating systems)
+I see, so that is where all those messages still pop up.
+That makes me wonder if this is what we want, check the queue at every data point when the delay is really small, it could produce a huge overhead, maybe.
+Right, maybe we stress test queue checking and set a minimum delay to check the queue. I don't want it to be intermittent though, either we always or never check it at a given step.
+I have been experiencing similar issues, I have been reluctant to post it here because I am still using parts of our own acquisition loop and have not spend any time trying to narrow it down to QCoDeS. I'd be very interested if addressing the way the logging works will solve some of these issues.

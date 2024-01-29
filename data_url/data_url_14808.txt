@@ -1,0 +1,17 @@
+When a circuit is created with integer qubit operands and a barrier is applied with those operands as a set the barrier instruction is created for a single qubit operand.
+gives
+I would expect (and the behaviour was this way in 0.44)
+Passing a list gives the expected behaviour
+No response
+Not denying that this probably should work, but are you sure this was working in previous versions of Qiskit?  I can't see any way it could have, given that the definition of QuantumCircuit.barrier hasn't changed for years, and that's where the bug is.
+edit: fwiw, the bug as presented is still present at least as far back as Terra 0.20.0, about two years ago.
+It's showing up in the code failing after upgrading to qiskit 0.45. It's possibly caused by a secondary interaction but casting to a list before calling resolves the failure that is working prior to the release (and I manually triggered it by upgrading my local qiskit version).
+What you're presenting is definitely a problem, but I don't think it can be the differential cause of what you're seeing, because this behaviour was in Qiskit 0.44 (and many versions before) as well - the reproducer in your top comment has the exact same behaviour with Qiskit 0.44 as with 0.45.
+We did have #11113, which if you're seeing new behaviour with Barrier is likely related, but the particular behaviour in the reproducer at the top wasn't changed by that, which is why I'm mentioning it - fixing this bug might not be the root cause of what you're seeing.
+Its worth mentioning that the bug came up during the traversal of a circuit with compose. Something like
+So its possible the behaviour of compose or the broadcasting above has changed and is interacting poorly with this issue.
+Ah, right right - so the circuit is initially constructed with QuantumCircuit.barrier({0, 1}), and then when later it's iterated through with compose like this (which actually looks like it means append, but that's not important right now), the compose call throws an error?
+If so, that's entirely possible, and it's actually good behaviour; we're finally detecting this years-old bug in QuantumCircuit.barrier.  Before #11113, the compose would silently duplicate the bugged-out circuit (qc in your latest code block), but now it's detecting it and complaining.
+The other good news from that is that fixing this bug as reported should solve your problem, despite this particular code not having changed in 0.45. All circuits generated using the code you've mentioned before now were buggy (including qc and new_circ) and it's been silently ignored.  Fortunately, I don't think it will have had any effect on anything - the Instruction.num_qubits field is never really inspected other than during the append.
+Great, thank you Jake 😄. For others that encounter this bug in the meantime, I was able to resolve it by first casting to a list, eg.,
+@hunterkemeny: would you be able to take a look at this?

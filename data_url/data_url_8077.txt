@@ -1,0 +1,21 @@
+setup.cfg is configured with
+This means that qutip cannot (easily) be built when numpy 1.20 or higher is installed.  The current stable release of numpy is 1.21
+Can qutip be updated to run with current versions of numpy?
+Incidently, a previously built qutip successfully passes tests using numpy 1.21.  Should the numpy<1.20 cap just be dropped?
+We can in theory drop that requirement for users - it was there in the immediate aftermath of the Numpy 1.20 release, which broke C-ABI compatibility with previous versions, and we had a couple of problems with people building against Numpy 1.20 but trying to run against a prior version.  Our CI and release versions will still all need to be built against Numpy 1.16 (or our minimum supported runtime Numpy) as the lowest common denominator until we drop support for all Numpy releases before 1.20, but we enforce that in our build pipelines anyway.
+Just to be clear (though I think you knew this):
+Can qutip be updated to run with current versions of Numpy?
+QuTiP already runs correctly against Numpy 1.20 and Numpy 1.21, and its runtime requirements on Numpy are uncapped.  It's just building from source that'll fail, and that was originally a sort of "fail-safe" mechanism.
+Also pip install -e . should automatically do build isolation for you, including installing all the build requirements into a temporary virtual environment, so it should have just worked here.  Calling setup.py develop directly is kind of out-dated now, though it can still be useful if you're planning on doing Cython development; pip's isolation actually usually means that the Cython compiler can't detect changes any more, so it always needs to rebuild everything.  setup.py develop, because of its much lower-level status, leaves the source and extension-library files well enough untouched that it can do incremental compilation.  If you're not doing Cython development (only Python), pip install -e . is much better.
+Thanks Jake.  I've raised the Issue in regards to building deb packages from source (https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=999517), so pip can't be used in that context.
+The Debian build machinery invokes python3 setup.py {config,build,install} not setup.py develop, c.f. past build log with numpy 1.19 here.
+@drew-parsons Thank you for reporting this.
+@jakelishman After reading your comments, I'm inclined to drop the <1.20 from the build requirements. However, I can't actually see where our GitHub build_wheel job specifies the numpy version, and I'd like to be sure I understand the build properly before removing it.
+Oh, you're right Simon - I think I was just thinking about conda-forge, where we have the pinning files.  The build process may need updating a bit now - I pinned cibuildwheel to a pre-2 version, but since I wrote that, cibuildwheel 2 was released, and should generally work fine.  You may want to look at things like CIBW_DEPENDENCY_VERSIONS to set constraints on the versions of Numpy and Scipy used in the build to maintain compatibility perhaps?
+@drew-parsons: will Debian's version requirements recognise that a version of QuTiP built against Numpy 1.20 can no longer support Numpys before 1.20?  Anything that compiles C extensions against Numpy will have that potential issue.
+We can set up packages dependencies easily enough. It's already done automatically in fact. Our numpy package provides a versioned python3-numpy-abi (currently python3-numpy-abi9) and an debhelper dh_numpy3 tool which sets the versioned dependency for dependent packages at build time
+Just noting that this bites building with Python 3.10 too since the only numpy recent enough to support Python 3.10 is more recent than the numpy specified in our build requirements (see #1732).
+@drew-parsons I've merged #1747. Could you confirm that this solves the Debian build issues? And please let us know if we can do anything else to make building for Debian easier!
+Thank you again for reporting this and sorry it took a little while to fix.
+I tested the PR #1747 patch against 4.6.2.  It's working fine. Building against numpy 1.21.5, and building and passing tests with python3.10.
+Great! Thanks. :D

@@ -1,0 +1,28 @@
+A lot of effort goes into making it look as if the fine RTIO timestamp was fully part of the RTIO timestamp and if the RTIO clock is 1 GHz. This is an old decision from the early days that we arrived at because it seemed like this could be easy and transparent and would be doable for a lot of PHYs for a long time.
+But in fact this picture isn't true:
+Comments, opinions, is there something missing?
+Thanks for taking a step back to consider the broad implications of this early design choice.
+For input do you likewise envision 8 bits per RTIO period that indicate the transition pattern? In this case backward compatible routines that return ns time-stamps on edge transition events and counts during interval are desirable.
+This would simplify the ARTIQ timing model from an end user's perspective. 👍
+Do these follow from what you propose?
+As for TTL outputs, there would be methods for TTL input that process the pattern data (we would consider re-eabling FFL1 and using that). None of the other things follow:
+What are FFS, FLS, FFL1?
+Find first/last set, i.e. the operations that determine the index of the first/last '1' bit in a word. FFL1 are the respective OR1k instructions, which we disabled on our soft cores a while back to make the design less taxing.
+Broadly agreed, some details:
+Okay, but it reduces CPU overhead.
+There is no resource overhead; the fine timestamp bits are simply excluded from those operations (with the caveats that you mention). It does make the gateware code more complex on the other hand.
+Those are still needed for clocking the SERDES. And on Ultrascale at least, they cannot be generated locally as they both have to come from the DRTIO transceiver.
+NB: this proposal will disallow latency compensation (#40) with a resolution finer than RTIO cycles.
+@sbourdeauducq Updated the top post.
+Yes. Gateware based latency compensation for TTLs would become as coarse as the RTIO clock. But that also was a pitfall for jitter and the pulses-shorter-than-a-RTIO-period. If fine delays are needed they would need to be implemented in software. The AD9910 driver does that already and needs software delays.
+But AFAIK the latency compensation does not support the fine TSC bits at all:
+https://github.com/m-labs/artiq/blob/master/artiq/gateware/rtio/sed/lane_distributor.py#L144
+I.e. this might be moot.
+But AFAIK the latency compensation does not support the fine TSC bits at all:
+https://github.com/m-labs/artiq/blob/master/artiq/gateware/rtio/sed/lane_distributor.py#L144
+I.e. this might be moot.
+It can be modified to include the fine timestamp bits; I didn't do it to preemptively avoid FPGA timing issues. Only SAWG needs this internally, and only uses coarse timestamps. And properly supporting latency compensation needs a user API, documentation, and funding.
+ACK
+I do generally agree that the current situation with "coarse" and "fine" timestamps is confusing and leads to some awkward situations.  This seems like a reasonable solution.  However, I am definitely nervous about the notion of pushing fine timestamp "generation" or "extraction", if you will, onto the CPU.  Having the ability to record and emit fine timestamps is a very nice (and for us, essential) feature of ARTIQ, but if the CPU overhead becomes too cumbersome it basically breaks the ability to do this.  We spend a lot of time worrying about performance improvements to get sustained RTIO throughput up, is this going to just slow all sustained RTIO throughput down by a factor of 2 (say), if fine timestamp resolution is required?  That would be a very bad outcome of all of this.
+I also worry about the ability to add offsets to timestamps which are finer than the RTIO clock.  By breaking out the 8 LSBs into the "data" portion, separate from the "RTIO timestamp", you would now have to add the "data" portions and carry overflows into the RTIO timestamp.  And while this addition of "data" portions is well-defined only if both of the "data" portions have only one edge; if one data portion has two edges, then you could end up shifting it so that the you now need two "data" portions in adjacent RTIO timestamps.  I believe that this may be tractable but it's certainly not pretty and also costs overhead.
+It's not clear to me how common the use case is for RTIO pulses shorter than the coarse RTIO period, or for multiple edges within a single coarse RTIO period.  Is this something you are really running up against?

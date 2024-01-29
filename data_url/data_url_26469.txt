@@ -1,0 +1,30 @@
+Until this morning, I was using the old regtesting bash script do_regtest due to my working branch being behind. I just changed to the new python script do_regtest.py and encounter issues when running with the psmp version.
+Namely, if I run ./do_regtest.py --maxtasks 100 --workbasedir ../../.. local psmp, it seems that only one test is running at any given time, whereas 25 are expected to do so. It can tell because of the very slow timing and an obviously empty machine when running htop.
+On the other hand, when I run the ssmp version, I observe that 50 tests are run at the same time. Any idea @oschuett ?
+Can you share some of the outout? Especially, the ---- Settings ---- section and the Launched X test directories and Y worker... line?
+Btw, a more convenient way run the tests is via make VERSION=psmp test.
+I have exactly the same issue and I never run regtests by launching the regtest script but with make <options> test instead
+Since I also use do_regtest.py directly (even if I haven't tried it recently), I would assume make test calls it (see 
+On the other hand, when I run the ssmp version, I observe that 50 tests are run at the same time.
+There might be restrictions on the number of concurrent MPI jobs. This is e.g. the case at CSCS.
+If you launch do_regtest.py with the --debug flag then it will print a message whenever it spawns a subprocess.
+When adding the dbug flag, I indeed see that 25 subprocesses are launched. I can also see a brief peak of activity with htop. It seems that the initial 25 instances of CP2K are launched, but not more.
+It seems that the initial 25 instances of CP2K are launched, but not more.
+This probably means that 24 of the workers are somehow stuck - probably due to MPI.
+You can run with --keepalive --debug to get the live output from all workers.
+Using the --keepalive flag to monitor the output, I see that the calculations are taking place, but at an extremely slow rate. Combining this observation with the htop command that show a tiny fraction of the machine being used, I would say that all 25 workers are actually sharing the same 4 physical CPUs.
+Is this OpenMPI? Try to avoid affinity then... Something like --bind-to none (check mpiexec --help)
+Thanks! This is indeed OpenMPI. Passing the argument --mpiexec "mpiexec --bind-to none" to the do_regtest.py script seems to do the trick. The question now is: should this be somehow included as default in the regtest script, such that this does not happen in the future?
+Yes, it would be good to change the default.
+Is --bind-to none part of the MPI standard, ie. will it work with all MPI implementations?
+No, it is not part of the standard. Moreover, it is not part of OpenMPI default (it only works if you require hwloc). So, in principle, I'm against introducing it in the default... Maybe a mention of a README would be fine...
+Yes, it would be good to change the default.
+Is --bind-to none part of the MPI standard, ie. will it work with all MPI implementations?
+I don't think so. Real background is that affinity is counterproductive for job-like execution (unrelated tasks). Most MPIs incl. MPICH/2 (Intel MPI) also have something similar. However, MPICH's/Intel's default is not such intrusive pinning or no affinity by default.
+I have just checked the MPI standard: The answer is no. But the library developers are allowed to support additional options.
+In the light of job schedulers, MPI's behavior could also be modified by the environment (pinning applied without user consensus). I think it's best to mention this in the README or issuing a console message prior to running the tests.
+No, it is not part of the standard. Moreover, it is not part of OpenMPI default (it only works if you require hwloc).
+So, in principle, I'm against introducing it in the default... Maybe a mention of a README would be fine...
+It seems to me that it's very common to build MPI with hwloc.
+So, I still think we should make --bind-to none the default for do_regtest.py.
+If hwloc is missing then there is a clear error message. In the other (more common) case the performance is just mysteriously low.

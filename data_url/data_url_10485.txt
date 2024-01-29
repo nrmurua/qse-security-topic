@@ -1,0 +1,24 @@
+I am curious what causes it to be wrong almost always by the quantum computer? It seems like it's not ready yet, but I am more just curious the difficulties presented by this problem.
+Hello @neverwiredhouse, could you please share an example in which you found a wrong answer?
+@sploiber ,
+No problem. Thanks for the fast reply.
+here is a gist
+pretty simple. I try using the "exact" method, which is on the PC, and then the quantum method and the answer is always random.
+Hello @neverwiredhouse, yes indeed, I am also seeing strange behavior from the QPU example. I will write it up below, but I will also document the overall picture thoroughly, to be sure we're on the same page.
+First, here's the exact solver code:
+Running in Python 3.7, on a Mac with Anaconda, I get an answer [2, 1, 0, 3]. If I add up all the paths in the graph (2->1, 1->0, 0->3, and 3->2), I get a distance of 12. This does seem to be the minimum answer, so ExactSolver seems to be working.
+If I run with SimulatedAnnealingSampler instead, I get different paths sometimes, but the distance is always 12. This is consistent - the different solver is finding a valid answer - just a different path.
+Now, if I look at the code with the QPU:
+I do indeed get unpredictable results - sometimes long vectors - sometimes vectors of length one. I'll continue on this today.
+For
+We can take a look at the actual qubo by running
+I won't print the actual output here, because it is long, but
+so the first thing to notice is that the qubo is fully connected and has n^2 variables (where n is the number of cities). However, in writing this reply I noticed that a log of the edges has weight 0 and could be removed, I generated an issue #105
+The next thing we're interested in is what the energy range will be when it is run on the QPU. So we need to convert to Ising
+This has the same number of variables/nodes and edges/interactions but we can look at the biases
+The system scales h/J down to [-2, 2] and [-1, 1] respectively, you can see this by running
+so that means that our biases are scaled down. With the long chains caused by the fully connectedness above, I think the biases are just totally getting washed out. Addressing the above issue will help, by reducing the chain length, but it will not address the bias range problem.
+I'm not quite sure if this is related to the same as this issue, but I also see some instances of None in the resultant path from the graph used in the prior comments here.
+@derekwisong I've taken a look at your question and code.  We've made some updates to the code to make sure we don't have any instances of None in the final route, and hopefully those will be merged soon.
+To follow-up on the earlier issue of inconsistent results:
+We just merged some adjustments to the QUBO created by this code.  Using this updated version, I was able to get consistent results between ExactSolver and the D-Wave Sampler by adjusting the parameters chain_strength and num_reads to 30 and 100, respectively.  Additionally, I set lagrange=15.0 as another parameter.  With these settings, I was able to obtain 16/17 of the optimal TSP routes for the above graph using the D-Wave sampler.

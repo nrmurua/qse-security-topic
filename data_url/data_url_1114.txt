@@ -1,0 +1,14 @@
+Sometimes you have a whole host of jobs to run. Instead of submitting lots of them and filling up the queue, you could do one at a time. But you can save on latency / classical processing overhead by keeping a respectful queue. I've been using this function
+Would something like this be welcome inside cirq.google?
+Yes!
+Can't we achieve the same thing using concurrent.futures.ThreadPoolExecutor? I.e.,
+I swear I scoured the python async docs looking for something like this!
+I didn't know about this until @mrwojtek showed me the other day 😛 .
+The concucrrent.futures.ThreadPoolExecutor is a concept that is conceptually orthogonal to asyncio library and they aim to solve slightly different problem. By design, asyncio is a single threaded library which allows for concurrent execution of python code. ThreadPoolExecutor allows for actual parallel execution where different functions run on different threads. This doesn't matter much for Python code since it's protected by a global lock anyway but matters a lot in our cases: where network I/O happens.
+Matthew, your code looks nice but it is dependent on how does func callback is implemented. If all func instances run on the same thread, they'll block on the same I/O operation. Could you give an example of how "func" looks like in your cases?
+I'd be curious to see what you put in func as well, @mpharrigan - the parallel execution will help only when we are network bound / waiting on the remote service's response. Do you have stats on this?
+Before introducing any parallel/concurrent processing primitive we should figure out under what circumstances it helps and whether we can leverage existing features. It would be interesting to study the latency / throughput of our jobs depending on job sizes (circuit depth, parameters, measurements, etc).
+func is a call to quantum engine. You need a variant of EngineSampler that has an async run method, where instead of blocking polling for a job to complete, you yield. When I had a bunch of 50k shot jobs to run, it gave almost a 2x speedup (heuristic) through a combination of keeping the engine-side queue warm and pipelining client-side classical processing. Now, batching might give you a bigger performance boost but still puts the onus on the developer to batch circuits into appropriately sized chunks and doesn't pipeline the client-side processing.
+Really, it would be sweet if we had an auto-batcher that uses async trickery to build up a local queue until it collects enough jobs to batch up and send
+Has this been superceded by feature testbed stuff @mpharrigan ?
+That would be a natural place for it, although it doesn't exist yet. Probably blocked by #5023

@@ -1,0 +1,9 @@
+The DBT unit tests fail using the current DPC++/C++ Intel oneAPI compiler (icpx/icx) version (2023.0.0) as shown by PR #2691. Consequently, tests using DBT are failing as well.
+According to the report it failes at 
+That is a very basic sanity check at the very beginning of dbm_multiply. So, my guess would be that something more fundamental is at fault here. Maybe the ISO_C_BINDINGS between the old ifort and the new icx?
+To get started, I would track the variables nrows and ncols after their got set in dbm_create. For this one could use the routines dbm_get_row_block_sizes and dbm_get_col_block_sizes from dbm_api.F.
+@oschuett Thanks for looking into the report and for the hints. I am afraid that we will still have to deal for the time being with the classic Intel Fortran compiler ifort, because CP2K cannot be compiled currently with the new Fortran compiler ifx due to catastrophic compiler errors.
+The problem is indeed related to the ISO_C_BINDINGS, more specifically the bool arguments. The old ifort encodes .TRUE. as -1, while the standard actually mandates it to be encoded as 1.  The new ifx then goes on and relies on the standard encoding when it compiles these ternary operators using "math" instead of jumps.
+The fix is to supply -fpscomp logicals. I also tried -standard-semantics, which includes the former flag, but it led to linker errors. See also this discussion.
+Btw, I had to remove the -xHost flag to use ifx on my AMD Threadripper machine because otherwise the resulting binaries would bail out with:
+@oschuett thanks for looking at this and solving it. It's a bit concerning that the compiler's default behavior is non-standard.

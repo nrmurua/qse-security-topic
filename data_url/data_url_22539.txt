@@ -1,0 +1,50 @@
+To me, it is clear that the only robust solution to #192, #193 and #236 is introducing some form of syntax that allows to describe immutable attribute and bindings. Let's discuss this here. @rjo @sbourdeauducq
+The requirements for this syntax would be:
+Let's think about both local variables and attributes for now. The syntax for attributes is an absolute requirement, whereas the syntax for local variables is a strong requirement but I will also consider working around that using some flow analysis.
+(that rjo guy, that's not me, even though he has my first name and cool sun glasses ;-)
+To clarify: There would not be much challenge in getting this (the parallel example code from all three issues) to work using transaction-style parallel (#193 (comment)) which is completely linear w.r.t. data and control flow. At least we should have that mechanism as a fallback for situations that can not be written in smart parallelism with constification. Its limitations are acceptable in the use cases that I can think of.
+I am uncertain whether I can give much input on implementing the smart parallelism which would need the constification. Depending on the outcome of this discussion we might just want to abandon it.
+Any advantages of the transaction style over the dumb with parallel implementation that I proposed (#193 (comment) point 1)?
+A few: You get granularity and you can decide yourself when you seek back to entry (you don't need with sequential blocks and increasing indentation then). And you can use multiple and named managers simultaneously.
+Hm. Good news on this, actually. Yesterday I thought of a few new design approaches to this and we can ditch the constification of local variables; there is a combination of a flow analysis and a syntactic restriction that can achieve the same goal and should be straightforward to reason about. (As a bonus it's pretty easy to implement.)
+The problem with mutable fields remains though.
+By "problem with mutable fields" you mean interleaving blocks that contain things like delay(self.something)?
+Unfortunately, this could be a common use case, unless we change how the experiment argument system works. Users want configurable pulse times, set at experiment submission from the GUI. Those are typically set as attributes on the experiment object in its build method, and referenced later in the kernel as e.g. delay(self.pi_pulse_time).
+It is also desirable to scan certain pulse times on the core device, with the scan parameters defined in the GUI. But for those cases, AFAICT the pulse sequences are simple enough that a non-interleaving solution (dumb parallel or transactional) would work just fine.
+By "problem with mutable fields" you mean interleaving blocks that contain things like delay(self.something)?
+Yes.
+Those are typically set as attributes on the experiment object in its build method, and referenced later in the kernel as e.g. delay(self.pi_pulse_time).
+It would be enough if you could do something like self.setattr_immutable("pi_pulse_time"). It would be then forbidden to set the attribute in the compiled code, but no restrictions otherwise.
+It is also desirable to scan certain pulse times on the core device, with the scan parameters defined in the GUI.
+In principle, there's nothing impossible, since (assuming we do the immutable attribute thing) this would already possible for a "scan" done with for pulse_time in range(self.x):. The interleaver could be extended to have intrinsic knowledge of certain scans.
+I guess that the required intrinsic knowledge of the scan is at which point in the scan the code needs to be interleaved differently. Some types of scans go through points in random order, so this will not work.
+Will the setattr_immutable play nice with an experiment object creating sub-objects (e.g. a "ion library" that contains higher-level functions) that do delays that would need to be interleaved?
+Those delays could be stored in the attributes of the sub-object, and their value depends on the attributes of the experiment object.
+You need to mark the attribute as immutable somehow. The compiler doesn't matter how or which objects in particular do it.
+Let's do this:
+I've implemented the dumb with parallel. It's lowered directly to ARTIQ IR.
+@sbourdeauducq Can you update the documentation? I don't think I know the right way to describe it.
+Let's only mention with parallel in the documentation; with interleave is experimental/developer-only at this stage, and it is likely to change anyway.
+Yes, but I'm not sure how to best explain the limitations of with parallel: in relation to the problem domain.
+@whitequark Unit tests are failing.
+@sbourdeauducq Yes. Some tests are genuinely impossible to write using the new with parallel:. Consider test_rtt:
+... or test_loopback_count:
+In both cases we use the same channel in different arms of the with parallel: statement, which of course is not possible.
+Hm, no, not in case of test_loopback_count. I will look closer at it now.
+We can probably remove test_rtt. It is a convenient form of test_loopback (!= test_loopback_count) that does not require any hardware (test_loopback needs you to physically connect loop_in and loop_out). But it has ugly bits to work around the "same channel" problem - the delay after self.ttl_inout.output(), and now, the requirement for with interleave...
+In test_loopback, self.loop_in.input() and the delay can probably be removed.
+Ah sorry, I posted the source for test_loopback above, not test_loopback_count. The latter one is in fact impossible to run without interleaving too:
+I'm fine with either:
+Those two problematic tests are not representative of real-world use, they just check that the RTIO stack is operating properly, in a convenient manner that does not require any other hardware than the board.
+We can do that with test_rtt but not test_loopback_count because our current interleaver is not smart enough to handle the latter.
+I mean, we can use with interleave for test_rtt.
+Then solution 3 everywhere (which means removing test_rtt that becomes redundant, and removing ttl_inout from the example DDB).
+AnalyzerTest also uses ttl_inout.
+I can port that to use loop_in/loop_out.
+Everything should be OK now, let's just run all the hardware unittests to verify.
+I've confirmed that with the following patch applied, ttl0 stops working either:
+@sbourdeauducq Oh. I figured it out. You need at least a delay_mu(8) between self.ttl0.output() and self.ttl0.on(). If I add that everything works, and ttl3 is perfectly alive.
+set_oe() and set_o() colliding should be a RTIOCollisionError.
+I verified that all related tests succeed.
+Don't we want to reopen this (or a similar issue)? Const-ification of variables would also drastically decrease the attribute writeback traffic.
+#322

@@ -1,0 +1,59 @@
+For the latest development code I get:
+===== Routine Calling Stack =====
+Abort(1) on node 0 (rank 0 in comm 0): application called MPI_Abort(MPI_COMM_WORLD, 1) - process 0
+I have tried different number of processors but it usually fails with this error in dbcsr .
+Ron Cohen
+Which MPI is this? Does it fail at the start-up of the application or after a while? Can you share an input we can try?
+Duplicate of #546
+Thanks! I don't know if this is a duplicate of #546 because that was fixed and closed. This is with intel mpi . The code was compiled wityh 20.1, but is being run under oneapi. I wonder if that is the problem.
+To clarify, I was loading the correct 20.1 module, but I still had an environment setting for oneapi. I have remove the oneapi line now and will see if that helps.
+module load intel/20.1
+source /central/software/Intel/oneapi/setvars.sh intel64
+OK--it seems on this machine I have to load the oneapi runtime for the job to start even though compiled with intel/20.1.
+This seems to be a seriuos problem--almostt none of my jobs complete even when I don't use oneapi at all. I get:
+INRES| Writing response functions to the restart file <iceX-RESTART-nmr_dxp-3.lr>
+LINRES| Writing response functions to the restart file <iceX-RESTART-nmr_dxp-3.lr>
+NMR| Shift gapw radius (a.u.)                                     1.133836E+02
+NMR| Shift factor (ppm)                                           1.366192E-02
+NMR| Shift factor gapw (ppm)                                      5.325134E+01
+NMR| Chi factor (SI)                                              1.972757E+01
+NMR| Conversion Chi (ppm/cgs)                                     6.022045E-02
+NMR| Conversion Chi to Shift                                      1.450429E-03
+NMR| Shielding tensor computed for                                   162 atoms
+Integrated j_xx(r): G-space= -0.9726573865204186E+03 R-space= -0.9726573865204186E+03
+Integrated j_yx(r): G-space= -0.5214930267259292E+03 R-space= -0.5214930267259292E+03
+Integrated j_zx(r): G-space= -0.8036280255394096E+03 R-space= -0.8036280255394095E+03
+calculate_jrho_atom_coeff: nbr_dbl=0.33E+06
+calculate_jrho_atom_coeff: nbr_dbl=0.33E+06
+calculate_jrho_atom_coeff: nbr_dbl=0.33E+06
+CheckSum R-integrated j=  0.1365223561146258E+04
+===== Routine Calling Stack =====
+Abort(1) on node 0 (rank 0 in comm 0): application called MPI_Abort(MPI_COMM_WORLD, 1) - process 0
+slurmstepd: error: *** STEP 30605317.0 ON hpc-21-14 CANCELLED AT 2022-12-01T22:56:42 ***
+:
+This is using:
+source /central/software/Intel/2020.1/compilers_and_libraries_2020/linux/mpi/intel64/bin/mpivars.sh
+Ron
+I have no clue... I can suggest to re-read my suggestions at #546 (comment) , especially to print how many sub-communications we are creating. Another solution is to try another MPI implementation and see if it works.
+It is very strange. I first just added a print statement as you recommended but the number of communicators seemed to be only 4 or 5 and made too much output. So instead I added the following to
+diff --git a/src/mpi/dbcsr_mpiwrap.F b/src/mpi/dbcsr_mpiwrap.F
+index 9785d41..cd43c7d 100644
+--- a/src/mpi/dbcsr_mpiwrap.F
++++ b/src/mpi/dbcsr_mpiwrap.F
+@@ -1030,6 +1030,9 @@ CONTAINS
+INTEGER, INTENT(IN)                                :: comm
+LOGICAL, DIMENSION(:), CONTIGUOUS, INTENT(IN)      :: rdim
+INTEGER, INTENT(OUT)                               :: sub_comm
++#if defined(__parallel)
++#endif
+@@ -1040,6 +1043,10 @@ CONTAINS
+#if defined(__parallel)
+It seems this should print if the number of communicators goes over 100. Nevertheless the jobs fails saying there are 0 communicators left:
+===== Routine Calling Stack =====
+:
+Ron
+The error is at line 775 when it is freeing the communicators? I wonder if there is a cumulative limit on that... On the other hand, maybe we can think a way to cache those subcommunicators rather then creating/destroying every time. Any way you can share the CP2k input for reproducing the problem?
+Here is the input. Note that the failure occurs with more processors--like 256 or 128. With 64 it might work OK. Thank you!
+Sincerely,
+Ron
+toomanycomm2.tar.gz

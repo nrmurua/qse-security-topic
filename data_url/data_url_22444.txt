@@ -1,0 +1,42 @@
+We'd like to synchronise multiple AD9914s on our setup following the instructions on page 5 of [http://www.analog.com/media/en/technical-documentation/application-notes/AN-1254.pdf].
+It can be done by setting the sync_out bit on all the DDS, not just the master. This basically involves writing to multiple DDS' and then providing an io_update that need not be synchronous. Would the best way of going about this be in modifying the runtime, or would it be better if there were some sort of dds_write and io_update function in dds.py that let the user do it separately?
+This seems to work on two dds' that I've programmed through SPI. The code is,
+dds.write(slave_select, array)
+Is this ARTIQ-spi?
+Boils down to the same. If you want to write arbitrary register values and are aware of all the pitfalls (make sure you stay clear of dds.set() etc) you need to expose that API. But rtio_write() should all you need. No need to change the runtime.
+Are you suggesting you do that yourself or is this an issue report?
+No, I had done this using the cheetah USB to SPI adapter we have. I guess this was more a feature request than an issue report.
+The code above is not ARTIQ-SPI, this is cheetah SPI code.  The discussions @sbourdeauducq and I have had on this topic boil down to:
+This is somewhat related to #115.
+The solution with the current architecture is to add a boolean argument to dds_init that specifies whether DDS sync should be enabled or not.
+And another API, which is not related to the DDS, to control RTIO clock phase, maybe. But I don't know if the hardware permits meeting FUD timing at all DDSes simultaneously, or if some complicated workaround such as changing the FUD timing depending on the selected channel would be necessary.
+I'm not sure if the sync function can be placed in dds_initand done for the DDS' one by one. From the application note it seems like one would have to programme them simultaneously.
+Why exactly?
+Not sure, some AD black magic probably. I'll try to do it one by one at NIST and call AD tomorrow.
+We are planning to test in the very near term to determine the FUD delay introduced by the backplane and DDS loading.  This will inform us if there is a need to do some complex gyrations on FUD timing, but I would imagine it should be ok at 100 MHz RTIO clock.  We will advise of the result of the measurements.
+Okay, I had a chat with AD. Looks like from that application note, step 1-7 can all be done on the DDSs one by one. The only thing that has to be simultaneous is the io-update after the frequency tuning word has been set as that's what gets the phase accumulator going. So what Sébastien suggested about having two options for dds.init() should work.
+I tried testing it out on 2 DDS' we have. Seems like it will work. It seems to be more reliable if you start by initialising the master DDS whose sync_out signal is being distributed to the other DDS' instead of one of the slaves first.
+This is the code I was running through our Cheetah SPI,
+I don't think you even need a simultaneous IO update. When programming DDSes at different times, the ARTIQ runtime should automatically apply the relevant phase correction.
+I'm trying to modify the runtime so the dds_init will result in sycing. Aside from dds.c and dds.h, are there any other files I have to modify? Do the following changes make sense? I'm a little unsure about the timing of dds_init. For example, for the 9858, why is it 7*DURATION_WRITE?
+for the 9858, why is it 7*DURATION_WRITE?
+Because for the init, there are 7 RTIO writes not counting the one for FUD:
+So for the 9914 there are
+Excluding the FUD, init is  8*DURATION_WRITE? What am I missing?
+Nothing, it is 8.
+https://github.com/m-labs/artiq/blob/master/artiq/runtime/dds.c#L21
+So you include the FUD in between the DAC cals in that count but exclude the final FUD? So for the code I posted above it should be fine? There shouldn't be any other files I need to modify?
+Yes. Looks good. I would make the sync optional (via a function argument, this also needs updating the driver). And keep DDS_USR0 sorted.
+Is there any other file I have to update? I somehow get an underflow error trying to run this experiment,
+Try adding a small delay before the init.
+That seemed to work, thanks. Looks like they seem to sync but not super deterministically. We may need to play around with the sync_delay. Would it be better to have this still under one dds.init function that takes two arguments, one whether to sync or not, and one with the delay or to have this as a separate function altogether, like dds.init_sync?
+What is sync_delay?
+The reason you need to add a delay at the beginning is chiefly because you are doing another DAC calibration that takes a lot of time, so you need to budget for it.
+Why don't you need to budget for it with just the normal init function? I guess I don't understand why the delay needs to be before you call init.
+Sorry, I meant the SYNC_IN delay ADJ as specified http://www.analog.com/media/en/technical-documentation/data-sheets/AD9915.pdf. I've tried to use identical SMA cables from the clock distribution we have for the SYNC_OUT signal but somehow it doesn't seem to be 100% deterministic on startup.
+dds_init is a point-in-time function (like SPI writes, DDS program, ...) which does not advance the timeline. It completes DDS initialization at now and therefore needs to perform operations before now. You need a sufficient time buffer to perform all those operations, and with the long DAC calibration you have added, the default time buffer that you get upon entering the first kernel (or calling break_realtime) is not enough.
+I wrote a new function for syncing that takes the sync_delay as the argument. I rebuilt the bitstream, flashed the board and tested it. I can adjust the phases of the sync_clks so seems like it works.
+Do you want this to be merged?
+A patch to the mailing list or in a forked repository would be a lot easier to discuss.
+I think it would be useful if it could be merged. Sébastien and I had discussed doing that briefly while he was here. Okay, I'll look into making a patch.
+Done.

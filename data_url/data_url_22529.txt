@@ -1,0 +1,110 @@
+
+One modification to this: we should be able to choose between shared read/write lines and separate read/write lines in the device_db.pyon configuration, without needing to recompile the bitstream.
+How about configuring this in the startup kernel?
+In this instance, a change in read/write direction would need to be accompanied by a reboot of the KC705 using the CPU_RESET button, correct?  If it can go in the startup kernel, why not in any kernel?  The device_db seems a more natural place for me because that is where one configures the hardware connections for everything else.
+It could go in any kernel, but the CPU needs to configure the SPI core at some point, and I think the startup kernel is the most appropriate place for this. Note that you may run the startup kernel at any time without a reboot by submitting it as an experiment.
+In that case, the startup kernel seems like a reasonable place to me.
+The SPI PHY will use dedicated RTIO channels (no switching pins between TTL and SPI at runtime without bitstream recompilation).
+The SPI core should have three modes:
+Requiring bitstream recompilation is OK with me, but this will likely mean that even more bitstreams need to be supported (e.g. QC2 will split into Magtrap, Cryo, Xtrap).  I know that one of your concerns had been having to build many different bitstreams in the continuous integration process, so you can weigh this against the added difficulty of making TTL/SPI dynamically reconfigurable.
+I don't think we can easily have the SERDES and the SPI logic on the same pins. The simple TTLs might be muxable. But anyway. Let's demote the bitstreams that nobody regularly tests bleeding edge stuff on to "build-on-request". We can build and upload them with the push of a button and would do so for releases, but not for CI.
+Ack @jordens, this seems reasonable.
+@dhslichter You have many IOs on those boards, are you really using so many of them to the point that you cannot dedicate some to SPI (for all experiments)?
+We can dedicate some to SPI in the bitstream, that is fine.
+I was only bringing up the point that this will mean that more bitstreams will need to be supported, which Robert has a reasonable solution for.
+Let's try to defer the proliferation of bitstreams until after 1.0 (I'd like to refactor gateware/targets then to avoid massive code duplication). In QC2-1.0, how many SPI channels do you want and on what pins?
+As SPI channels will be allocated at bitstream compilation time, and there is the problem of the unused other data pin in bidirectional mode: The choice between bidirectional and unidirectional data will be done at bitstream compilation time as well (as initially planned) in order to save IO pins on constrained devices e.g. Pipistrello.
+My suggestion for an implementation plan for the wishbone SPI master is below. Please review.
+This looks good to me.
+Thanks Robert, comments inline below.
+"""SPI Master.
+It is important to be able to have different clock speeds available for write and read portions.  Propagation delays for read signals limit the max read clock speed to something slower than roughly 1/(4*propagation time) to ensure valid data at master on appropriate clock edge.  These limitations do not apply for SPI writes because the clock and data have the same propagation delay.
+Transaction Sequence:
+Register address and bit map:
+config (address 0):
+xfer (address 1):
+As mentioned above, it would be nice to have the choice of physical chip select lines configurable at runtime, and implement chip select pulses by calling the standard RTIO TTL output methods to pulse at the appropriate time and for the appropriate duration.  The rationale is that different labs may want different configurations of chip selects, and so one avoids having to build many different bitstreams.  I figure that the chip select portion of the code is less demanding/specialized than the rest of the SPI core, and maps very naturally to the existing TTL stuff, therefore we can put the rest of the SPI core in the bitstream but leave the choice of chip select lines for runtime?
+—
+Reply to this email directly or view it on GitHubhttps://github.com//issues/277#issuecomment-189337486.
+As explained above, runtime configuration of the input and output pin sets is complicated if not impossible. You can not easily mux tristated pins between different usage patterns. Let alone SERDES IO. Nor are the pullups configurable at runtime AFAIK. You can use e.g. four cs_n pins per default. That gives you 15 devices in a decoded pattern and four with one-hot. Same bitstream for both setups. I can imagine a lot of fun with signal integrity if you have more devices. Could you form a consensus on a minimum number of bitstream configurations that would be required, so that we have some data points to decide this on?
+Switching clock speeds within a mixed transaction is not in the spec. Is it really important? Do you really expect to gain something from that? Do you expect a lot of reads? Why can't you just reconfigure the core between fast write-only xfers and slower mixed xfers? Since time will be dominated by the read time, the ability to write fast in a mixed transfer doesn't seem to be relevant.
+If you want to generate a clock from rising edges of the RTIO clock, for an odd division, you will get an asymmetric output clock. If an asymmetric clock is really a problem (unlikely since you already suggested in-flight clock speed changes), we would have to generate an actual FPGA clock signal and route that. That would probably severely limit the choice of output pin for the SPI clk and would be a lot of work. Not to mention that reconfiguring the clock speed for that thing would probably be jittery, complicated, slow, and unaligned to the RTIO clock. And we might even need a clock domain crossing.
+The cs timing is as deterministic as the regular RTIO TTL timing. It has 8 ns resolution. You can always wire up zero cs signals to the spi core and handle cs at a software (runtime or kernel) layer. But that means more code, more data transfers, slower code, and would also be expensive for the DMA core that is to come at some point. And you don't get any additional features other than runtime re-assignment of TTL lines.
+I would expose a lower-level, more flexible interface and take advantage of the RTIO features to generate some of the SPI timings.
+With this architecture, transactions of an arbitrary number of bits and with varying clock speeds can be implemented by combining those basic operations.
+This puts less functionality into the gateware and more into the upper layers, which provides more flexibility that enables implementation of all the features that Daniel wants in a pretty simple manner I think.
+We don't need arbitrary length transactions. Varying clock speed is glitch-free and possible between transactions already as well. If it is really needed, I can implement a different speed for reads.
+The problem with handling cs in ttls, is that it roughly triples the data that needs to be generated and pushed around if you have a single cs line. If you decode cs, it's yet more. That is quite an overhead for dma and for drtio. And there is also the overhead of computing the two additional timestamps. But as I explained above, separate control over the cs lines works just the same with my design. Then you can also have arbitrary long transactions via the same mechanism at lower cost.
+Your read logic breaks the wishbone interface and precludes reuse of the core and much simplified testing outside rtio.
+The rephrasing of the transaction length seems unnecessary and it means having an artificially inflated read_length that does not correspond to how spi is described and used, refers to bits that are irrelevant and worse, to bits that may have already fallen out of the register unless that is inflated as well. For all the devices targeted here and virtually all other spi devices, you just don't have 'reads and writes happening in parallel'. But my core also supports that and silently shifts in data during the write phase as well.
+If you look at how spi is used, there will be predominantly either pure fast writes (dacs, output devices) or purely mixed transactions for slow reads (debugging of predominantly output-like devices) or fast reads (adcs, input devices). There will be little clock switching traffic in practice. Having that in a register with the other five configuration bits seems fine, compact, and convenient. Having the transaction parameters (cs, read_length, write_length) in one register and the data in another then mirrors to the natural difference in traffic: the transaction parameters will change much less than the data.
+In summary, there is less workload for the already taxed compiler, the busy kernel cpu, the network transfer, dma and drtio. And it is very flexible and should cover the usage in the lab.
+What exactly is the problem with my proposed transaction length mechanism? If you want to read N bits from SPI, and the maximum number of bits per transaction is M, then you issue N/M transactions as follows (assuming here N is a multiple of M):
+Then read out the N/M chunks from the RTIO input FIFO.
+Take a look at the datasheets of the devices we are targeting here. A read will always be preceded by a write in the same transaction. If e.g. your transaction is a 8 bit register address write followed by a 32 bit data read, you would need with your mechanism write_length = 8 and read_length = 40. But the first 8 bits read are irrelevant. They will also fall out of your register if that is only 32 bits wide (which is all that is needed here and meets the spec). If you feel the need to split this simple transaction you pay data and cpu overhead for the two transactions and the piecing together of the read data and on top of that you have suddenly made the complicated and expensive out-of-band cs handling a requirement. This is unnecessary.
+Yes, I would split the transaction. Note that with your mechanism, and the RTIO-Wishbone bridge as it is now, you also need two transactions: one to read from SPI, the other to put the data into the RTIO input FIFO.
+The overhead of my mechanism can be reduced in two ways:
+With those features, the DAC sample write method becomes:
+Total cost: 12 bus writes.
+With your mechanism:
+Total cost: 6 bus writes.
+Your mechanism is definitely simpler and faster though, if by far the main use case to optimize for is feeding data to a DAC.
+And AFAICS, if we rewrite that in cost for DMA where we might need a table of uncompressed entries that look like (delta_mu (64), rtio_channel (~8), address (~16), data (32)) to be sufficiently agnostic of the individual rtio channel formats, this it may look a bit worse yet.
+To optimize ADC style transfers to the same extent, we could do the following:
+The rtio message that triggers feeding the read data into the rtio input fifo could be automated. Such a readback mode would be a natural addition to the RT2WB layer to account for the very split input/output nature of rtio. It already has pure write and pure read. readback would be a write to wishbone followed by an automatic read from the same address.
+And I have found a couple ADCs that support simultaneous I/O in some "overlapped" fashion. Let's rephrase the docstring to say that data is also automatically and implicitly shifted in during write.
+OK, here are a few compromise notions on the architecture after all this discussion:
+Good that you agree. This seems to be what I proposed and implemented unless I am misunderstanding.
+Integer division works a bit differently here. For odd divide-by-3, f_rtio_clk/3 = f_spi_clk, you get (setup, hold) spi phases that are (2, 1), (2, 1), ... cycles long (in units of 1/f_rtio_clk). For rtio_clk/spi_clk = 9, you get (5, 4) ... etc. For odd division there is always a longer and a shorter phase. With integers, that can not be avoided.
+Meanwhile also distinct read/write clocks and chained arbitrarily long transactions with double buffering have landed.
+qc2 will have ttl21-ttl27 reassigned to a single SPI bus as cs0_n, cs1_n, cs2_n, cs3_n, clk, mosi, miso. Also remember that you can daisy-chain some dacs without needing more cs.
+Yes, this is basically what you proposed, with me backtracking on some features/items I had hoped would be included after your explanations convinced me that they were not as necessary/important as I had felt.
+Ack on the clock division, and this should be fine.  I was somehow thinking that the integer divider could be configured to be clocked on both edges of the RTIO clock, and that thus it would be possible to make an even duty cycle no matter what the integer for division, e.g. (1.5, 1.5) for a divide-by-3.
+I will submit a patch for the qc2 and kc705 target files in ARTIQ and Migen to implement TTL channels up to 55 with the second backplane.
+The qc2 bitstream should have four cs lines and two sets of mosi miso sclk for now (as we will probably want to run SPI to two different physical locations around the trap).  The main reason for the multiple cs is for serial programming of the on-table DDS boards, which the magtrap uses (and others may adopt).  Because of the hardware implementation, lines 23-27 and 52-55 are output only, so I propose using the following scheme:
+ttl52-ttl53 - cs_2 cs_3
+ttl48-51 - cs_1 mosi_1 miso_1 sclk_1
+ttl44-47 - cs_0 mosi_0 miso_0 sclk_0
+The clock bitstream I leave to @dleibrandt to determine.  Currently they have three separate SPI outputs, each consisting of cs mosi miso sclk.
+The problem with doing things on falling edges of the RTIO clock ist that it is harder to generate that clock and it is tedious to tell ISE/Vivado correctly that there is never a 4ns timing constraint.
+I am setting up for the XADC/AMS101 spi bus and spi0 on the clock backplane. The current clock pin description is broken (ttl7 collides with spi2.clk among other things). And it does not correspond to the clock hardware that I have here or that is in HK. @dleibrandt could you verify that there is only one clock backplane that is labeled FMC LPC ZYNQ DDS April 2014 and that this is the one that correcponds to nist_clock.py?
+Why are you doing the XADC/AMS101?  Is this just a simple way for you to confirm SPI functionality?
+Yes.
+I'm pretty sure that there is only one version of the clock backplane.  I have tested the artiq clock configuration and can confirm that all of the TTLs and DDSs work.  I have not checked the SPI pin assignments, but I'll do that sometime in the next couple days (I'm a bit slammed at the moment).  In what way does the clock pin description not correspond to the hardware you have?
+ttl7 and spi2.clk have the same pin.
+https://github.com/m-labs/artiq/blob/master/artiq/gateware/nist_clock.py
+On the schematic from April 2014 they don't.
+The TTL numbers in artiq.gateware.nist_clock also do not match those in the schematics.
+OK, here are some corrections for artiq.gateware.clock:
+ttl7 should be:
+("ttl", 7, Pins("LPC:LA01_CC_P"), IOStandard("LVTTL")),
+I'm sure all the other ttls are correct (I've tested them).
+spi0 and spi1 are correct (based on the constraints file we're using with our current zynq hardware).
+spi 2 should be:
+("spi", 2,
+Subsignal("clk", Pins("LPC:LA26_N")),
+Subsignal("cs_n", Pins("LPC:LA27_N")),
+Subsignal("mosi", Pins("LPC:LA26_P")),
+Subsignal("miso", Pins("LPC:LA27_P")),
+IOStandard("LVTTL")),
+@sbourdeauducq, note that some of the pins are scrambled in the clock hardware schematics.
+OK I committed those changes.
+Can we get an updated schematics where those pins are not scrambled?
+@dleibrandt
+@dleibrandt Also, your mounting holes are too small for the typical M3 hex standoffs.
+Agreed.  The permutation is strange.  I will point out that I didn't design this board.
+If it helps, here is my map of the TTL breakout card:
+Each box is one RJ45 connector.  The color is the color of the ethernet cable wire.
+
+Aha! @whitequark the standoffs for the FMC connector are actually M2.5 -- the hole sizes used are given in the FMC specification, they are 2.9 mm diameter IIRC.  Harder to find, I know, but that's what we're stuck with.
+Implemented (f2b4b97 and previous commits).
+Try the following example. device_db.pyon snippets and documentation are in the usual places.
+https://github.com/m-labs/artiq/blob/master/examples/master/repository/coredevice_examples/simple/ad5360.py
+I'm starting to do some testing of the SPI and AD5360 support, and I've found a bug in artiq.coredevice.ad5360:
+I don't have an LDAC line hooked up.  I've tried to use ldac_device = None, but this results in a compiler error because in the load function ldac is used without first checking if it exists.
+Also, how do I add a new coredevice module (for my other DAC)?  I'm using the conda artiq distribution, and I've tried sticking the file in anaconda3/envs/artiq-2016-03-14/lib/python3.5/site-packages/artiq/coredevice, but it isn't found when I try to use it.  Do I have to recompile the runtime?
+If you don't let AD5360 manage LDAC, load() and the zero-delay set() become meaningless. That's intentional. You need to use write_channel() yourself in that case. You could consider it (and file) a bug that this shows up as a compiler error instead of something else.
+By "your other DAC" you mean that TI device? Depends on what your plans are. If you intend to submit it to ARTIQ, then uninstall just the artiq ccnda package, check out artiq, and start using that fresh development artiq tree with python setup.py develop. And then just put your DAC support into artiq/coredevice/. Alternatively, you can and maybe should start your own nist_clock package that you "distribute" yourself. You can make it depend on artiq. And then just put the code there and rig the module import in device_db.pyon accordingly. You won't have to recompile the runtime or gateware or bios in either case. Putting stuff in that path you mention could work temporarily but I would suspect that this is not the artiq you are actually using. What does python -c 'import artiq; print(artiq.__artiq_dir__)' show?
+@dleibrandt @r-srinivas Did you guys get a chance to test this? Can we close it?
+I've done some testing with the AD5370.  I'll test our other DAC this week.
+OK. Reopen if there are problems.

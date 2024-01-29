@@ -1,0 +1,35 @@
+A user should be able to implement a gate with a _decompose_ into other known gates, and be able to simulate it.
+...I actually thought it was working this way already (oops).
+I'm not sure I agree with this.
+Already we have had a regression because xmon simulator was using KAK and causing it to be very slow.  This means for a complicated gate it will fall back on whatever decompose is when it is faster and better to just implement the unitary.
+Decompose itself is also very confusing.  Do we allow passing in a different compose?
+It also feels like we are sicking everything in the capsule: why are we putting transformations on the gates into the simulator?
+@dabacon even if it's faster and better to actually implement the unitary, I don't think we should require it of the user. Making this change won't make anything slower; it'll just give the user more options for getting a gate to be simulated.
+Also, XmonSimulator already does this! I.e., the following code works, but not if you replace XmonSimulator with Simulator
+why are we putting transformations on the gates into the simulator?
+The user said simulate, and it is our job to do our best to get that done. More generally, we want it to be easy to define the gates you want to use and having the simulator natively understand "oh I should try to decompose" gives users an additional implementation option.
+That all being said, I think that it does make sense to have a strict "give me what I understand and nothing else" simulator. That would be the xmon simulator.
+I agree the xmon simulator shouldn't do it.
+I think the problem here is in decompose.  Decompose is  not well defined.  There are infinite number of decompositions, why did you chose one over the other?  It seems completely arbitrary.  Already we see people getting factors of 10 worse because they are using the default decompose on methods in a particular gate setting.  This is completely unexpected for most users.  There are places where decompose is NOT the most efficient decomposition.  People ask: "should I implement unitary or decompose or both?"
+I strongly agree simulate(circuit) should just work.  I just worry that it needs to work in a way that doesn't bork users simulation speed by a factor of 10 because they didn't understand that the gate called decompose a bunch of times to actually figure out what was being done.
+And this isn't just about simulation: it's about fundamentally not hiding the native gate set for different architectures from the users.  When you play lose with decompose, you encourage people to write code that ends up being impractical on the NISQ architectures.
+The 10x slowdown in XmonSimulator is because we forced unnecessary decompositions. In sparse simulator we stop as soon as there's a unitary or apply unitary method. I think this is the right thing to do, with the possible caveat that operations on large numbers of qubits should be further decomposed.
+In my mind the intent of decompose is clear, but perhaps not clearly documented. The documentation does say what the intent is:
+These operations are simpler because they act on fewer qubits. In general, a
+decomposition should move closer towards the basic 1-qubit and 2-qubit gates
+included by default in cirq. It is not necessary to get all the way there,
+just closer (callers will iteratively decompose if needed).
+i.e. all decompositions must lead to the common two qubit operations, and code doing decomposition is supposed to stop as soon as it sees something it can use. This was made easier by the introduction of cirq.decompose with its keep predicate.
+Perhaps we should make keep mandatory?
+"These operations are simpler because they act on fewer qubits. In general, a
+decomposition should move closer towards the basic 1-qubit and 2-qubit gates
+included by default in cirq. It is not necessary to get all the way there,
+just closer (callers will iteratively decompose if needed)."
+That isn't at all clear, and not mathematically well defined (closer in what metric?)  It also completely ignores native gate sets for architectures.  By hiding this from users we are not serving NISQ device circuit builders.  It also says "what is included by default in cirq", which is 1) subject to change, 2) an arbitrary standard not at all in line with what multiple different architectures will want.
+So this should really go over in  #930 where I bring up decompose being ill defined.
+But a question does arise here about how to fix this "bug".  If we are going to rely on decompose as a fallback for missing unitary, why shouldn't that be part of the unitary contract (i.e. fallback to decompose)
+That isn't at all clear, and not mathematically well defined (closer in what metric?)
+The distance metric I had in mind was "number of decompositions remaining until you're within the set".
+If we are going to rely on decompose as a fallback for missing unitary, why shouldn't that be part of the unitary contract (i.e. fallback to decompose)
+I like that idea. We'll need some way to indicate the qubit order...
+I would open that as a separate issue to combine these various workarounds into a top-level support for decomposing when asking for unitary, has_unitary, and apply_unitary.

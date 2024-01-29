@@ -1,0 +1,41 @@
+I set up a simulation using backend configuration and defaults of the armonk backend.
+The pulse of the X gate didn't produce a correct response: only ~60% in the |1> state vs. ~100% as expected.
+Code snippet below (backend data was queried on 9/30/2020.)
+Could you please take a look to see whether the set-up was not as expected or it is a bug in the simulator?
+Nil
+The results of the simulation are consistent with the parameters, so I don't believe this is due to any bug with the simulator. We can see this by looking at the probabilities of each energy level of the final state (after running your code) via:
+np.abs(result.get_statevector(0))**2
+resulting in:
+array([3.78475641e-01, 6.21524358e-01, 8.16647096e-10])
+To see what to expect roughly, we can look at the analytic predictions of a rotating wave approximation (RWA). Based on the way the Hamiltonian is parameterized, the expected unitary under RWA (if we ignore the third level) is expm(-1j * (A * omegad0 / 2) * X), with A the area under the pulse and X the pauli X operator.
+We can approximate the probabilities of reading 0 or 1 at the end (with a 2 level approximation) as:
+this prints:
+array([0.37842542, 0.62157458])
+which agrees with the simulator up to a few decimal places (a deviation "reasonably" attributable to the RWA).
+So, I think that either there is an issue with the reported parameters, or the calibrated pulse being used doesn't correspond to the one from which the Hamiltonian parameters were generated.
+Thanks @DanPuzzuoli. I guess the question then is why we have this discrepancy.
+I have carefully checked the configuration and defaults data of the armonk device to make sure the Hamiltonian and the pulse of the X gate are correct.
+Do you have any insights/suggestions to make this simulation work using backend information?
+For a short term solution you could modify omegad0 so that the given X-gate produces a proper pi pulse, though obviously that could have unintended consequences for other gates. (In any case, to do this, we need A * omegad0 / 2 to equal np.pi / 2, so setting omegad0 = np.pi / A will make the X gate work. Running this myself results in state 0 going to state 1 with >99.9%.)
+For a proper solution we'll need some information about backend reporting.  @zachschoenfeld33
+Yes we are aware of the issue and a fix has been prepared. Hopefully should be merged in soon
+Until then, you can multiply the drive strength by 2, that will fix it.
+Thanks @zachschoenfeld33!
+Yes, I can confirm that multiplying the drive strength (omegad) by 2 brought the final count distribution to ~96% |1> state using the X cmd-def on the aer simulator.
+However, a multiplying factor of 1.7 is more ideal for the simulator (almost perfect 100% |1> state).
+@zachschoenfeld33 Do you have any insights? Also, just want to confirm that this same multiplying factor also applies to U channel drive strength, right?
+I think that's just due to calibration error from the backend (since x is based on backend calibrations)--it should be 2.
+Why are there U channels? I thought you're on Armonk? But yes, it's the same drive strength used so you'd need to multiply by the same factor there.
+@zachschoenfeld33 Thank you for the information.
+Regarding the U channels, I meant for other backends, e.g. rome/bogota, which also have this drive strength mismatches.
+Yes use the same factor. Hopefully this will get pushed onto our backends soon...
+@DanPuzzuoli @zachschoenfeld33 I guess this is already fixed in Terra. Can we close it?
+I believe so
+Hi @zachschoenfeld33
+I just tried the below with latest Qiskit (from master branch)
+While the result is okay for ibmq_armonk, I don't get the correct answer for ibmq_bogota (see the provider.get_backend line).
+I always get all zeros when using ibmq_bogota backend.
+Could you please confirm that it is indeed fixed for all pulse backends?
+It seems that the backend numbers may not be getting reported correctly, although this is not due to the simulator or prior backend issue. Check backend.configuration().hamiltonian['vars']. You will see that the delta's (anharmonicities) are all 0. I am currently inquiring. I can confirm that Rome, Athens and Casablanca all work
+I have confirmed that some of the backends were not receiving the correct numbers from our internal database. We are working on fixing it. @dtmcclure may be able to further comment
+Sorry for the delay. I was fixing this over the last several days. I think they should all be good now, and we have a better system in place to make sure they don't get left empty in the future. Let me know if you see any still missing. Thanks for bringing it to our attention.

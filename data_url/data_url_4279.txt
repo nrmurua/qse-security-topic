@@ -1,0 +1,17 @@
+to reproduce, modify the quantum_random_numbers.py to have
+raise Exception("...") just above the Measure | q1 operation
+i get the following
+i don't think this is good. i'm guessing the cleanup code just needs a bit of a clean up :)
+Hi! This is actually a feature of the simulator: All qubits must either be measured or uncomputed before they can be deallocated; otherwise an exception is raised (above it says "RuntimeError: Error: Qubit has not been measured / uncomputed! There is most likely a bug in your code.").
+The last few errors are due to the Python garbage collection: When Python is exiting, it assigns None to all variables, including, e.g., imported modules such as copy. This leads to errors such as "TypeError: 'NoneType' object is not iterable".
+If you delay the final clean-up by putting the code into a function and catching your Exception("...") in the main program, only the exception thrown by the simulator would show up (namely as an ignored exception which occurred when dealing with your Exception("...")).
+i think it's a mistake to consider this a feature; it makes programming with this framework not particularly enjoyable.
+i agree that it is good to do some cleanup of resources when the application exits, but the resource clean-up should be very robust.
+imagine if the same thing happened when you exited a database-reading application before closing all connections - that code doesn't emit a new exception per connection you had open, informing you that you should've closed it.
+Programming in this framework is particularly nice as it supports automatic management of qubits (no need to explicitly deallocate qubits).
+Any back-end can expect the following:
+It receives an allocate qubit command for each qubit you allocate in your quantum program and also receives a deallocate qubit (at the latest when your program finishes). This is implemented using atexit...
+Different back-ends can have their own implementation of what happens when a qubit is deallocated.
+The simulator for example checks that your qubit is either measured or in a computational basis state (otherwise an exception is thrown as you have seen above). For example, if your program contains  with Compute(eng) and with CustomUncompute(eng) statements, it will check that you implemented them correctly. (I also like the -Wpedantic flag when programming in C++ :)
+The main purpose of a quantum simulator is to test and debug quantum programs and hence we think this is an actual feature.
+A hardware back-end will not throw you such an error (as it cannot figure out that you made a mistake) but just return the wrong result...

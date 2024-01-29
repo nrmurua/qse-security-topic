@@ -1,0 +1,18 @@
+The depth method on QuantumCircuit ignores barriers:
+The depth method on DAGCircuit is correct however:
+Note: snapshot should also behave similarly to barrier and extend the depth.
+This was by design. Should a snapshot actually change the depth?  I think not as it is not a physical operation. As for barrier. Otherwise depth losses it property of being a measure of circuit length and gauge of whether a circuit can actually run.
+Depending on your model. If eg considering only T1 relaxation, real clock time is the relevant, and hence barriers increase the depth. Repeating Ali's example to many qubits will fail the circuit once the clock time becomes larger than T1. Depth with barriers is then 2n which captures this fail, depth without barriers is just 2 which does not capture the fail
+Except maybe the barrier itself should not be counted in depth. Not sure what's the hardware time for barrier enforcement compared to gate time.
+So the question is does the barrier actually take time on a device?  If so then yes, it should be included. But then that brings up other questions like why is barrier not converted to basis gates for example. Or why is it not possible to prevent cross barrier optimizations without adding time?  Let me check what happens when I use 100 barriers in a circuit.
+No, that wasn't the (main) point. Suppose even if the barrier takes no time on hardware. For Ali's example circuit with n qubits, the actual runtime will be nT_g with T_g the gate-time. For a T1 model, you want your depth to scale as the actual runtime, because the probability of failure scales with the actual runtime. If you include barriers in the depth calculation - you get depth=n which is ok. If you don't include them, you get depth=2 for whatever n, which wrongly suggests that you may run your circuit without failure
+This is related to Qiskit/qiskit-aer#237. You can add I gates to model the T1 noise in such cases of barriers, but probably better that depth() returns you the relevant depth (at least for relaxation noise) on your original circuit, without you needing to manipulate the circuit first.
+Ok I  see what is going on. The hardware is using the barrier as an alignment for timing. In that case, the barrier is still not added to the depth, but instead makes the stacks of all the barrier qubits equal to the max of the set. In the above example the depth should be 4.
+Yes the depth of the above example should be 4. Barrier is a compiler directive and will serialize operations that happen before/after it. The barrier itself should not be counted towards depth.
+The reason that dag.depth() is reporting 5 is because the dag operations are pure graph operations, and are not intelligent about what the graph nodes are (here barrier is a node in the graph). I'm not sure how useful it is, maybe it is. But circuit.depth should definitely be 4.
+Also snapshot acts like a barrier, so should be the same.
+As @nonhermitian and @yehuda-naveh pointed out, the barrier is not just a transpiler directive, but more important a scheduling directive. The true effect of the barrier is realized at scheduling time (it is only at this point that we know what will actually run) and should not be counted as a resource.
+barrier is not just a compiler directive, but more important a scheduling directive.
+I consider scheduling part of compilation.
+| I consider scheduling part of compilation.
+You're right, corrected to transpiler directive.

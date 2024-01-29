@@ -1,0 +1,18 @@
+As part of our examples we have something similar to the following:
+The QuakeSynth pass, however, does not supports structure types:
+If you look at the output IR files with --save-temps, you'll see that the callable argument is already "inlined" by the bridge.
+I think for these cases, we can update the QuakeSynth pass to ignore these types of input, remove them, and update the offset for the args.
+Investigating this further... If I update the kernel signature to have another argument (so I can implement this fix in its full generality, updating the offset in QuakeSynth correctly), we end up with the following overridden entry point kernel function
+To me this looks correct, but when I try to look at the i32 value in the %.sub kernel arguments in altLaunchKernel, it seems to be garbage. I'm not sure why. This of course makes its way down to the QuakeSynth pass as garbage, and we end up with a garbage kernel function.
+@schweitzpgi Any thoughts here? I will say that I think the calculated args size is wrong, here it says 16 but shouldn't it be 12 (noting the GenKernelExec stuff took the baz{} input struct and replaced with i64?
+Here's the updated kernels
+Now, if I switch the order of the arguments, the integer is in there and it all works
+Ok, more experiments, with the following I can reproduce the issue:
+and
+If I run
+I see that the 2 does not make its way to the args pointer, and the print shows it is equal to 0 (when it should be 2). If I update the first argument type from {} (which I assume means empty struct) to i64 (just some dummy type we don't care about), then everything finally works.
+My guess is that arguments after an "empty struct" argument somehow get garbled up...
+Could also be that an empty struct has size 0 in C, size 1 in C++
+Ok... Here's the real issue. The calling LLVM code looks like this
+Notice the baz argument is taken as a ptr. Our generated entry point signature takes that argument as a {} and not a {}*. If I update my above example to take a pointer to an empty struct instead of just an empty struct, this example works.
+Now the question is - should the bridge generate cc.struct<"baz",{}> or cc.ptr<cc.struct<"baz",{}>>, or should we just go with the former and when we lower to LLVM in LowerToQIR, do we assume any cc.struct should be translated to a pointer to that struct?

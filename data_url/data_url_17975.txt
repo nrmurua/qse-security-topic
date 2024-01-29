@@ -1,0 +1,127 @@
+@1ucian0 noted in PR #824 some of the flaws of the current transpiler implementation. The notes now are in qiskit/transpiler/README.md of this branch.
+The CxCancellation requires and preserves ToffoliDecompose. Same for RotationMerge. The pass Mapper requires extra information for running (the coupling_map, in this case).
+The sequence of passes to execute in this case is:
+A pass behavior can be heavily influenced by its parameters. For example, unrolling using some basis gates is totally different than unrolling to different gates. And a PassManager might use both.
+where (from qelib1.inc):
+For this reason, the identity of a pass is given by its name and parameters.
+There are cases when one or more passes have to run until a condition is fulfilled.
+The control argument do_while will run these passes until the callable returns False. In this example, CalculateDepth is an analysis pass that updates the property depth in the property set.
+The pass manager developer can avoid one or more passes by making them conditional (to a property in the property set)
+The CheckIfMapped is an analysis pass that updates the property is_mapped. If LayoutMapper could map the circuit to the coupling map, the SwapMapper is unnecessary.
+To help the pass developer discipline, if an analysis pass attempt to modify the dag or if a transformation pass tries to set a property in the property manager, a TranspilerAccessError raises.
+The enforcement of this does not attempt to be strict.
+The goal of this section is not to criticize the current implementation but in the absence of a proper discussion about the architectural implications of this new development, be aware of the risks and technical debt we are taking if going ahead with this proposal.
+Main problems are:
+Are they a solution for a use case or a configuration convenience? If it's the former, what is the use case?
+It is hard to distinguish the goal of the current equality tests. It considers equal passes two instances with the same parameterization and different instances, passes with different parametrizations.
+It is unclear to me If this is related to the assumption of the pass' behaviour differs only if they are parameterized differently. If that's the case, this should be taken thoroughly since it could interfere with the fact that the access to the property panel could dynamically parametrise the behaviour of the pass.
+Instead of control structures, we could provide controllers for altering how running a pass is done. This allows for extending the functionality without altering the implementation of the WorkingList class and goes in the spirit of the open-closed principle.
+What if the developer wants to add their own helpers to the property set? Someone would use an analysis pass to alter the set adding some convenient functions but this seems a little bit hacky:
+If we are willing to provide extensibility (which sounds reasonable in a pluggable ecosystem), we should shift to a more suitable pattern such as the observer or pub-sub pattern.
+Ignoring preservations and ignoring requirements can alter the way a pass behave, the author of the pass can think this pass will always run a different one and use it as a precondition but this would be not the case if the pass is registered with different options.
+Current implementation of idempotence is broken. Idempotence is defined as f(x) == f(f(x)) but, this does not imply f(x) == f(g(f(x))). With the current implementation, if I register [A, B, A] and A is idempotent, once the first A is run, the second will never run which is not the desired behaviour.
+The current implementation of the dependency system is brittle.
+Imagine a cycle: A requires B and B requires A.
+Now imagine I've registered [A, B] but B depends on C and D that are not even registered? The current implementation will execute C and D.
+Or suppose this scenario where I register [A, B, C, D] but it turns out B requires D. The provided list will be executed [A, D, B, C] which plays against the least astonishment principle and make scheduling complex cases unpredictable.
+If we aim at having an ecosystem of 3rd party passes, we should provide the proper tools for preventing the developers from building impossible or conflicting pipelines and prevent debugging pipelines to become a nightmare.
+Are they a solution for a use case or a configuration convenience? If it's the former, what is the use case?
+The design was the result of conversations in-person with the researchers. I'm summarizing the conversations in qiskit/transpiler/README.md and adding use cases.
+It is hard to distinguish the goal of the current equality tests. It considers equal passes two instances with the same parameterization and different instances, passes with different parametrizations.
+The use case for this scenario is unrolling. See f31c571.
+The suggestion in the Control structures paragraph is interesting. However, the condition needs to be parametrized by the property set, since scheduling decisions are based on this (eg, repeat until fixed point, or do not do this pass if the DAG is already mapped). Maybe you can go deeper into how that would look?
+If I understand correctly the @delapuente comment in Property set helpers, the idea is to have a way to register new property set helpers (such as fixed_point). I'm not fully sure if I follow the example with on_change(utility)...
+I added some use cases with conditions in the qiskit/transpiler/README.md. Maybe you can use them as an example to make your point.
+The ignore_preserves and ignore_requires was added with the goal of giving to the pass manager developer flexibility in the use of passes. I see it can be "dangerous", probably good documentation is needed there. Any comment @ajavadia ?
+About the Idempotence point, I agree. Probably the problem is that idempotence is a bad name. We want passes to be very loosely coupled and assume very little about in which order are they run or if they are run without repetition. Idempotence a condition for that, but not enough. Any ideas?
+About Dependencies, it's true that circular dependencies are not detected. I might have seen to add some monitoring to avoid that. But I'm not fully sure that is urgent since I'm not imagining very complicated passes where that can happen accidentally. About the order, is connected with my comment in #825 (comment).
+I've copied the use cases from the PR to the description of the issue to allow continuing the discussion here.
+Well, clarified the use cases, here is my second review:
+The wrapt dependency seems overkilling for the use we are doing of it. We could start by not restricting the access or converting the property set into a frozendict. Not sure for the DAG, perhaps it should
+I understand why you need two differently parametrized objects, but why do you need two same-parametrized objects to be the same?
+The proposal in #825 (comment) would execute the control structure calling a predefined method, passing in the property set so the control structure could use it interanlly to run the pass according to the property set.
+However, the point with that proposal is to provide an example of a decoupled architecture. Others are possible.
+I would keep the property set as simple as possible. I think there is no need of adding pass-specific functionality in advance. While translating the current set of passes, if we discover common functionality, we can factor it out in functions, not methods.
+Again, the pub/sub or obeserver patterns are examples of decoupled architectures.
+This use is not even among the use cases and it could introduce potential violations of passes preconditions. I strongly recommend removing this feature and re-introduce once we have a clear use case.
+I think idempotence does not help in keeping the passes decoupled. It simply means that you can run as many as you want in a row without altering the result but it says nothing about what happen when you have other passes in between.
+I would remove the concept completely and think thoroughly about the kind of planification we want for the passes.
+Because preserves=[Pass()] needs to match requires=[Pass()]. We can do it differently in the implementation.
+These options are disable by default and attemps to increse the flexibility.
+I'm all in for this one. But I'm failing to adapt the use cases.
+Sure. Again, use cases need to be adapted.
+Wrapt
+Sure. I agree that it's too much for property set. The  DAG strcture is/will be more complicated. But we can remove that dependency for now.
+Should I understand you will try a different approach for some of the problems discussed here? I would love to hear the input of other members in the team.
+Here is a status on each issue and its further actions:
+Am I missing something?
+I think you're covering all the points, but it would be great if can get more eyes here.
+This overall looks good to me. I'll comment on some of the points raised:
+Idempotence:
+This is an important point, and I thought about it a bit more. I think there is a decision to be made here, and feedback is welcome.
+I will give an example: imagine a simple circuit like the one below.
+
+If the CNOT cancellation pass is idempotent, it will clean up the middle CNOTs, then the outer CNOTs. That means repeatedly applying this pass has the effect of just applying it once.
+If it is not idempotent, you have to apply the pass twice to clean up all CNOTs. Incidentally, the current CNOT cancellation pass of Qiskit is NOT idempotent. You can check it:
+yields:
+Pros of Idempotence:
+Cons of Idempotence:
+Circular dependencies:
+I think this is a pathological case, and is possible if a pass developer writes a bad pass. I don't think it is the job of the transpiler to guard against that. We should certainly ensure that the passes that we provide in Qiskit don't have this problem. But one can always write passes A and B where each say they require the other, and that's just a bug in my opinion that needs fixing.
+Pass identities
+We do need two passes that are from the same class with the same args to evaluate to equal. Otherwise the pass manager can't be sure that a pass that needed to be run, ran.
+It seems to me that the idempotency problem can be generalized to passes operating on a different set of wires. Cnot cancelation is idempotent when operating on a specific set of wires, as any other peephole transformation on non-unary operations. Does it make sense to consider CnotCancelation(q_0,q_2) a different pass than CnotCancelation(q_1,q_2) (where q_n are physical wires, not variable names)?
+@1ucian0 that would make writing passes extremely complicated. Essentially the pass works on 2 wires at a time, and so requiring something like cxcancellation becomes tedious as you have to require many instances of it based on how many circuit wires there are.
+I think I would prefer idempotent passes, but let's not do anything about enforcing that at the moment. If someone writes a non-idempotent pass, it still can be counted as valid transformer of DAG, but its property must be taken into account during pass scheduling.
+One note about fixed point: we need a way to specify an iteration limit, otherwise some loops of passes may never converge.
+About the iteration limit, that's true for any kind of loop. It's easy to add. Added in dd9d8f7. The default is 1000, sounds reasonable?
+They way that idempotence was implemented is by adding the pass X in the preserves set once X was run. Maybe idempotence is not the best name for the property. What about self-preserves?
+I reverted the removal about the idempotence option back in 00f99db
+Before changing the implementation of fixed_point, @1ucian0 @ajavadia is the design decision about it being embedded in the property set final? Don't you prefer a more extensible approach such as an observer pattern?
+@ajavadia I think I understand why you do need to passes with the same arguments, nevertheless, there would be other strategies to do the same while relying on Pythons identity. One is to provide factory functions which can return the same object when invoked with the same parameters.
+(This is an example, there are more ergonomic ways to do it.)
+In addition, I think it is important to leave the __hash__ implementation up to the pass developer while providing some usual implementations. I'm not an expert on designing transpiler passes but consider the scenario where you have a pass that requires some normalization in the arguments, for instance, consider it accepts an angle AngleParametrizedPass(angle): the current approach would hash AngleParametrizedPass(0) and AngleParametrizedPass(2*math.pi) differently where they should be the same.
+Regarding idempotence, @ajavadia @1ucian0, we can reintroduce the concept as a promise, not having an effect on scheduling the passes.
+Note my comment on idempotence in #825 (comment) was not about the utility of the term but about it being used in the wrong way, assuming f(x) == f(f(x)) implied f(x) == f(g(f(x))), which is false.
+I don't care much about the name idempotence. I used  this meaning (first bullet), but I understand that can be confused in the context of requires and preserves. In your example f(x) == f(f(x)) implied f(x) == f(g(f(x))) if g preserves f. In other words, the implication is true if g behaves as the identity for the effects of f; f(g(f(x))) == f(id(f(x))) == f(f(x)) == f(x).
+Again, I don't care about the name of this property, as long as we have a way to describe passes with and without that property.
+Before changing the implementation of fixed_point, @1ucian0 @ajavadia is the design decision about it being embedded in the property set final? Don't you prefer a more extensible approach such as an observer pattern?
+I will draft the observer pattern in the code today or tomorrow, so we can talk about something more concrete. Implemented for property sets in 0ab5d76
+if g preserves f. In other words, the implication is true if g behaves as the identity for the effects of f; f(g(f(x))) == f(id(f(x))) == f(f(x)) == f(x).
+You're right: if we also add that "g preserves f", then, having the promise of an idempotent f can save some execution time by not repeating further passes. The implementation should follow preserve chains but conceptually, this is OK.
+I implemented the items extending control structures and property set helpers. Let me know your thoughts @delapuente .
+I removed the wrapt dependency in d6c13a8. Maybe too hacky? Alternatives are welcomed.
+I think all the pending things (those we agreed) are now fixed. Waiting for further comments now.
+For third parties wanting to implement transpiler passes, being able to return a fresh dag is quite important -- we can't modify it in place.
+I'll go one step further: I think it would simplify the design to provide an immutable DAG in addition of requiring passes to return the transformed DAG.
+I'm not convinced about the solution for property set utilities. I think providing a new utility is hard with the new implementation. I'm still inclined to think that it would be useful to have some observer mechanism but truly, I don't know. I think I prefer the former implementation.
+I would love to see what @diego-plan9 and @atilag think about?
+@rossduncan There are transformations that are easier in-place (like gate cancelation). It makes sense to also consider the possibility of returning a fresh dag. Probably, the easier way is to return the dag. If you did in-place, just return self.dag (maybe doing this automatically if the pass returns None?) What do you think @delapuente ?
+Probably, the easier way is to return the dag. If you did in-place, just return self.dag (maybe doing this automatically if the pass returns None?) What do you think @delapuente ?
+I would do it explicitly, i.e. without converting None into a DAG.
+Regarding utility functions, per @atilag suggestion, a solution that leverages the current architecture is to convert utilities into analysis passes such as:
+TestFixedPoint class could have a dependency with CalculateDepth ensuring it is called before checking for an equilibrium point.
+I iterated again on the utility functions to simplify it. It's in 75d1121, let me know your thoughts.
+(I did not take the TestFixedPoint approach, because it seems like a very artificial pass to me).
+@1ucian0 I are with everything you said; that's exactly what I had in mind when I said that Passes which do update-in-place would be easy to adapt.
+I iterated again on the utility functions to simplify it. It's in 75d1121, let me know your thoughts.
+I prefer the analysis pass approach. It is indeed an analysis of the evolution of the circuit and it prevents to deal with an additional concept such as the Utility class.
+In eef4578 I'm forcing every transformation pass to return a dag back.
+I removed the concept of utility. Now, the fixed point analysis is implemented as a pass. Maybe helps to see this test as an example: 84a27ca#diff-086bfc6396298d112141bcb72d7d76ddR284
+Let me know if you have any other comment.
+I think we have passed through almost all the issues I raised.
+I'm fine with almost everything except I have my reservations regarding identity although they can be solved in the implementation; I continue thinking it is a bad idea to allow ignoring requirements and preservations when registering.
+We did not talk about paralel compilation and I think it is an important matter. I would love @atilag, @diego-plan9 or @nonhermitian would take a look at the current design and highlight some design decissions that could block a future effort on paralelizing the transpiler.
+Pass sets + control structures provide a light layer of composition without dealing with pass creation nor introducing the concept of metapass.
+Pass identity based on pass class + arguments provide a convenient way of referring parametrized passes but the identity matter should be addressed in a way that minimizes instance creation and relies on Python mechanisms as much as possible. This can be addressed at the implementation level.
+In addition to pass sets, control structures provide a light layer of composition. There is no need for more exposing more complex control structures and, internally, this is already implemented in an extensible way.
+We've removed the concept of property set helper and rely on the analysis passes to perform these kinds of checkings.
+I continue thinking that ignoring preservations or ignoring requirements can alter the way a pass behave, the author of the pass can think this pass will always run a different one and use it as a precondition but this would be not the case if the pass is registered with different options.
+I would not allow configuring this until we have some use-cases supporting the decision. Thoughts @ajavadia ?
+In addition to the set of what is preserved or not, the idempotence of a pass could save some time during transpilation by preventing the scheduler to run unnecessary passes. However, the idempotence cannot be calculated, it is a promise from the pass developer.
+I think that the dependency solver right now is enough but I would love to see it catching and informing of those scenarios that can not be solved such as circular imports.
+About parallel compilation
+If I understand correctly, the most common use case is to have a lot of relatively small circuits to compile (in contrast with few very large and complicated circuits). If that's the case (please, @ajavadia confirm or not), it probably makes sense to keep the tranpilation process independently so we don't have to control for side effects on a shared memory (DAG).
+Parallelization is done over completely independent DAGs. The current implementation still allows this I think.
+The ignore_requires and ignore_preserves can be handy in our exploration phase when we're trying to experiment with different schedules. Let's leave it in for now, and most people will just use default False for these.
+Some other changes suggested by @ajavadia :

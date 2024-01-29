@@ -1,0 +1,24 @@
+
+becomes:
+
+Run above at optimization levels 1->3.
+If the user explicitly puts resets at the beginning of a circuit they should remain there.  This is important as the unconditional reset done by default on IBM Quantum systems is not perfect, leading to state prep errors.  Adding a reset at the beginning of a circuit greatly suppresses these errors and is needed to get high-fidelity results.
+Do not remove resets at the beginning of circuits. i.e. do not run this RemoveResetInZeroState
+May I have a go at this @nonhermitian ?
+Well I think it likely needs a discussion first as it was explicitly set this way 2 years ago by @ajavadia and @1ucian0.  It does cause a noticeable performance degradation to remove resets.   So if explicitly put there, I would think they should be kept so.
+Okay looking forward to hearing from them!
+Why not put a barrier before the reset?
+Separately I think we wanted to make circuits not assume |0> initial state by default but that requires some changes in various places and user expectations.
+I did not think of that. Useful in the short term. Although I am still puzzled as to why this happens. The only cases I can think of are an user explicitly adding resets, or they come as part of the state init routine. In both cases there are performance improvements from including them. They do add a us or two, but in practice one can decrease the rep_delay to more than cover this and still usually win.
+This was included back when "reset" was not a supported instruction on ibm devices and people put in an "initialize" and got error.
+But even without that context, I still think this is a valid optimization if the assumption is circuit begins in zero. Or when you have multiple resets, I think logically it is valid to collapse them into one reset. Barrier is there exactly for the user to signal their intention and prevent the compiler from doing these optimizations. Compiler can't know whether something is intentional or accidental.
+Does this issue overlap with #5127 or #5921?
+@nonhermitian was there a collective agreement for this bug? If yes, I would be happy to implement the changes here!
+Does this issue overlap with #5127 or #5921?
+yes i think it is related.
+I'm ok disabling the RemoveResetInZeroState pass from preset passmanagers. It doesn't do much in the way of circuit optimization anyway, and may be surprising to users. (But I do think it is a valid compiler thing to do, and barriers are the correct way for users to  prevent the compiler from doing that.)
+Longer term I think the correct thing to do is to alter the assumption that circuits always start in state zero. We already started down this path by making the drawers not put |0> in the beginning of the circuit. But this assumption requires some user preparation, mainly because they have to always put .reset() at the beginning of their circuit (otherwise the qubit starts at some unknown state which could be anything). Some users may actually not want to reset qubits, e.g. in restless schemes (but the vast majority do).
+Yeah, I forgot that submitted essentially the same issue earlier.
+I can confirm that this is still an open issue, especially for our QASM3 support which currently does not initialize the qubits by default.
+let's just remove the RemoveResetInZeroState pass. It's kind of pointless I think. I think what it's doing is valid but don't see much use for it.
+Hello, this is still an open issue today. I'm building a backend that does not make the assumption that qubits are initialized in the zero state. This behavior just bit me today, and for what it's worth removing the RemoveResetInZeroState would make things simpler on our side :)

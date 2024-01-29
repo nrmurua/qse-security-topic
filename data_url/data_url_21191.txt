@@ -1,0 +1,26 @@
+Unexpected behavior for clock configuration.
+I think by default the Si4324, which is used in the second case, continues producing a clock using its local XO when the input gets disconnected. It should report a PLL lock failure if you try to boot with the clock missing however. I'm not sure if it can or should be programmed to do something else or if it would have to be constantly monitored by the Kasli firmware.
+This is also not specific to Kasli-SoC.
+I suppose we actually want the free-running behavior on 8 since that's the only clock we have. Maybe configure it so it switches INT when clock is lost, and then we just have to monitor that GPIO in the firmware and e.g. panic.
+I think by default the Si4324, which is used in the second case, continues producing a clock using its local XO when the input gets disconnected. It should report a PLL lock failure if you try to boot with the clock missing however.
+This isn't what I see. If ext0_synth0_100to125 is set I can boot fine (board responds to ping, etc) with a 100 MHz clock supplied. However, if I remove the SMA clock and reboot the board hangs. No response to ping. etc.
+I did some more tests this afternoon.
+I conclude that the kasli-soc is relying exclusively on it's internal clock source.
+Or maybe you just unlock the 5324 PLL when you change the frequency and it does not relock.
+However, if I remove the SMA clock and reboot the board hangs. No response to ping. etc.
+Yes, and I guess with a "PLL lock failed" message on the console?
+I've tested this again while watching the serial console. I can switch the external clock from 100 MHz to 110 MHz with no error reported by the firmware. And there still no change in the period of a "1*ms" square wave.
+Again, PLL losing lock will not be reported currently (only failure to acquire the initial lock is reported), and the Si5324 will keep generating the frequency it was generating before. Try booting with the offset frequency from the start instead of changing it after PLL lock.
+Try booting with the offset frequency from the start instead of changing it after PLL lock.
+Confirmed that the PLL locks upon boot to a 110 MHz external clock and the period of "1*ms" square wave is reduced as expected.
+Agreed that loss of reference clock or any other PLL issues should have very obvious consequences. This would likely involve polling the Si5324 and generating a panic (or at least some kind of RTIO error) when an issue is detected.
+We regularly work with 10 Hz-level features, and sporadic abrupt changes in frequency are a pain to debug (even when not building a clock). One of the labs here is on such a chase right now.
+The Si5324 supports hitless switching between the two synchronous input clocks in compliance with Telcordia GR-253-CORE that greatly minimizes the propagation of phase transients to the clock outputs during an input clock transition (maximum 200 ps phase change). Manual and automatic revertive and non-revertive input clock switching options are available.
+Manual mode would ensure that loss of external clock or PLL-lock failure is not masked by an auto-switch. See Register 4 bits 7:6.
+The Si5324 monitors both input clocks for loss-of-signal (LOS) and provides a LOS alarm when it detects missing pulses on either input clock.
+The device monitors the lock status of the PLL. The lock detect algorithm works by continuously monitoring the phase of the input clock in relation to the phase of the feedback clock. Due to the low loop bandwidth of the part, the LOL indicator clears before the loop fully settles.
+In a perfect world we want to know about clock problems even if they are transient. So ideally LOL and LOS would latch until reset. However, polling by the uP may be the only option. Proposed behavior if LOL or LOS are observed high....
+Si5324 has an Interrupt pin (INT_C1B) which can be configured to report things like clock failures. This could be used to continuously monitor for Si5324 errors using the FPGA. However, it is not routed to the FPGA on Kasli or Kasli-SOC. Do we want this routed to the FPGA in future revisions of Kasli and Kasli-SOC?
+The Si5324 also monitors frequency offset alarms (FOS), which indicate if an input clock is within a specified frequency ppm accuracy relative to the frequency of an XA/XB reference clock.
+I don't think we care about this functionality.
+As I said before we want to keep the hitless switch feature enabled, so that the CPU reports the error instead of crashing due to missing/problematic clock. The rtio clock is the only clock in artiq 8 systems.

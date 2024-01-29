@@ -1,0 +1,61 @@
+Consider the following program:
+The output is:
+The following output:
+The current parser ignores comments. There is room for discussion if a parser should create an AST with this information (a Full Syntax Tree).  I think in our context is a handy thing to have. For example, to add annotations or metainformation, which might be handy in such experimental field.
+Usually, comments are ignored in the lexer stage, but I'm a big fan of comment nodes. A common strategy is to provide a flag for retaining these nodes or not.
+I'm not sure we the expected behaviour is what you point. I would have expected the new code to keep the comments in the same locations, aside from some normalization so this:
+would translate to this:
+But it looks counter-intuitive to find the comment in a new line after the code it is commenting. Even thinking that the behaviour preserves the ordering of the nodes, it challenges the semantic purpose of the comment. Suppose:
+would be translated into:
+which makes the comment to refer to the last statement, which is not true.
+I would rather expect this comment to be placed before the statement but the optimal solution is to keep it at the statement level.
+The OPEN QASM 2.0 spec is inconsistent regarding comments: the formal grammar does not include them (suggesting they are unimportant from a semantic point of view) but a summarizing statements table at the end of the language description section include comments among the statements.
+From a grammatical point of view, one of the solutions is to retain the concrete the concrete syntax tree or parsing tree and use it to recompose the original form of the source code.
+Another, perhaps more practical solution, would be to allow the AST nodes to carry some metainformation that can include an inlinded comment node.
+The "unparse" method is qasm() and it has some room for improvement in terms of reconstructing line and spacing or using the positioning metadata.
+Examples:
+ 
+qreg r[1];
+
+Basically, the (un)parser is ignoring spacing and line positioning and my implementation of comment nodes (PR #906) follows that previous philosophy.  Each node unparsing forces new spacing and new-lines all over (like in the last case, a gate declaration distributes the curly brackets in different lines). If better unparsing is a feature that we want, join the discussion in #923 .
+In your example:
+the reason for this is not connected with the comment node. The new line between the comment and the conditional statement is added by the state concatenation code (see https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/qasm/_node/_program.py#L28). Makes sense to open a new issue about this?
+As mentioned before, I don't mind some normalization happening. The output of the unparsing is more verbose, agree, but it is not incorrect. However, making an inline comment to be pushed after the code commented is against a very well-established tradition of putting comments before or at the same level of the commented code.
+I don't mind to keep this open to track the fact that OPEANQASM 2.0 has a documented case where comments are relevant for the AST as docstrings that we are not implementing. But the current description of the issue is incorrect, even talking about ASTs only:
+
+It is incorrect because something like:
+would be parsed as: [Qreg, Comment, Gate].
+And:
+would be equally parsed: [Qreg, Comment, Gate] without a way of distinguishing among them.
+The unparser if patched in ff1f735, by keeping line information.
+@1ucian0 how do you suggest the AST should look when parsing an inline comment?
+after ff1f735, the line information is saved and the unparse puts the inline comment in the correct line. Currently the parse parse this:
+into something like this:
+Changing it into this:
+is not trivial.
+I think this is going to be very difficult to do in a sensible way.  Consider the code
+This is valid, and parses the same as
+To make sufficient changes to the AST to support comments basically anywhere that are part of the AST, is going to make it insanely ugly.  And it'll make the grammar a real mess, to boot.
+But there is hope.  There is a more-or-less standard way of getting what you wish, at the cost of a smarter lexer.  Basically, instead of the lexer returning tokens that are mere strings (or other constants), it returns a triple, of (, , ).  Both positions are returned, so that (fixed-width) operators and keywords can be handled the same as identifiers and other variable-width tokens.  The AST node has a slot where the tokens returned in parsing that AST node directly (not its children) are stored.  And at pretty-printing time, instead of (possibly empty) whitespace between text, the pretty-printer uses the saved tokens to look at the original input stream and pull out the whitespace (if any) which was used originally, and prints that.
+I don't know if PLY supports this mode of use; I'll look into it.  I know that Ocaml's "alternate" parser/lexer system, Camlp4/Camlp5 supports it -- it was a design point -- and I suspect that the standard parser/lexer can also be used in that way.
+But basically, saving the comments in the AST is .... not a good idea.
+What do you mean by q[0],q[1]; being valid?
+It's my impression that the OpenQASM authors thought this way to add "metadata" to the gate definition:
+I agree that might not be the best way to reach their goal. This kind of comment might be treat differently than h q[0]; // comment by the parser. I don't have any use case for their later use. But I would like to support the former.
+Arrrgh!  I didn't even notice that github took out the comment.  What I meant was that comments are valid anywhere, e.g. between the "," and the "q" in "cx q[0], q[1] ;"
+Comments are valid between any two lexemes, and if you want a comment to be a token, then the modifications to the grammar to support that will be .... painful.  Whereas the method I suggest is both standard, and straightforward to implement.
+My understanding of the specification is that comments are between // and line-end.
+Probably my original post was wrongly trying to be too generic. Sorry. I'm only interested in the use case from the specification, about adding metadata to gates.
+Comments are between // and line-end.  But remark that
+is valid QASM, and hence I can put a comment after the comma.  Similarly with
+And (I'm not going to go experiment, but I'm pretty sure) you could do the same before (or after) the "[".  Etc.
+oh! I see what you mean:
+You are right.
+An end-of-line comment is one thing; inserting a comment after the comma, splitting the line and naming a target register on the next line looks quite odd.
+Those cases look pathological. I think no classical assembler would accept that syntax?
+That said, comments are indeed nodes in nuqasm2, but I have not dealt with the case of an end-of-line comment, which easily could be done.
+I wasn't suggesting that such comments are desired; rather, that if you want to make comments be part of the grammar, you're going to have to change where they're allowed, b/c currently such pathological cases are allowed.  That's all I mean.
+Also, you're probably right that "old-school line-oriented language-processors" probably don't accept such comments.  And I find that GNU AS doesn't accept them, either.
+The problem is easily solvable -- just prohibit comments except at end-of-statement (and at beginning-of-file).
+Currently my nuqasm2 POC accepts comment lines anywhere and adds them to the AST. However, I didn't consider the end-of-line comment, which probably should be permitted.
+2019-04-06 : nuqasm2 now accepts end-of-line comment

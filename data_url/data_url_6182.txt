@@ -1,0 +1,72 @@
+Currently in Aer, an AerJob with a particular ID is created on every execution. This mimics the IBMQJob and its async execution model. However this AerJob is not as useful, as it only persists during that session (the job id is basically useless for future reference).
+Can we treat the user's disk as the "cloud" used in IBMQ jobs, save all the qobj and result and simulation configs associated with each execution, and allow them to be queried later?
+The size of this data is unlikely to grow extremely large, so I'd enable this by default, with an option to turn off.
+This would make @adcorcol and @dcmckayibm happy.
+No activity here for a long time.
+But this still seems to be interesting and it's not implemented.
+Asking @adcorcol and @dcmckayibm if this feature is still wanted :)
+This looks interesting, I'd be happy to get started with a little nudge in the right direction :)
+Hi @aditya-giri thanks for jumping in, but I'm afraid we are not implementing this in the near future. If for whatever reason this shows up again, I'll be glad to mentor here :)
+This escalated quickly.. ok @aditya-giri , it's yours :)
+That's great! Happy to get started! Let me take a day or two to get aer built locally and look through the source a little? I'd appreciate some guidance once I'm ready to go.
+So before getting our hands into the code, let's bring some more details about what we want here.
+This is the use-case:
+"Users want to have information (job, results and configuration) about jobs already executed in the simulator."
+We could split these up into the following tasks:
+Constraints:
+@aditya-giri  let's start by proposing a public API :)
+Got it. Just one clarification re: Everything happens in the Python side (no C++ changes beforehand), so the standalone won't have this feature - could you elaborate on this a little?
+About the API - how are we expecting users to use this? Are we only going to allow retrieval of jobs from the disk (and save all jobs by default)? Or do we want to provide more control over which jobs get written to the disk?
+could you elaborate on this a little?
+Aer is a mix of Pyhon code (which is the public interface for the users), and a core written in C++. Furthermore, we have to flavors of Aer: The python extension (or the Provider that works with Qiskit), and a standalone version (a pure binary executable that doesn't use Python at all). This "job saving" feature only makes sense when Aer is used as a Qiskit provider, and because we have all the data required in the Python side, there's no need to change anything in the C++ code (at least, from a very superficial analysis).
+About the API
+Users will have to use an interface we define to save arbitrary job/result/config.
+I think the best approach could be adding a new backend configuration parameter, maybe something like:
+The presence of this field, express the intention to persist the jobs in disk, so there's no need for a separate boolean flag or something.
+One real use case could be:
+Based on the existence or not of the "path_to_save" config option, we have to save the job at some point into this function from aerbackend.py
+I leave to you to figure out where :)
+For the name of the file with the information, I'd suggest following a format that includes at least: date and time at the time of serializing to disk and job id. JSON format of course.
+I leave to you to define the JSON format that composes these files :)
+Sounds good...and then we would need a way to retrieve the information from these files, right?
+Let me start by building the source and getting it to work with my local Qiskit installation first. And then I will work on saving the jobs to the disk. Once this is done we can go ahead with querying saved jobs?
+So it looks like I'm good with the build - I ran pip install . on the repo's root directory and it installed the python extension (version 0.6.0). Would I also need to build the standalone binary?
+No, there's no need to build the standalone version, although whatever we do should not interfere with it (nor in the build or at runtime).
+Quick question - the behaviour is expected to be the same with execute() as well, right? execute is defined in terra and it takes backend_properties, but they are not passed to backend.run. So I was wondering what I would have to do there...
+@atilag bump^
+backend_properties is meant for other stuff. For the execute method we are interested in run_config (the last parameter). This is the one that is populated to the backend.run() method.
+I see, got it!
+If we are looking to store all the information contained in the Results object (along with some other stuff), I will need to store a variety of data types including matrices (which could be quite big themselves). Some of these might require some custom serialization logic too. Would it be possible to take a look at how this is done on the cloud currently so that I can take a similar approach and also make sure I cover all ends from my side?
+For our use case, let's just compress everything (Zip or 7z) and serialize to disk.
+If this happens to not work well for us, we could think of some other serialization format later... let's take the easy approach first.
+Heads up - I'm working on this but progress has been pretty slow because I've been tied up with other things; I hope that's not a problem. I'll continue to work on it and raise a draft PR soon...
+Thanks for the heads up! Looking forward to see this landed :)
+Ping me whenever you want.
+Will do, thanks!
+@atilag I was experimenting with pickle, and it seems to me like it's a very convenient way to serialize and de-serialize the data without having to actually write any of the logic. For the sake of testing, I modified the _run_job function to serialize the Result, write to disk, then read it back from disk, de-serialize, and return the de-serialized object and it seems to work perfectly well. I am attaching a snippet of how the code looks and what the output is.
+
+
+
+The only caveat I see here is a potential security issue with deserializing binary data straight off the file, but we can probably prevent that using hmac or something similar. What are your thoughts on this?
+Yes, I like the idea but it's true that we need a way to make it safe. Hmac seems to be a good option though, go for it.
+A hint: Try to encapsulate the serialization behavior in a function so we don't implement it right in the _run_job function.
+Something in the lines of:
+And then post_process(result) can check for the existence of save_jobs -> hmac encryption, or just return results without any post processing, etc.
+Yep, got it. I put it in _run_job just for the sake of a quick test, but I'll clean it up and move it out to a new function. I'll also add hmac.
+One more question, where do I implement the functionality for retrieving from disk? Does that become an Aer function like Aer.retrieve_local_job() or something?
+One more question, where do I implement the functionality for retrieving from disk? Does that become an Aer function like Aer.retrieve_local_job() or something?
+I think that functionality belongs to the AerBackend class, and we could mimic somehow the API we have in our IBM-Q-Providers: https://quantum-computing.ibm.com/docs/manage/account/ibmq#Backends
+So I would add two functions at least: jobs() to get a list of the jobs (and Ids) with some pretty printing (?) and a retrieve_job(JOB_ID) to get one of the serialized jobs.
+Once you have the job instance loaded, we use it's common interface to get the results, etc.
+Got it 👍🏼
+I'm having second thoughts about the whole hmac thing though - for 2 reasons:
+Another point - I think the path_to_save parameter should be globally configured instead of passing it to every call to execute. Otherwise we don't know where to look for the job to retrieve it. We could then ask users to provide an extra config like save: True to indicate whether they want to save it or not. Where would such a global configuration go? Or could we just save it in the current working directory?
+Thoughts?
+Yes, ok. Let's implement the serialization without encryption to start with and will figure out later.
+I think is fine if the first implementation uses a fixed/hardcoded directory to save the jobs, we can play later with the .qiskit/settings.conf file that already exists. So if we are  going to have a fixed directory, then the only flag we really need is the save_jobs: True.
+At the time of reading them, we just need to look into the fixed directory for existing files. Also, if we call the jobs() function to list all jobs, we should output those that exist locally and remotely. It would be great too, if we can just show local jobs or remote jobs. I'm not a big fan of passing flags to methods that changes their behavior, so let's create a total of three functions:
+So if we are going to have a fixed directory, then the only flag we really need is the save_jobs: True.
+Sounds good 👍
+It would be great too, if we can just show local jobs or remote jobs.
+Isn't the job linked to the specific backend it is run on? IBMQBackend already has jobs() to retrieve jobs for a particular remote backend and we only need the corresponding functionality for local jobs, right? i.e. on a particular instance of AerBackend (one of the simulators) we are interested in retrieving all the jobs... did I misunderstand something?
+Sorry that we have been leaving this issue for a long time. Please create a new issue if this feature is still necessary.

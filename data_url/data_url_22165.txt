@@ -1,0 +1,48 @@
+I'm running artiq 2.2 on the kc705 nist clock hardware.
+I'm testing SPI communication with a slave device by writing random values to configuration registers and reading them back, and I see intermittent failures of the SPI RTIO outputs for SPI clock frequencies faster than about 2 MHz.  The rate of these failures gets higher as the SPI clock frequency is increased.  Below 2 MHz, I never see failures (in > 1e5 trials).  Below are a few example scope traces.  Yellow is data in, blue is data out, purple is chip select out, and green is clock out.
+Successful trial:
+
+Failed trial 1 (the final few clock cycles were not output):
+
+Failed trial 2 (the final few clock cycles were not output and chip select was late to be pulled high):
+
+Failed trial 3 (similar mode):
+
+Can you post kernel code that produces this issue?
+Something like this:
+I am worried about that core.reset().
+Could you provide an analyzer dump? I think the SPI channels should be covered by coreanalyzer but haven't checked lately.
+They will be in the raw dump but decoding into VCD is not supported. @dleibrandt please provide the raw dump.
+I've attached both below.
+rtio.zip
+@dleibrandt thanks.
+I have added SPI support to coreanalyzer (in master).
+Did that dump include such an intermittent failure?
+Yes.
+What do you need the core.reset() for? Could you try without it (e.g. break_realtime() where needed instead)?
+You're right.  I don't actually need the core.reset().  However, I still see the problem when I replace it with core.break_realtime().
+The "intermittent" baffles me. I can't come up with a reason based on your description and your code that could make something like this intermittent.
+Agreed.  I also don't have an explanation.
+Your dump shows that there are read_async() immediately followed by set_config_mu()/set_xfer(). That's not how you do it in your example code. If you reset/change config or xfer or start a new write before the read has finished, or if you core.reset() the entire thing, that would obviously cause problems. Please provide the code that shows the problem and the corresponding dump.
+Ah, yes.  Sorry about that.  I was trying to simplify things a bit, and I've been changing the code a lot lately.  This code:
+produces the problem on 14% of attempts.  Adding 1 ms delays on both sides of the set_xfer calls in _get_config_uint reduces that to 8%.  Increasing read_div to 125 eliminates the problem altogether.  Does set_xfer not respect the timeline?
+In any case, the exact code above produced the RTIO dump below, which failed on the last attempt.
+rtio.zip
+Here is the corresponding log output:
+And here is the physical scope output:
+
+@dleibrandt just a quick note to confirm that I am still looking at this. Right now, the only things I can come up with is some weirdness or deep bug in the gateware or in Vivado that we haven't seen before or a spurious RTIO reset interfering.
+Did anyone make any progress?
+I ran SPI reads over night on PDQ and couldn't reproduce this.
+Using the 2.2 nist_clock gateware, or a different gateware?
+I suppose 3.0/master, but the SPI code should be the same.
+Yes. 1a1edb1 But I can't see relevant changes in the SPI code w.r.t. 2.3
+@dleibrandt Do you still have the problem with 2.3 (instead of 2.2) and that commit Robert mentions?
+@dleibrandt Also it would be helpful if you found the simplest possible experiment code that produces the problem.
+With current master, I ran a couple million of these >16 MHz reads and they all passed fine.
+
+Just checked 2.3, and I still see the problem.
+Can you test with master, and post a minimal way to reproduce the problem?
+Spent some time trying to come up with a simple way to reproduce the problem, and learned that it is only present when the SPI lines are connected to my slave device.  Further testing revealed that the SPI lines coming out of the kc705 were actually OK, but previously I had only measured the SPI lines after an isolator chip on the TTL breakout board.  The isolator chip outputs were dropping out because the MISO line was ringing (overshooting), causing the voltage to be outside the specs of the chip.  I fixed this by reducing the MISO drive current compliance on the slave device.
+Anyway, problem solved.  Sorry about the wild goose chase.
+No problem. Thanks for tracking it down.

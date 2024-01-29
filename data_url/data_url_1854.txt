@@ -1,0 +1,57 @@
+Is your feature request related to a use case or problem? Please describe.
+If you're running many "independent" circuits in parallel on a given set of qubits (where independent means there are no entangling gates between them; i.e. you can factorize the circuit (and therefore wavefunction)) you can simulate it much more efficiently than working in the full 2^(all n qubits) space.
+Describe the solution you'd like
+I think it should be possible to transform a circuit into an interaction graph, use a connected components algorithm to figure out how to split it into circuits operating on a subsets of qubits, and return a dictionary of state vectors keyed by the set of qubits.
+What is the urgency from your perspective for this issue? Is it blocking important work?
+Any sort of characterization that you run in parallel and requires simulating the circuit (read: XEB) would benefit from this! There's a version of this hacked into cirq.experiments.parallel_two_qubit_xeb
+Is someone already looking at this, or can I give it a shot?
+(By the way, I couldn't locate cirq.experiments.parallel_two_qubit_xeb in this repository)
+Let's chat about it on Cirq Cynq today @Ashalynd - thanks for volunteering!!
+Sure, sounds good! (I'll be there today ~15 minutes later, schedule mangled due to the winter time).
+Discussed on Cirq Cynque:
+Use case: mostly characterization, example: two qubit parallel XEB
+Initial design ideas:
+Other thoughts: when SubCircuits are implemented keeping the factorized structure would be nice.
+We just discussed this with Alan, who suggested that the reverse might be more interesting (and physically relevant) problem (with the reverse being understood as: given a number of circuits and the specific device (or a simulator), and the information about two-qubit error rates, figure out how many of them could be reliably run together on this device.
+Will open another issue for that.
+Thinking further about this.
+Matthew @mpharrigan : a few clarifying questions :)
+and here:
+and from the point of factorization, this example:
+will be identical to this:
+and both will have three factors?
+This seems to boil down to separating from each other groups of qubits, given the optrees defined on them. (Assumption is that every two qubits start independent, until their operation trees get merged because their descendants downstream have participated in a multi-qubit operation). Is this correct?
+Does factorization still makes sense for the noisy circuits? (Intuitively, as the noise increases there is more chance that formerly independent " branches" will somehow interfere).
+1: yes, all of your assertions are correct. The "H"s example: the two circuits are identical anyways (ignoring real-world noise, see below)
+yes. You could probably implement this functionality by making a networkx graph representation of the circuit (where an edge is added for each two qubit interaction) and using the "connected components" algorithm to find the factors, as I mused in the original post
+In the real world, cross-talk (noise which entangles qubits you wish to remain separate) can be a problem. This is difficult to model accurately in simulation. Usually we use a single qubit noise model (where noise operations are added to all the qubits but each noise operation only affects one qubit). If you use a noise model with 2-qubit noise operators, there's no reason why the factorization couldn't still work so long as the noisy operations are added to the circuit before you try to factorize it.
+Given that there is already CircuitDag (which is conveniently already based on networkx.DiGraph), one way to achieve this is to use this class to convert the circuit to a DAG , factorize it as you suggest (e.g. with networkx.algorithms.components.weakly_connected_components) and then convert each of the resulting components back to CircuitDag and to a circuit.
+CircuitDag already can convert to and from circuit (although at least within Cirq repo this doesn't seem to be used anywhere), the only missing stone here is finding the correspondence between the nodes in factors and the operations in the original graph to recreate CircuitDag objects.
+If that seems reasonable, I am going to implement CircuitDag.factorize method to generate a sequence of DAGs, if that works out then the rest should be relatively easy.
+I don't think CircuitDag is exactly what I had in mind. The documentation is a bit sketchy, but it seems like it is representing a graph of the time-like structure of the circuit ("this operation must happen after that operation") where I was thinking of a space-like structure ("this qubit talks to that qubit sometime(s)")
+Looking at CircuitDag, it might serve in the way you suggest if a different can_reorder strategy gets implemented (currently it just checks whether the operations have qubits in common).
+On the other side, looking at the examples, many of them represent time-like circuits, and the docs don't talk much about the difference between the two. I feel like I am missing some piece of understanding here, having never seen the actual devices :) Could we discuss the space-like vs time-like circuits today during the sync?
+Actually things became a bit clearer to me after I looked at cross_entropy_benchmarking example :)
+Here is a proof of concept, to illustrate what I meant: #3599
+(By the way, thanks for the chat today - it had an unblocking effect :) )
+Re-opening, as #3873 addresses factoring circuits but doesn't plumb it into a simulator interface.
+@mpharrigan First step here is #4035 so that any optimization will apply to all simulators (or at least the Python ones). Then I'm working on https://github.com/daxfohl/Cirq/compare/run...daxfohl:runsplit?expand=1 that does the optimization of running unentangled state spaces independently, joining/splitting when entangled/measured. (If anyone wants to check the functions I wrote to merge/split state vectors and density matrices in the linalg/transformations.py file, that would be great).
+Like I said, this is just for Python simulators. Are you more interested in those, or in building this functionality into qsim etc?
+Ideally for a run-and-measure type factorizable circuit you'd never merge the state vector but only the sampled bits. Is this what you were planning as well?
+This is merging the state vector as needed, i.e. as entanglement is created, to allow the most flexibility for things like when a circuit is mostly unentangled except toward the end.
+Are you just looking for a function that calls simulate on each of the factored circuits and reassembles the results?
+If you're just drawing samples, you do not need to "tensor up" the 2^n state vector. You can draw samples from each of the factors and zip/hstack them together
+@daxfohl would you like to take over the rest of this issue or are you ok with me taking the second part as well?
+I think you can continue to lead this one. It sounds like the thing I was proposing was different from what @mpharrigan is needing.
+Thanks for the quick response!
+Hi @mpharrigan, I have a question regarding the second part of the solution (running the factors). Is actual parallelisation (= firing up a bunch of threads) part of this ticket, or would that be responsibility of the caller?
+(I.e. should the caller provide a callback to accept the circuit's factors and run them in whichever way is best for the caller, or should there be some default multitreading implementation)?
+We talked about this in cirq cync: the request is not necessarily running the fragments in parallel with threads but rather (semi-?)automatically factoring, running, sampling from factors, and concatenating samples.
+@95-martin-orion was under the impression that @daxfohl 's ActOn work subsumes this. Maybe he can confirm
+All of the behavior @mpharrigan described is implemented in #4100. A follow-up PR (#4110) allows factors to be sampled from separately without needing to merge them into a single state vector.
+Ok, I think #4110 is the critical piece for this issue
+Those PRs are fairly big and my primary role workload has increased (I'm not even a 20%er officially), so it may be quite some time before they get merged.
+The core component of the zipping up of samples is here: https://github.com/daxfohl/Cirq/blob/b7288f49f02a83c45370531adcafd55ea5124c93/cirq-core/cirq/sim/simulator_base.py#L364
+If you want to copy that into your own fork, it should be straightforward how to modify that to integrate with Anna's solution and speed up sampling on your experiments. It's only a few lines of code, so sounds like it would be worth the effort.
+Note even after #4110 there's still one final place that the full state space gets tensored up: the creation of the TrialResult object. Though that only occurs once per experiment and I believe only in run, not simulate, and shouldn't be too hard to fix. Though I'd actually prefer we should deprecate that and return the final StepResult directly instead.
+@mpharrigan I think this can be closed.

@@ -1,0 +1,39 @@
+To be done:
+I propose we update the language to support quantum allocation with user-provided initial state specification. This should supersede functions like from_state(...) on the kernel_builder.
+New constructors
+New builder method
+The Python builder would be similar as in the following.
+The following snippet demonstrates what this might look like:
+For library-mode / simulation we pass the state data along to NVQIR. For physical backends, we can replace runtime state data with the result of a circuit synthesis pass (like the current implementation in from_state(...).
+Thanks @amccaskey for proposing this.
+I have a clarification question regarding the semantics of a cudaq::qvector's state. For example, what will be the return value of the following kernel?
+I see two possibilities:
+Thinking a bit forward, it seems to me that the second option is more appropriate. Eventually, we can define a quantum integer type, say cudaq::qint, in which the state must be interpreted as a number:
+In this case, the kernel must return true.
+To make the API future-proof, we could also consider adding an optional bit-ordering vector argument (similar to custatevec API).
+cudaq::qvector q({0., 1., 0., 0.}, {0, 1}); => q[0] should be |1>
+cudaq::qvector q({0., 1., 0., 0.}, {1, 0}); => q[1] should be |1>
+The default when none provided could be one of those two endian conventions, e.g., LSB.
+Thanks @amccaskey for proposing this.
+I have a clarification question regarding the semantics of a cudaq::qvector's state. For example, what will be the return value of the following kernel?
+I see two possibilities:
+It returns true.
+It returns false:
+Thinking a bit forward, it seems to me that the second option is more appropriate. Eventually, we can define a quantum integer type, say cudaq::qint, in which the state must be interpreted as a number:
+In this case, the kernel must return true.
+@boschmitt I prefer we go with bullet 2.
+@boschmitt for your qint example, I was hoping to support cudaq::qint q = 4; instead of the initializer list. Do you foresee any gotchas there?
+One thing to add, it will likely be good to update the cudaq::state definition to be backend specific, and allow it as input to a CUDA Quantum kernel. If it is backend specific, we can have the sub-type hold a GPU device pointer and avoid copying the large data vector from device to host.
+I was hoping to support cudaq::qint q = 4; instead of the initializer list. Do you foresee any gotchas there?
+Would this be interpreted as the bitstring 1,0,0? You would need to know how many leading zeros are needed, so maybe an additional constructor parameter that is nQubits.
+If the goal is to construct states restricted to the computational basis, I would think rather than qint we could add qvector(const std::vector<bool>&);. Here the vector is of length nQubits, rather than 2**nQubits, and the construction is just specified by the bitstring.
+@boschmitt for your qint example, I was hoping to support cudaq::qint q = 4; instead of the initializer list. Do you foresee any gotchas there?
+We can certainly support it, but we would still have to define what it means with respect to a state vector. There will be more question to answer in order to support this idea. For example:
+Let me try to rephrase my questions: If we have a set of qubits we can try to initialize this set using a state vector, then the we need clarity on:
+@boschmitt for your qint example, I was hoping to support cudaq::qint q = 4; instead of the initializer list. Do you foresee any gotchas there?
+We can certainly support it, but we would still have to define what it means with respect to a state vector. There will be more question to answer in order to support this idea. For example:
+Let me try to rephrase my questions: If we have a set of qubits we can try to initialize this set using a state vector, then the we need clarity on:
+I guess qint may be a bit beyond this RFC, but to answer your first question - for qint we might want a template parameter for the size of the qubit register qint<N> and then typedefs for common ones.
+I guess qint may be a bit beyond this RFC
+I agree.
+The main point for which I asked clarification is with regards of how the semantics of the state vector relates to the type, cudaq::qvector, and accessing individual qubits. I provided two takes on it and it seems there is a preference for the second. The cudaq::qint digression is just a thought experiment to see how our decision will stand the test of time and possible CUDA Quantum evolutions.

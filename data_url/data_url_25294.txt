@@ -1,0 +1,43 @@
+As part of the epic to support cancelling tasks and dispatches, this issue tracks the proposed changes to the executors and Runner, including the mechanism for executor plugins to request services of Core Covalent.
+Request: Executor -> Runner
+(action, body)
+Supported actions:
+Response: Runner -> Executor
+(True/False, response) where the first  element indicates success or failure
+New exception type: TaskCancelledError
+BaseExecutor
+ Business logic for communicating with the Runner:
+ Methods for consumption by executor plugin authors:
+ Modifications to execute():
+The return value of execute() is now (output, stdout, stderr, status), where status is the job’s terminal status. Its possible values are:
+In execute(), catch TaskCancelledError from run() and set the task’s terminal job_status to RESULT_STATUS.CANCELLED
+The handler for TaskRuntimeError sets the terminal job_status to RESULT_STATUS.FAILED
+Call self._notify() in the finally: block with the following message:
+This tells the Runner to stop listening for messages from this executor instance.
+ Methods to cancel jobs:
+AsyncBaseExecutor
+ Business logic for communicating with the Runner:
+def _init_runtime(self, loop = None, cancel_pool: ThreadPoolExecutor = None):
+This method is invoked by the Runner in _run_task to initialize runtime attributes of the executor instance.
+Creates the following instance attributes:
+There is no need to store the loop or cancel_pool in this case. The method signature preserves consistency with non-async executors.
+def _notify(self, action: str, body: str = None)
+async def _wait_for_response(self, timeout: int = 5)
+async def _notify_sync(self, action: str, body: str = None)
+ Methods for consumption by executor plugin authors:
+ Modifications to execute():
+The return value of execute() is now (output, stdout, stderr, status), where status is the job’s terminal status. The possible values are:
+In execute(), catch TaskCancelledError from run() and set the task’s terminal job_status to RESULT_STATUS.CANCELLED
+The handler for TaskRuntimeError sets status to RESULT_STATUS.FAILED
+Call self._notify() in the finally: block with the following message:
+This tells the Runner to stop listening for messages from this executor instance.
+ Methods to cancel jobs:
+DaskExecutor
+Runner
+ Introduce executor proxy in _core/runner_modules/executor_proxy.py — Interacts with the Job Manager on the executor’s behalf
+ Modifications to _run_task:
+ Create a singleton ThreadPoolExecutor called _cancel_pool at the top of [runner.py](http://runner.py) . This will be reserved specifically for cancelling jobs running in non-async executors.
+ In _run_abstract_task, query the Job Manager to see if the task has been requested to be cancelled. If that is so, do not proceed to _run_task, and simply use data_manager.generate_node_result() to return a cancelled node result:
+ async def _cancel_task(dispatch_id: str, task_id: int, executor: str, executor_data: Dict, job_handle: str) -> None
+ async def cancel_tasks(dispatch_id: str, task_ids: List[int])
+ Add and adjust unit tests. Feel free to crib some tests from this branch. Mock all interactions with the other core modules.

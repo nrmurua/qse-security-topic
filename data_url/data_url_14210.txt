@@ -1,0 +1,27 @@
+Currently, it does not support BackendV2 for scheduling.
+I check backend.instruction_schedule_map, and it seems that the difference is that BackendV1 has the simultaneous measurement operation for all qubits, while BackendV2 does not have such operation.
+Simply schedule the circuit, then it fails:
+Error information:
+Exception has occurred: PulseError
+"We could not find a default measurement schedule called 'measure'. Please provide another name using the 'measure_name' keyword argument. For assistance, the instructions which are defined are: ['sx', 'id', 'x', 'rz', 'cx', 'measure']"
+qiskit.pulse.exceptions.PulseError: "Operation 'measure' exists, but is only defined for qubits [0, 1, 2, 3, 4, 5, 6]."
+The above exception was the direct cause of the following exception:
+File "D:\qiskit_test\test.py", line 29, in 
+sched = schedule(qc, backend)
+qiskit.pulse.exceptions.PulseError: "We could not find a default measurement schedule called 'measure'. Please provide another name using the 'measure_name' keyword argument. For assistance, the instructions which are defined are: ['sx', 'id', 'x', 'rz', 'cx', 'measure']"
+I found some issues and PRs mentioning and solving this problem: #9488 , #9912 , #9987 , #10105 , #10200 .
+Thanks to all these efforts, it seems that with many changes, this problem has already been solved.
+One thing that confuses me is that qiskit.pulse.measure (in qiskit/pulse/macro.py) has one argument backend, which will be used to decide the version of the backend and then decide the way of scheduling measurements.
+However, I checked all the references of measure, but there is no place passing the backend into it, except for test files.
+The issue with the current schedule is that no backend parameter will be passed for this. So even passing BackendV2 into schedule, it still uses _measure_v1 to schedule and thus leading to the bug.
+I check the whole process of schedule, where the call stack is:
+qiskit.compiler.schedule -> qiskit.scheduler.schedule_circuit -> qiskit.scheduler.methods.as_late_as_possible (or as_soon_as_possible) -> qiskit.scheduler.lower_gates -> qiskit.pulse.measure.
+If we can somehow passing the backend for qiskit.pulse.measure to differentiate the version of the backend, then this bug will be solved.
+Without changing the function interfaces, I think the best option is to include the backend into ScheduleConfig.
+I knew from the above issues and PRs that possibly ScheduleConfig will be deprecated in the future, but as one simple solution, we can add the backend as one parameter into ScheduleConfig.
+In this way, we only need to change a few places to remove the bug.
+Also, it may be reasonable to have a backend in ScheduleConfig, because this class is said to be "Container for information needed to schedule a QuantumCircuit into a pulse Schedule.".
+Backend information is important for scheduling, such as on which backend you schedule this job.
+Though it is not necessary, we can make this parameter to be optional.
+Since I found #10285 which is striving to solve the bug, and also there are many discussions about how to change it but I have not participated in it, I only create one draft PR.
+But if you are interested, you can check #10299, and possibly we can change it to regular PR if necessary.

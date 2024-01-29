@@ -1,0 +1,21 @@
+The Aer simulators have num_qubits in their configuration.  However, the simulators do not obey this value, and one can send circuits wider than this limit.  E.g. this works:
+on my machine even though the num_qubits argument returns 30.
+This causes issues because some routines look at num_qubits when performing because this number usually has consequences when running on real machines.  So when this limit can be bypassed without warning then things can break.  A specific example is M3 in the Runtime sampler where users calling ibmq_qasm_simulator are actually dispatched to Aer simulator.  In that case, people expect 32 qubits since that is what the ibmq_qasm_simulator reports, but Aer is reporting 31 qubits.
+Run above
+num_qubits should be respected like it is on real-hardware, unless interoperability between sims and real hardware is not a concern.
+Basically, sim.configuration().num_qubits is calculated from the amount of system memory assuming use of statevector.
+sim.configuration().num_qubits is basically n_qubits of QasmBackendConfiguration in backendconfiguration.py.
+n_qubits is configured as MAX_QUBITS_STATEVECTOR in  qasm_simulator.py.
+MAX_QUBITS_STATEVECTOR is defined to use of the half of SYSTEM_MEMORY_GB in backend_utils.py.
+SYSTEM_MEMORY_GB is from local_hardware_info()['memory'].
+I guess that your machine has 32GB or more memory and then MAX_QUBITS_STATEVECTOR is set to use 16GB which support 30 qubits in statevector. The above circuit is 32 qubit circuit. Therefore, in my understanding, its execution should be error if you use sim.run(qc, method='statevector'). However, this circuit is simple and Aer automatically selects stabilizer method to run it if no method is explicitly specified.
+QasmSimulator (that Aer.get_backend('qasm_simulator') returns) cannot report sim.configuration().num_qubits correctly before running a circuit (and AerSimulator without method cannot also). This is because the maximum number of qubits depends on a method and method is automatically determined when a circuit is simulated.  I recommend to use AerSimulator(method='statevector') (simulator_statevector in IBM service) if correct num_qubits is necessary before running a circuit.
+Aer is reporting 31 qubits.
+Could you explain more about where Aer returns 31 qubits?
+So the above example is a trimmed down version from @jyu00 that uses the random_circuit functionality in Qiskit
+The issue is indeed that there is auto-selection of the simulation method behind the scenes.  In the case of the random_circuit, with or without noise, nominally the matrix-product state method appears to be selected and no warning is issued.  Doing
+which I believe is the suggestion also goes through without raising, but seems to just use up all the CPU resources, but never yields a result.  Thus, in many cases there would be a large performance hit setting method='statevector' explicitly.
+The real issue I guess is that the Runtime is using Aer simulator in the docker image when it labels it as ibmq_qasm_simulator.  The Runtime docker memory size gives num_qubits=31, but ibmq_qasm_simulator supports up to 32, and therefore these corner cases arise.
+I am fine if this is closed as out of scope as, at the end of the day, it just means that the Runtime needs to just have custom logic for simulators, and there needs to be some clarity on the number of qubits that is actually supported in the Runtime env.
+Update:  Setting method='statevector' finally failed with a memory exception, but it took ~10 minutes to do so.
+num_qubits can be configured via QasmSimulator(n_qubits=32).  I would like to find what is happening in qasm_sim.run(trans_qc, noise_model=noise_model, method='statevector'). At least, it should return results even though very long time is taken.

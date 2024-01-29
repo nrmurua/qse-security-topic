@@ -1,0 +1,55 @@
+I was able to build and download ScaffCC 3 days ago (170806)
+However, there are some important steps missing in the README.
+I found I had to do the following on my RedHat Linux:
+yum install zlib-devel
+yum install bzip2-devel
+yum install m4
+in order to get past the boost build and gmp builds
+And even then I have a few remaining failures around thread support in boost.
+All errors are similar to the two shown here:
+gcc.compile.c++ bin.v2/libs/locale/build/gcc-4.8.3/release/threading-multi/shared/date_time.o
+In file included from ./boost/thread/detail/platform.hpp:17:0,
+from ./boost/thread/mutex.hpp:12,
+from libs/locale/src/shared/date_time.cpp:11:
+./boost/config/requires_threads.hpp:29:4: error: #error "Threading support unavaliable: it has been explicitly disabled with BOOST_DISABLE_THREADS"
+error "Threading support unavaliable: it has been explicitly disabled with BOOST_DISABLE_THREADS"
+libs/locale/src/shared/date_time.cpp:435:5: error: â mutexâ  in namespace â boostâ  does not name a type
+boost::mutex &tz_mutex()
+^
+libs/locale/src/shared/date_time.cpp: In function â std::string boost::locale::time_zone::global()â :
+libs/locale/src/shared/date_time.cpp:447:9: error: â unique_lockâ  is not a member of â boostâ
+boost::unique_lockboost::mutex lock(tz_mutex());
+I was able , however, to perform the make at the top level
+and it succeeds, with no reports of errors.
+So, I ran the regression_test.sh script .
+Several of the tests succeed, but I get 3 errors:
+cat_state.n04_merged.scaffold fails with:
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+make: *** [cat_state.n04.qasmf] Error 1
+cmp: *.qasmf: No such file or directory
+[./../test_cases/Cat_State] Generating Flattened QASM Failed
+Also get
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+make: *** [rkqc_test.n32.qasmf] Error 1
+cmp: *.qasmf: No such file or directory
+[./../test_cases/RKQC_Testing] Generating Flattened QASM Failed
+and
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+make: *** [square_root.n10.qasmf] Error 1
+cmp: *.qasmf: No such file or directory
+[./../test_cases/Square_Root] Generating Flattened QASM Failed
+**** Any ideas what might be causing these errors ?
+Note: I am able to successfully run several of the Algorithms, such as Shors,
+so much of scaffold appears to be working.
+OK, I was able to get generate the Flattened QASM files ... turns out clang used in this project is v3.1, but clang has newer versions.  The code has some hardcoded paths to find hardware specific C libaries, libgcc+ and crtbegin.o ... when clang runs to create the flattened path the location of these files is not in the current version of code, so the process fails.
+I found in a search mention of an environment variable "COMPILER_PATH" that can be used to set additional paths to search.  I did this:
+export COMPILER_PATH=/usr/lib/gcc/x86_64-amazon-linux/4.8.3
+and now the link process works, except for the reference to crtbegin.o and crtend.o.
+For those, I had to manually copy these two files from their location in COMPILER_PATH to /usr/local/lib
+so they get found.  Couldn't find another solution.
+But now, I can generate the flattened QASMF files, as well as the QC sim files ...
+for most of the Algorithms.  Several of them get errors in processing.
+This will need some attention.
+But, one question ... would it make sense to up to the newest version of clang and Boost ?
+Thank you @rtvuser1 for bringing this issue to our attention and helping us verify the compiler on RedHat Linux. We believe the issue you are experiencing is a localized problem on RedHat. The current release should work fine on OS X and Ubuntu without the upgrade to new versions of clang and boost. Right now, we are evaluating the cost/benefit of keeping up with the newest version of clang and boost for future releases, and employ small fixes to the current release.
+@rtvuser1 I migrated scaff-llvm to LLVM version 6.0.0 (trunk 315971) also migrating scaff-clang

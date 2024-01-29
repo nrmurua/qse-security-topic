@@ -1,0 +1,21 @@
+A target whose only entangling gate is an iSwap gate fails to synthesize a circuit. The decomposer XXDecomposer (which can't use iSwap gates) runs anyway and throws an error.
+This is fairly minimal, but not super short. (The duration and error on the gates is probably irrelevant and could be omitted)
+Running the function defined above try_unitary_synth_with_iswap() thows IndexError: index out of range. Running  try_unitary_synth_with_iswap() runs and exits normally.
+Both examples above should successfully synthesize the circuit and exit normally. We have decomposers for both iswap and cx gates.
+This bug is related to #9983 and several other issues and attempted PRs
+The circuit in the example above is a a 2q circuit with a single gate, a CX gate that has been converted to a gate of name unitary defined by an explicit matrix. This forces the synthesizers to try to synthesize gates from this matrix.
+A list of 2q decomposers is built with one of the variables in the composers being the 2q entangling gates in the target set. Two groups of entangling gates are discriminated: controlled gates and super-controlled gates. In the example above we used a CX gate and an iSwap gate. The CX gate is both controlled and super-controlled, so it appears in both groups. The iSwap gate is super-controlled but not controlled, so it appears in only the super-controlled group, not in the controlled group.
+XXDecomposer is a 2q decomposer which only handles basis sets with controlled gates, and not with super-controlled gates.
+The 2q composers are invoked with any 2q gates that they do not support filtered out.
+The current logic in unitary_synthesis.py will invoke XXDecomposer unconditionally, with an empty basis set if there are no controlled gates in the target basis set. If the circuit to synthesize has any entangling 2q gates, the error mentioned above will be thrown. This prevents a decomposer that can use an iSwap gate from being used in case there is an iSwap in the target basis set.
+We could skip running XXDecomposer in the case that there are no controlled gates in the target basis. However, we currently have a test in the test suite that tests a path including XXDecomposer with an empty list of gates synthesizing a nonentangling gate. That is, a gate that doesn't need any entangling basis gates to be sythesized.  XXDecomposer correctly handles this. If we always skip XXDecomposer in the case that there are no controlled gates this latter test will fail.
+See #9994 and references to discussions there for more details.
+One solution that would preserve all existing behavior (except for  throwing errors) is to modify the decomposers to return a status flag. If the decomposition failed, you simply ignore the result. Currently XXDecomposer simply errors either graciously with #9994, or ungraciously as before.
+I propose (trying) the following. It adds a bit of complexity, but it also removes complexity in the logic. It also breaks anything relying on the existing interface.
+The two-qubit synthesizers in quantum_info currently return a circuit. Instead they could return an object that contains the synthesized circuit and also some status or report information. For the first implementation, the report would include only one item, a bool telling whether synthesis succeed or failed... or perhaps a failure message too.
+The only "normal" path this would be useful for is this test for synthesizing a trivial circuit for a target with no entangling gates:
+https://github.com/Qiskit/qiskit-terra/blob/1203a3b18551f06325354208274e61d02d8bd584/test/python/transpiler/test_unitary_synthesis.py#L839-L842
+For error paths, it would improve diagnostics. Currently you might throw, say, an index error deep in the algorithm. Instead , the loop that runs all decomposers and compares the results would check the statuses and report that no decomposers succeeded.
+EDIT  I see one decomposer that flags failure to decompose (probably) using None.
+https://github.com/Qiskit/qiskit-terra/blob/1203a3b18551f06325354208274e61d02d8bd584/qiskit/transpiler/passes/synthesis/unitary_synthesis.py#L779-L781
+I don't think the others do. But you have to dig through the code to see if it could possibly return None. This makes me think an explicit status may be warranted.

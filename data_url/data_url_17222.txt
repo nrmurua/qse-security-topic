@@ -1,0 +1,30 @@
+-Qiskit Terra version:  0.8.1
+-Python version: 3.7.2
+-Operating system: MacOS Mojave
+The data stored in Operator(circuit).data (with Operator imported from qiskit.quantum_info
+) seems not to correspond to the right unitary for certain circuits.
+Choose the following circuit:
+qasm = 'OPENQASM 2.0;'
+qasm += 'include "qelib1.inc";'
+qasm += 'qreg q[3];'
+qasm += 'creg c[3];'
+qasm += 'rx(3.141592653589793) q[2];'
+qasm += 'ry(0.294524311274043) q[2];'
+qasm += 'cx q[0],q[2];'
+qasm += 'ry(-0.0981747704246810) q[2];'
+qasm += 'cx q[1],q[2];'
+qasm += 'ry(0.0981747704246810) q[2];'
+qasm += 'cx q[0],q[2];'
+qasm += 'ry(-3.141592653589793) q[2];'
+circuit = QuantumCircuit.from_qasm_str(qasm)
+One finds a different result [than the one found by(Operator(circuit).data] using the unitary_simulator:
+simulator = BasicAer.get_backend('unitary_simulator')
+result = execute(circuit, simulator).result()
+unitary = result.get_unitary(circuit)
+matrix_equal(Operator(circuit).data, unitary, ignore_phase=True)
+The last line returns False.
+This does indeed look like a bug in the operator class.  The numerical values appear to be correct, but the indices are not.  So it seems that there is some array manipulations that are not correct.
+To make reproducing easier, here is the circuit:
+Looks like the single qubit gate is getting applied to the wrong index, but only for rx, ry, rz.
+If I run the following circuit with some debugging prints added the last three are getting applied to q[0] instead of q[2].
+My guess is there is a bug in how Operator unrolls gates without a matrix def. I'll look into a fix.

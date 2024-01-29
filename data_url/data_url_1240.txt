@@ -1,0 +1,41 @@
+Description of the issue
+I use the cirq.sample_state_vector to extract counts from the statevector. But it appears to not scale beyond 32 qubits due to a NumPy limitation, which hardcodes the maximum number of dimensions to be 32: numpy/numpy#5744.
+How to reproduce the issue
+I'm running the following code in an NVIDIA cuQuantum Docker instance, because a CPU simulation of the code would be slow. However, this shouldn't affect that the error still happens.
+Error message:
+Cirq version
+But should apply to 1.1.x as well: 
+From Cirq sync:
+The 32 limit seems interinsic to numpy, but it seems there are multiple scientific libraries running into this problem so numpy might pump up that limit numpy/numpy#5744 (comment) , however it probably won't be easy for them numpy/numpy#5744 (comment) and will take time.
+The code in this issue can be rewritten in a way that doesn't require reshaping the state array, however this is not an isolated issue and we will get more occurrences of it in other places as people build larger circuits/run simulations on large GPUs.
+For now I think it will be enough to write helper functions that allow us to do the needed operations but on a flattened array instead of a reshaped array. For a start a function for indexing and trasposing will be needed to fix this issue.
+An alternative would be to increase the limit yourself, build a local version of numpy (and hope it works fine) as mentioned  in https://stackoverflow.com/a/35192754
+UPDATE: cupy also has the same limit https://github.com/cupy/cupy/blob/cb71365934dd5fa8197578ba55b74370cf07951a/cupy/_core/core.pyx#L197
+Update: I found another maximum supported dimension issue in 
+The code I used to reproduce this is the one in quantumlib/qsim#612 (comment), but with num_qubits of 34. This time, I'm using Cirq 1.1.0. I suppose this initial_state.reshape(qid_shape) is not present in Cirq 0.14, and hence why I didn't encounter this error when posting this issue (#6031).
+I suppose cirq.sample_state_vector is not commonly used, but the new error I wrote in #6031 (comment) has a code pattern that is very commonly used. As such, this affects cuQuantum Appliance 23.03 (which uses Cirq 1.0.0), when using the cuStateVec backend (cuTensorNet should be unaffected); cc: @leofang @ahehn-nv @tlubowe.
+from a first glance it seems that the reshape is not actually needed ... the qid_shape is passed anyway to other functions and isn't actually used except during the calculation of probabilities which I fix in #6090 so after that PR is merged I think we can remove the reshape line and it will still work -maybe with a few tweeks-.
+It does not make any sense to be limited by NumPy's arbitrary choice (32 or whatever). For single-node workloads the only true limitation is the 64-bit unsigned integer limit, which translates to 64 qubits, and for multi-node workloads, unlimited in practice since the state vector can be processed/stored in a distributed manner (cuQuantum has that). Also, other simulation methods like tensor network allow exceeding 64 qubits very easily, so I would advice for all QC frameworks to not make any assumptions in the max number of qubits.
+This issue is stale because it has been open 30 days with no activity. Remove stale label or comment or this will be closed in 30 days
+Hi there - any updates on the cirq 1.1.0 issue?
+Basically the new cirq doesn't allow >32 qubit simulations. I would say this is a pretty serious issue.
+This is preventing us from upgrading our cirq 0.14 to cirq 1.0
+@hthayko we just merged #6090 which fixes the original issue. The new issue from #6031 (comment) turned out to be trickier than original anticipated since all the operations of _BufferedStateVector assume that the state vector is in the correct shape.
+Since v0.14 The StateVectorSimulationState class acquired new functionalities that were all optimized for performance. all of these optimizations assumed the state vector is in a specific shape.
+If #6090 is enough fixes your issue then you can upgrade cirq 1.0. otherwise you will need to wait until the numpy issue is resolved. luckly this seems to be close see numpy/numpy#5744 (comment) and my suggested solution numpy/numpy#5744 (comment)
+If you don't want to remain blocked on numpy you can try the hack in numpy/numpy#5744 (comment) until the issue is resolved.
+The https://github.com/quantumlib/qsim simulator has no limit on the number of qubits of the simulation. As long as you have enough RAM the qsim simulator will run the simulation with no problem.
+With this I will close this issue since we have an alternative simulator that handles more than 32 qubits and the limitation imposed on the state vector simulator comes from numpy and is not intrinsic to the state vector simulator.
+You should check the code in #6031 (comment). I used qsimcirq there.
+@rht As said before this is a numpy issue and isn't internsic to the simulators ... if we do it in a different way then we are sacrificing efficiency and by that I mean multiplying the run time by several orders of magnitude. not to mention filling our code base with throwaway code.
+When numpy starts supporting more than 32 dimensions then the state vector simulation will work out of the box.  If you really need to do this kind of simulation then I suggest keeping an eye on the numpy issue numpy/numpy#5744 where they indicated that they don't have an issue with this but are lacking people to work on the fixing blockers for this, mainly the old iterators numpy/numpy#5744 (comment)
+@rht at your risk and as a work around you can compile your own numpy after updating the limit on number of dimensions numpy/numpy#5744 (comment)
+@NoureldinYosri so what's your recommendation for users? That they use the c++ based interface of qsim? Can we make qsimcirq not fail for > 32 qubits ?
+actually after taking another look. it looks like for qsim the breakage happens during returning the result rather than while computing it. This is why I didn't notice the problem in #6031 (comment) since I didn't wait for the simulation to finish.
+In that case we can create a simplified version of the StateVectorSimulationState for reporting the results.
+so yea I guess we aren't blocked on numpy for this after all.
+So next I will implement a simplified version of StateVectorSimulationState for reporting the simulation results that works within the dimensions limit.
+@rht does quantumlib/qsim#623 work for you?
+Yes, it looks promising, that I can finally use sim.simulate(circuit) for >32 qubits. A 1D array result works for me.
+@rht qsim simulator now has a new method simulate_into_1d_array which you can use to run your simulation and get the state vector as a 1D array.
+Yes, thank you so much for the simulate_into_1d_array!

@@ -1,0 +1,26 @@
+Inspired by @mtreinish in #4958 .
+Currently, it takes on the order of seconds to import just the base qiskit package, and that doesn't improve if you only import subpackages (e.g. qiskit.pulse) due to the top-level import of heavy packages in ./qiskit/__init__.py, e.g. qiskit.providers.ibmq which are always imported.
+Here, I am mostly looking in this issue at import speed improvements in qiskit/__init__.py.
+I see a few possible solutions, ranked in order of more breaking changes:
+This can be checked visually with:
+Which yields (qiskit-terra==0.15.1, qiskit-ibmq-provider==0.8.0):
+
+which is similar to that in #4958 (I must have a slower computer/not be running on SSD):
+
+We see that import qiskit.pulse ends up importing the top-level qiskit init file anyways. As a side note, I'd really prefer not to spend ~3 seconds importing qiskit-terra every time.
+This a good direction, I've done similar analysis in the past and agree we can do better. For your proposed steps:
+The other thing which I think we can do here which was going to be a follow-up from #4958 as a multi-step process is to move matplotlib to not be imported at import time. The problem is which I found during #4958 is that doing this as I did there removes qiskit.visualization from the core import which was problematic for backwards compat. Then the other way to move the import is to make matplotlib a run time import everywhere, but this had issues because we export HAS_MATPLOTLIB and have for some time (and other projects may rely on this, I think ignis might). Either way it's used a lot of places in terra. So to do this we'll have to first deprecate HAS_MATPLOTLB and untangle the HAS_MATPLOTLIB usage everywhere. Then after that deprecation cycle we can migrate to run time matplotlib imports.
+This isn't a top priority, but I found another leaf import that could potentially be removed/delayed. scipy.stats seems to only be used once in the repository
+https://github.com/Qiskit/qiskit-terra/blob/19bf1a7b8d75616bd587f927a71f9b2eb8041dd4/qiskit/quantum_info/operators/random.py#L19
+, and takes >= 0.1s of the import time (~8%). This could be solved with a similar approach as in #5102.
+Did you consider using lazy imports? Sometimes it can make troubleshooting more tricky. But the behaviour could be controlled by env variable.
+@drewrisinger yeah, scipy.stats was a good call. I pushed a PR to make that change in: #5258
+I really want to push one to move matplotlib to be a lazy runtime import too. It'll probably meaning breaking anyone who is relying on qiskit.visualization.HAS_MATPLOTLIB today. Which might be a fair tradeoff, but after we drop python3.6 support (which the process for starts in #5189 ) we can use a module level getattr functions (which was added in 3.7) to do this more gracefully. So I'm a bit torn on whether to make the breaking change or just wait 6 months from the next release.
+Also, we should be able to remove networkx from the import path (which is surprisingly not cheap either) after #5183 merges which will speed things up a bit more
+After #5471 and #5485 the import performance here is a lot better. The only 2 things after #5485 is finished and merges that will be good to do is remove the fastjsonschema import time compilation (which is deprecated and is just a matter of time) and then something for __qiskit_version__. __qiskit_version__ is a bit more involved to do lazily because it's defined as a module attribute that's a dict. So the hack I used for HAS_MATPLOTLIB won't work because there is no hidden method being called when it's accessed. We won't have module __getattr__ on modules until Python 3.7 is the minimum supported version.
+I think after #5619 and #5485 are merged we can close this issue as fixed. There is also #5582 which will hopefully help prevent regressions on this in the future after we have this fixed.
+Thanks @mtreinish for being responsive and the tedious work that goes into this!
+ok, I'm going to close this as all 3 of those PRs have merged now. To wrap it I just ran an importtime profile of import qiskit with all optional dependencies and all the qiskit components installed and this is what it returned:
+
+which I think is a good enough improvement to go from ~1.1 sec to ~0.49 sec.
+With all the jsonschema usage currently being deprecated, >=3 months after 0.17.0's release when we remove the jsonschema bits we'll shave another ~0.05 sec off the import time. There is also cvxpy in there which is only used in one place and takes ~0.06 sec to import. But both of those times seem pretty minor. We can open up follow up issues or PRs if they get to be a bottleneck for people.

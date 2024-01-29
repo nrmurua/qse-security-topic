@@ -1,0 +1,27 @@
+I started using CP2K from the overlay on a simple system and noticed that it does not execute properly when using hybrid parallelisation. Whenever the number of OMP threads /= 1, cholesky decomposition will fail and it also becomes very slow. This usually happens when some threading problems with underlying BLAS occur. I've tested with the defaults but also with MKL as BLAS and LAPACK provider, but the results are the same. Both one of my "real life" examples as well as many inputs from the test suite fail when using OMP parallelisation.
+OMP_NUM_THREADS=4 cp2k pbe_nvt.txt.
+Pure MPI execution works fine. Nevertheless, for the psmp version, that is being built, the combination of both should work fine (and actually does on the same version of CP2K built without Nix).
+I couldn't narrrow it down further, yet.
+I was able to narrow it down further. It actually is the BLAS threading. For reasons unknown to me, the abstract blas and lapack derivations both do not work. Unwrapped openblasCompat, amd-blis and amd-libflame also do not work. The only thing where I could get correct threading behaviour is with unwrapped mkl. It is not enough to simply do blas.override { blasProvider = super.mkl; } and lapack.override { lapackProvider = super.mkl; }, it really needs to be provided unwrapped.
+I will make a PR with more details, but it is not too nice, as it introduces many conditionals.
+What advantage does the OpenMP parallelization in CP2K bring? I did benchmarks against NixOS 20.03, and I couldn't see any gains (with the test cases in NixOS-QChem). Maybe we should just drop the OpenMP support and build it purely with MPI?
+Here the hybrid parallelisation is actually very helpful, especially for large calculations with Hartree-Fock exchange or RI-MP2. It saves memory and also communication overhead if the calculations become very large. I have good experience with the hybrid scheme for calculations on our cluster, that are parallel over >= 10 nodes (360 cores used with 4 OMP  threads, 90 MPI processes). This was nearly saving a factor of 2 in time.
+I just realised that mpi in nixpkgs is built without threading support 🤔 This might be the cause for the problems here. --enable-mpi-thread-multiple is usually required for openmpi to support the hybrid scheme and does no harm otherwise.
+I just realised that mpi in nixpkgs is built without threading support 🤔 This might be the cause for the problems here. --enable-mpi-thread-multiple is usually required for openmpi to support the hybrid scheme and does no harm otherwise.
+EDIT: MVAPICH comes with threading enabled by default. I will see if this can fix the problem without the BLAS hacks
+Can you try if openmpi with mpi-thread-multiple solves the problem? If yes we can change it upstream.
+I have tried and unfortunately it didn't help. I would still suggest to add it upstream. It is good to have.
+I also tried to use MVAPICH on my workstation but this causes MPI problems. Some MPIDI_CH3_Init failed. I guess this is a problem with the network interface. Have you figured out how to use the current MVAPICH derivation on a workstation without IB? I've had flags in my MVAPICH to switch the supported device during build (again many conditionals):
+I can add support for different interfaces to MVAPICH later, if you want.
+How should we go on with CP2K threading then? I would still prefer to keep support for the PSMP version, as I use it on a regular basis.
+We can keep the PSMP version. I would recommend fixing the following things
+Regarding your MVAPICH on a work station problem: With MPICH I had the problem that it started to fail in sandboxed builds. Setting HYDRA_IFACE=lo helped here. I think this may be a similar problem, although I am not sure if an IB configured MVAPICH will ever run a node  without IB interfaces.
+More tests on CP2K:
+Playing around with endless permutations on how to build CP2K, I found this test case to boil it down to either working or wrong: oxole_tpss_nvt.txt.
+The only option that gives correct results, even with OMP_NUM_THREADS=1 is with MKL. Any other option wont work. So the problem must be even deeper than only in BLAS threading. Maybe related to the segfaults of #35 ?
+I've tested also against my CP2K 7.1 on our CentOS cluster (MVAPICH, LP64 OpenBLAS with OpenMP threading) and the MKL results agree with those. Every other combination did now work. @markuskowa Could you confirm with master vs my version from #34 ?
+Fix MVAPICH so that it can be easily built for different interfaces (can you open a PR for that?). The conditionals are OK here since the interface type needs to be decided at build time (IIRC).
+Test MVAPICH and move it into nixpkgs once we can confirm that is works well.
+See #35
+This is solved now with #34?
+I will just add a test case in another PR and then we can close.

@@ -1,0 +1,19 @@
+Application of VariationalLayer appears to result in an exception for some choice of qubit pairs. Here is a minimum reproducible example:
+which throws:
+ValueError: ('Variational layer can have at most one additional target for one qubit gates but has {0, 5}.', None)
+This happens for even number of nqubits and the choice made in pairs2 (I checked the problem is not to apply successive VariationalLayer gates on different pairs, but rather this particular choice of pairs).
+Thanks for opening this.
+In the current implementation this error is expected because by definition the VariationalLayer expects the pairs to contain all qubits included in the layer. The only case where pairs can skip one qubit is when the number of qubits is odd. For example if you had 5 qubits (0 to 4) then the pairs could be [(1, 2), (3, 4)] and skip qubit 0 from the two-qubit gates. In your example qubits 0 and 5 are left out from pairs and it is not possible to leave out two qubits. If you try pairs2 = [(1, 2), (3, 4), (0, 5)] it should work and will be equivalent to:
+however I assume that for some reason you don't want a CZ between 0 and 5.
+The VariationalLayer is a bit restrictive, because originally I was planning to remove it once we have a good implementation of general gate fusion in place. It is redudant to have both gate fusion and the VariationalLayer as the latter is just a special case of fusion. For example, in your case you can define the circuit using normal gates and then fuse:
+The reason we left the VariationalLayer was that it had better performance than fuse() in the VQE circuit.
+With this in mind, I think the two possible solution are the following:
+I believe the first is a better long term solution because it is more general and easier to maintain. I am afraid that with the second there will always exist cases that we do not cover.
+I agree, investigating fuse should be the ideal solution.
+Thanks for the answer @stavros11.
+I don't mind having a CZ between qubits 0 and 5. So I'm good with the long-term solution.
+Although not directly related to this issue, since we were discussing about this, here are some benchmarks on using c.fuse() vs gates.VariationalLayer. The circuit used in all cases is the variational circuit from the paper benchmarks and creation refers to the time required to create the circuit, while execution to the time required to execute the circuit.
+The main result is that both strategies are very similar when executing, however fusion has an overhead in creation. The difference is more important for small number of qubits, as for large circuits it is generally execution time >> creation and the overhead will be less noticeable. Also, comparing the tables for 1 and 10 layers, note that the difference is larger for deeper circuits. I am not sure how much we can improve the fusion regarding this, however it is expected that the variational layer will always be faster to create because the gate arrangement is pre-coded, while c.fuse() has to search how to fuse gates. This is why c.fuse() is also much more flexible (works with any circuit).
+Plot for a single layer:
+
+Thanks for generating the benchmark, I believe it is now clear the timings for generation and overall execution in the small and large qubits regimes.

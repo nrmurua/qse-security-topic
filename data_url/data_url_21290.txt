@@ -1,0 +1,15 @@
+The comm <-> kernel roundtrip to allocate extra memory for an RPC result has extremely high latency, to the point where it is easy to make the master-to-core-device TCP connection time out.
+For instance, have a look at the following innocent program:
+Running this on latest ARTIQ fails with a TimeoutError, as the repeated roundtips between comm and kernel CPU to allocate memory for the list elements take long enough for the TCP timeout to elapse. (The exact point at which this start to fail might vary depending on setup details, but of course this will be a performance problem even before complete failure.)
+Any idea why this takes several milliseconds? (Profiling this is a bit messy…)
+Profiling this is a bit messy…
+@whitequark had started developing a sampling profiler, but I'm not sure what the status is.
+The profiler does work (it should be functional in master), unfortunately there are two issues with it:
+@dnadlinger I can try to refresh my memory and write some introduction for using the profiler.
+The slowness is due to allocation request/reply per element, which we can hardly do anything about it. (Some optimization on zynq could make the allocation request per element down to 8 microseconds, but that would still take 9ms for the test case above)
+Recent PR #1510 added optimization for commonly used lists/arrays (elements of type Bool/Int32/Int64/Float, the performance for them should be much faster. However, there is not much improvement for the test case above.
+In my mind, the solution here is really just for the comms CPU (core0) not to interpret any of the payload, but ship it to the kernel CPU (core1) instead, where everything can be done locally, without any locking.
+In my mind, the solution here is really just for the comms CPU (core0) not to interpret any of the payload, but ship it to the kernel CPU (core1) instead, where everything can be done locally, without any locking.
+Not sure about or1k, but for zynq, the async runtime expects to be run in a single core, so we cannot really move that to core1.
+One way to solve the problem is to modify the protocol to include the length of the return buffer at the start, read the whole buffer in core0 and copy that to core1, but I am not sure about the performance of this approach. I don't think the overhead for sync_channel without context switch is that big.
+Just for the record, the above test case still takes about 0.5 s on 1f40f3c/Kasli – but hey, at least, it doesn't time out anymore.

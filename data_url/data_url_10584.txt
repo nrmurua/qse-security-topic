@@ -1,0 +1,26 @@
+EmbeddingComposite et al. currently use a fixed default value for chain_strength (1.0), regardless of actual problem bias/coupling magnitudes.
+It would be useful to provide a utility for estimating a better chain_strength, based on actual problem being embedded. Wrapping that utility in a sampling composite would be very helpful in a use case of multiple/auto embedding calls, typical in a hybrid workflow.
+Agree. This has been on the wish list for a long time. One reason that we've held off is because there are many different strategies, so we'd want to expose that to the user. To name a few:
+1, 2, 4 could probably be exposed pretty easily.
+To throw an interface out there
+A great start would be to simply implement a utility function for (2) or (4), IMO.
+This should be the default operation in my opinion
+I would add
+6. If the embedding is for a clique, use relative chain strength =  3/2*sqrt(N)
+@pau557, in "relative chain strength = 3/2*sqrt(N)", by "relative" you mean for h, J scaled down to J_range  or extended_J_range, right?
+@JoelPasvolsky I meant relative to the logical problem scale. The chain strength is set to 3/2*sqrt(N)*max(abs(h), abs(J)).
+Then one would rescale both the chains and the problem weights in order to send that to the QPU using extended_j_range:
+With c_s = 3/2*sqrt(N)*max(abs(h), abs(J)),
+c_s' = min(c_s, extended_j_range)
+h' = h * c_s'/c_s
+J' = J * c_s'/c_s
+btw, it would be useful if dimod bqms had a .maxbias() and .minbias() method in order to extract the problem scale. Is there anything like that @arcondello?
+@pau557 there is not at the moment, though there is an existing feature request dwavesystems/dimod#402
+I thought the default behaviour was to set Jchain = -max(|Jphysical|, not chain). If Jchain is not set proportional to scale(Jlogical) this needs to be addressed urgently. Guessing optimal chain strength is not easy, but it should be obvious that if we scale Jproblem we scale Jchain, and the default must reflect this.
+[acondello 2.]. Jchain = -Jrange* max(|Jphysical|, not chain): This is a good default for easy problems since it maximizes all the gaps, and without much frustration we don't need to worry about chains breaking.
+[pau]. Jchain = - Jrange * k* standardDeviation(Jlogical) , where k is around 1 (specifically 3/2 works well for spin glasses): This is a better default for homogeneous frustrated problems.
+Note that scale(Jlogical) is used in both cases. In case [acondello] in a manner that is minor-embedding dependent, max(absolute physical Jlogical). In case [pau] in an embedding independent manner, standard deviation (logical J).
+There are other frameworks obviously.
+Jrange = 2 for extended Jrange, 1 for regular Jrange. We should be encouraging users to choose extended J-range.
+Just adding the feature request from @joelgdwave and @vgoliber to make sure we're returning the chosen chain strength in the sampleset. We do a similar thing in dimod's ScaleComposite.
+Reopening because there are other methods we should add!

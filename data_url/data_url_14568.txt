@@ -1,0 +1,19 @@
+The TemplateOptimization pass is used with rzx_templates to specify to the transpiler pass how circuits could be made more hardware efficient by implementing two-qubit interactions in terms of RZXGates instead of CNOTs, which is closer to the native two-qubit interaction for superconducting qubits. A prototypical working example is given by the following code:
+which produces the output
+The transpilation step
+then correctly produces the optimized circuit
+A minimal model to produce the problem consists of the same circuit as above followed by an RZGate on q1
+produces the output
+The template optimization step
+now produces the identical circuit
+which is not optimized.
+The template optimized test_circ_rzx2 should be the same as test_circ_rzx1 followed by an RZGate on q1.
+The costs of both circuits 1 and 2 should be the same, so I am not sure why the template optimization fails here.
+Oh, this is interesting. Since TemplateMatching tries to find maximal matches of the template in the circuit, it will always match together with the CX-Rz-CX series, the Rz(-theta) gate in the template with this extra Rz(pi / 2) gate in the circuit. But later, theTemplateSubstitution step can't find a single value of theta that satisfies both constraints and the substitution will not be made.
+That's a great observation @georgios-ts! From what I understand now is that the template optimization takes the maximal matches, which includes the entirety of test circuits 1 & 2 above, and processes them. One of the processing steps is _attempt_bind() (and is indeed one of the methods that I heavily modified to accept Parameters/ParameterExpressions), which will pass through if the attempted parameter bind fails due to the inconsistency you pointed out (which is the case for test circuit 2, but not 1).
+This leads me to think a solution may be to try the _attempt_bind() step in the routine that finds the maximal matches, i.e., to find the maximal match with "consistent" parameters. However, I would also worry that this would increase the amount of processing on an already computationally intensive pass.
+Conversely (and I am not sure how this would be done), once an inconsistent parameter set is found for a maximal match, then its sub-maximal matches could be considered for consistency?
+I had a look at finding sub-maximal matches if there is an inconsistent parameter set and the particular template match in this issue can be fixed by replacing https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/transpiler/passes/optimization/template_matching/template_substitution.py#L326 with
+This works well if the expression leading to a set of inconsistent parameters is at the end of the template match. However, inconsistent parameter expressions may occur at the beginning, the end, and/or in the middle of the template match, which will lead to a sub-optimal sub-maximal match with this approach. This approach can be extended by greedily cutting away from the template match as shown in the code above from the beginning and the end to make the parameter set of the match consistent.
+An alternative may be possible for some instances by asking the sympy solver to produce the set of mutually exclusive parameter assignments and work out the optimal sub-maximal match from there, i.e. evaluating the cost of possible sub-maximal template matches. I'm not sure how computationally expensive this is and whether the sympy solver supports such a feature (other solvers e.g. SAT solvers do).
+Apart from this, allowing sub-maximal matches for inconsistent parameters may remove the ability to develop parameter-sensitive templates in some cases: a user may want to apply a different template depending on a specific expression evaluating to P-π or P+π. If this is a valid use case, the user should be given the choice of allowing sub-maximal matches by introducing a new parameter to the TemplateOptimization class.

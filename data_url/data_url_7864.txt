@@ -1,0 +1,27 @@
+Some tests of qutip.testing.run() fail on master on a MacBook Pro (2021) with M1. Qutip was installed on a miniforge python 3.9.9 distribution.
+Tests should succeed.
+No response
+@matteoacrossi Thank you for running the tests and reporting these. I'm glad there are only four failing.
+I can't immediately guess the cause of any of them, so some digging is needed. If you're up to digging into them I'm happy to review and merge PRs. If not, no worries -- I will try think of another plan.
+@hodgestar I'm happy to help digging into them if you instruct me! Also thanks for all the effort in getting qutip to work on M1!
+@matteoacrossi Thanks! I don't know that I have much particular advice, other than "let's try debug the failing tests one at a time". Maybe pick one of the test_driven_cavity ones, because I'm not quite sure how ValueError: Invalid preconditioning method can get raised when it succeeds on other platforms. Maybe it is a bug that isn't completely related to the M1?
+Are you familiar with pdb? Running just the one test using pytest and pytest --pdb will allow to explore the stack trace and see the values of variables in each stack frame, and hopefully figure out what went wrong.
+Another first step is just to fix the line raise ValueError("Invalid preconditioning method.") to be raise ValueError(f"Invalid preconditioning method: {ss_args['method']!r}.") so that the error messages gives more of a hint of what the invalid method name was.
+I'm very surprised to see that there is a failing test on qutip.qip, which is pure python and is unlikely to be platform dependent.
+I have a guess that this one may have something to do with pytest parameterization. I had a problem with that on Mac OS (not M1) before, which I still don't fully understand and I left a comment back then:
+
+If you would like to, you can copy that failing test and run it (without using pytest parameterization but giving the input explicitly) in a Python console. If it works well, then my guess should be right. But it doesn't apply to all other failing tests I think.
+Indeed if I run the following
+It seems to be working.
+Ah great! Thanks! So I probably used parameterization with the circuit in a non-recommended way. The source code is correct, there is just something wrong with the test. I'll try coming up with a solution for that test later.
+@BoxiLi also, quite interestingly it seems that the tests don't fail all the times. This is another run of the tests:
+I actually think it only happens if I use qutip.testing.run() more than once in the same python shell. And by running pytest directly they don't seem to fail.
+test_countstat.py::test_dqd_current is the only one that fails consistently.
+Interesting, sounds like some cached values of the previous test corrupted the next one. Since the other two tests also use parameterization, the reason might even be the same, except for test_countstat.py::test_dqd_current, which looks like numerical instability.
+On the test_dqd_current() test: it appears that the problem is with the element 14 in the eps_vec. I did some more checking with different values for eps_vec, and there are other values which give problems, you can see the code below.
+I defined a function that returns the values for a given value of eps:
+Now I have the following:
+So the noise is quite different from noise_target.
+But if I increment eps by 1e-15 then everything is fine.
+Comparing rhoss in the two cases gives differences that are of the order of the increment in eps:
+So I think the problem is not in the steadystate function but it must be in countstat_current_noise.

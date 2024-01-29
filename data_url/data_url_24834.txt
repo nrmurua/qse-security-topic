@@ -1,0 +1,74 @@
+In special-measure, the pulses are all stored in one struct, ordered and accessible by their IDs. There is one global database struct in which the default pulses are stored. For a new experiment, the user has to work with his local copy where he overwrites unneeded IDs. When the experiment has been finished, the user saves the whole database file and its report into a folder.
+The main database could be rewritten into a SQL-Database. These databases only store basetypes and references, therefore additional steps are necessary to store arbitrary objects.
+The main database can be represented in the XML-Format. This format is the standard for data exchange.  For each experiment, we generate a subfolder in which the relevant data (pulse, measurements, documentation) will be stored. The pulse file may reference the main database and stores the composition of subpulses.
+So, in the end, we have the trade-off between having a performant database and having an easy one.
+Which setup do you think will fulfill your needs?
+Regarding the above question, my feeling is that performance will become important, while exchange between different platforms or human-readability of the whole database is not. Hence, SQL seems preferable.
+Before going into more depth, I'd like to make sure I understand the reason for using a database.
+The main limitation of regular files is that loading then is often too slow. Loading the content into memory helps, but requires user-managed caching in a simple form. Does a database approach solve that problem, i.e. offer a performance close to reading from memory but persistent without explicit synchronization commands? Is there another advantage of databases?
+Another question is whether it makes sense to use a database for every pulse? I could imagine that the more disposable ones that are, for example, used only for a single experiment are more conveniently archived together with  data instead of cluttering a pulse database. Of course one could also maintain several databases or sections, but is that convenient? Hence, would it make sense to provide both files and a database as persistence mechanism?
+For us, code (and possibly class definitions) changes on a daily basis. How does this work for saving?
+In general, I think the problem should be split:
+Addressing them in turn:
+Persistent Storing of Pulses
+First of all, pulse definitions are implicitly stored in the code which first defines them. As long as they are not shared between experiments/persons, this should be sufficient and there is no need to store them in another persistent storage.
+A database as a persistent storage for pulses is only intended to contain pulses that should be shared/reused in some way, e.g., because they are commonly used in many experiments (or are the final implementation of a gate). Disposable pulses should not be stored in a globally accessible database. The different levels/scopes of sharing (global sharing for all experiments, internal sharing between team members of a experiment, reuse of pulses by a single person across experiments this person takes part in, ...) may require some subdivision of databases.
+As we see it, all pulse definitions are added to the plsdata struct which is stored persistently using MATLAB functionality. This somewhat contradicts Hendrik's statement: "I could imagine that the more disposable ones that are, for example, used only for a single experiment are more conveniently archived together with data instead of cluttering a pulse database."
+On Database Systems
+In general, database systems provide solutions to storing lots of data and relations in-between. This means, that they take care of how the data is laid out and stored on the disk, establish indices for faster access, scaling to larger amounts of data and so on. Hence, these problems need not be solved by the user of the database system. Using only "raw" files, these issues may need to be considered while implementing the storage system. This is the main reason for considering them as a means of storing the data as opposed to manually implementing a storage mechanism.
+Full-fledged database management systems (e.g., Microsoft SQL, PostgreSQL, MySQL, Oracle...) usually require a database server process to be run on some machine which is then accessed via a network connection. These systems are designed to be a central database for large (and distributed) systems storing large amounts of data (which is generally stored in multiple files on the servers file system). SQLite is a library implementation of a SQL database which stores the database in a file and thus provides the functionality and abstraction of a relational database while still storing all data in a single file without involving server processes, meaning it is generally faster as long as the database does not grow too large. However, this also implies that establishing a global accessible database with SQLite is difficult because all clients would need to have access to the database file.
+Speed-up in Contrast to Raw Files
+I don't quite understand the issue here. Storing pulses for reuse means that they at some point need to be read from the file system. Whether a DBMS does this or one does it manually cannot change this fact. Thus, database implementations cannot be faster reading the actual data, indeed they generally introduce some runtime overhead due to their internal data management complexity.
+Maybe I've misunderstood the question?
+My Conclusion (on Databases)
+Which database implementation one should use for the project depends on the actual requirements.
+If it is required to have a database to store commonly used pulses and experimental results in a central place, a database server would be most convenient, Note that this does not necessarily mean, that everyone has to use or even know all the pulses stored there. It would be possible to set up scopes of visibility such that teams working on different experiments would not interfere with each other.
+If pulses are only shared in smaller groups and a need for sharing pulses between those groups essentially never arises, local storage (SQLite or even raw files) would be sufficient.
+Addressing Pulses
+My understanding is the following: If a new pulse that reuses existing pulses is set up within an experiment, it should use the latest version of these existing pulses. If that pulse in turn should be reusable, it should always refer to the latest version of its subpulses to allow improvements/fixes of these to propagate. Hence, this pulse, as a reusable "template", should store references to its subpulses.
+However, for each experiment such a pulse is used in, its actual composition at that concrete moment should be preserved, meaning that an experiment should store copies such that changes to single pulses do not affect the experiment when re-run later on.
+These copies could then, only of actually desired, replaced by more recent versions to include fixes into the experiment.
+Is my understanding correct? Does this not solve the problems?
+@lumip Lukas, could it be that something is missing at the end of the first section? (This contradicts ...)
+Regarding performance: Yes, pulses have to be reread from disk if reused. However, when they are constructed hierarchically, one sometimes ends up reading the same pulse quite often, which is slow if only stored on disk. At least this seems to be a problem with current pulse dictionaries. Caching them in memory is much faster. I guess the issue might simply be that much more than the pulse needed is read each time. Loading the pulse definition from file into memory and saving it only for syncing is one solution that works reasonably well, but is somewhat inconvenient and seems crude.
+I doubt that overall size will be a limiting factor for recyclable material, but may be for archival storage.
+Would the extensive use of references, e.g. in recursive pulse definitions, be another reason to use a database system? Do we need more than pulse indices or names, that could translate into filenames?
+Multi-user access to pulses could be a nice feature in the future, but so far has not been critical. Copying and weeding out the pulse repository from another team does not seem too bad.
+Regarding "Adressing pulses": I think your analysis is correct, and may solve the problem at a very high level.
+could it be that something is missing at the end of the first section?
+Yes, I forgot to end that sentence. I have edited it above. I just thought that the fact that currently all pulses end up in the (global) plsdata struct would contradict the following statement: "I could imagine that the more disposable ones that are, for example, used only for a single experiment are more conveniently archived together with data instead of cluttering a pulse database."
+Regarding performance: Database systems should address this. The described problem is mostly due a bad implementation of loading pulses and must be dealt with in our implementation. However, database systems generally do some caching due to their implementation such that repeated accesses to the same data in a relatively short period of time should be a bit faster than reading a file over and over again.
+Would the extensive use of references, e.g. in recursive pulse definitions, be another reason to use a database system?
+Yes. Relational database allow for easy referencing and resolution of such references.
+Do we need more than pulse indices or names, that could translate into filenames?
+No. A management of these files and following references must be implemented manually when storing in raw files. As well as a file format to store the informatin. A database system already provides solutions for (parts of) this.
+Multi-user access to pulses could be a nice feature in the future, but so far has not been critical. Copying and weeding out the pulse repository from another team does not seem too bad.
+If that could be a nice feature, I would consider it now instead of changing it in the future.
+Regarding "Adressing pulses": I think your analysis is correct, and may solve the problem at a very high level.
+Which levels would remain unsolved? It seems I am not grasping the entire picture here.
+Another actually quite relevant feature of a server based database is that it facilitates access to the pulses from different computers for preparing experiments and analysing data.
+You are right about the contradiction. We realized that keeping everything central database has its drawback as it grows rather quickly. Dictionaries in contrast are often treated as disposable and saved along with the data. Essentially historical artifacts of the current system.
+Using code as documentation is possible, but has potential limitations
+i) One needs to make sure (ideally automate) that the code is archived
+ii) Changes of utility functions must be tracked (e.g. via version control)
+iii) Using scripts brings the danger of using data living in the workspace is used and not archived
+iv) Code is not easily machine readable short of re-executing.
+Of course these can all be addressed, but storing the result of the code as well still seems attractive.
+Imagine one wants to analyze some data from a year ago. Loading saved pulses should be simple as long as the format is still supported by utilities. Rerunning a script on the other hand would require restoring the appropriate environment, version, executing it and then looking at the results.
+Nevertheless, the idea of also automatically saving generating code is good, as it helps reusing it.
+What I mean by unsolved at the low level is that many details remain open as far as I can see.
+Summarizing what emerged from the discussion:
+Despite the favour of an immediate database implementation, I would like to present my take on this. It may cover a few more issues than Persistence only but the implementation sketch is only an example.
+My preference would be to stick to files in a file system for now or a hybrid solution in the long run. I think databases become interesting for managing more than 100,000 pulses or so, since file system access per folder becomes slow.
+I did a little benchmark to compare the performance of a SQL type database (sqlite3) and just using the filesystem (json files) in saving a pulse tree structure. I considered the worst case scenario, where one pulse references many many other pulses.
+The implementation is simple. Since I could linearize a pulse tree structure in principle I just consider a linked list in the first place. I create the list of integers id_list=1:id_count and shuffle it. The root pulse is id_list[0] and has a reference to id_list[1], which in turn has a reference to id_list[2] and so on.
+To account for the case where a pulse is referenced several times, a ref_count variable is stored with the reference. When reading the pulse, the read-operation is repeated ref_count times.
+The read-operation can work either with a sqlite database, json files in a folder or a redis server.
+Results on a 2,3 GHz Intel Core i7 with an APPLE SSD SM256E and Python 3.5.0b2. Python 2.7.8 is similar but a few percent slower.
+Every 10th reference is read 10 times, to see how cashing improves the situation.
+It seems SQL is not a good choice here, or my SQL skills are just too low. Redis on the other hand is quite fast (The data is stored in RAM and dumped to disk periodically -> cannot get too large). It may seem strange, that json with cashing is slower than without, but the small files are probably cashed on a lower level anyway and lru_cache just adds more overhead here.
+Conclusion: Plain files are basically the fastest/easiest way.
+WARNING: This will run for about 30 min.
+I don't think this test is entirely accurate because of the following.
+Regarding the caching: The size of the cache is limited to 16 entries. That is a small number compared to the number of pulses for the last few tests which means that we mostly get cache-misses and effectively add only overhead to the function calls. Hence the increase in runtime with caching enabled.
+This is not intended to be an argument towards SQLite - as far as I remeber we agreed on using JSON files during the last meeting - but I think this benchmark is not accurate in its current form. We could rewrite it, but it might yield the same result and I don't know whether this is high-priority. If so, please create a ticket for us.

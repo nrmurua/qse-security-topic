@@ -1,0 +1,21 @@
+Hi,
+I've set up an ocean environment as specified by the ocean setup readme, with python version 3.9.7. In the first code cell of benchmarks-ocean-add-maxcut.ipyb, I comment the D-WAVE provider code but leave the simulated annealing sampler code uncommented. I can then run this cell fine. However, when I run the code block under Maxcut - Method 2 I get a value error coming from calling np.max(sizes) where sizes is an empty array. Do you know how I can fix this please? I know 'from neal import SimulatedAnnealingSampler' is now deprecated, but I get the same error with 'from dwave.samplers import SimulatedAnnealingSampler' too
+Problem noted.
+Looking in ocean/maxcut_benchmark.py, you can see inside the compute_best_cut_measured() function, the call to np.max(sizes) uses the value of sizes passed to it, computed on line 973, using the call to compute_cutsizes().
+Looking at compute_cutsizes() definition on line 186, sizes is generated from the keys and values of the results object returned from executing the annealing process.
+In compute_cutsizes(), the len of sizes would have to match the len of cuts which is the array of keys in the results object.
+This suggests that you are getting an array of results that is empty.
+This results array is generated up in the top-level _common/ocean/execute.py code returned on line 318 after processing the sampleset returned from execution.
+There is a verbose flag in this file.  In the notebook cell, after importing maxcut_benchmark add the lines:
+import execute
+execute.verbose = True
+maxcut_benchmark.verbose = True
+This will print the sampleset.record and other debug info and you can try to determine why the execute_circuit() is returning the empty array.
+It is likely due to some change in the API, and will need to be debugged.
+Thanks
+Got it to work. Within _common\ocean\execute.py on line 203 I changed
+sampleset = sampler.sample_ising(qc.h, qc.J, num_reads=shots, num_sweeps=num_sweeps, annealing_time=annealing_time)
+to
+sampleset = sampler.sample_ising(qc.h, qc.J, num_reads=shots, num_sweeps=int(num_sweeps), annealing_time=annealing_time)
+my NumPy version, 1.2.6, never liked num_sweeps being of type float. Changed it to an int and all seems okay. I'm guessing Miniconda's 4.10.3 version of NumPy is different to 1.2.6
+Can you make a PR from your branch into the develop branch of the QED-C repo?

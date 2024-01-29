@@ -1,0 +1,58 @@
+I'm seeing some weird results when running the following simple code. I am trying to calculate the expectation value of an observable in three different ways.
+It seems that qsimcirq acts strangely when specifying the initial_state as a vector array.  There seems to be no problem when the initial state is an integer. Here is the simple code showing the problem
+which returns
+0: ───H───@───
+│
+1: ───────X───
+(nan+nanj)
+(0.9999999403953552+0j)
+(0.9999999403953552+0j)
+I reinstall cirq and qsimcirq and now it is working fine.
+Running It many times, it randomly switchs between the correct answer and nan+nanj
+Hi @Hosseinberg,
+I'm unable to reproduce this locally with cirq==1.0.0 and qsimcirq==0.14.0. Could you share which versions of cirq and qsimcirq you are using in the nan+nanj runs?
+Sample script to print versions:
+Hi @95-martin-orion ,
+I have the same versions:
+cirq version: 1.0.0
+qsimcirq version: 0.14.0
+I'm using WSL2 and I suspect that might be the problem because I tried it on other machines and got the correct result.
+I'm using WSL2 and I suspect that might be the problem {...}
+That seems plausible to me. Unfortunately we don't have the resources to put towards solving this specific case, but if you're able to confirm this (or better yet, find a workaround), sharing your notes here would be greatly appreciated.
+I happen to see the issue as well - I have tested in two fresh virtual environments with Python 3.9.13 and Python 3.10.8 running 50 repeats of the sample script.  Both environments behaved in a similar way - here are the counts of the unique qsimcirq results with Python 3.9.13:
+I am testing with cirq 1.0.0 and qsimcirq 0.14.0 as well.
+Thanks, @pavoljuhas for running the script. Do you also run Python on WSL2?
+Do you also run Python on WSL2?
+I am using a recent Debian Linux running directly on the hardware.
+Perhaps it works for @95-martin-orion because of a different numpy version?
+My environment has numpy 1.23.5.
+My guess is that it is related to the pybind11 and cmake
+@pavoljuhas My previous test was with numpy~=1.21, but upgrading to numpy==1.23.5` has no apparent effect (~20 runs all passed).
+@Hosseinberg Are you installing the wheels with pip install qsimcirq, or building from source locally? I won't deny that pybind11 and cmake can cause issues, but if you install from pip that code should already be compiled.
+@95-martin-orion I have tried both building from source locally and installing from pip
+Hmm. The only remaining difference between stable and flaky versions seems to be Python version: the Colab I'm running in is on Python 3.8.16.
+I have tried Python 3.10.5 and 3.8.15
+I have tracked this to the VectorSpace::Copy function reading uninitialized values on line 155 below -
+
+I have verified dest.num_qubits() == 2 so per the leading comment the array index should go up to i < 8.
+In fact it goes up to 32 and thus copies arbitrary values after numpy array extent.
+I am new to the qsimcirq code so will need more time to find where is the index range set.
+For now, you can work around this issue by using
+which ensures out-of-bound values exist and are all zero.
+Thanks for tracking this down, @pavoljuhas! Some links to the code involved here:
+Notably, the 2 * 2^dest.num_qubits() elements should be handled by MinSize(num_qubits) - the extra factor of two is for separate real and imaginary components, which should map directly to numpy's dtype==complex64.
+The fact that this isn't working suggests that there may be an error in one of the MinSize implementations.
+@95-martin-orion  and @pavoljuhas
+Would you please let me know what you get when running the following script?
+@95-martin-orion and @pavoljuhas Would you please let me know what you get when running the following script?
+{...}
+I'm getting qsimcirq.qsim_avx2 - what do you see?
+I'm getting 'qsimcirq.qsim_avx512'
+That's a reasonable lead to start from. @sergeisakov, do you know of any differences between the AVX2 and AVX512 implementations that might cause AVX512 to fail on this while AVX2 succeeds? Specifically, it seems like AVX512 isn't initializing all of the memory it needs for 2-qubit expectation values on a 2-qubit circuit.
+The comment here is misleading:
+
+VectorSpace::Copy should not be called here for small circuits because input_vector does not have enough elements.
+I don't think the issue has been resolved. I just compiled it from the source that includes the recent merge and still get nan+nanj when using initial_state = np.array([1,0,0,0], dtype='complex64')
+I can't reproduce that after the recent merge. @Hosseinberg Do you also get nan+nanj with pip install qsimcirq?
+I am now getting the correct answer with both methods of installation. Not sure why it didn't work the other day. Anyway, I think the issue is resolved and we can close it. Thank you
+Glad to hear it @Hosseinberg! Thanks for your assistance in tracking this issue down.

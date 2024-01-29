@@ -1,0 +1,18 @@
+Is your design idea/issue related to a use case or problem? Please describe.
+Currently, CircuitOperation keeps a local Dict of measurement key remappings and does not propagate it to the actual underlying circuit, even though a new CircuitOperation is created on each with_measurement_key_mapping call. I suspect this was done for efficiency to avoid iterating over the circuit or create a copy of it.
+But this behavior leads to some inconsistencies and additional complexity if you try to work with the underlying circuit, leading me to wonder if this optimization is worth it. Most of the interface of Circuit and CircuitOperation is consistent but this logic introduces some counter-intuitive behavior unless you know this implementation detail of CircuitOperation.
+Describe your design idea/issue
+Rather than  keeping a Dict of mappings in CircuitOperation, we can pass down the remapping of keys to the underlying Circuit similar to how key remapping on a Circuit passes it on to Moments and then Operations. This will make the behavior consistent and easier to understand but there is a (small?) performance penalty at the time of circuit construction in the python code.
+This will also make other logic or additional features dealing with measurements in CircuitOperations cleaner.
+Note: This does not include the repetition_id path update on the keys during "unrolling" of the sub-circuit. That is purely a CircuitOperation feature and should be kept local to CircuitOperation unless needed elsewhere.
+@95-martin-orion @daxfohl
+I was thinking the same, but the mapping is rendered in diagrams so it needs to be preserved.
+Not propagating measurement key changes to the underlying circuit is intentional, as it allows us to reference the same FrozenCircuit object across multiple CircuitOperations. Without this, we would be unable to concisely serialize multiple copies of a measurement-containing CircuitOperation.
+Fair enough
+Relatedly though, is it necessary to have parent_path applied lazily? And is it necessary to have a deep=False option in mapped_circuit?
+I'm finding it a bit awkward that we expose a public method for changing the parent path in a subcircuit. I can't think of a use case where an end user would need to do this. It's there for unrolling functionality, but I think we've got too many substeps of that exposed publicly, when it should be a single function that does the whole thing at once.
+I think the best approach for this would be pass an optional parent_path into mapped_circuit, and remove the map_deep=False option. This would give mapped_circuit all the information it needs to perform the unrolling and forward it through to sub-subcircuits etc as a single step.
+If there's a need for shallow mapping then this probably won't work, and we'll need to continue to support lazy parent_path application. But I can't think of a use case where shallow mapping is useful. The only place in the code that uses it is an artificial test case.
+(Note that we probably shouldn't get too addicted to circuit unrolling anyway: if/when we bring on repeat-until subcircuits, no mapped_circuit implementation will work; it would result in an infinite loop).
+mapped_circuit(..., deep=False) and changing parent_path are used to facilitate CircuitOperation._decompose_. This is currently used by cirq_google.optimize_for_sycamore to convert the contents of a CircuitOperation to Sycamore-friendly gates while preserving the CircuitOperation structure which contains them.
+It might be possible to do this without deep=False, but it would effectively involve doing decomposition work outside of the decomposition protocol.

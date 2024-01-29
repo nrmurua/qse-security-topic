@@ -1,0 +1,52 @@
+Hi!
+I'm running some calculations on various molecules by seeing how many terms are there in the JW operator (jw_qubit_operator.terms) where jw_qubit_operator = jordan_wigner(molecular_hamiltonian_from_MolecularData).
+When I run the same calculation on different machines, I get different answers (different terms, with different lengths, different number of terms, etc). Why does this happen? Is this expected?
+Thanks!
+Hi Tarini,
+What you describe sounds like a catastrophic error. That is definitely not the expected behavior! However, we cannot really debug the situation with the information provided. Can you perhaps give us a minimal example which demonstrates this failure? Can you confirm that both machines are running the same version of FermiLib? Is Psi4 or pyscf involved? Are the versions the same? Can you make sure the output of the electronic structure plugin is the same so that we know whether the error is due to FermiLib or the plugin? We'd love to get to the bottom of this one. Thanks!
+Hi Ryan,
+Here's some more information:
+Computer A: Mac running macOS Sierra with psi4 v = 1.1+add49b9, fermilibpsi4plugin v = 0.1a1 , fermilib v = 0.1a3
+Computer B: This is the Dartmouth research server. It's a Linux cluster (http://techdoc.dartmouth.edu/discovery/) running: psi4 v = 1.1+add49b9, fermilibpsi4plugin v = 0.1a1, fermilib v = 0.1a3
+The psi4 output (integrals and SCF energy) is the same, with the exception of very small numbers on the order of e-16. Computer B preserves more accuracy, while A tends to list these as 0.
+For reference, I'm working with @kanavsetia and comparing the JW and BKSF algorithms.
+In the case of hydrogen, given the same geometry, multiplicity, and basis set, the total number of terms used, the average length, etc all agree, but the actual operator terms from Computer A and B are not the same for both JW and BKSF.
+In the case of some more complex molecules like butadiene or benzene, the tensor weights, the number of terms, etc itself varies. I have attached all four relevant files.
+butadiene3_A.txt
+butadiene3_B.txt
+benzene_A.txt
+benzene_B.txt
+Let me know if you want any more details.
+Thanks!
+Tarini
+Thanks Tarini.
+Is it possible that the discrepancy is just due to the round-off differences? For instance, are there terms with appreciable weight (like larger than 1e-4) that exist when you do the calculation on one computer versus the other?
+Hi Ryan,
+I'm not sure I understand what you are referring to with the weight of the terms. I have attached all terms from hydrogen here.
+Thanks!
+hydrogen_ten_wt_computer.txt
+Hi Ryan,
+Sorry for taking so long to reply. I printed both operators and they are the same upon visual inspection.
+I'm creating molecular Hamiltonians that are being stored as Interaction Operators, not Fermion Operators, and so I can't call .compress() on them.
+Are long doubles used at all here?
+Thanks,
+Tarini
+Hi Tarini,
+So the FermionOperators are the same but the InteractionOperator form of them is not? Can I confirm that what is happening is that the InteractionOperator on one computer has really small entries (like magnitude 1e-12 or smaller) where the other computer has zero entries? Perhaps we should implement a .compress() method for InteractionOperators. This is very simple, to get rid of all those small entries you can just write something like:
+my_interaction_operator[abs(my_interaction_operator) < 1e-12] = 0
+No, I do not think long doubles are being used. Just numpy floats, which I believe are Float64s. But I would be surprised if you needed anything more.
+Hi Ryan,
+I am sorry, I think there is some misunderstanding here. The InteractionOperator (= Molecular Hamiltonian) doesn't have any really small values. Values are on the order of 1e-3 at least (attached MolHam.txt).
+However, for the integrals that PSI4 returns, one computer has really small values (1e-16), while they seem to be rounded off to 0 on the second computer (attached). When I run a straightforward PSI4 calculation on hydrogen, the total energy differs on both machines in the 14th decimal place.
+Maybe the JW/BKSF term discrepancy is a consequence of this rounding off from PSI4?
+Thanks,
+Tarini
+
+MolHam.txt
+Hi Tarini,
+Yes, that is exactly what is happening. This doesn't seem to effect any observables of the system (e.g. energy). So I am not sure if it is really a problem at all. You can always zero out the small values of the integrals before converting to a molecular Hamiltonian if that would be helpful for you.
+So it seems to me like we've identified the issue and it seems to be that different machines handle small numbers a little differently, which doesn't necessarily seem like a glitch to me. Can I consider this issue closed or is there a concrete function we can add (or functionality we can change) which would address the issue so we can close it?
+Hi Ryan,
+Yeah I think the issue can be closed. Thank you for your help and patience!
+Tarini
+👍

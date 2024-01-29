@@ -1,0 +1,22 @@
+This came up while running quantum volume, e.g.
+I've been able to isolate the problem to the point where for Program prog =
+calling
+sometimes causes the error
+Specifically, running the loop
+usually fails at a random iteration < 100.
+If important I'll sketch the topology of 'Aspen-4-8Q-A'. Note that qubits 1,2 are disconnected from 10,11.
+The problem remains for, e.g. qc = get_qc('Aspen-4-16Q-A', as_qvm=True, noisy=False)
+The short answer is to specify PRAGMA INITIAL_REWIRING "PARTIAL". The long answer is I don't yet have a great idea of how this happens, but @ecpeterson is usually tuned-in to these kinda things.
+FWIW, this has also caught @msohaibalam.
+quilc employs different addressing strategies at two stages: (1) initial program layout, and (2) mid-program SWAP selection. The user interface for these are not at all well-elaborated: the different options for PRAGMA INITIAL_REWIRING "..." select pre-specified combinations of these two. The default, NAIVE, has the attractive feature to users that its behavior during (1) won't disturb their qubit layout if they're already set up to have all-native interactions, but its performance during (2) is sometimes shaky and suffers from this kind of false negative error. If you don't care about disturbing the initial qubit layout, then the recommendation (as per Mark) is to use PARTIAL, which can wildly derange the original qubit ordering in (1) but is typically very robust in (2).
+The kind of thing that NAIVE suffers from in (2) is that it uses a greedy scheme to pick from the various SWAPs available on the chip, where the cost function it's trying to optimize is some kind of measure of "current distance on the qubit graph between the desired qubit-qubit interactions that are next up in the program", appropriately summed together and decayed. A sufficiently symmetric graph of available SWAPs and desired interactions can put this cost function into a local minimum that the greedy algorithm doesn't know how to climb out of—and that triggers the error.
+Thanks!
+What I imagine the best thing to do is: check the input program, and if you see an INITIAL_REWIRING, use that; if it consists of all-native interactions, then pick NAIVE; otherwise, pick PARTIAL.
+That's the advice we're handing out to users one-at-a-time, but it would be just as easy to install into quilc itself.
+I'll add another example here. The Program contained in prog only probabilistically compiles (roughly with 0.3 probability). This happens whether you add PRAGMA INITIAL_REWIRING "NAIVE" to the beginning of the program or not. Does this mean that qc.compiler.quil_to_native_quil, with naive initial rewiring, is a non-deterministic method?
+I should add that a longer, somewhat similar, program fails to compile 100% of the times with naive initial rewiring. So the following program should output 0.0 (as the success ratio).
+For future github explorers and bugfix verification purposes, here is a single python file that includes all three test cases helpfully provided by kylegulshen and msohaibalam, above.
+Here is the result of running the above against a quilc with the changes in #380 vs master.
+quilc@master
+quilc@#380
+Note that in the above python snippet, I had to comment out the explicit PRAGMA INITIAL_REWIRING "NAIVE" from msohaibalam's examples. Even after the changes in #380, quilc will still respect an explicit PRAGMA INITIAL_REWIRING, and still fails in the same way.

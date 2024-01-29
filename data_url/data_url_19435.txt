@@ -1,0 +1,51 @@
+Following the publication from Qulacs, I performed some benchmarks of the circuit they use (Section IV. E). The following (expandable) sections contain the benchmark code I used and the results from the DGX CPU. I used the OMP_NUM_THREADS environment variable to control the number of threads which works both for Qulacs and Qibo (on the OpenMP branch). I have not used any circuit optimizations.
+Indeed Qulacs is faster when using single thread, however when using parallelization our performance is comparable, in disagreement with Fig. 9 from the paper.
+@stavros11 many thanks for these results. I don't think there is a substantial difference between the OMP branch and the master (or say 0.1.1).
+From our side, it may be useful to check why Qulacs has much better performance when reducing the number of threads (particularly for single threads). We already knew from our paper benchmarks that Qulacs is faster for small circuits (<20 qubits), however now I found that it keeps being faster for larger circuits if we force single thread execution. This result is new because in our paper we benchmarked Qibo single thread but not Qulacs single thread.
+I don't think there is a substantial difference between the OMP branch and the master (or say 0.1.1).
+Regarding the multi-threading results (using all threads), all Qibo versions (master/stable/OMP branch) should have identical performance. So I cannot really say what went wrong in Fig. 9 and Qibo appears slower than all other libraries. I don't think it is related to the Tensorflow installation because I get similar performance to Qulacs in my local machine where I installed everything with pip without any special instructions. Both Qulacs and Qibo use double precision and utilize all threads by default, so it is very strange.
+Here are some additional results using the master branch that does not have OMP. I am using a circuit of depth=10. For the 24 thread case, I use OMP_NUM_THREADS for Qulacs and taskset for Qibo.
+Thanks for this check. If we use the OMP implementation for this latest setup (24 threads) do we get the same numbers as master?
+Some additional Qibo comparisons to answer these questions.
+Comparing Qibo master with Qibo OMP. I use taskset -c 1-24 to restrict Qibo master to using 24 threads without making any changes to the Tensorflow thread configuration.
+Comparing using the environment variable vs using taskset to restrict the Qibo OMP threads. That is
+vs
+Comparing using a custom initial state or no on Qibo master. By default initial state I mean calling circuit(), while the np.array is the same initial state but creating it as numpy array first, eg:
+Here are some additional comparisons between Qibo master and Qulacs on the QFT circuit that we used in our paper:
+Here are the benchmarks using the updated DGX environment with the latest versions of Qibo and Qulacs.
+Note that the latest Qibo master with the OMP version of custom operators was used so the results may be slightly different compared to using the latest pip release that doesn't have OMP. The OMP_NUM_THREADS flag was used to control the number of threads for both Qibo and Qulacs (no taskset in either case).
+Hi, I'm a developer of Qulacs and we discussed at qulacs/qulacs#271.
+Thanks for the comments on our benchmark.
+This weekend, we plan to update our manuscript on arxiv, so we would like to update our benchmark results of Qibo at that time. In my understanding, when the number of threads is limited, Qibo with another version (OMP version) shows better performance than the master branch. So we would like to ask whether we can use OMP version or not and how we can install it.
+If we can use it, we would like to update our benchmark with it. Note that our current results and benchmark codes are in the following branch.
+https://github.com/qulacs/benchmark-qulacs/tree/update/qibo_benchmark
+@corryvrequan thanks for your message. Please use the latest Qibo 0.1.2 version (available with pip), this version uses OpenMP instead of the default tensorflow thread pool implemented Qibo 0.1.1, so you can control the number of threads with the OMP_NUM_THREADS env variable or using qibo.set_threads() method (ref. docs).
+The expected performance when compared to Qulacs should be similar to the last values quoted by @stavros11 in the post above #289 (comment).
+Thanks. We have updated the benchmark results of Qibo with ver 0.1.2.
+Here are benchmark results in our environment (Our CPU is Xeon CPU E5-2687W v4 @ 3.00GHz x 2).
+All the data are also pushed to this branch.
+
+
+
+
+
+
+We observed performance improvement at all the numbers of qubits by the update of Qibo. I don't know why but the results of the single-thread benchmark are also improved.
+On the other hand, we still observed about x1.3 gap at n=25 in the benchmark with 24 threads, while there is a negligible gap in the results shown by @stavros11. Since there is a larger gap in the single-thread benchmarks and since we expect multi-threading with many cores would decrease this gap, our CPUs maybe not powerful enough for closing the gap.
+@corryvrequan thank you very much for looking into this issue and sharing your results. I tried using the pytest-benchmark scripts from the update/qibo_benchmark branch on our DGX machine. I used two separate environments, one based on Python 3.7 (same as your benchmarks) and one on Python 3.8 which is what I used in my last post above. Here are the results:
+*note that when OMP_NUM_THREADS is not set then Qibo uses half of the available threads (20 in our case) while Qulacs uses all available threads (40). I do not observe significant performance differences from this.
+There is a large performance drop in Qulacs single-thread when going from 3.7 to 3.8. @corryvrequan have you done any tests of using Qulacs with Python 3.8 that show something similar?
+have you done any tests of using Qulacs with Python3.8 that show something similar?
+No, we have performed pytest benchmark only in python3.7. We've checked Qulacs works at python3.8 and passes tests, but didn't check its performance. I expected that the performance is the same since Qulacs is written in C++ and exports its functions to python with pybind11. So it is unexpected behavior for me.
+We checked the performance in our environment by switching python3.7 and 3.8 with pyenv, and found that there is no difference between their performance. However, when we install qulacs library from pypi, it shows about x3 degradation.
+For example, at n=23, we observed the following times in the single-thread benchmark.
+python3.7 source build: 13.8 sec
+python3.7 PyPI install: 34.1
+python3.8 source build: 13.5 sec
+python3.8 PyPI install: 34.3 sec
+I guess this problem happens because a binary of qulacs that is uploaded to PyPI is built with an environment that does not support AVX2. This is possible since we changed service to build and upload binary to PyPI from TravisCI to Github Actions from ver0.2.0. We would like to fix this problem as soon as possible.
+Note that this difference would disappear in the multi-thread benchmark since the performance of the multi-thread benchmark depends on memory bandwidth and SIMD optimization does not affect its performance.
+If my guess is correct, I think the difference in your benchmark will disappear when you install qulacs with source-build.
+pip install git+https://github.com/qulacs/qulacs
+This command requires the installation of gcc, git, and cmake.
+Anyway, thanks a lot for reporting this problem.

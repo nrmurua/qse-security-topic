@@ -1,0 +1,62 @@
+When running a simple test of the state vector simulator with 16 qubits I get a segmentation fault. The script works until 15 qubits. I am using ssh to run the code on a data cluster with a container with the same packages as on my own computer. This code works on my own computer up until 28 qubits when I run out of memory.
+When running the code I get:
+`Fatal Python error: Segmentation fault
+Current thread 0x00007f1ef3462700 (most recent call first):
+File "/usr/local/lib/python3.8/site-packages/qiskit/providers/aer/backends/backend_utils.py", line 42 in cpp_execute
+File "/usr/local/lib/python3.8/site-packages/qiskit/providers/aer/backends/statevector_simulator.py", line 211 in _execute
+File "/usr/local/lib/python3.8/site-packages/qiskit/providers/aer/backends/aerbackend.py", line 265 in _run
+File "/usr/local/lib/python3.8/concurrent/futures/thread.py", line 57 in run
+File "/usr/local/lib/python3.8/concurrent/futures/thread.py", line 80 in _worker
+File "/usr/local/lib/python3.8/threading.py", line 870 in run
+File "/usr/local/lib/python3.8/threading.py", line 932 in _bootstrap_inner
+File "/usr/local/lib/python3.8/threading.py", line 890 in _bootstrap
+Thread 0x00007f1fb9804740 (most recent call first):
+File "/usr/local/lib/python3.8/threading.py", line 302 in wait
+File "/usr/local/lib/python3.8/threading.py", line 558 in wait
+File "/usr/local/lib/python3.8/threading.py", line 857 in start
+File "/usr/local/lib/python3.8/concurrent/futures/thread.py", line 213 in _adjust_thread_count
+File "/usr/local/lib/python3.8/concurrent/futures/thread.py", line 188 in submit
+File "/usr/local/lib/python3.8/site-packages/qiskit/providers/aer/aerjob.py", line 79 in submit
+File "/usr/local/lib/python3.8/site-packages/qiskit/providers/aer/backends/aerbackend.py", line 169 in run
+File "/usr/local/lib/python3.8/site-packages/qiskit/utils/deprecation.py", line 56 in wrapper
+File "/usr/local/lib/python3.8/site-packages/qiskit/execute_function.py", line 343 in execute
+File "code_generating_segmentation_fault.py", line 36 in 
+Segmentation fault`
+This is a test script that generates the behavior
+`# Import packages
+#remove warnings
+import warnings
+warnings.filterwarnings('ignore')
+#import math tools
+import numpy as np
+#importing Qiskit
+from qiskit import Aer
+from qiskit import QuantumRegister, ClassicalRegister, QuantumCircuit, execute
+#import optimize
+from scipy import optimize
+backend = Aer.get_backend('statevector_simulator')
+#print("create quantum circuit")
+n_qubits = 16
+gamma = np.pi/3
+qc = QuantumCircuit(n_qubits, n_qubits)
+qc.barrier()
+for qubit in range(n_qubits):
+qc.rz(2 * gamma, qubit)
+for qubit1 in range(n_qubits):
+for qubit2 in range(qubit1 + 1, n_qubits):
+qc.rzz(2 * gamma, qubit1, qubit2)
+qc.barrier()
+#print("execute circuit")
+job = execute(qc, backend, method='statevector')
+#print("get statevector")
+state_vector = job.result().get_statevector(qc)
+print(state_vector)`
+No segmentation fault because it works on my own computer with less memory.
+no idea what the problem might be.
+I am having similar issues. The example above works for me, but a moderately more complicated example leads to a segmentation fault despite definitely not running out of memory.
+I can verify that the memory limit is not exceeded by running memory_profiler:
+At peak the script uses only ~20GB out of 126GB available, with 36 threads on Intel Xeon E5-2695v4:
+
+This issue may be related to #244 and #1288. Tagging @hitomitak who fixed #244.
+Thank you for your reporting. I'm now investigating this issue. I confirmed that #1291 does not help (unfortunately).
+#1294 will fix this issue.

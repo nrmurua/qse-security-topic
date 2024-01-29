@@ -1,0 +1,83 @@
+When running a VQC training process with a PauliFeatureMap and RealAmplitudes for a QPSK signal classification task, I encountered a CircuitError that states "Register size must be an integer".
+Here is the traceback:
+Traceback (most recent call last):
+File "/Users/jesusvilelajato/PycharmProjects/QuantumNNSNR/main.py", line 88, in 
+vqc = VQC(feature_map, var_form, optimizer, training_input)
+File "/Users/jesusvilelajato/PycharmProjects/QuantumNNSNR/venv/lib/python3.9/site-packages/qiskit_machine_learning/algorithms/classifiers/vqc.py", line 105, in init
+num_qubits, feature_map, ansatz = derive_num_qubits_feature_map_ansatz(
+File "/Users/jesusvilelajato/PycharmProjects/QuantumNNSNR/venv/lib/python3.9/site-packages/qiskit_machine_learning/utils/adjust_num_qubits.py", line 66, in derive_num_qubits_feature_map_ansatz
+_adjust_num_qubits(feature_map, "feature map", num_qubits)
+File "/Users/jesusvilelajato/PycharmProjects/QuantumNNSNR/venv/lib/python3.9/site-packages/qiskit_machine_learning/utils/adjust_num_qubits.py", line 106, in _adjust_num_qubits
+circuit.num_qubits = num_qubits
+File "/Users/jesusvilelajato/PycharmProjects/QuantumNNSNR/venv/lib/python3.9/site-packages/qiskit/circuit/library/n_local/n_local.py", line 189, in num_qubits
+self.qregs = [QuantumRegister(num_qubits, name="q")]
+File "/Users/jesusvilelajato/PycharmProjects/QuantumNNSNR/venv/lib/python3.9/site-packages/qiskit/circuit/register.py", line 104, in init
+raise CircuitError(
+qiskit.circuit.exceptions.CircuitError: "Register size must be an integer. (PauliFeatureMap ' ┌───────────────────────────────────────┐\nq_0: ┤0 ├\n │ │\nq_1: ┤1 ├\n │ PauliFeatureMap(x[0],x[1],x[2],x[3]) │\nq_2: ┤2 ├\n │ │\nq_3: ┤3 ├\n └───────────────────────────────────────┘' was provided)"
+I ran the following code snippet, where I'm creating a VQC classifier for QPSK signals:
+import numpy as np
+from qiskit import Aer
+from qiskit.utils import QuantumInstance
+from qiskit.algorithms.optimizers import COBYLA
+from qiskit.circuit.library import RealAmplitudes
+from qiskit_machine_learning.algorithms.classifiers import VQC
+from qiskit.circuit.library import PauliFeatureMap
+import numpy as np
+from sklearn.model_selection import train_test_split
+num_symbols = 10000
+symbol_rate = 1e9
+baud_rate = 2 * symbol_rate
+symbols_per_packet = 10  # Define the number of symbols per packet
+signal_I = np.random.choice([-1, 1], num_symbols)
+signal_Q = np.random.choice([-1, 1], num_symbols)
+noise_I = np.random.normal(scale=np.sqrt(signal_I.var()/10**(10/10)), size=num_symbols)
+noise_Q = np.random.normal(scale=1.1*np.sqrt(signal_Q.var()/10**(10/10)), size=num_symbols)
+binary_sequence = np.array([(i > 0) + 2 * (q > 0) for i, q in zip(signal_I, signal_Q)])
+packets_I = np.array([signal_I[i:i+symbols_per_packet] for i in range(0, len(signal_I), symbols_per_packet)])
+packets_Q = np.array([signal_Q[i:i+symbols_per_packet] for i in range(0, len(signal_Q), symbols_per_packet)])
+noise_packets_I = np.array([noise_I[i:i+symbols_per_packet] for i in range(0, len(noise_I), symbols_per_packet)])
+noise_packets_Q = np.array([noise_Q[i:i+symbols_per_packet] for i in range(0, len(noise_Q), symbols_per_packet)])
+snr = 10 * np.log10((packets_I.var(axis=1) + packets_Q.var(axis=1)) / (noise_packets_I.var(axis=1) + noise_packets_Q.var(axis=1)))
+snr_threshold = np.median(snr)  # dB
+labels = snr >= snr_threshold
+int_labels = np.array([int(i) for i in labels])
+str_labels = np.array([str(i) for i in int_labels])
+binary_sequence = np.array([(i > 0) + 2 * (q > 0) for i, q in zip(signal_I, signal_Q)])
+packets = np.array([binary_sequence[i:i+symbols_per_packet] for i in range(0, len(binary_sequence), symbols_per_packet)])
+backend = Aer.get_backend('statevector_simulator')
+print(backend.configuration())
+feature_dim = 4
+num_qubits = 4  # Set the number of qubits
+feature_map = PauliFeatureMap(feature_dimension=num_qubits, reps=1, paulis=['X', 'Y', 'Z'])
+var_form = RealAmplitudes(num_qubits, entanglement='linear', reps=1)
+optimizer = COBYLA(maxiter=500)
+train_data = np.array([np.histogram(packet, bins=4, range=(0, 4))[0]/symbols_per_packet for packet in packets])
+training_input = {str(i): train_data[int_labels == i] for i in np.unique(int_labels)}
+print(np.unique(str_labels))
+print(train_data.shape)
+print(int_labels.shape)
+print(np.unique(int_labels, return_counts=True))
+for i in np.unique(str_labels):  # Here is the correction: use str_labels instead of labels
+print(f"Shape of class {i} data:", training_input[i].shape)
+print("Feature map circuit:")
+print(feature_map.draw())
+print("Variational form circuit:")
+print(var_form.draw())
+print(f"Number of features in data: {train_data.shape[1]}")
+print(f"Number of qubits in feature map: {feature_map.num_qubits}")
+print(f"Number of qubits in ansatz: {var_form.num_qubits}")
+vqc = VQC(feature_map, var_form, optimizer, training_input)
+train_data, test_data, train_labels, test_labels = train_test_split(train_data, str_labels, test_size=0.2, random_state=42)
+training_input = {str(i): train_data[train_labels == str(i)] for i in np.unique(train_labels)}
+test_input = {str(i): test_data[test_labels == str(i)] for i in np.unique(test_labels)}
+vqc = VQC(optimizer, feature_map, var_form, training_input, test_input)
+quantum_instance = QuantumInstance(backend)
+result = vqc.run(quantum_instance)
+predicted_labels = vqc.predict(test_data, quantum_instance)
+accuracy = np.sum(predicted_labels == test_labels) / len(test_labels)
+print('Accuracy:', accuracy)
+I expected the VQC training process to adjust the number of qubits in the PauliFeatureMap without raising an error, and to proceed with the training process.
+It seems there might be an issue with how the number of qubits is being adjusted in the PauliFeatureMap when used in the VQC process. Perhaps an investigation into how the number of qubits is adjusted and assigned within the adjust_num_qubits method could provide insight into what is going wrong.
+Thank you in advance for your help!
+No response
+Code corrected based on updated VQC constructor.

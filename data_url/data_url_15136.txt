@@ -1,0 +1,13 @@
+When applied to a parameterised circuit with n >= 14 qubits, the sampler gradient does not always return the correct number of gradients. It should return 2ˆn gradients for each parameter in the circuit, but it sometimes returns fewer. I have only tested this with ParamShiftSamplerGradient and LinCombSamplerGradient on a single-layer RealAmplitudes circuit.
+In the code below with fixed numpy seed for reproducibility, the first 10 calls to the sampler gradient correctly return 2ˆ14 = 16384 gradients for the zeroth parameter, but the 11th incorrectly returns 16376 gradients.
+Observed output:
+Expected output:
+No response
+@a-matsuo do you have any idea why that could come up? Maybe something with the ThreadPoolExecutor? 🤔
+It's the input weights that matter - if you np.random.seed(1) for the weights = np.random.uniform(...) you get the wrong number every time.
+I think the sampler results with probability 0 (which are removed) are causing this and the behavior is as expected. I increased the number of repetitions from 11 to 100. Then I got  like this. It happens rarely, but it always happens at a certain time, i.e. 11, 62, and 77.
+For example, when I checked the sampler results for instance no. 11, the number of sampler results was less than 16384. So the number of sampler gradient results will also be less than 16384 (It maintains the property of being sparse).
+
+It turns out our assumption was wrong: the gradient dictionary does not include all 2^n probability gradients, but only thosw which are nonzero. This is per design, as otherwise we'd always have an exponentially large dictionary, see also #9248 on the same topic 🙂
+So the length not being consistent just means that some of the probability gradients are zero. To handle that your code would need to be changed to work on dictionaries, or you could turn the dictionary into a sparse vector to keep the efficient representation.
+Thank you @a-matsuo and @Cryoris for clarifying! I didn't realise that the sampler only returned non-zero gradients.

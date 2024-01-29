@@ -1,0 +1,51 @@
+I find the current lo interface confusing to use. I think it is a combination of naming and functionality. My main complaint is that:
+This can be confusing for users. I think it may be better to replace
+qubit_lo_freq and meas_lo_freq by qubit_freq_est and meas_freq_est and then have the default behaviour to be too use these to create and pad schedule_los if not supplied. This way there is only one explicit behaviour to set the los for assembly (schedule_los).
+Thoughts @nkanazawa1989  and @itoko?
+I remember why we didn't take the approach of
+to replace qubit_lo_freq and meas_lo_freq by qubit_freq_est and meas_freq_est
+is separation of schedule_los from backend and immutability of schedule_los , i.e. schedule_los should receive backend in its constructor to know qubit_freq_est and meas_freq_est . Currently everything about los is done in the assembler (because the assembler gets backend), but we don't need to output los in qobj when los are not supplied - default values will be automatically assigned in the backend. Please let me know if I don't answer to the question.
+My another concern is naming issue (pulse.configuration.LoConfig), because #2650 will add another configuration for scheduler. We will have many schedule configuration s defined in different places and in different context. This is also confusing to use. I think these configurations should be combined.
+The issue is naming. Right now it appears there are three ways to set the schedule lo qubit_lo_freq, meas_lo_freq and schedule_lo_freq. I understand the reason for having all three, but we should make it clearer that the qubit_lo_freq is really the frequencies of the qubits that the LO will default too.
+My another concern is naming issue (pulse.configuration.LoConfig), because #2650 will add another configuration for scheduler. We will have many schedule configuration s defined in different places and in different context. This is also confusing to use. I think these configurations should be combined.
+I don't really see the need for the users to ever use this class. They should be able to just provided a dictionary of channel:frequencies. Perhaps we could hide it?
+qubit_lo_freq and meas_lo_freq are appeared only in qobj, so I think they are hidden from users unless the user directly assemble qobj. But I agree
+the qubit_lo_freq is really the frequencies of the qubits that the LO will default
+The only reason to have LoConfig class is self validation of frequency range. If we create pulse job validator, we don't need the class.
+I don't think the above addresses my concerns. qubit_lo_freq and meas_lo_freq are arguments to assemble in conjunction with schedule_los this is confusing as these are really the qubit and measurement frequencies that as a matter of protocol we default to if schedule_los are not provided. Perhaps these should be default_qubit/meas_lo_freq?
+I understand your point. I agree. We need to simplify the configuration of los. qubit_lo_freq and meas_lo_freq can be used to set los which is common in all experiments, while schedule_los is used to set los depending on experiment.
+As far as I understand,
+(1) nothing
+this will set backend default qubit_lo_freq and meas_lo_freq as common configuration.
+(2) qubit_lo_freq and meas_lo_freq, without schedule_los
+this will set custom qubit_lo_freq and meas_lo_freq as common configuration.
+(3) single schedule_los, without qubit_lo_freq and meas_lo_freq
+this will set custom schedule_los as common configuration - just same as (2).
+(4) n schedule_los of the same frequencies, without qubit_lo_freq and meas_lo_freq
+this will set qubit_lo_freq and meas_lo_freq for each experiment configuration, but this will give the same configuration as above (just increasing the size of qobj).
+(5) qubit_lo_freq and meas_lo_freq, with n schedule_los
+this will overwrite backend default qubit_lo_freq and meas_lo_freq, and overwrite them by schedule_los in each experiment configuration.
+now we have too many options to set lo configuration, and we should simplify this. As (3) can cover (2), we might be able to deprecate qubit_lo_freq and meas_lo_freq from arguments.
+And I don't like the name qubit_lo_freq because this can be intentionally detuned from qubit frequency and "qubit" doesn't have a local oscillator (LO is bound to AWG). drive_freq and meas_freq sounds more natural to me.
+Yes, I agree. The other subtlety is that if we only allow schedule_los the user must provide an lo for each qubit/measure channel. This is what I was thinking of when I was suggesting keeping qubit_freq_est and meas_freq_est as these are what the backend is going to use create the default lo. Do you think this is an issue?
+I agree that drive_freq and meas_freq are the most accurate, we should support this at least in the user API. I also find schedule_lo confusing, and have been thinking about this problem. My first guess is we could do everything we wanted by just including drive and meas frequencies. What does schedule_los do that cannot be done with the others?
+@nkanazawa1989 thank you for laying out a detailed map of all the current possibilities :)
+What does schedule_los do that cannot be done with the others?
+Schedule_lo right now is essentially a dictionary that is a mapping of {channel: frequency}. schedule_los can be a list of these. Right now if you do not specify all Drive and Measure channels, it will default qubit_lo_freq or meas_lo_freq which are typically set to qubit_freq_est and meas_freq_est (this is what is done if just a backend is provided).
+We are also able to complement schedule_los using the backend defaults inside assembler. In this case we don't need qubit_lo_freq and meas_lo_freq in arguments. We can specify a single schedule_los to overwrite backend default. On the other hand, I also feel it is reasonable to rename them to have schedule_los and default_los in the arguments.
+I think we have three approaches (examples are how to overwrite default qubit drive[1] and apply frequency sweep of qubit drive[0]).
+Pros:
+Cons:
+Pros:
+Cons:
+Pros:
+Cons:
+@lcapelluto I agree that schedule_los is bit confusing, but this is sometime very useful. e.g. when we do frequency sweep of qubit drive, only schedule_los enables us to combine all frequency sweeps in a single job. This is extremely useful to minimize a drift. Currently schedule_los consists of a list of LoConfig (when we provide los with python dictionary, LoConfig instance is generated internally). The reason we have this class is (1) to validate frequency range, and (2) to guarantee immutability. I think these are not mandatory and we can replace the class by python dictionary + validator to avoid confusing with ScheduleConfig of scheduler.
+In general, this problem would be overcome if for each pulse channel we could specify the frame and sideband with which it should be applied. Then we could track these frames and sidebands separately (as we do already internally).
+Related to #3467. I'm not sure if the PR #3468 addresses the problem of frame. @eggerdj, this conversation may be interesting to you.
+PR #3468 does not address the problem of frame.
+After reading this conversion here is what I think would make sense from a physics point of view. Let's assume that the aim of PulseChannel is to generate Re[exp(i 2pi f j dt + phase) * d_j]. Then,
+Consequences:
+The one aspect I am still unclear on is how do we properly handle frames when changing frequencies. Consider the situation below for a cross-resonance gate with control i and target j.
+I don't think this is captured within the current SetFrequency instruction. It may make more sense to define a frame object, which has a frequency and a frame that evolves. Channels could then be assigned a frame.
+We can close this. The SetFrequency command will allow us to deprecate these assemble arguments altogether. (#3468)

@@ -1,0 +1,37 @@
+Describe the bug
+liboqs is failing to build on ARM with the configuration -DOQS_DIST_BUILD=OFF. The error occurs when ninja is called.
+On the other hand, a build in the same environment with -DOQS_DIST_BUILD=OFF -DOQS_OPT_TARGET=generic succeeds.
+To Reproduce
+See https://app.circleci.com/pipelines/github/open-quantum-safe/liboqs/2869/workflows/fef62d49-fe36-4118-8ea8-e520bac6d7c0/jobs/23049 for the failing build.
+Expected behavior
+The build should succeed, as it did here and here.
+(The first of the pipelines linked above failed because no tests were run, not because of a build error. That said, I'm not sure why no tests were run.)
+Additional context
+I used the arm_machine template for both jobs.
+Piggy-backing onto this: both the "generic" ARM configuration and the "native" ARM configuration seem to enable the aarch64 implementations, based on this and this. This runs contrary to our x86_64 builds, where the avx2 versions are not enabled with OQS_DIST_BUILD=OFF and OQS_OPT_TARGET=generic.
+Is this expected behaviour? @baentsch @praveksharma
+liboqs is failing to build on ARM with the configuration -DOQS_DIST_BUILD=OFF. The error occurs when ninja is called.
+Hmm -- I cannot quite reproduce this: When using Douglas'  M1 box (arm64) a build with "-DOQS_DIST_BUILD=OFF" succeeds.
+So this might well be a CCI-specific issue (with the "arm-machine"). When seeing CCI doing surprising things, my first recommendation would be to try github CI (emulating aarch64). Further alternative (to debugging remotely CCI): Use an aarch64 VM: We have at least one (for profiling) at AWS: How does the liboqs build in this config behave there?
+both the "generic" ARM configuration and the "native" ARM configuration seem to enable the aarch64 implementations
+This is IMO not wrong: aarch64 is the architecture designator (like x64). The difference should be that "auto" enables the "neon" and all "sha" and "aes" optimizations and "generic" doesn't (equivalent to the "avx2" optimization instructions for x64).
+That said, this is not what is happening: The code in fact activates all optimizations also for "generic" config. Tagging @Martyrshot for an explanation as to why this is so/correct (as per c520cdb#diff-8390d41b621f91157f77df2a276f933c189a6ad67634fa4949e8b802f53b62f2)? Related question: Did I read correctly that all aarch64 chips do have support for "neon" no matter what? Or are also the crypto extensions contained in all aarch64 chips? Then indeed the question changes to "What is the difference between "auto" and "generic" chip config for aarch64?
+Finally answering my own question above after having done the test I suggested:
+How does the liboqs build in this config behave there?
+liboqs builds (and tests) perfectly on an aarch64 (AWS) VM as well as on an aarch64 M1, regardless of "OQS_DIST_BUILD" setting. Thus, re-labelling this issue.
+liboqs builds (and tests) perfectly on an aarch64 (AWS) VM as well as on an aarch64 M1, regardless of "OQS_DIST_BUILD" setting. Thus, re-labelling this issue.
+I'm actually observing different behaviour here: the build (cmake -GNinja -DOQS_DIST_BUILD=OFF .. && ninja) fails for me on the M1 machine in a container created from the ci-ubuntu-focal-arm64 image. (Were you building in Docker or directly on the M1? Or do we not expect that image to work on M1?) It does, however, work with the same Docker setup on the Dev-ARM64 EC2 intance.
+fails for me on the M1 machine in a container
+OK -- I built natively. So let me see whether I find a problem with the CI container....
+let me see whether I find a problem with the CI container....
+I cannot: This command works like a charm executed on the M1:
+--> What is different in your setup?
+--> What is different in your setup?
+I just ran that same command on the M1, and it worked perfectly---differently from the way it had worked in the container (named arm-build-test) I created last week to test this. Also, the version of gcc is different between the two containers (9.3.0 in mine and 9.4.0 in the one that was working)... Indeed, the arm-build-test container seems to have been created using an older version of the ci-ubuntu-focal-arm64 image, with sha 209fb3bf4416. Looking through the images downloaded on the M1, it appears to be ~2 years old. I'm going to assume that I didn't call docker pull before docker create.
+So, the problem does indeed seem to be limited to CircleCI, as far as I can tell.
+So, the problem does indeed seem to be limited to CircleCI, as far as I can tell.
+Is it worthwhile tracking then? I'm personally not particularly keen spending work on a buggy CI environment. We have a github CI job for ARM that helps protect liboqs from real ARM problems. The job is only for "armhf", though but should be extensible to "aarch64" (or any other ARM HW we care about).
+The latter sentence actually makes me wonder: Would it make reasonable to have a (documented) list of OS/HW combinations liboqs promises to support (and then ensure there are CI jobs for those platforms in some CI system)?
+So, the problem does indeed seem to be limited to CircleCI, as far as I can tell.
+Is it worthwhile tracking then? I'm personally not particularly keen spending work on a buggy CI environment.
+I think not, and me neither.

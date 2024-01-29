@@ -1,0 +1,25 @@
+Current Problem
+Related to dwavesystems/dwavebinarycsp#57, the need to obtain an inordinately large number of samples meant that the straightforward problem statement, to request a large number of samples, had to be turned into a while() loop (lines 46-62 in attached code)
+maxCut_csp.py.gz
+because the EmbeddingComposite.sample() method is limited to 10,000 samples, which was not enough to find a valid sample.  The higher-level sample() method should accept a large value (at least millions) and, if necessary, strip-mine that number to comply with lower-level sampler constraints.
+@conta877 has also requested the same feature
+Feature Request: Automatic batching of QPU calls
+Motivation: The QPU has a maximum “problem-run duration” of 1s. That means that you cannot use combinations of reads, anneal durations, etc. that add to more than 1s. In places like an automatic report, sometimes we like to change a parameter report-level. Eg. use longer anneals everywhere or use more thermalization everywhere. This prompts a bunch of
+Proposal: When this particular error comes up, the dimod solver should try to send multiple batches with less reads per batch and seamlessly return a single sampleset. This could use a MultiCallComposite or it’s own special purpose batching.
+Yes, this is an important and long-requested feature.
+One issue is that it's not very well defined what "too long" is, if I recall, some of the values needed to do that calculation are not available algorithmically right now.
+We could do the retry case the way that you suggest, but right now SolverFailureError is not really informative enough to know how to change the parameters to make it work.
+I think this will require some work server-side to make it "nice".
+@arcondello the error tells you how much usage time you're allowed (1000000) and how much time you are asking for, this should be enough for us to batch things up.
+Worth noting that batching things increases your quota usage though additional programmings, so this should be something that the user decides to do consciously (though a specific composite)
+it also messes the sequentiality of your reads if you're doing that type of analysis
+to make it user aware - can be done via a specific composite with warning. i.e.: increased quote usage + non sequential.
+@pau557 , I agree that the string has the info that I, as a human, need. But right now if I wanted to write the code to react, I would need to regex the string to determine what went wrong, and then hard encode what needs to happen.
+If the string text was to change, the whole system would break. We're also inconsistent server-side with what kind the error messages contain and their format - I am not at all convinced that we always give the same error message for related breaks.
+The alternative would be to have a dedicated error type that I can catch, something like
+This would need to be propagated from the cloud-client.
+I do think this is worth doing, it's just not very simple 😄
+The solvers used to expose the max time.
+Still do: .properties["problem_run_duration_range"]
+With dwavesystems/dwave-cloud-client#530, we are pretty close to being able to implement this. Both for large num_reads and for too long runtimes.
+IMO, there is a pretty big switch between single submission and multisubmission. I would be inclined to add an additional allow_multiple_submissions (or a better name) keyword argument, defaulting to False. So the user actively needs to opt into the behavior that there may be multiple submissions and therefore non-sequential reads on the QPU.

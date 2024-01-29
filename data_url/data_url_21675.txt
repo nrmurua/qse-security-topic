@@ -1,0 +1,38 @@
+This is a breakout issue from #1370: Kernel compilation is slow, and we should do something about it.
+To follow up on the earlier discussion, this is an overview of the compilation process on a typical piece of code in my experiment (ARTIQ commit 611bcc4):
+
+(This was generated using py-spy record -r 100 -f speedscope -o artiq_run.speedscope  -- artiq_run ~/…/run_gate_sequence.py. The raw data can be explored on https://speedscope.app; I've also generated an SVG flamegraph.)
+In reference to the earlier discussion, note that > 70 % of the time is spent in the ARTIQ compiler proper. In other words, llvmlite certainly isn't our biggest problem. Just caching emitted object file fragments also wouldn't help much; we'd need to make sure we can do so without type-checking the function bodies.
+Speaking of which, all the Python functions with the highest execution time are currently related to type inference/merging:
+
+I'm not sure how this looks for other languages with HM-style type inference, but this certainly seems a bit high, and suggests optimisations here (e.g. interning well-known types) could be worth it.
+Also, the total time spent in C calls, i.e. including all the heavy lifting done in LLVM itself, is only about 5% of the overall compilation cost. Although the comparison isn't entirely fair, compilers for languages like D and Rust (C++ too, probably – haven't looked at Clang in a while) typically spend the majority of time in LLVM, or at least a much more sizeable fraction. In a way, this is good news: If LLVM was our bottleneck, improving on compile times would likely be a much more elaborate undertaking.
+In any case, it doesn't look like for us there is currently is a single pathological case that, if fixed, would greatly speed up compilation. Consequently, it does seem like enabling re-use of compilation results is the way to go even in the short term, not just in terms of long-term scalability. Transparently integrating this with the dynamic mess that is Python doesn't seem particularly straightforward, though. Ideas/opinions?
+(Per-function py-spy recordings, instead of per-line: artiq_run.functions.speedscope.zip
+artiq_run.functions.svg.zip.)
+See #1415 for another compile time improvement.
+On another performance-related note, on one of my experiment test cases (others were similar) I saw a 24% reduction in total compilation time by switching from Conda's Python 3.5 to 3.8, and a custom PGO+LTO build gave a few more percent for a total reduction of 30% compared to Python 3.5. (Haven't checked any intermediate versions.)
+a custom PGO+LTO build gave a few more percent for a total reduction of 30% compared to Python 3.5.
+Can you describe how you built that?
+Can you describe how you built that?
+Just checked out the 3.8.1 source tree and ./configure --prefix=/opt/python-3.8-pgo~lto --enable-optimizations --with-lto && make && make install.
+This uses some random test cases for establishing the PGO counters. I've tried manually running it on the target test case as well, but that made at most a percent difference, so isn't worth the effort. (This isn't very surprising, as I wouldn't expect the compiler to be bottlenecked by a particular hot path in the VM.)
+NixOS/nixpkgs#43442 (comment)
+If this doesn't get accepted we can use a nixpkgs overlay to replace Python in ARTIQ installations, but it would cause annoying package rebuilds as I hinted.
+Do you have any links describing how to do that? I'll have to roll out the changes in a somewhat permanent way in at least a few of our setups. (The Nix Python setup is – probably quite reasonably so – a bit complex; how do I change the default version to 3.8 from an overlay? I can certainly figure out how to do that in Nix, but if it's trivial for you to do…)
+Enabling optimizations can be done like this:
+For Python 3.8, many packages in release-19.09 and master of nixpkgs are not compatible, so the simplest way seems to be to use the staging branch, which comes with 3.8.
+Turns out, there's also the libapparmor Python 3.8 issue on staging, so for now there is no simple solution if you do need 3.8 (either fix libapparmor, or use a mix of 3.7 and 3.8).
+In any case, it doesn't look like for us there is currently is a single pathological case that, if fixed, would greatly speed up compilation.
+Maybe we should rewrite the compiler in an efficient and compiled language (probably Rust), using this and other lessons learned from the previous two iterations in Python.
+FYI, looks like these python speedup improvements might hit nixpkgs/staging based on a new, well-tested & documented PR that hit nixpkgs today. NixOS/nixpkgs#84072
+Is it possible to provide some benchmark code for us to put in the unit tests? I need some example for profiling and testing. (otherwise I don't know where to look for)
+FYI, looks like these python speedup improvements might hit nixpkgs/staging based on a new, well-tested & documented PR that hit nixpkgs today. NixOS/nixpkgs#84072
+However it seems that they don't use optimizations for now:
+https://github.com/NixOS/nixpkgs/blob/e9148dc1c30e02aae80cc52f68ceb37b772066f3/pkgs/development/interpreters/python/cpython/default.nix#L41
+https://github.com/NixOS/nixpkgs/blob/e9148dc1c30e02aae80cc52f68ceb37b772066f3/pkgs/development/interpreters/python/cpython/default.nix#L66-L67
+It seems that they prefer deterministic builds instead of 25% speedup...
+@pca006132 Yes, these optimizations were reverted in NixOS/nixpkgs#107965, which I was minimally involved in. You are correct that they seemed to prefer reproducible builds. Luckily, with Nix you can still enable those optimizations yourself and get the 25% speedup if you really care, just requires a little bit of Nix knowledge & a decent amount of time to rebuild all the dependent packages.
+For reference, the Nix to produce it would look something like (untested) (ref: https://nixos.wiki/wiki/Overlays):
+shell.nix:
+NAC3 compilation time breakdown is different and seems to be dominated by LLVM.

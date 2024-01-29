@@ -1,0 +1,35 @@
+When attempting a 32 bit SPI transfer, the last bit transferred is a copy of the first bit, rather than the correct value. For example, on writing 0x7FFFFFFF, the actual output value is 0x7FFFFFFE. This is true both for chained transfers and for single transfers. Here is a minimal working example.
+Yep. I had also noticed that.
+@jmizrahi For my own reference, what SPI device are you talking to? Do you know if it automatically stops receiving bits after 32 rising edges of the clock?
+@cr1901 the AD9912, and no, it does not stop receiving bits after 32 rising edges. I'm actually sending it 64 bits, with two chained transfers.
+I found this bug because I noticed that sometimes I would program a frequency and the DDS would output a slightly incorrect value. When I looked at the serial data output on a scope, I saw that the last bit was sometimes wrong, and further checking showed that it always matched the first bit.
+I don't think this bug has anything to do with the device, though, as my test code had nothing specific to the device itself.
+@jmizrahi Okay, the following patches to MiSoC and ARTIQ should (hopefully) fix your issue:
+https://gist.github.com/cr1901/a5810720532e287df97b78c03112cec1
+Apply with:
+git am < {artiq, misoc}.diff
+I wasn't able to duplicate your issue exactly, but I did fix a bug with the SPI core, and I suspect that this was the bug you were seeing. Please let me know if it fixes the issue.
+@cr1901 I tried to test this today, but am having trouble because things seem to have moved around. I have been on misoc tag 0.3 and artiq branch release-2. I could not apply the misoc patch. I pulled the latest misoc master, and was then able to apply your patch, but artiq does not compile. Any way to fix this bug in a way that will let me stay on the release-2 branch for the time being?
+https://irclog.whitequark.org/m-labs/2016-11-09#18135928
+@jordens Was this directed at my question? If so I don't follow.
+This was a proposal for a solution.
+@jordens This isn't relevant to the problem @jmizrahi has. @jmizrahi just wants the patch backported to misoc 0.3/artiq 0.2 for testing. But since paths changed between that release and the current head, the patch fails.
+There actually isn't an easy way to apply a patch under these conditions using git. That being said, the misoc patch in my previous gist will apply correctly  as is to release 0.3 of misoc with the following command, relative to the root of your misoc source:
+cat misoc.diff | patch misoc/cores/spi/core.py
+Make sure you have tag 0.3 checked out :).
+It is relevant because it is a simpler solution.
+@jordens Simply adding an extra register bit is not sufficient to fix the bug. If an extra register bit is added, the SPI core needs 32 shifts before the data is fully transferred. The SPIMachine done signal asserts immediately after the 32nd sample, which precedes the 32nd shift.
+There is more than one way to fix this. The way I chose is that the done signal needs to be registered synchronous with the SPI clock, so that the core doesn't notify the CPU too early that the data transfer was completed. Therefore I delay the done signal by one SPI clock.
+@cr1901 please read again what I said. This is not just adding another register.
+And additionally your observation sounds wrong. If the 32nd sample preceeded the 32nd shift, then the 1st sample would preceed the 1st shift (which is not the case by virtue of MOSI being tied to the first bit). And the problem would be independent of the length of the transfer.
+You are also confusing the interfaces. There is no CPU involved at that level.
+please read again what I said. This is not just adding another register.
+Okay, I see now.  When I said "there is more than one way to fix this", this was an alternate way I considered to fix the problem. I don't remember why I decided against it, but I'll recheck timing waveforms when I'm at my laptop. If I can't find anything unusual this time around, I'll just use your solution instead, b/c it is simpler as described than what I did.
+And additionally your observation sounds wrong. If the 32nd sample preceeded the 32nd shift, then the 1st sample would preceed the 1st shift (which is not the case by virtue of MOSI being tied to the first bit).
+I don't understand. Did you mean MISO being tied to the first bit (of the master's shift register)?
+You are also confusing the interfaces. There is no CPU involved at that level.
+Correct, I said "notify the CPU", I meant "notify the wishbone interface".
+@cr1901 Thanks for the help. I tested the patch today. For individual 32 bit transfers, it worked correctly. All the SPI transfers I attempted worked fine.
+For chained transfers, it is still not working correctly. When I attempt two chained 32 bit transfers, I get inconsistent results -- sometimes it works, sometimes it doesn't. I am seeing a glitch in the mosi line between the two 32 bit transfers. It is about 8 ns in width (which is my ref_period_mu). I think it is sometimes being read by the device and sometimes not.
+@jmizrahi Yea, I noticed this too in my waveforms. The SPI Machine is reversing the timing of the shift/sample signals during clock edges after that glitch. Naturally, the test suite is still passing :).
+@jordens and I talked in IRC yesterday and I agree that his solution is simpler, so I'm going to try that instead.

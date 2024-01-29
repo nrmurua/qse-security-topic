@@ -1,0 +1,49 @@
+The output of Result.get_counts is a dictionary with no particular order of the keys (although that depends a bit on the type of Result). For example the output of a GHZ state simulation is:
+A better representation would be to sort the keys. Either according to the key, or according to the value:
+Sorted according to value
+Some questions:
+The Statevector method sample_counts returns a dict sorted on the key value. For that reason I would sort according to the key value.
+I am a newcomer and recently got into learning QisKit. I would like to attempt fixing this.
+@Rajan117 That would be nice!
+It might be as easy as adding the line at the end of the get_counts method of the Result class. Another option would be to do the sorted earlier in in processing, but that might be more complex.
+I will take a crack at it and see what I can do :) @eendebakpt
+Well I am struggling to even get a workable environment setup. When I do 'pip install -e .' in the environment I get this error
+. I tried manually setting the owner of that file to my user but it did not work. For reference I am following this official QisKit guide. https://www.youtube.com/watch?v=QjZdvNgYl3s&list=PLOFEBzvs-Vvp2xg9-POLJhQwtVktlYGbY&index=7
+@Rajan117 This error is not related to qiskit. It looks like a problem in your python environment. Can you create a virtual environment to work in? Google for virtualenv/venv  and have a look at https://docs.python.org/3/library/venv.html
+Thank you, I think I am all good now. I tried again today and got no errors (though I will be sure to tread lightly).
+@eendebakpt What is the easiest way to recreate your output?
+@Rajan117 A minimal example is:
+Alright, found the Result class and the method. Could not find the 'sample_counts' method in the Statevector class. Where can I find it as I am probably looking in the wrong place. My initial thought to fix this is to just reuse the implementation in the method to keep consistency.
+Not sure I can do it in one line. What data type is the key? It seems to be binary but is in quotes?
+The data type is str in the example, but that should not really matter. You can just sort it using the normal python sorting (see the example code on top of the issue)
+I may have found an issue. I was editing the code for the return statement that occurs for a dictionary with size greater than 1. But the function returns at the point for a dictionary of size 1.
+
+
+@peendebak I tried that but got an AttributeError: 'list' object has no attribute 'keys'. I think I need to reword it for dictionaries.
+My bad I misunderstood the code, it is actually outputs of a list of dictionaries also.
+I think I may have done it.
+
+
+The whole time I overlooked how dict_list[0] is a dictionary, so all I needed to do was add '[0]'.
+
+How do I test my code? The QisKit YouTube tutorial does this but for me I get an error throw. What may I have missed?
+@Rajan117 What do you mean by test? Locally you can run the qiskit tests from the command line with the command tox -epy37. If you make a PR tests will automatically be executed.
+@eendebakpt The QisKit guide said to run those tests but if they are done automatically then I will do a pull request. Thank you :)
+There's a couple of additional things to consider here.  First, the result of get_counts() isn't always directly a dict instance - sometimes it's an instance of qiskit.results.counts.Counts (which subclasses dict).  Second, while the order of dict entries is typically insertion order, this wasn't a full Python guarantee until 3.7, despite being an implementation detail of CPython 3.6.  So
+is not necessarily in sorted order in Python 3.6 if one is not using CPython, though in practice it almost certainly will be.
+I am not sure I see the value here.  Namely there is no algorithmic reason to sort the keys.  In addition, the sort method is somewhat arbitrary, e.g. perhaps I want things sorted by Hamming weight (I personally often do) rather than by int representation.  Why not have a sort method on the Counts object itself?
+The value is mainly in printing the results for the user. I agree that the choice of sorting order is arbitrary. But any choice seems better than a random order.
+I guess my point is that, lacking any computational reason for doing so, the sorting should be optional.
+I could add a argument to the get counts method that will return a sorted list if used?
+My PR failed the windows, mac and linux tests? Any help on that would be appreciated
+Adding an optional keyword argument to get_counts I think is a fine solution.  There's an advantage to not having the user do it manually themselves, because the return value of get_counts() isn't necessarily exactly a dict; the natural
+call would throw away the dict subclasses which normally get returned, which is surprising.
+It's probably best to avoid sorting by default, and let the user explicitly ask for it, if they want it.  Perhaps accept an argument sorter: Callable = None, so the user can pass in an arbitrary function to provide the sort key?
+The Statevector method sample_counts returns a dict sorted on the key value. For that reason I would sort according to the key value.
+This isn't really by design, it's just a side effect of an internal call to np.unique to perform the sample counting, which happens to return a sorted array.  That doesn't mean it's an invalid choice, just that this is still "arbitrary order", rather than an intentional sort.
+Also, while the docstring of get_counts() is correct in saying it returns dict instances, it might be less surprising if it mentioned that it may also return subclasses. Several places in the tests assume that the output is actually a Counts instance, and going off the docstring, you'd not be aware that that was possible.
+I will give that a go then. Any idea why my pull request failed the tests? It failed the windows, mac and Linux ones. Not sure why a the code I changed would not effect that.
+#6752 (comment)
+Awesome thanks :) I will see what I can do about allowing the user to provide  an arbitrary sort function or atleast an argument for a basic sort.
+See also #4985 . I think this is essentially a dup.
+With the discussion above, I'm closing this as "not planned", now.  Qiskit will return the dictionary in arbitrary order to avoid unnecessary performance overhead (especially since sorting has non-linear complexity), since there's several sort orders that might be useful.  Users who would find a particular order more useful themselves can do the sort themselves.

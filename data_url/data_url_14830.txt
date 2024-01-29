@@ -1,0 +1,42 @@
+Circuit drawings seem to include the full Qubit[register] label rather than just egq0, which makes the drawings a bit messy looking
+see above
+see above
+The drawer should return simple labels for the input qubits
+No response
+This isn't in the 0.25.x branch so must have been introduced during the 0.45.x development.  This is a bug, so we'll target a fix for it each during the 0.45.0rc1 lifecycle (before 0.45.0 proper) or into the first patch release of the 0.45.x series, depending on when we can get it fixed.
+A couple of questions.
+Thanks.
+Edwin: I made a full repro script like this
+and I see the behaviour with both mpl and text drawers on current main at 457aaa2.
+Yeah, it looks like those names are being loaded into QuantumCircuit._layout, so it appears to happen prior to the call to the drawers.
+I also did some tests on this and it seems to me at least that it happens only if the optimization_level is higher than 0 when running the transpile function. Moreover, I observed a pattern that I think can point us to the pass that does this
+So I tried out with a smaller example in order to get a feeling of where this might be coming from.
+The following example showcases the same bug (again, only for optimization_level > 0)
+But the following doesn't showcase the same bug (for all the optimization_levels)
+So I think this comes from a pass starting at optimization_level 1. However, I'll try to see If I can find out more
+Update: the following code reproduces the bug:
+Maybe it has to do with SabreLayout.?
+SabreLayout isn't the problem, what you're actually seeing is that the problem happens when we need to run layout and routing, because that sets a full TranspileLayout on the output circuit.
+Oh, I see. My mistake, sorry for that
+Oh no sorry, don't be sorry - thank you for looking into it!
+Not quite sure I have a full understanding, but here's what I've got so far.
+In visualization/circuit/utils.py in the function get_wire_label, there is a call to Layout.get_registers. If FakeMelbourne is used, both the q register and the ancilla register are returned.
+If FakePerth is used, only the ancilla register is returned and since this does not match the register in the bit to be displayed, the function assumes this is a bit without a register and displays the whole bit.
+So the question is 'When TranspileLayout is used, why is only one register returned?'
+Hmm, nothing in TranspileLayout should be causing this. It's just a dataclass container and the layout property set field should get set as TranspileLayout.initial_layout which is what the visualizers access IIRC: https://github.com/Qiskit/qiskit/blob/main/qiskit/transpiler/runningpassmanager.py#L131 What this points to for me is that we're missing adding a register when we create the Layout object that goes into the property set.
+I believe that @SoranaAurelia is correct and I think the bug is actually in SabreLayout. If you look at: 
+
+so we can just add that to after the Layout object creation in the rust sabre code path and it should correctly find the labels. Although, if this is the root cause, it's been this way for a long time since at least #9116 which moved to creating the layout by just using bit indices, after we moved SabreLayout to rust so something else changing is probably triggering it. But at least annotating the Layout object with registers in SabreLayout will fix the reported issue I think.
+Yeah, TranspileLayout isn't the problem itself, though SabreLayout being part of the problem does make sense with why it would have appeared only recently.
+I don't think the drawers should be reading any information about registers from a Layout, and really, a Layout shouldn't contain any information about registers.  Quantum registers are a circuit-level construction only, and the drawers should be determining "what do I call this Qubit" by asking the circuit, not the layout.  The root problem is here: 
+On line 268, the layout should not be referenced; it should be the circuit.  I can provide a fix.
+Ah, no, sorry, you're right - after a transpilation, we don't have the initial virtual bit objects any more in the circuit.  I guess in that case we do need to get the information from somewhere else, and in practice that's going to have to be some portion of the layout.
+The Layout object itself does not seem like the correct place to me, because that's just meant to be a bidict.  It feels like it ought to be a generalisation of the TranspileLayout.input_qubit_mapping field that includes all the information about containing registers in the initial circuit, if we're committing to transferring that information over.
+Maybe in practice, though, since Layout has been doing this for so long, it's ok to let it keep doing it.  The code in the drawers to retrieve bit labels is horribly inefficient because of its use of Layout, but the information is (in theory) there at least.
+This was interesting! But yeah, as @mtreinish suggested, adding
+to the sabre_layout code fixed the problem locally. I was not able to reproduce the bug anymore
+@SoranaAurelia Yep, that seems to work. Would you like to do a PR for this?
+@jakelishman
+The Layout object itself does not seem like the correct place to me, because that's just meant to be a bidict. It feels like it ought to be a generalisation of the TranspileLayout.input_qubit_mapping field that includes all the information about containing registers in the initial circuit, if we're committing to transferring that information over.
+Agreed having a {bit: reg} mapping would be more efficient. I tried creating that once at the beginning of the drawers and using it in get_wire_label. I didn't notice any performance difference however up to 300 qubits. The text version did a transpilation and display on a simple circuit with 300 qubits in .25 sec. and the mpl did 2.5 sec on my local. So the performance aspect is probably not that significant.
+@enavarro51 Yes, I would like to do a PR on this :)

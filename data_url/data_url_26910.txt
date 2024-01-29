@@ -1,0 +1,39 @@
+The PR #21 led  to a number of dashboard failures.
+This seems to be a compiler bug as only gcc 7.3.0 and 4.9.2 crash while gcc 8.2.0 works fine.
+Looking at the code it seems that an ALLOCATABLE is passed as an optional argument.
+@RubenStaub, ALLOCATABLES often cause problems - unfortunately. So, maybe you could just pass in SUM(kTS) instead of the whole kTS array?
+Indeed, it seems to me that some compilers consider have a peculiar evaluation of PRESENT() :
+If a nullified pointer is given as an argument to a subroutine, this argument is considered not present in the called subroutine...
+I have made a quick fix that I committed on my fork : replacing
+CPASSERT(PRESENT(kTS))
+by
+CPASSERT(PRESENT(kTS) .OR. .NOT. smearing)
+But your idea is undeniably more elegant! Is it okay if I quickly implement it, test it, and commit it? Or do you think it is not worth the time?
+Yes, just submit a new PR based on the current master branch.
+Thank you very much for your support !
+And sorry for the trouble...
+The tests are still failing with valgrind (see https://www.cp2k.org/static/regtest/trunk/uzh-opt5/Linux-x86-64-valgrind.sdbg.out ). Example of error message:
+==32342== Conditional jump or move depends on uninitialised value(s)
+==32342==    at 0x134CC31: __almo_scf_qs_MOD_almo_dm_to_almo_ks (almo_scf_qs.F:781)
+==32342==    by 0xF8A2D5: __almo_scf_MOD_almo_scf_initial_guess (almo_scf.F:725)
+==32342==    by 0xF90BB3: __almo_scf_MOD_almo_entry_scf (almo_scf.F:136)
+==32342==    by 0xACB583: __qs_energy_MOD_qs_energies (qs_energy.F:84)
+==32342==    by 0x165B23B: __qs_force_MOD_qs_calc_energy_force (qs_force.F:116)
+==32342==    by 0xC2BB5A: __force_env_methods_MOD_force_env_calc_energy_force (force_env_methods.F:257)
+==32342==    by 0x42CFBE: __cp2k_runs_MOD_cp2k_run (cp2k_runs.F:327)
+==32342==    by 0x42DFFB: cp2k_runs_MOD_run_input (cp2k_runs.F:1109)
+==32342==    by 0x4291E3: MAIN (cp2k.F:281)
+==32342==    by 0x4288FC: main (cp2k.F90:45)
+==32342==
+==32342== Conditional jump or move depends on uninitialised value(s)
+==32342==    at 0x134CC31: __almo_scf_qs_MOD_almo_dm_to_almo_ks (almo_scf_qs.F:781)
+==32342==    by 0x173650A: __almo_scf_optimizer_MOD_almo_scf_block_diagonal (almo_scf_optimizer.F:368)
+It looks like (my guess) that the OPTIONAL array kTS gets associated at the function call
+
+with an array which is not allocated...
+It's the same problem as before: Passage of an ALLOCATABLE to an OPTIONAL. Now it just happens a function call earlier.
+@RubenStaub, could you move the SUM(kTS) up into almo_scf_initial_guess()? Then you entirely avoid passing kTS.
+Sure, I am working on it!
+Once I am finished with the testing/git history formatting I will submit a new PR (following @oschuett's nice guidelines).
+(I really did not expected that from all my code, these meaningfully insignificant lines would be so problematic...)
+Fixed via #42.

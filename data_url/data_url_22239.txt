@@ -1,0 +1,29 @@
+We are using a number of headless ARM/Linux boards to run ARTIQ controllers for various pieces of hardware (think Raspberry Pi, BeagleBone). The most natural way to integrate this with the rest of the system seems to be to go with small Python/pc_rpc servers that are herded by ctlmgr instances on those boards.
+Currently, the ARTIQ package (as in setup.py/pip) pulls in the GUI parts of Qt and LLVM as hard dependencies. For the above use case, this is rather inconvenient, as the machines are neither running X11 nor necessarily have a C toolchain installed.
+Would it be possible to either split up the monolithic package or offer another way of disabling the dependencies? (I'm quick to admit that Python packaging is not my forte, so I can't offer much advice as to what the best design would be.)
+Putting it politely, conda (and other Python package managers) is a pain to deal with.
+A couple notes:
+The latter two items seem to be small and robust. I'd be happy to accept them.
+I have drafted a conda recipe for a simple stripped down version of artiq which includes (entry points for) only those bits needed on 'remote' rpc servers:
+Packages built with this recipe are available on my anaconda channel along with the necessary dependencies for running on linux-armv7l. What I have done is a bit hacky, but it is sufficient for us to run rpc servers on RPIs and BeagleBones, and so might be of use to others until a more elegant solution is reached.
+Patch:
+https://gist.github.com/tballance/201226bc18d690e6b2667bf83aaed5d1
+
+If we split packages, this can also remove the console window that appears when running the dashboard or browser on Windows. The only reason it still appears at the moment is because conda does not allow you to put GUI and non-GUI programs in the same package.
+@sbourdeauducq Can't you simply run them explicitly with pythonw -m artiq.frontend.foo to avoid that? We can add that logic to our GUI tools, it is two lines of code.
+There would still be the console appearing for a short while. And we'd have to be careful not to break the GUI completely in some situations, e.g. if pythonw is not in the PATH for some reason.
+@dnadlinger Try installing NixOS on the Raspberry Pi, then it's straightforward to remove the unwanted bits from the .nix files and setup.py. I've tried running artiq_flash (including our modified OpenOCD) and a few other things that way, and it just works fine (on a AAarch64 model B+).
+Also, the new build/installation system in ARTIQ-5 makes conda much less of a pain, so I'm happy to revisit this split package idea, if there's still interest.
+I would even say 5 components, the fifth being the "board tools" with:
+Besides the improvement in ARTIQ packaging and CI/CD system (e.g. controllers do not get rebuilt needlessly when ARTIQ is modified), splitting out much of artiq.protocols into its own package and advertising it as an independent library has another benefit.
+It is a simple library with no special dependencies, which can be used outside of ARTIQ by other projects, and for which depending on ARTIQ would be annoying. People may not even be aware that artiq.protocols would solve their problem.
+I propose the name SiPyCo (Simple Python Communications).
+@jordens Thoughts on the above and OK if I modify your QUARTIQ controllers to depend on SiPyCo?
+@sbourdeauducq if you break out artiq.protocols then they should be a little better documented. Specifically, working with the Publisher/Subscriber/Notifier is a bit of a pain, as the data structure modifications are undocumented and not immediately obvious what is happening (e.g. mods is a Dict[str: (bool, ???)])??? 
+Yes, I definitely found the lack of documentation for those hard when I first used them. They really need some simple examples to show how they're intended to be used (I read ARTIQ source to figure that out)
+I also think that the stuff in protocols covers a limited area of scalability/applicability/maintainability.
+But OK to factor out if the impact on the usability (all the way to installing the controllers on ARTIQ-4 using the conda packages) is handled.
+Done. There are now three packages:
+The controllers and artiq-comtools are easily installable on non-x86 single-board computers (speaking of, I recently met someone from https://libre.computer/ which may be a good alternative to crappy Raspberry Pis).
+As for backwards compatibility, sipyco retains the same wire protocol as ARTIQ and can be installed alongside ARTIQ-4, so using sipyco controllers with ARTIQ-4 is straightforward.
+@drewrisinger Do you know someone who is available, motivated, and good at writing documentation?

@@ -1,0 +1,24 @@
+
+This code produces a correct solution. It is basically a very simple Max-Cut Problem of 256 vertices with a known solution.
+Unfortunately, however, as soon as more vertices, say, num_vars = 1024, are used, the program will never produce the theoretically correct result, which is supposed to have num_vars - 1 cut edges, and num_vars/2 vertices in each set.
+Could you please help me reach the goal of as many vertices as possible, say, 5000? After all, it is claimed that D-Wave hardware is capable of handling more than 5000 variables.
+Thanks.
+Hi @DevelopDaily, this is an interesting problem. You're essentially testing the maximum antiferromagnetic chain length. it's definitely not true that the hardware can solve all problems sent to it, and in some sense this is a particularly hard problem for the hardware relative to classically.
+To explain why, it's probably best to start with the best way to solve it classically, which is to start at one end of the path and then simply alternate values along the chain. This can be solved in O(n) time.
+However, classical BQM samplers like dwave-neal and dwave-tabu don't know this trick. They randomly select a starting position and test various changes until they find a good solution. So imagine you have a chain like
+0-1-0-1-1-0-1-0-0-1-0-1
+you can see that this chain is made up of four valid "sub chains" but the middle subchain is flipped. So in order for a classical solver to "fix it", it would need to flip the entire sub chain, which is difficult for it to do.
+Now, on the quantum computer, we have a semi-similar situation. Different qubits can freeze out at different times. So part way through the anneal you can get something like
+0-1-s-s-1-0-1-s-s-s-0-1
+where s represents a variable still in superposition. The different frozen-out sub-chains can be valid among themselves, but not valid in relation to each other. Because frozen out qubits can only flip thermally, it is difficult to "fix".
+I would be curious for your problem, if you're getting runs of valid chains in the solution. Maybe something like
+would tell you how long each of the valid segments are. Note that the above function assumes that your path graph is labelled [0,n).
+Also, FWIW, a simpler way to formulate this problem is
+It's worth noting that finding a path of length N in an N-node graph is generally quite difficult (this also known as the Hamiltonian Path Problem).  I would expect minorminer to have a very hard time with this -- I got lucky and found a path of length 4000 on my first try, but 5000 is going to be very difficult for minorminer.  If you're really curious, the first place to look would probably be longest path heuristics -- for example SageMath [1] has both heuristic (fast) and exact (slow) algorithms.  Alternatively, you can try a subgraph solver such as Glasgow [2].
+However, as Alex notes, this class of problem will be quite difficult for the QPU as well -- running such long paths may be of dubious value.
+[1] https://doc.sagemath.org/html/en/reference/graphs/sage/graphs/generic_graph.html#sage.graphs.generic_graph.GenericGraph.longest_path
+[2] https://github.com/ciaranm/glasgow-subgraph-solver
+Using your function, I print out the lowest energy and the chunks. Here are the results:
+It is pleasantly surprising that the energy goes lower as the num_reads goes higher. The D-Wave API does not allow me to go beyond 10,000. Would you tweak the num_reads internally to, say, 1,000,000? The annealing may reach the theoretical lowest energy. How do you think?
+By the way, thanks for your advice on the ising formulation, which I haven't learnt yet. Somehow, your particular ising model does not produce the same result as my model intends to. My graph basically looks like a long string of 1024 pearls.
+See also #106

@@ -1,0 +1,42 @@
+How can I access the UART port of a Kasli from a windows machine? I tried installing a USB serial port driver for interface 2 of the Quad-RS232 HS device, but could not connect to the corresponding COM port (serial connection from a linux system worked, so I assume I'm looking at the correct device).
+Side note: artiq_flash can't seem to cope with the presence of any Quad-RS232 HS devices with drivers other than WinUSB. As soon as I installed any other driver, I got below error message. It goes away if I replace all installed drivers for these devices with WinUSB. If installing a different driver is necessary for accessing UART, this will become a problem.
+How can I access the UART port of a Kasli from a windows machine? I tried installing a USB serial port driver for interface 2 of the Quad-RS232 HS device, but could not connect to the corresponding COM port (serial connection from a linux system worked, so I assume I'm looking at the correct device).
+Did you try with PuTTY? It is surprisingly trouble-free software, as far as Windows applications go. What is the error message?
+Side note: artiq_flash can't seem to cope with the presence of any Quad-RS232 HS devices with drivers other than WinUSB.
+Did you install the Zadig thing?
+Here's what I did in more detail:
+On linux, python -m serial.tools.miniterm /dev/ttyUSB2 115200 works.
+I saw similar behaviour with artiq_flash trying to flash a kasli in W10: the issue is in the OpenOCD script located in <conda location>\envs\<env name>\Library\share\openocd\scripts\board\kasli.cfg, the device description Quad RS232-HS doesn't always match what Windows has decided to call it on that given day.
+By changing the line
+to
+in my case. I found this by looking at Device Manager properties, Details tab, "Bus reported device description". Note this is not the "Device description", which was "USB <-> Serial Converter (Interface 0)"... Logical, I know.
+In summary:
+Edit openocd\scripts\board\kasli.cfg to reflect Windows whimsy
+Is this definitely a windows/driver thing? I thought that description was something that's flashed into the FT232 and can be changed with e.g. FT PROG or the Kasli I2C tool. IIRC I've also had the issue on Linux and it can be fixed either by replacing the Quad RS232-HS with * (as you do) or by changing the flashed description to match the openocd script's expectation (which is better since you don't have to maintain a patched version of openocd).
+Edit: but, it's been a while since I had this issue so I might well be completely wrong about that...
+IIRC I've also had the issue on Linux
+Yes, this happens also with Digilent JTAG probes and the scripts provided upstream openocd. I guess Digilent flash the FTDI EEPROMs inconsistently.
+and it can be fixed either by replacing the Quad RS232-HS with * (as you do)
+Or remove the ftdi_device_desc line entirely.
+@hartytp you're completely right about the option to change product description in FT PROG. Not sure how I missed it given that it's right above where I reprogrammed the serial number 🤦
+@gkasprow can we ask TS/CTI to set the FTDI settings appropriately before shipping? It would be great if they set a unique serial number as well.
+otherwise we should add a note about this in the artiq manual (@ljstephenson fancy spinning up a short doc PR?)
+I think this can be done. All boards are tested using an automated test bench so that should be simple
+This would not solve it for the existing fleet of boards that have empty EEPROMs.
+Where is that "USB <-> Serial Converter" string coming from? Windows driver or EEPROM? If EEPROM, who put it there?
+AFAICT it's programmed into the EEPROM before Kasli shipped.
+If you want a solution for existing boards then either change the openocd script or tell users to reprogram them (using the Kasli I2C tool or FTD PROG).
+Confirmed that reprogramming EEPROM using FT PROG with correct description made everything work happily for flashing on W10. @hartytp I'll make a doc PR once I've cleared a couple of things off my to-do list, unless the solution is to delete the ftdi_device_desc line entirely as @sbourdeauducq suggests - presumably VID and PID are sufficient information, and these shouldn't change.
+Re: unique serial numbers I'm agnostic, but one thing to consider is that they will make W10 enumerate each new device as a different set of 4 COM ports - could be a bug or feature depending on your perspective.
+@ljstephenson Where did you purchase the problematic board from, and did you or someone else flash the EEPROM after receiving it?
+The board was from Technosystems. I did flash the EEPROM after receiving (precisely to give a unique serial number), but FT PROG populates fields with the currently stored value unless empty, in which case they remain unpopulated, i.e. it was already programmed with "USB <-> Serial Converter"
+I can confirm that CTI implemented EEPROM configuration in the production test suite.
+Looks like the COM port issue is a Windows/FTDI bug, not ARTIQ.
+The board was from Technosystems. I did flash the EEPROM after receiving (precisely to give a unique serial number), but FT PROG populates fields with the currently stored value unless empty, in which case they remain unpopulated, i.e. it was already programmed with "USB <-> Serial Converter"
+FWIW: plugging a new Kasli from TS into a linux PC it comes up with the Quad RS232-HS description. Plugging it into a windows machine and opening FT PROG, the default option is USB <-> Serial Converter. I haven't dug into this exhaustively but it feels like FT_PROG just ignores the current value and overwrites it with its own default.
+@sbourdeauducq since this is the default value used by FT_PROG should we change the openocd rule to allow it? Otherwise, we should probably add this to the docs somewhere since it's bitten me plenty of times.
+NB if one programs the EEPROMs using @jordens the expected value is always set so we could also advertise that (although it's linux only AFAICT). https://github.com/quartiq/kasli-i2c/blob/master/kasli-ft4232h.conf.in
+Yes. kasli-i2c and the openocd scripts are intentionally compatible with both unmodified and flashed EEPROMs as long as they keep pid/vid/description. There is enough opportunity in manufacturer and serial for customization.
+so tl;dr this is FT_PROG being dumb. Still though the openocd rule we have is quite restrictive and does introduce a bit of a foot gun particularly since the kasli-i2c tool isn't advertised anywhere. Can we easily relax it? e.g. is it harmful to only test vid + pid and not the description?
+@sbourdeauducq since this is the default value used by FT_PROG should we change the openocd rule to allow it?
+That's much harder than you think considering the need to rebuild and package openocd on windoze. It's not in nix-scripts/wfvm yet.

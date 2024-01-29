@@ -1,0 +1,34 @@
+Description
+I noticed, that after running my script for a while, the memory footprint starts to grow over time.
+It seems to be a problem with both DWaveSampler/EmbeddingComposite and QBSolv.
+Deleting the objects and running the garbage collector doesn't help to solve the problem.
+Here is the output of the code posted below for use_dwave=True:
+and for use_dwave=False (using QBSolve):
+As you can see, the memory impact of QBSolv is much smaller (I needed bigger qubo to even observe this effect), but it's still there.
+To Reproduce
+https://gist.github.com/mstechly/1a0b077382d64fb417651f5cf405e67b
+Expected behavior
+I would expect that deleting an object and running the garbage collector should free the memory.
+Environment:
+There's a known issue with DWaveSampler/dwave-cloud-client and releasing of system resources. Entrance to the rabbit hole here: #91. Solution could be dwavesystems/dwave-cloud-client#118.
+In short, thread pools are the reason we can't have automatic garbage collection. Until force close in the cloud client is implemented, and DWaveSystem provided as a context manager, there are two workarounds:
+The first approach is preferred at this point.
+And regarding the possible memory leak in qbsolv - we need to investigate that further.
+@randomir Thanks!
+I tried the first approach earlier but it didn't work for some reason - but it might have been implementation error. I will let you know once I implement it again.
+Considering the second one I did:
+and it had no effect on memory.
+Writing DWaveSampler.client.close() explicitly as you suggested resulted in error: AttributeError: type object 'DWaveSampler' has no attribute 'client', so not sure if it doesn't work or I messed syntax.
+@randomir Actually the first method also doesn't seem to work:
+resulted in:
+Or am I doing it wrong?
+In the first example, yes, I meant "DWaveSampler::client::close()" - client is a member variable of a DWaveSampler object. But in addition to closing the client, you probably also need to loose all references to it (solver, samples, etc), and invoke GC. (Also I didn't test any of this, so there might be additional nuances.)
+In your second example, you're doing it wrong 😃. Python doesn't collect garbage too often. You need to either wait a lot longer / allocate a lot more (iterate much more than 5 times), or invoke the GC yourself.
+@randomir I implemented the singleton approach and it works better now - good enough for my case, though not sure what's exactly happening under the hood.
+Thanks!
+@mstechly, when you say better, what exactly do you mean? Are you seeing a constant memory overhead (no memory increase on each sampling), or something else?
+FWIW, we plan to make the underlying thread pools (in the cloud client) singleton objects. That should make DWaveSampler objects relatively cheap (there's still going to be the overhead of solver selection per each instantiation).
+@randomir It means that the memory still grows with each iteration, but slower with each consecutive one and stops growing at all at some point.
+Not sure why it behaves like this since I run gc.collect() every time, but it caps at the point that fits my memory.
+That's interesting. We'll have that in mind (tests) when implementing singleton Client/thread pools. Thanks, @mstechly!
+I'm closing this issue because it's a duplicate / known bug.

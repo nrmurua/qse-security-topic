@@ -1,0 +1,22 @@
+When modifying a DAGCircuit it is not easily possible to remove a specific node from the circuit. There exists a protected method _remove_op_node which does what I want to do. Is there a reason why this method needs to be protected?
+There should exist a way to remove a specific node from a DAGCircuit that does not use protected methods.
+The only way currently is to either modify multi_graph directly (and risk breaking changes) or ignore the protected status and use _remove_op_node anyway (my choice currently).
+Simple fix: Make the method public.
+Complex fix: Rework the API for interacting with DAGCircuit. Currently, I am required to inspect multi_graph directly for many things that I wish to do with a DAGCircuit. I do not think this should be intended, since multi_graph encodes some fairly opaque internal state.
+I am trying to transform a DAGCircuit for the QISKit developer challenge to conform to a given hardware architecture. I do that by removing op nodes from the given DAGCircuit and building a DAGCircuit that conforms to the architecture.
+Thanks @eddieschoute. You are right, DAG modification methods should be public and easier to use than direct multi_graph manipulation. We would like to change a few things in the DAG going forward, and this is one of them.
+Dear @ajavadia , looking forward to the changes. If you are looking for some use cases I could maybe provide you with some ways that I interact with DAGCircuit.
+Generally I feel like DAGCircuit was designed as a low-level class that stores read in code (e.g. QASM) internally for execution. Especially things like the basis field seem like they could be deferred to an unroller at a later stage that would compile higher-level gates to some supported basis.
+I am also unsure how gates can be used when building a DAGCircuit. I tried defining some higher level gates through add_gates_data but after that it is impossible to add a gate to the DAG using e.g. apply_operation_back.
+@eddieschoute, providing some use-cases supporting the feature request would be super-useful.
+I am trying to transform a DAGCircuit for the QISKit developer challenge to conform to a given hardware architecture. I do that by removing op nodes from the given DAGCircuit and building a DAGCircuit that conforms to the architecture.
+I was referring to this:
+If you are looking for some use cases I could maybe provide you with some ways that I interact with DAGCircuit.
+Right, let me give an explicit example then. Here I apply an operation as given by the multigraph in the DAG. Then, since I have applied the operation, I wish to remove it from the DAG. (Alternatively, I could manage pointers to the current location in the DAG, but have decided against it because of code complexity.)
+where remove successor does
+It's been a while since I looked at this code. Perhaps I can just call todo_circuit._remove_op_node directly on the op_node.
+The last comment also evidences a flaw in the DAGCircuit API: the consumer needs to go down into the multigraph API supporting the DAG in order to perform circuit-level operations. That reveals encapsulation/abstraction issues.
+I have lost count how often I needed to access the multi-graph directly. It's basically the only way I know of actually using the DAG part of DAGCircuit!
+I have also simplified the above code to
+I have lost count how often I needed to access the multi-graph directly. It's basically the only way I know of actually using the DAG part of DAGCircuit!
+I've opened #728 to try to come up with a better understanding of what operations the DAG should support and provide direct methods for it.

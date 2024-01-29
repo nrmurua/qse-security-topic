@@ -1,0 +1,50 @@
+This issue is for discussing and tracking how we should improve cirq's noise capabilities.
+My opinions follow.
+Right now cirq's noise story is quite clunky. Our original idea was to keep the noise stuff out of the simulator by instead having code to take a circuit and return a noisy version (e.g. with extra parameterized Paulis that you could then sweep over). @dstrain115 implemented this for us, and the code is currently in contrib. However, on reflection (and a bit of user feedback, and realizing the simulator can be significantly simpified via np.einsum) I think it is clear this design is not the way to go.
+The easily-fixed problem is that the noise code as-is is hard to use. The more serious problem is that conceptually the noise is really about the thing running the circuit as opposed to the circuit itself. It's somehow weird to say "okay now give me a noisy circuit" instead of "now do a noisy simulation of this circuit".
+Refactoring the code to be in the simulator is one aspect of this issue. The other aspect is expanding the noise to include non-markovian noise models. @DanielSank has offered to help with this, which should be useful because he has some experience with the problem and with the hardware. Quantum Benchmark has also offered to help; I don't know their github IDs but I will link them to this issue.
+How much generality are you looking for?
+Generalizing to arbitrary Markovian noise is quite easy and we have existing code routines that could be modified to be integrated with Cirq's simulator. They currently use np.reshape() extensively as I was not aware of np.einsum().
+The approach we use could also be generalized to include 1/f noise relatively simply (or for that matter, noise that is at any instant drawn from a probability distribution over the set of channels where the probability distribution has time dependence).
+I actually don't know how much generality we want; I'm very much a beginner when it comes to noise. I would very much appreciate relevant opinions and details. What types of noise are useful, why are they useful, how hard are they to do (engineering-effort wise and cpu-effort wise), etc?
+There are a few classes of non-Markovian noise, that have different difficulties associated with them.
+Class 1: coupling to a common environment. This one is quite painful to implement because it requires a lot of matrix exponentials and a larger quantum system. It also makes time-ordering of gates extremely important, which is a feature from the realism side, but much harder on the software- and ease-of-use side.
+Class 2: random channels drawn from a time- (and gate-) dependent ensemble of channels. This is relatively easy to implement and somewhat realistic. The big performance hit is that to accurately represent the physics, you have to simulate measurements at the single-shot level rather than computing the final probability distribution and sampling that repeatedly. This will typically add 100 times the simulation overhead. The other performance hit, which I think is relatively minor, is that you can no longer cache all the noise channels.
+For class 2, I think you could get the final distribution (and then repeatedly sample from it) with a single simulation run. You would do so by performing a density matrix simulation instead of a wavefunction simulation.
+On the other hand, the cost of the density matrix simulation is analogous to setting the number of wavefunction repetitions to 2^N where N is the number of qubits. But 2^N is usually more than the number of samples you'd want... maybe not so useful.
+Actually, even with probabilistic unitary noise, class 2 cannot be easily simulated using a density matrix because the effective channel for the whole circuit does not factorize as a matrix product of individual channels per gate.
+I was also assuming that you would subclass pure-state and density-matrix simulators from a common abstract class, as some channels of interest, e.g., amplitude damping, cannot be represented as a probabilistic mixture of unitary matrices.
+I see. Do you happen to have a simple example of a channel that doesn't factorize in the way you mentioned? (A paper or textbook reference also works.)
+I can't remember a good reference off the top of my head :)
+Consider the following ideal experiment:
+Now suppose that x1~N(x,s) is normally distributed, representing a calibration error (supposing the experiment is re-calibrated every shot) and that x2~N(x1, d) is normally distributed with a mean dependent upon x1, representing a random drift.
+Then for any individual run, Z_x2 Z_x1 (in operator order) factorizes, but the average does not because x2 depends upon x1.
+Speaking as an experimentalist, a large set of useful cases is covered by class 2.
+Class 1 is interesting and potentially useful, but I think a massive chunk of the utility is in Class 2.
+I agree @DanielSank. It is convenient that Class 2 is also the easier one to simulate!
+Now suppose that x1N(x,s) is normally distributed, representing a calibration error (supposing the experiment is re-calibrated every shot) and that x2N(x1, d) is normally distributed with a mean dependent upon x1, representing a random drift.
+I'm not sure what that comment is saying because of the strike through. Is the idea that x2 is a random variable whose distribution depends on x1?
+Did you refresh? I forgot to escape the ~ but edited immediately after posting
+and yes, that is the idea
+Hi all,
+I think that user feedback came from us. Currently, we're looking into the different possibilites how to implemet noise processes into cirq. At the moment, we're thinking about Markovian processes only. Any quantum channel with unitary Krauss operators can be simulated in cirq in a straight forward manner however noise channels with non-unitary Krauss operators such as amplitude damping pose an unnecessary obstacle which might be overcome with the following minor adjustements:
+Using ancillary qubits
+One possibility would be to use ancillary qubits to represent the bath, which would result in a non-unitary evolution of the remaining qubits. Therewith, it also would be possible to represent the amplitude damping channel. This method has two problems: i) for larger systems, it gets messy and ii) the circuit requires more qubits, which would result in a large overhead.
+Use non-unitary evolution on density matrix level
+From our perspective, the most straightforward possibility would be to implement the noise on the level of density matrices. Maybe a possibility would be to choose between two simulators (one with and one without noise), where the first one would be the same as now, where then the circuit could be use on the real QPU as well. The second simulator could offer the possibility to add non-unitary processes on the level of density matrices and therefore to implement noise processes. The noise processes  could be implemented directly into the gates, so one could adjust the noise level just by adjusting the fidelity parameters of the elementary gates. (extension could be to add ampltiude-damping channels to all qubits, also when unused or to add non-markovian processes). I think this would the most convenient way.
+Cheers
+Michael
+Hi all,
+I have a few thoughts about the noise simulation from a user perspective:
+(a) T1, T2*
+(b) readout fidelity.
+(c) Thermal excitation in a bath of temperature T.
+(d) Gate fidelities defined by Kraus maps.
+(e) Coherent errors (with a Markovian noise source).
+(f) A reasonably updated noise profile for the Google quantum devices (once it is available).
+The following is other things that may be interesting but is probably not important at the moment. I list them here for your reference.
+(g) Escape error from the qubit subspace. This could be useful if users can modify the qubit control pulse.
+(h) Non-Markovian noise, say 1/f noise. However, given the difficulty in simulating 1/f noise and that the gain is likely to be smaller, I think it is not cost effective to go along this direction.
+Hope that these are helpful,
+Andy Li
+Closing because we have made a lot of progress in simulating noise. Even though there is still more work to do, this issue is not specific enough to define when to close.

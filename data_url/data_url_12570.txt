@@ -1,0 +1,20 @@
+This comes from the conclusion of review this PR #196 . The purpose of this issue is to find a way to reduce the number of samples in linear_combination_test from 3e6 to 2e3.
+Here is a thing. @zaqqwerty @MichaelBroughton (and cc @QuantumVerd  because he wanted to have this feature :D)
+Given Hamiltonian, we can generate a probabilistic distribution describing how many terms are sampled with various ways. I want to introduce the best way of it.
+Let H be a Hamiltonian with two terms to be sampled
+H=a*Z_1 + b*Z_2
+We can add up the absolute value of the coefficient of each term, say E=|a|+|b|
+This hamiltonian can be described by H=E*(a/E)*Z_1 + E*(b/E)*Z_2
+Therefore, sampled expectation on H with m samples can be defined as:
+H=E*sum_{i}*p_i*P_i = E*Expectation_{i ~ p_i} P_i where i ~ p_i means i-th term is sampled with probability p_i. In this case, p_0, p_1 = |a|/E, |b|/E, and P_i is the i-th Pauli term absorbing the phase if the sign of the term is negative. P_0, P_1 = sign(a)*Z_1, sign(b)*Z_2
+This is the mechanism to sample the Hamiltonian with the smallest variance. Please see 3.1 zeroth-order sampling in Harrow et al.. Yes, the current version from this #196  is not wrong, it has just a larger variance. That's why linear_combination_test required such a big number of samples.  Sweke et al. describes both ways. One is the uniform distribution sampling as @zaqqwerty  implemented, the other is what I (& Harrow et al.) described.
+We have already implemented how to construct such a probabilistic distribution for stochastic_differentiator here. Even if they are TF-based python codes, I hope they are helpful.
+Please feel free to discuss this topic, and ask me more related questions. I could be wrong somewhere because I quickly reviewed the codes during this midnight. :) Your corrections are welcome!
+Thank you for doing this investigation Jae! Looking at the implementation we used to use for SampledExpectation before #196 it looks like we also didn't have this "importance" based sampling approach. We followed closely along with what is done here: https://github.com/quantumlib/Cirq/blob/master/cirq/work/pauli_sum_collector.py#L27 . I think the reason they did it this way as apposed to the way Harrow mentions is because it is easier to get it to work with engine.
+Engine will accept a cirq.Circuit and a cirq.Sweep as input. From there it will draw a fixed number of repetitions from the circuit with the parameters in the circuit set to all the values of the sweep. A sample call might look like:
+This will gather 10 shots from H^1. 10 shots from H^2 and so on. Doing:
+will work, but is much much slower.
+It would be nice to upgrade to this method for more sample efficiency in simulation, but we should also think about how to do it given this is how we must interact with engine. Do you think we can make this work somehow ?
+Thank you Mike for the details. Yes, your investigations make it much clearer. then I think I need to investigate the new RNG part in TFQ deeper like why the uniform sampling behaves differently from pauli_sum_collector.
+Also, for EngineJob,  sampled expectation would work, in my understanding, because the measurement parts would get the resolved circuits even if sweep varies parameters in the input circuits. Of course, before working on it, I think I must follow the recent big change & new design for engine.
+This issue has not had any activity in a month. Is it stale ?

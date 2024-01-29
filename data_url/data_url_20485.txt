@@ -1,0 +1,26 @@
+When deriving the various keys in kex_derive_keys, the pure-PQ functions that handle encrypting and decrypting the shared secret, kex_kem_generic_enc and kex_kem_generic_dec, write only the shared secret data itself into the buffer that is later input to the KDF. They call sshbuf_reserve and pass a pointer directly into the buffer contents to OQS_KEM_encaps or _decaps. The SSH spec requires the shared secret input to the KDF to be in the mpint format, which has 4 bytes of length prepended to it. This causes the keys to be derived in a manner not compliant with the spec. In kex_derive_keys, shared_secret ends up being 16 bytes, for example, when it should be 20 (4 bytes length + 16 bytes secret).
+The relevant code is at 
+The v7.9 branch had this correct, and there's even a note calling it out at 
+As an aside, I believe the hybrid case is correct, but I haven't been able to test it yet. kex_kem_generic_with_ec_enc and kex_kem_generic_with_ec_dec both write the shared secret to the relevant buffer with sshbuf_put_string, in the same way the v7.9 code does, and so the prepended length should be present. See 
+I may have a PR for this soon, but wanted to get it written up in case anyone spots a problem with my reasoning.
+Certainly I'll agree that the v7 and v8 implementations should use the same encoding method.
+That being said, I don't agree with the original SSH spec's choice to use mpint as the encoding method for the shared secret. mpint drops leading zeros, which is risky from a side-channel perspective.  For an updated revision of the hybrid draft, we're discussing whether to switch to string rather than mpint.  Since there's no draft at this point for pure PQ KEMs, we can make our own choice here, if you have an opinion.
+It seems like this danger exists no matter the key exchange method, and is not unique to pure PQ KEM. That's an argument to change the SSH spec's treatment of the shared secret entirely, and that's a way bigger problem than I want to tackle here!
+For things we can affect, I'd favor sticking with mpint for now for the following reasons:
+That's my view, but for my near-term goal of updating libssh to interoperate with the v8 branch, we can take either path.
+Longer-term, I agree it's best if the shared secret is a constant length, whenever an official spec for these KEMs comes out for SSH.
+It seems like this danger exists no matter the key exchange method, and is not unique to pure PQ KEM. That's an argument to change the SSH spec's treatment of the shared secret entirely, and that's a way bigger problem than I want to tackle here!
+Fair enough.
+For things we can affect, I'd favor sticking with mpint for now for the following reasons:
+Okay.  If the SSH hybrid Internet-Draft switches from mpints to strings, then we can revisit.
+I'm a bit confused by this point.  Are you saying that in the places where our implementations are saying they're using mpint's, they are actually not dropping leading zeros?
+I'm a bit confused by this point. Are you saying that in the places where our implementations are saying they're using mpint's, they are actually not dropping leading zeros?
+For PQ and hybrid KEMs, that’s correct. Internally they’re handled as byte arrays and written out as SSH strings.
+I'm a bit confused by this point. Are you saying that in the places where our implementations are saying they're using mpint's, they are actually not dropping leading zeros?
+For PQ and hybrid KEMs, that’s correct. Internally they’re handled as byte arrays and written out as SSH strings.
+Okay, we should fix that to be consistent with what the current drafts / specs say, and then indeed deal with whether mpint or string is a safer choice later.  Are you working on a PR for any of this?
+Okay, we should fix that to be consistent with what the current drafts / specs say, and then indeed deal with whether mpint or string is a safer choice later. Are you working on a PR for any of this?
+I have a PR in progress to change pure PQ KEMs to behave the same way as hybrids do, and as both did in v7: technically an mpint, but leading zeroes are not dropped because it's really an SSH string. I have not yet looked at dropping leading zeroes.
+If it's acceptable to you, I'd prefer to only make this change now to OpenSSH, so OpenSSH doesn't change any more than it has to, just because there are a number of other changes I'm making to libssh to match how the v8 branch works in other ways. Then once I have interop between those two, we can update both to drop leading zeroes and conform fully to the mpint spec.
+This is related to an old issue, #66. A PR that resolves this issue should also resolve that one.
+Alright. I'll move ahead with my small PR just to turn it back into basically an ssh_string to unblock me, and consider this issue resolved when that's done, and leave the larger issues of doing properly zero-trimmed mpints or officially switching to a string to be resolved in #66.

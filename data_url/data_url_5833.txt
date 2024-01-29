@@ -1,0 +1,24 @@
+The MPS simulator, when run in shots-sampling mode with the sample generation algorithm mps_sample_measure_algorithm='mps_apply_measure', can give drastically different runtimes if one (1) explicitly specifies a bond dimension via matrix_product_state_max_bond_dimension in the AerSimulator constructor such that the circuit will be represented exactly without truncation, versus if one (2) uses the default values for matrix_product_state_max_bond_dimension (no limit) and matrix_product_state_truncation_threshold (1e-16) so as to let the code choose the appropriate bond dimension for exact representation. The problem seems to be more pronounced for states with larger bond dimension. For example, for an sca depth 2 ansatz [RealAmplitudes(num_qubits=n, entanglement='sca', reps=2)], I get the following runtime versus number of qubits (MacBook Pro, using 1 thread):
+
+All sca circuits can be represented exactly with an MPS of bond dimension \chi = 4^depth, hence the blue curve corresponds to using a backend with \chi = 4^2 = 16:
+while the orange curve corresponds to
+At 60 qubits, the runtime difference for 1000 shots is about a factor 6. The dashed curves are reference n^2 parabolas (likely related to #1304).
+I have checked the MPS print logs (see #1248), and they indicate that the bond dimensions chosen are identical in both cases; however, setting matrix_product_state_max_bond_dimension=16 produces finite discarded values in the logs, while using the default settings does not. As a sanity check, I was able to confirm using snapshots that both configurations do produce the same state with perfect overlap to machine precision with the exact statevector for up to 20 qubits.
+The following code was used to produce the above graph:
+Furthermore, the print logs for the two cases, on a 10 qubit system, are as follows:
+
+
+I would expect nearly identical behavior and runtime for the two configurations.
+Circuits with linear entanglement don't seem to suffer from the same performance discrepancies. Here is the same data for a linear ansatz with depth 6 (bond dimension = 2^6 = 64).
+
+Regarding the general performance, following the performance enhancements in #1290 and in #1304, I am getting the following graph:
+
+It does not appear to behave like n^2 any longer.
+When I compare running with max_bond_dimension = 16 vs. no limit on bond dimension, I see the difference in performance that you pointed out. Here is the graph I get (I also added max_bond_dimension = 100:
+
+I investigated this difference in performance and this is what I found: The bond dimensions are printed out after every operation in the circuit. However, they are not printed out after internal swap operations that the MPS adds before 2-qubit operations. There are cases where the bond dimension increased to 32 (and once I even saw 64), but eventually, after additional swaps, this was reduced back to 16. So the approximation is working correctly.
+This may actually be a good strategy - first run an exact version to determine the highest bond dimension, and then to use this for approximation.
+I see. That makes sense and also explains the rather dramatic difference between linear (where no swaps are needed) and sca. Great, so it seems #1304 and, to a lesser extent (since now the swaps will only happen once instead of every shot), this enforcing of the "correct" bond dimension will give very substantial performance gains for beyond-linear entanglement circuits.
+I also get an intermittent BLAS error when explicitly setting matrix_product_state_max_bond_dimension. The following code:
+throws ldb must be >= MAX(K,1): ldb=0 K=0. BLAS error: Parameter number 11 passed to cblas_zgemm had an invalid value. This seems to happen for about 1 in every 100 or so randomly generated RealAmplitudes circuits of this size / entanglement type.
+I believe this is now resolved in 0.9 release

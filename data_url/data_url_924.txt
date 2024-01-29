@@ -1,0 +1,35 @@
+Description of the issue
+The cirq.qasm [docs] expects an optional qubits kw-args. But specifying it throws an error.
+It seems like this line picks the AbstractCircuit's  _qasm_ argument, which is not expecting anything.
+If qubits is given an incorrectly-typed argument, then I was expecting a different error message.
+How to reproduce the issue
+TypeError: AbstractCircuit.qasm() got an unexpected keyword argument 'qubits'
+Cirq version
+This is indeed broken and should be fixed, but there is a workaround for now.
+The qubits argument to cirq.qasm protocol is meant as a means of supplying qubits to objects that wouldn't otherwise know which qubits they're being applied to, such as a gate. You are passing in a circuit, so you shouldn't be passing qubits at all since circuit knows its qubits. The following works:
+and prints
+This looks like intended behavior to me, mainly because of what @viathor explained that cirq.qasm(val) should be supplied with an additional qubits argument only when val itself does not know it's qubits.
+So, if you pass a cirq.Gate to cirq.qasm, you must supply the additional qubits. But for objects which already know which qubits they act upon, like a cirq.Operation or cirq.Circuit, there's no need to pass additional qubits.
+This is indeed broken and should be fixed, but there is a workaround for now.
+Adam, do you think there's anything else that's broken? We could potentially add more clarification in the documentation but I don't think anything else needs fixing here.
+@tanujkhattar I think at minimum we should update exception's message and documentation to make it clear for the user what they should do (else we'll just get more issues filed in future).
+In addition, we could also check that the qubits passed in are the same as those in the circuit and if so, just ignore them (and raise an exception if they're different).
+In addition, we could also check that the qubits passed in are the same as those in the circuit and if so, just ignore them
+This is tricky, because another valid behavior could be to apply a qubit transformation via val.transform_qubits (all of circuit, moment, operations support this) when the user supplies qubits and they are not same as input qubits.
+I would lean towards not changing the behavior of the function to keep it consistent with other similar protocols in Cirq. For example, cirq.decompose_once is another such protocol where
+As an action item for the issue, I suggest that we should update the documentation and error message to make it clear to the user what they do should do.
+I see. Keeping things consistent is definitely important. I'm fine with keeping behavior as is and improving clarity of exception message and documentation.
+Thanks for replying!
+What do you think a good message can be? Something like qubits are not needed for the given {value} as it already knows its qubits ?
+I can pick this up. You can assign it to me.
+I'm concerned that {value} may expand to a very long string. Also, the exceptions might be raised from within a complex piece of code unfamiliar to the user, so it's gonna be helpful to clarify which function didn't expect qubits to be passed in.
+How about cirq.qasm does not expect qubits to be specified for the given value of type {type(value)}?
+cirq.qasm does not expect qubits to be specified for the given value of type {type(value)}
+The message looks good. Thanks!
+I saw the comment here which says
+Currently, the function checks for neither of the conditions. If we add a check for the qubits, and someone provides the the args, instead of the qubits (val being a circuit, for example), they'd get the the same error again: _qasm_() got an unexpected keyword argument 'args'. So the message can be a bit more generic. For example: cirq.qasm does not expect qubits or args to be specified for the given value of type {type(value)}.
+Also, for the implementation: What's a better idea?
+Doing checks such as this:
+or catching the exception and re-throwing with a better error message?
+Maybe there's a third possibility that I am missing?
+Thanks!

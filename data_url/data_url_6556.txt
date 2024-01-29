@@ -1,0 +1,28 @@
+I noticed that the qsim Cirq interface doesn't support MatrixGates that act on more than two qubits - can we get support for this?
+I also noticed that if I create a controlled gate via something like this:
+ControlledGate(MyGate)(ctrl_qubit, *target_qubits)
+then qsim fails. For example ControlledGate(cirq.X)(qubits[0], qubits[1]) returns the error
+ValueError: Operation doesn't satisfy the given 'keep' but can't be decomposed: cirq.X(cirq.LineQubit(1)).controlled_by(cirq.LineQubit(0)).
+(I know that in this situation, one should use cirq.CX.) Can we get support for arbitrary ControlledGates? And are there any workarounds for the above two issues? Thanks!
+Unfortunately, the two-qubit matrix gate limitation is based on a core assumption of qsim that all gates act on at most two qubits. In my understanding, extending this to 3-qubit gates might be possible, but it would involve compromises in performance on 1- and 2-qubit gates.
+Aside from manually decomposing these gates into 1- and 2-qubit gates, I don't know of a good workaround for this - @sergeisakov might be able to explain further.
+On a similar note, controlled gates on >2 qubits (including control qubits) are also out of scope for qsim. Controlled 1-qubit gates should be possible, but currently Cirq doesn't support removing controlled_by via gate decomposition. In theory we could handle this in qsim, but I think the correct solution would instead be to update the decomposition behavior in Cirq. This is an area of active discussion in the Cirq dev team - I encourage you to open an issue there.
+Until that's resolved, the workaround for controlled 1-qubit gates would be to use builtin controlled gates where possible, and define any others as 2-qubit matrix gates. Larger controlled gates would have to fall back to manual decomposition.
+Hi @95-martin-orion , I wonder if it is possible to add subroutines specifically for multi-qubit controlled gates and also prevent compromises in performance on 1 and 2 qubit gates? There is a very simple algorithm that can simulate gates of very large controlled qubits with very small memory overhead. Is it possible to integrate this to qsim?
+There are plans to add support for multi-qubit gates in general and for multi-qubit controlled gates in particular. It will be added at some point later.
+Hi qsim developers, we are filling this RFC for an implementation of multi-controlled 1 qubit gates.
+Looking forwards to comments!
+Thank you for writing that. We are actually working on multi-qubit and multi-controlled gates. It is likely that multi-controlled gates will be implemented in a different way from as implemented in the QuEST simulator.
+@sergeisakov any updates on progress here ? This would definitely be a nice to have feature for TFQ.
+PR #216 allows the C++ layers of qsim to recognize (but not execute) multi-controlled gates. The effort to support execution of these gates, as well as translating them from Cirq, is ongoing.
+Got this error when doing controlled-ry:
+ValueError: Operation doesn't satisfy the given keep but can't be decomposed: cirq.ry(np.pi*0.8904292526573554).on(cirq.GridQubit(0, 1)).controlled_by(cirq.GridQubit(0, 0))
+would be really helpful if it can do 2-qubit controlled gates like C-ry(theta) if not multi-controlled or multi-qubit gates.
+Thanks.
+Thanks for highlighting this, @4Dmovie. Work on this issue has been focused on multi-controlled gates in order to provide a general solution to the problem, with Sergei's PR #231 being the most recent change submitted. I'll follow up with the qsimcirq support shortly, and will update this issue when the feature is available.
+With PR #233, controlled gates requested in Cirq should now be able to take advantage of the support in qsim-core. In particular, @4Dmovie's example with controlled-ry should work at HEAD (but note that we haven't released this change, so you'll need to install directly from GitHub to pick it up).
+Support for larger matrix gates is still in progress.
+With PR #233, controlled gates requested in Cirq should now be able to take advantage of the support in qsim-core. In particular, @4Dmovie's example with controlled-ry should work at HEAD (but note that we haven't released this change, so you'll need to install directly from GitHub to pick it up).
+Support for larger matrix gates is still in progress.
+Works for C-Ry now. Thank you so much for your team's amazing work! I'll let you know if further functionalities are demanded.
+qsimcirq v0.6.0 provides support for arbitrary gates of up to six qubits. This includes any gate that can decompose into the qsim gateset (defined in gates_cirq) as well as any gate that has a matrix definition.

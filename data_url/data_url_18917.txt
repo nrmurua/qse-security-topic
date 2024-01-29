@@ -1,0 +1,29 @@
+Suggestions on boxing: https://qiskit.github.io/openqasm/language/delays.html#boxed-expressions.
+Rather than boxas/boxto types, use a single box type. A duration would be optional and a name required (as is the case for any type.
+box[optional_duration] name {...}.
+For instance, a 1 ms box w/ centered CNOT would be:
+Furthermore, I assume a box may only be used within a gate or a subroutine (or implicitly as {} in a lengthof)?
+So a box is not really a type, in the sense that it could be reused or passed to something else. It is just a mechanism for scoping and referring to a part of a QASM program (a subcircuit). Note that a subcircuit is different from a subroutine. A subroutine can be reused, a subcircuit is really a particular piece of code in the context it appears in. In that sense you might want to scope something without giving it a name, perhaps because you want some stretches to only matter and be resolved inside that box. This actually happens a lot, so I think having anonymous boxes is important otherwise you end up creating many unused names.
+In principle I'm ok with collapsing box, boxas and boxto into one keyword with extra optional tags for name and duration. Maybe this?
+box {...}
+box mybox {...}
+box [1ms] {...}
+box [1ms] mybox {...}
+(Tagging @levbishop in case he has further thoughts here).
+I think that makes sense.
+A few other minor clarifications:
+I prefer the idea of box rather than boxto or boxas, but I have a slightly different thing in mind to @ajavadia
+This ties into #121 where I think lengths are a  way of specifying constraints, not parameters, and those constraints are to be specified in square brackets as [list of linear function of stretches]
+So:
+This elminates the need for the "name" field of box, and requirement to wrap it in lengthof to extract the length of that name. If you want to add another way to refer to the length of a box, you can just include that name in the list:
+introduces mybox  as an alias for the duration of that box.
+It also has the advantage that we don't need to introduce scoping/aliasing rules for box names, rather the scope is just the scope of the stretch variable.
+The original motivation  for having "name" of a box as a separate field was because of the idea that maybe you could reuse a box by name, as @zachschoenfeld33 was pondering, but that seems tricky to specify at least when the box contents refer to virtual qubits rather than physical qubits. (My suggested syntax above does not preclude allowing a "name" field in the future qasm 3.1  if we decide a scoping rule and can figure out a consistent semantics to go with the syntax....)
+@levbishop what is implied by box [len1, len2]? We could also perhaps get around the "reuse" issue by instead defining a new gate which can be reused for each box. In this case, you'd just be using the box as a barrier and to specify a specific length, which seems to be its main intent (rather than redefining portions of circuits).
+box [len1, len2] specifies the constraint that all 3 of len1, len2, and the contents of the box must resolve to the same duration.
+Defining a new gate to reuse multiple times is the right way to specify a logical intent to perform the same logical operation in different locations of a circuit. The potential advantage of reusing boxes is more subtle - you could guarantee that the gates within the boxes are compiled to the exact same physical implementation each time. To force the TeX analogy: reusing a gate is like putting a snippet of text in a macro with \newcommand or \def and you'll get the same text but with potentially different line-breaks, hyphenation, etc, whereas reusing a named box would be more like putting the text in a \makebox, so the typesetting would be identical each use. You can imagine this being useful for some kinds of decoupling (or to go crazy one can imagine even doing zero noise extrapolation for error mitigation with some analogy to \scalebox to re-use the exact compilation but perform the scaling).
+The hard part with all this is that whereas for latex a box is just a rectangle of the page and can be relocated arbitrarily, for qasm the box has context within the circuit (eg the mapping of logical to physical qubits) and can't be so easily shifted, which is why this kind of box reuse would have to be restricted to only make sense for physical qubits, or have extra semantics that its setting up extra constraints to the routing pass so that the logical-to-physical mapping is held constant. This sounds tricky so I propose to skip it for 3.0 and revisit if there's a compelling use case at a point revision, since the syntax allows it to be backwards compatible
+Sorry for the delayed reply. This makes sense to me. So shall we go forward by not including any named boxes and instead having the syntax
+Closing via #206.
+How did you use the box type in qiskit? https://de.quantum-computing.ibm.com/lab/docs/iql/manage/systems/dynamic-circuits/feature-table states that it is not supported in qiskit. I am not able to use one, any suggestions are appreciated!
+box is forward looking for future QPU installations and is probably only supported experimentally in the lab at the present time.

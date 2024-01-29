@@ -1,0 +1,27 @@
+Describe the bug
+I try to build 0.8.0-rc1 for ALT Linux and found that 40 tests failed on armv7hf arch.
+Environment (please complete the following information):
+Full build log is temporary available there https://git.altlinux.org/tasks/321944/build/100/armh/log
+My (not expert in arm) debugging attempts:
+Can you try adding -DOQS_USE_RASPBERRY_PI to your CMake command?  We have some code in ds_benchmark.h that is allowed on ARM but guarded against use on Raspberry Pi since we know it doesn't work there, I'm wondering if the problem extends further to ARM32.
+I added -DOQS_USE_RASPBERRY_PI to CFLAGS[1] and after this all tests are passed.
+Thanks!
+[1] Adding to cmake command does not work:
+Okay, so that's the code that was causing the problem. Do you know how to do cycle counting on ARM32?  If not, then ideally we would update the CMake configuration to automatically detect ARM32 and apply the flag you did.
+I'm not an expert in ARM32, so I don't have personal knowledge, but I have heard that djb does libcpucycles, which appears to support some ARM32.: https://cpucycles.cr.yp.to/libcpucycles-20230115/cpucycles/arm32-cortex.c.html (not tested by me.)
+not tested by me.
+I tested and this (call to ticks and enable) produces Illegal instruction either. (And yes enable seems the same as your code.)
+ps. I fear there cannot be single solution for ARM32 since they are very diverse.
+not tested by me.
+I tested and this (call to ticks and enable) produces Illegal instruction either. (And yes enable seems the same as your code.)
+ps. I fear there cannot be single solution for ARM32 since they are very diverse.
+So probably we'll need to revert to using time rather than cycles. Do you happen to know a way to detect ARM32 in either CMake or C preprocessor macros?
+By this https://developer.arm.com/documentation/dui0774/e/Other-Compiler-specific-Features/Predefined-macros I think __arm__ is for ARM32, and __aarch64__ for ARM64. I tested this.
+JFYI:
+About cmake, my guess is if CMAKE_SYSTEM_PROCESSOR contains substring "arm" then it some kind of ARM32 (for example even if it's "armv8l"), if matches "aarch64" then it's ARM64.
+I'm not sure how to characterize which platforms it is acceptable on and which aren't, so the only strategy I have would be to turn it off on all ARM32 platforms.
+I've created #1485 as an attempt to fix it.
+But I wonder if it's actually a different problem -- it's not that the instructions aren't supported, but that they aren't available to user-space programs by default.  It's my understanding this is a problem on ARMv8 (https://github.com/mupq/pqax#enable-access-to-performance-counters) but it might also be a problem on ARMv7 (https://neocontra.blogspot.com/2013/05/user-mode-performance-counters-for.html).  The workaround on ARMv8 is to install a kernel module (see my first link) to turn on the Performance Monitor Unit (PMU) which then makes the required instructions available to user-space programs.  In our benchmarking code we have a configure-time option that lets you decide whether to use those or not (but still depends on you having the kernel module enabled.)
+I think our infrastructure admins will not agree to install some 3rd party out-of-tree kernel module on build farm (not even all in-tree modules, due to security reasons) just to run some tests.
+Also (I tried to run but) tests do not work in aarch32 KVM virtual machine.
+So the best approach sounds like to have configure-time option. (And by default to disable this on all ARM32.)

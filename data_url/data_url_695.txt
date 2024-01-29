@@ -1,0 +1,58 @@
+I have noticed three issues related to the rz gate.
+Qiskit result:
+
+In the preprocessor.hpp, rz is defined identically:
+https://github.com/softwareQinc/qpp/blob/main/qasmtools/include/qasmtools/parser/preprocessor.hpp#L66
+https://github.com/softwareQinc/qpp/blob/main/qasmtools/include/qasmtools/parser/preprocessor.hpp#L103
+But, their gate implementations are different depending on the USE_OPENQASM2_SPECS.
+https://github.com/softwareQinc/qpp/blob/main/include/qasm/qasm.hpp#L116
+Is that a problem?
+There seems to be a documentation problem here (https://github.com/softwareQinc/qpp/blob/main/DISCREPANCIES.md) The rz difference is not described but it is implemented differently.
+(2) They are defined in the same way, but the difference is in the matrix we use for the U gate:
+https://github.com/softwareQinc/qpp/blob/main/include/qasm/qasm.hpp#L563
+This is the main source of all existing discrepancies.
+(3) In both qelib1.incs, rz is identical to the u1 gate, so you can refer to that row in the discrepancy table for the implementations.
+However, in the "usual" gate definitions, rz and u1 differ by a phase shift. But it is impossible to implement both using OpenQASM 2 code because the language comes with only U and CX gates, and no way to apply a global phase.
+(1) Using OpenQASM 2's U gate, rz matches the "usual" definition (which is why it's not in the discrepancy table). Using Qiskit's U gate, rz matches the usual definition of u1 (which is why qpp didn't have the same output as IBM).
+This is also related to #70
+Thanks for the clarifications for the (2) and (3).
+I am still referring to the mode USE_OPENQASM2_SPECS=false. In that mode, it is your design intent to match the QISKIT behaviors, isn't it? I am not suggesting QISKIT is absolutely right, but it seems to work. I suspect they have done something special in the rz and u1 implementation.
+I did four tests to show the final states out of rz and u1 on QISKIT and qpp.
+In QISKIT:
+rz(pi/3) q[0]; // => [ 0.866-0.5j, 0+0j ]
+u1(pi/3) q[0]; // => [ 1+0j, 0+0j ]
+In qpp:
+rz(pi/3) q[0]; // => 1  0
+u1(pi/3) q[0]; // => 1  0
+So, the QISKIT does reflect what you said about "..., rz and u1 differ by a phase shift", qpp does not.
+Maybe it is more clear if we look at the OpenQASM 3.0 standard library (from https://arxiv.org/pdf/2104.14722.pdf):
+This matches the Qiskit specification. However, there is no equivalent to gphase in OpenQASM 2. If we ignore that and use a different matrix for rz, that will cause phase shift issues if the rz gate is inlined.
+I am ignorant of the "inlined" use cases, so I cannot comment on that. Can I read about it somewhere?
+Any workaround possible to deal with the situation? I don't have any useful suggestions.
+The identicality of rz and u1 in qpp won't allow me to do any Quantum Phase Estimation apps in QASM. So, I tweaked the rz and crz  mimicking QISKIT to suit my apps. So far, so good. But, I guess I will run into troubles when there is an "inlined" situation down the road.
+One example of a use case is if there are hardware constraints. The staq mapper fully inlines all gates to the builtin U, CX gate set.
+To resolve the issue, we can define rz as
+The extra x-u1-x-u1 sequence adds the required phase (assuming Qiskit standard gates). We're currently testing this change.
+@DevelopDaily can you check this now please?
+Passed the simple test cases. Will test more complex cases...
+The staq fails a slightly more complex test case. Here are two files (input-O2-output.zip): input.qasm and output.qasm, the latter being the result of this command:
+./staq -O2 -o output.qasm input.qasm
+Executing the example program qpp_qasm on them produces drastically different final states.
+From the input.qasm:
+From the output.qasm:
+Adding @meamy In staq, those changes are still on the dev branch (not yet merged to main). Can you @DevelopDaily
+please checkout the dev branch of staq and check again? https://github.com/softwareQinc/staq/tree/dev
+From the output.qasm, based on the dev branch:
+It still does not match that from the input.qasm.
+Is it technically possible to preserve the final state of a circuit after it is optimized?
+The current implementation seems to have been improved significantly. By the way, the input.qasm does quantum phase estimation. I couldn't do that on the output.qasm before this fix, but now I can. That being said, I am not sure if it will work for all the future more complex circuits.
+@meamy any idea? Looks like the final state in output.qasm is (at least at a quick glance) the same up to a phase (the coefficients seem to have same magnitudes as the ones in input.qasm)
+I did another test.
+./staq -O3 -o output3.qasm input.qasm
+The final state of the output3.qasm matches that of the input.qasm, bit by bit. Amazing! Looks promising.
+I don't know enough about the optimization theory. I did a superficial analysis of the output files from -O2 and -O3 options. The former contains two rz gates and the latter none.
+@vsoftco There's an issue with the rotation folding optimization with the changes to rz and u1, which @DevelopDaily identified above. With both types of rotation gates, the overall global phase correction becomes harder to compute.
+For the time being, we can merge in the changes and turn off global phase corrections, since they'll be incorrect anyway. This kind of semantics-breaking behaviour is something common in optimizing compilers anyway, but we should note it and plan to fix it eventually.
+Thanks for the help @DevelopDaily!
+@meamy Thanks, merging into main, but will keep the issue open
+closing here, and leaving it open on staq softwareQinc/staq#45

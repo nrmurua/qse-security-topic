@@ -1,0 +1,31 @@
+We need a better way to visualize DAGDependency objects, so that we can understand from the picture on which qubits each gate acts on.
+As an example, consider the following:
+Drawing this QuantumCircuit with
+produces
+
+from which it's very clear to understand on which qubits each gate acts on.
+Converting QuantumCircuit to DAGCircuit and drawing it with
+produces
+
+and again it's easy to figure out on which qubits each gate acts on.
+However, converting QuantumCircuit to DAGDependency and drawing it with
+produces
+
+from which it's almost impossible to figure out which gate is which, or what set of qubits it acts on.
+It would be nice if for each gate in the last picture we could explicitly see the qubits it acts on.
+Could you define the purpose of having a DAGDependency graph? (Given that we can have circuits printed and we can have the flowchart of unitary action printed out in the DAGCircuit)
+The DAGDependency is an internal representation used in some transpiler passes as it far better represents the commutation relations between various gates than the DAGCircuit which is a data-flow graph.  The object already exists in Qiskit - this issue is just about improving its drawing.
+Sasha: I think a lot of improvement could be achieved quite simply; the actual graph drawing right now is passable, it's just that the description function for nodes (and edges) makes some suboptimal choices.  The nodes could be improved a lot, for example, by just changing these lines: https://github.com/Qiskit/qiskit-terra/blob/3ce1737b2cb1b417c5bf9c41073d3ab4a664a732/qiskit/visualization/dag_visualization.py#L78-L103
+I played around with the code a bit and I believe there is a fundamental problem here. There appears to be no "in" or "out" DAGDepNodes, which means no red or green nodes can be shown. And the edge that's passed to the edge display function is a dict that has {"commute": False} in it instead of a qubit or clbit. So none of the qubits shown in the DAG version on the wires are available.
+I was able to make the output a little prettier, but no additional information can be shown without significant changes to the DAGDependency and DAGDepNode classes.
+
+@alexanderivrii Actually after thinking this over, I realized there is a lot more info available, mainly in the qargs and cargs with each node. Also I didn't realize that these graphviz ovals would automatically expand with the size of the label. So I came up with this for this circuit.
+
+Let me know if there are any changes you'd like in color, info, etc.
+Thanks @enavarro51, this is exactly what I have originally wanted! And looks much prettier!
+Personally I don't care too much about colors. @Cryoris, since you have been looking at color schemes in other contexts, maybe you can comment?
+Just a few questions from looking at the diagram above. What would the picture look like if we had a barrier (or some other gates) over many qubits?  Would it make sense to include the full information vs. some partial information? In addition, the green conditional "x"-gate only shows that it's conditional, not the actual classical bits. Do we want to see these in practice? (Note that these are questions and not implementation suggestions, since I don't know what's the best from the user perspective.)
+Yes, good point about the barrier. You certainly could have a 100-qubit barrier. What we've done on the circuit drawers for things such as parameters is to truncate at some point and add "...". In the image below I limit it to 5 qubits/clbits.
+For c_if, IfElseOp and WhileLoopOp, it was pretty straightforward to add the condition as long as it isn't an expr.Expr expression.
+I've submitted PR #11103 and will update it with these changes.
+

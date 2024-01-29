@@ -1,0 +1,25 @@
+Calibrations that are defined for gates whose parameters are precisely of type float seem to roundtrip through QPY just fine.  However, if the calibration is made to a gate whose parameters are fully bound ParameterExpressions, then a QPY-roundtripped circuit doesn't seem to recognise the calibration any more.
+gives
+Notably, roundtrip(qc2_t) still does appear to have the requisite calibration, it's just not quite recognised correctly:
+The roundtripped circuit should still recognise that it has a calibration for that instruction.
+I think what's happening is that the floating-point number in the ParameterExpression is changing by 1 ULP, which sounds suspiciously like there might be a dodgy float-to-str conversion happening somewhere in the ParameterExpression handling in QPY?
+I mean, the underlying cause is another of these things where fully assigned ParameterExpressions not immediately becoming regular floats is causing problems.  But either way, if it happens with bound ParameterExpression, I'm sure there'll be mechanisms to trigger it with bound ones as well, we just don't notice as much if they're like 1ULP differences in a random float coefficient in a mostly symbolic calculation.
+See Qiskit/qiskit-ibm-runtime#666.
+cc: @kt474, @nbronn.
+Investigated. This is the issue of ParameterExpression roundtrip as you mentioned, which is happening here.
+https://github.com/Qiskit/qiskit-terra/blob/6829bb18cf791960896fe72b9be9611aac44155a/qiskit/qpy/binary_io/value.py#L50
+repr of obj. _symbol_expr is -1.71319829743142 but float(obj. _symbol_expr) is -1.7131982974314244. Likely sympy srepr command (we still rely on sympy for serialization) takes repr of symbolic expression which likely has smaller significant digit.
+My old PR could address this issue if symengine is available in your environement. Basically symengine expression can be directly serialized without making plain text, i.e. obj.__reduce__()[1][0].
+(Edit) The PR above has dependency on the next release of symengine, which has not been released for a while.
+Likely sympy sympify reduces the digit, not srepr. i.e.
+Here simplify is used to typecast symengine Expression to sympy Expression to use srepr.
+Unfortunately looks like your PR's still on hold, since the necessary Symengine fix is merged to main, but they haven't cut a 0.10.0 release.  Other than that, though, yeah, your PR looks like a much more straightforwards way to go than serialisation to string.
+Thanks for your comment on my PR. As you pointed out, my PR would break portability of QPY data. We need another mechanism to serialize expression without changing significant digits, or we should promote symengine to be required. Alternatively we could use single precision floating point in circuit calibrations dictionary.
+Python doesn't natively support single-precision floats, so I suppose what we'd really be saying is that we round the stored data in QuantumCircuit.calibrations off to a certain number of mantissa digits.   That feels a bit gross to do it at that level of round-off, because there'd be cases where certain parameters being 1ULP off each other would need separate calibrations, while others that were $2^{28}$ ULP off will compare equal.
+Making the calibration dict fuzzy in any way just to support deficiencies in parameter serialisation via QPY is probably not going to be very satisfying.  I wonder if we could accept a performance hit in QPY where we verify on write-out that the roundtrip is exactly equal, and revert to some slower-but-safer serialisation method if it isn't?  I'm not very sure what that would be, though.
+Hmm me neither. Probably we can typecast expression to float before calling sympy simplify.
+I think this doesn't break any reference.
+(edit) but we cannot recover digits of coefficients in unbound expression. this could be an issue for QASM3 with offloaded parameter binding?
+I found that it's a bug of symengine. See symengine/symengine#1901. It rounds float value with wrong digits, which may affect translation of symengine expression to sympy expression, which is necessary for serialization in QPY. Note that this issue has been already fixed in their master branch but just not released. I tried to install their master branch but it was really complicated and I gave up. I think we just need to wait for symengine 0.10.
+For temp fix you can uninstall symengine from your env. This allows you to bypass the expression typecast at the price of performance.
+fyi symengine/symengine.py#433

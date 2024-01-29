@@ -1,0 +1,27 @@
+Presently, the Circuit class provides fairly sophisticated method for inserting operations which is useful for writing optimizers (e.g. insert earliest). I think this is a misplaced responsibility. Circuit should be a simple(*) container for storing and organizing gate operations but without circuit optimization logic. In particular, all insertions should require the client to say where the insertion is to occur. If some gates need to be moved earlier to reduce circuit duration by filling empty moments, then this counts as a circuit optimization and should therefore live in optimizers, not the Circuit class.
+One reason for this separation is pure esthetics of the Circuit-as-a-simple-container approach. A more practical reason is that Circuit is a core concept in cirq and as such it should be simple, reliable and very stable over future releases. These properties are easier to obtain when complicated logic like circuit optimizations lives elsewhere. This is inspired by some reflection on #2743.
+Concretely, this issue proposes to remove InsertStrategy from Circuit and instead introduce the functionality as an optimizer. This would be a breaking change that would need careful and gradual introduction. It's one of the things we'd want to complete before v1.0.
+Note that another welcome effect of this change would be simplification of Circuit API.
+I'm curious what y'all think.
+(*) For the purposes of this issue, containers such as priority queues count as complex containers.
+I know we're not technically at v1.0 but I'd consider circuit construction as a feature for which we already offer a high degree of backwards compatibility and for which there is already likely lots of code in the wild depending on it. This sounds like a reasonable request for v2.0 several years down the line :)
+I agree the insert methods are confusing and hard to use (I usually fail the first time).  One part of this is that this is because they behave differently depending on the content of the container, and that's not something that we typically encounter.
+I disagree a bit that this functionality should be put in optimizers, there is something particularly nice about using EARLIEST insertion strategy when building some circuits.  Build, then compress, feels odd.  Maybe what we are missing here is a the proper language for defining these behaviors.  I have a similar feeling when I use PointOptimizer.
+As @mpharrigan says these might be widely used now.  I do wonder how many people use each insert strategy or the frontier or batch insert methods.
+What do we think? Is there a maintenance burden to continuing to support the methods we already have? Should we start the deprecation process?
+I think the arguments above that Circuit should be simple, robust and slowly changing still stand, but before we decide, we should address the convenience issue raised above by @dabacon.
+One approach consists of upgrading insert strategy from a mere enum that it is today to its own standalone type (a class or a set of functions with matching signatures) and then factoring the insertion logic out of Circuit into this new type (rather than new optimizers as suggested earlier). If done properly, this achieves the desired decoupling of Circuit from InsertionStrategy.
+In practice, the two types - Circuit and InsertionStrategy - would be used like this:
+The signature of Circuit.insert would change to:
+IOW, Circuit would never have to come up with clever ways to compute insertion index. Instead, it would delegate that logic to whatever was passed in as the "index" argument to insert.
+WDYT?
+Sounds like a decent idea to me, xref #3246
+I disagree that circuit should not have "push to left" functionality when appending. I use this functionality all the time.
+Allowing precise commands does not mean you have to remove convenient commands. This would be like requiring all calls to np.array to specify a dtype, because the type inference is a bit finicky.
+I agree in principle with removing insertion strategy, because I haven't specified one since EARLIEST was made the default and we added support for moments behaving precisely like list items.
+Oh, I was imagining the default would still left-align
+Circuit.append would remain unchanged, i.e. it would continue to call Circuit.insert with cirq.EARLIEST insert strategy (as it does today).
+Observations from ~two years later:
+There's definite merit to this (especially given the last point above), but as Matt pointed out Circuit is the cornerstone of Cirq, and this would be a major change. Given that we're currently avoiding new designs in the ramp-up to 1.0, I vote in favor of postponing this to after Cirq 1.0.
+Pinging @MichaelBroughton for confirmation.
+Item 3 from the above comment will be taken care of in #5332 (assuming users pass an array with all their ops into the Circuit constructor rather than iteratively calling append).

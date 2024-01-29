@@ -1,0 +1,38 @@
+function pip |> cannot indicates side effects of blocks, and with is too complex. We should remove these two first in v0.2. And add something better when we are able to.
+Good side of |>
+e.g. we have a circuit of GAN, register is under the following operations
+generator circuit, add one ancilla qubit, discriminator circuit, measure
+It is natural & cool to code like
+reg |> generator |> addbit(1) |> discriminator |> measure.
+rather than
+measure(apply!(addbit!(apply!(reg, generator), 1), discriminator).
+Register's content can change under operator is ituitive, which has no confusion. This should be a superior rule than Julia's side effect must have ! rule.
+@GiggleLiu check this, just a proposal, inspired by MXNet.jl, the problem is to keep use |> as an eye sugar without implicit using its original meaning on pure functions pips, we should use a macro (which is designed to do this job):
+Case 1:
+Case 2 (Nested)
+The main problem of |> is because when |> is overloaded as apply! for blocks, this is actually different with function calls. Function calls can use function name to represent the side-effect explicitly:
+However, since any block instance can use |> now, then we have
+And it is hard to notice (at first glance), if you do not want to tweak your original registers you need to write
+This could be quite misleading with the original capability of |>. This will reduce our code's readability as Yao is designed for humans. This could be something bad.
+However, what is the different with a @chain and |>? similar with MXNet.jl, no matter what you want to do with such a chained circuit, you just want to use |> to chain them together with good readability, which is great.
+Without @chain, this could be hard to implement and can be ambiguous
+The situation is, if people use |> as a functional
+this works, but when you want to use the object of this circuit, you have to re-write it again with chain function. This is not necessary. Say if I need to call adjoint or mat, how do I get a concrete object of a long chained circuit with |>?
+does not look possible!
+We should use |> to construct a object of a circuit rather than function call. Or you will need write more code. Especially, when someone is using REPL (you don't have the object you are actually using).
+To implement this with only |>, you will need to define a mid-type to capture the constructor state in the runtime, let's say ChainContainer
+or you will mix up with un-expected Chain
+To solve this problem, you have to mess up with more definition on|>.
+similar for the original with and with! implementation, it requires a type for Context, this will tag a register and decide whether it will use copy, which is totally not necessary.
+You can use |> happily now, since this is in an macro, it is safe! and nested macros will solve the
+ambiguity naturally.
+See? this macro produce better readability and less parenthesis! And it is easy to implement without any mid-types!
+for the original with method, print it inside with environment is confusing:
+whether to print the register or the Context?  There will be too much noise if you print the Context (nobody care about this), but it would be confusing if you print the register.
+And you need to write a register for twice: first to pass it to with, then define the callback, and callback can be dangerous.
+Firstly, We want something easier to use than apply!(reg, block). At this point, with and @chain is not acceptable, they make things even more complicated.
+You are basically saying all functions with side-effect should append !, without exclusion.
+We all know it is impossible. Because we can bind call to a type, but the name of instances are not decided by us.
+My concern comes from practise, I'd like to use reg |> circuit1 |> focus!(2,3,4) |> circuit2 |> relax!, interweaving functions and circuit, functions are ended with !, but circuits are not. We can distinguish the intances and methods immediatedly. It is very convenient and Cool!.
+Register passing a circuit, it changes, there is nothing non-intuitive, A ! is redundant.
+So, the decision is to keep |> for those pipe lovers, but for who cares safety, there is also an explicit apply!.

@@ -1,0 +1,13 @@
+When running on OSX or on Linux without the environment variable OPENSSL_NO_CLEANUP set, the execution of openssl speed oqssig (or any specific algorithm with the name 'picnic' in  it) causes a memory error.
+A possible avenue to pursue is running tests with -DUSE_SANITIZER=Address to track things down (as per suggestion by @xvzcf ).
+Is this still occurring after #169?
+will check again...
+Yes, error definitely still occurs when running plain or hybrid picnic in openssl speed:
+(both with Debug and Optimized liboqs)
+I'm wondering if this is a picnic or a big-signature problem. We currently only support picnic, but a larger sig alg could be set with OQS_SIG_DEFAULT and see if the same problem occurs.
+Try this with other algorithms after they've been added in #144.
+Nothing changed after doing #144 : Still it's only picnic causing such crashes. But then again, we did not add new signature algorithms...
+I traced the failure to src/sig/picnic/external/mzd_additional.c's mzd_local_free_multiple function, to the aligned_free call. There is special handling of this function in liboqs, and will need to be revisited. I'll check that next week.
+The Picnic team pushed a v2.2 version last month to fix a few things, just before releasing v3. I'll plan on integrating the v2.2 update in this OQS release, hopefully that would help with this issue as well.
+The picnic aligned_free was a red herring; the problem is due to a size limit in OpenSSL's speed.c. They expect signatures to be no more than 16,384 = 16 * 1024 (last element of the lengths_list array defined on line 216). Adding a last value larger than picnicl1fs's sig length seems to solve the issue. I'll make a few more tests and push a fix. (Thanks to @sebastinas for the help)
+Fixed by #178

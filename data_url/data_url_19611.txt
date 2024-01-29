@@ -1,0 +1,20 @@
+Hello Oscar,
+thank you very much for this very nice MWPM implementation.
+I ran some benchmarks on the 3D Toric code and noticed some strange runtime behavior. At really small error rates, the decoding time actually starts to increase. See the graph below.
+
+For benchmarking, I used a slightly modified version of the 3D Toric code example from the documentation.
+What is the cause of this behavior and can it be avoided?
+Thanks,
+Kai
+Hi Kai,
+Thank your for bringing this to my attention and for the analysis. Although slightly counterintuitive, this is actually expected behaviour. As you increase p, while there are more defects (highlighted nodes), these defects are also closer together in the matching graph which reduces the complexity of the local Dijkstra search for any defect.
+More concretely, suppose you set num_neighbours=m and that the syndrome has weight c (there are c defects). We'll also denote the number of nodes in the matching graph by N. Assuming the noise is homogeneous, we expect a subgraph with roughly  nodes to contain m defects. In local matching, a local Dijkstra search is performed starting at each defect, and each search halts once m defects are found. Dijkstra's algorithm has complexity O(x log(x)) for a graph with x nodes. Therefore, each local Dijkstra search has complexity O(m/p log(m/p)), and there are O(pN) such searches. This leads to an overall runtime for the Dijkstra step of O(Nm log(m/p)), which is a monotonically decreasing function of p, consistent with what you observe at error rates around 10^{-3}. The assumptions above don't hold for all error rates - for sufficiently small p (e.g. 10^{-4} in your example) there are fewer than m defects, and for sufficiently large p, the number of defects is no longer well approximated as being proportional to pN. But the behaviour you ask about at error rates of 10^{-3} can be explained by the above argument.
+The blossom algorithm step's runtime is a monotonically increasing function of p, but the dominant cost in the regime you mention is the local Dijkstra search. I added the runtime of local Dijkstra and the Blossom algorithm onto your plot to demonstrate this:
+
+Note that at low p and for sufficiently small L you could use exact matching (setting num_neighbours=None). This method precomputes all the shortest paths, which uses memory and time quadratic in N and can be prohibitively expensive even for L=31. However, once this is precomputed, the time per sample can be faster for small p, and is a monotonically increasing function of p. E.g. here are runtimes for L=21:
+
+I'd generally recommend just sticking to local matching though, given how memory intensive the exact matching option is for large L.
+I hope this helps,
+Oscar
+Thank you for the quick reply. This really clarifies the matter and is a great help for me.
+I am closing the issue.

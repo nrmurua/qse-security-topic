@@ -1,0 +1,43 @@
+In ssl/ssl_local.h, there are #defines that assign one-hot encodings to each signature algorithm. These encodings are used in ssl/ssl_cert_table.h, and are assigned to a uint32_t variable called amask here.
+Since the encodings are one-hot, at most 32 different signature algorithms can be encoded, and since 8 bits are already used up by OpenSSL by default, at most 24 different OQS signature algorithms can be encoded and assigned to amask at any given instant.
+This (possibly?) prevents us from enabling all signature algorithms by default, and the question is how we should deal with this.
+TLDR: After checking the code I don't see a problem going beyond the possible amask bitcount (32) with OQS algorithms, i.e., activate all OQS-sigs. Minor caveat on clients not sending sigalgs: See below: Ideas how to trigger that welcome.
+Full rationale:
+Source code analysis (code review plus walk-through by debugger) of all places where amask is utilized (discarding/assuming as irrelevant its uses in test and its own declaration in ssl_local.h):
+
+
+--> use guarded for !TLS1_3: not applicable to OQS-OpenSSL (running only TLS1.3)
+
+--> ECDSA only: not applicable to OQS-OpenSSL
+
+--> No cipher alg is associated with an OQS auth alg; thus, this case cannot trigger (in testing for example cipher is always TLS_AES_256_GCM_SHA384 ensuring this code path is not reached at all) -> also no issue
+
+--> seems OK, but cannot validate 100% as I do not know how to enforce the client to NOT send a list of supported sig types.
+
+--> Again, only operates on legacy algs in disabled_mask: Not applicable to OQS-OpenSSL
+
+--> This code/function tls12_get_cert_sigalg_idx would only trigger on TLS < 1.3 as per this:
+
+--> Again, not applicable to OQS-OpenSSL
+Is this the reason why dilithium family errors out? It says the algorithm is not enabled when generate.ylm says it is true.
+Is this the reason why dilithium family errors out? It says the algorithm is not enabled when generate.ylm says it is true.
+I'm not sure I understand either statement: How/why does dilithium error out? What (command?) says it's not enabled?
+Oh I am sorry I thought these my problem was related to this. "Since the encodings are one-hot, at most 32 different signature algorithms can be encoded, and since 8 bits are already used up by OpenSSL by default, at most 24 different OQS signature algorithms can be encoded and assigned to amask at any given instant." I thought that was referring to some algorithms not being enabled. I will create a new issue sorry I jumped in this thread.
+After having just enabled all algs, this is the (not entirely surprising) response by a self-respecting compiler (OSX):
+--> We'd need to "widen" integers beyond 64 bits, it seems. Doesn't feel right.
+What'd be the rationale behind including all algs? Do we really need all? The count of Sphincs' algs alone made me dizzy....
+Including all algs would mean that CI runs do test every single algorithm; right now, we manually enable and test all the algorithms before a release. It would also mean that users wouldn't have to go through the algorithm enabling process.
+It would also mean that users wouldn't have to go through the algorithm enabling process.
+Do we know users that need all these algs? On which platforms? Wouldn't it be a better approach to have a "representative" set of algorithms enabled (similar to what we have now) and do "the full monty" with all algs only on release? All it'd need for the latter is running sed over the checked-in "representative" generate.yml to save us any manual effort and save the CO2 emitted by CCI doing over-and-over the same tests.
+As a concrete proposal: What about disabling by default all algs that don't truly "teach something new"? For example, why have SHAKE and AES and plain ref algs for the same family and NIST level? What about asking all algorithm "owners" about a priority list and then using that to curtail each family at the same count (say 1 alg per NIST level)?
+Do we know users that need all these algs? On which platforms?
+Not that I'm aware of, I just see this as a secondary nice-to-have.
+Wouldn't it be a better approach to have a "representative" set of algorithms enabled (similar to what we have now) and do "the full monty" with all algs only on release?
+There's still a small chance we might not catch certain errors until release testing time, but this should be low as long as the algorithms are representative enough (which I've tried to ensure here and in OpenSSH).
+As a concrete proposal: What about disabling by default all algs that don't truly "teach something new"? For example, why have SHAKE and AES and plain ref algs for the same family and NIST level? What about asking all algorithm "owners" about a priority list and then using that to curtail each family at the same count (say 1 alg per NIST level)?
+When I took a shot at something like this last year, it was not well received, but we can revisit this.
+Not that I'm aware of, I just see this as a secondary nice-to-have.
+Then I'd say we take our responsibility for the environment more serious and run all algs as rarely as reasonable.
+When I took a shot at something like this last year, it was not well received, but we can revisit this.
+So maybe a topic for our call (@dstebila ?)
+Agreement to leave as-is for now & extend release testing along the lines discussed above.

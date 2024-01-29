@@ -1,0 +1,36 @@
+Currently, the setup.py file uses brew to find llvm: 
+Would it be possible to remove that and use a different way?
+I am the maintainer of the conda-forge distribution of pennylane-lightning and we do not use brew in our CI so I am currently unable to package pennylane-lightning for OSX.
+Ref: conda-forge/pennylane-lightning-feedstock#12
+Logs: https://dev.azure.com/conda-forge/feedstock-builds/_build/results?buildId=552109&view=logs&jobId=9c5ef928-2cd6-52e5-dbe6-9d173a7d951b&j=9c5ef928-2cd6-52e5-dbe6-9d173a7d951b&t=20c71c51-4b27-578b-485d-06ade2de1d00
+Hi @BastianZim thanks for getting in touch.
+Our method for building wheels for Lightning relies explicitly on the Github Actions runners and their supported packages, of which homebrew is a relied upon toolchain provider (see here).
+Since we require full knowledge of the build tooling and system for standardised runtimes performance and debugging, we may find it difficult to provide support for wheels not built within the same compiler tooling as we use for each targeted release. Is it possible for your system image to be updated to include the same brew infrastructure as we use, or potentially use the provided Github Runner images in your build process?
+Hi @mlxd thanks for the explanation.
+Conda-forge uses the same build environment across all of its packages to guarantee compatibility, so, unfortunately, I cannot change anything in the underlying tools. I am able to set newer compiler versions but nothing else.
+From what I can see, you're just using the command to find the compiler, so would it maybe be possible to replace that with something different? If not, no worries, then I'll try to add a patch in conda-forge that switches that for a different approach.
+Hey @BastianZim we currently use the brew clang to build wheels for x86 Macs. Largely the reason for this was the older MacOS 10.14/10.15 runners had insufficient C++17 and C++20 support for our builds, so we needed a more updated compiler. The MacOS 11 runners had updated compiler infrastructure and allowed us to build safely for the Arm variants. We recently ported the now deprecated MacOS 10.15 builder support to MacOS 11 runners for x86, but still rely on brew for the compilation there.
+We likely won't deviate from that for some time, but we do have on our roadmap to rely entirely on the Apple toolchain for a future release on x86.  We will also need to understand the performance impact of the compiler change, so this is currently not going to happen until PennyLane Lightning v0.27.0 at the earliest, which is expected a little later in the year.
+We can keep this issue open and report once this change has been made. Does that work for you?
+Ahh ok – thanks for the clarification. So you first install everything with brew, and then in the build script, use brew to identify where everything was installed?
+If I install the necessary toolchain myself and then add a patch to the llvmpath = subprocess.check_output(["brew", "--prefix", "llvm"]).decode().strip() line I should be able to rely on our own compilers and still be able to run everything, correct?
+We can keep this issue open and report once this change has been made. Does that work for you?
+Yes that would be great, thank you!
+Ahh ok – thanks for the clarification. So you first install everything with brew, and then in the build script, use brew to identify where everything was installed?
+Yes, that is right. Brew on the Github Actions runners comes preinstalled with everything, so we pull the paths in the subprocess line, and use that for the rest of the process.
+If I install the necessary toolchain myself and then add a patch to the llvmpath = subprocess.check_output(["brew", "--prefix", "llvm"]).decode().strip() line I should be able to rely on our own compilers and still be able to run everything, correct?
+If you strip the above line, provided your version of LLVM or GCC is modern enough it should work as expected. We are currently defaulting to clang-13 in the builds, so if possible I'd recommend to use that or newer.
+Ok that's great! From my side, this is then resolved.
+Happy to keep the issue open if you want to use it for tracking, otherwise I can also close it?
+Thanks @BastianZim
+Let's keep it open, and I can update here once the builds are updated on our side.
+Hi @BastianZim we are currently looking at improving the support for the conda-forge builders you have provided. We can aim to start with this request, and see what else we need to bring the latest v0.28.0+ releases. Do you still have the time to help with maintenance on the recipe side?
+Hi @mlxd that's great, thanks! Yeah happy to help out wherever I can. If you're familiar with conda-forge, also happy to add you (or anyone else) to the team.
+For the overall process, removing brew and allowing us to optionally (Maybe through an env variable) provide our own third-party dependencies instead of building them together with this package during the build step would make it much easier.
+Thanks @BastianZim I'll chat with the team and get back to you shortly on handling this.
+As a long term plan, I'd like to understand the conda-forge build system, so once time permits we'd be happy to have somebody added to the team.
+Hi @BastianZim , I would like to assist you in resolving this issue. I'm not familiar with conda-forge yet, but I would like to be part of the team if that helps.
+Since it appears that your problem is caused by a single line calling brew, I think the simplest thing would be to change the value of llvmpath with an environment variable, LLVM_ROOT_DIR say, as you suggested. Link to the commit.
+Hi everyone. Thanks for the help here and the PR. I've added some comments there but also invited @vincentmr to the org; that PR should come momentarily.
+That should give you full rights, so please feel free to add more from your team, if required.
+I'm not completely familiar with the exact build process you use besides what I've done so far, but happy to answer any questions you have about the conda-forge process.

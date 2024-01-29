@@ -1,0 +1,22 @@
+Hi all,
+@SamuelDeleglise and I are currently trying to deal with the problem raised earlier in issue #415 : trying to phase-lock a two-laser beatnote with a reference signal at 40 MHz, we are limited by the "naive" FPGA implementation of the PFD (the 125 MHz sampling being a limitation when using a simple rising edge counter). I think it deserves a dedicated issue.
+I digged a little into the Verilog code to try and improve this PFD, and managed to write a new module, taking the I and Q signals of the IQ demodulator as inputs, and giving the phase atan2(Q,I) as output, thereby extracting the phase of the beatnote in the rotating frame at 40 MHz over several times 2pi. To do this I used a pipelined CORDIC algorithm, as suggested by Samuel earlier, which is able to calculate the phase with a few mrad precision with an approx. 10 clock cycles latency. I know the code works (up to a few details that can be solved quickly) thanks to single-module simulations.
+However, when trying to implement it on the RedPitaya, synthesis fails because it requires more ressources than those available on the FPGA. As you can see on this screenshot, the LookUp Table occupation jumps from 98% (with the current implementation) to 112% after synthesis. I believe my module's efficiency can be partly improved, but the 2% margin we have seems quite impossible to reach...
+
+As a total beginner in the domain of FPGAs, I would like your advice on how to make better use of the ressources. So far, the different options we see are the following : abandoning some other modules that we don't use for our specific setup (dropping an unused iq or pid), or trying to use the RedPitaya's RAM, which doesn't seem saturated at all, either for my CORDIC implementation or for already existing modules (like the scope?). I believe the second option is more viable, but I have no idea how complicated it would be to set it up.
+I am willing to learn how to do this, but we would be interested in a more experienced opinion before getting started.
+Hi,
+Waiting for a piece of advice, I tried to check if my implementation worked by making it lighter: I dropped some LSBs in the input signals (I and Q) and encoded the computed phase on fewer bits (reducing the number of iteration of the CORDIC algorithm). I managed to make this fit into the FPGA limited ressources by temporarily suppressing the iq2, and implementing the new PFD module only on iq1 (leaving iq0 with the previous version of the PFD). The LUT space occupied after synthesis is now approx. 83%.
+Here's the result on a 20 000 001 Hz signal demodulated at 20 MHz by iq1 : the green curve is the in-phase quadrature (I), and the red curve the (new) PFD signal calculated by iq1 (sorry for the visibility on the screenshots):
+
+In case of saturation, as the 2pi ambiguity cannot be resolved anymore, the PFD goes 2pi backwards to keep track of the phase anyway:
+
+I think these results are pretty encouraging! Yet, I need to find a way to make it fit in the ressources when implemented on every iq (without suppressing iq2). You can fing the Verilog code in the "modif_fpga_pfd" branch, maybe it can be optimized too:
+https://github.com/lneuhaus/pyrpl/blob/modif_fpga_pfd/pyrpl/fpga/rtl/red_pitaya_pfd_block.v
+If you have ideas for the next steps, I'm ready to try them !
+Thanks
+I suggest you use the branch max_hold_no_iir, where I have recently made a few additions and in order to fit everything on the chip I removed the costly IIR module, so there should hopefully be enough free resources for your design.
+Very encouraging results by the way! Maybe a useful test would be to check the "capture range" of the PFD, i.e. instead of trying on a signal 1 Hz away, rather try something like 10 MHz away and see if the behavior is acceptable.
+Thanks, I'll try to compile on the other branch!
+It seems to work really fine for very large frequency differences between the signals, here you can see a switch from a 30 MHz signal to a 10 MHz signal, still demodulated @ 20MHz:
+

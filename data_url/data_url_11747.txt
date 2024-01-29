@@ -1,0 +1,52 @@
+{'qiskit-terra': '0.10.0.dev0+d2b15b1', 'qiskit-ignis': '0.3.0.dev0+d2cc445', 'qiskit-aqua': '0.7.0.dev0+888bfbe', 'qiskit-ibmq-provider': 'dev-47753aead920ca479afea95f232d82497376a0d4', 'qiskit': None, 'qiskit-aer': '0.3.0'}
+Python 3.7.4
+Linux dccpc414 4.14.0-115.el7a.ppc64le #1 SMP Tue Sep 25 12:28:39 EDT 2018 ppc64le ppc64le ppc64le GNU/Linux
+Incorrect results when using psi4 from aqua because of lack for support for long double data types in hdf5 on P9.
+When psi4 is used in aqua programs, it's invoked as a separate process and uses hdf5 files as a means of IPC with the host aqua program. However, any long double data types (128-bit fp) are incorrectly serialized (and deserialized) to (from) hdf5 files on P9 because of the following issue (copying from my post in a slack channel):
+It turns out, POWER9 has two modes for the internal representation of long double, inherited from the former generation of POWER. Each is 128-bit, and one representation implements this algorithm, https://en.wikipedia.org/wiki/Kahan_summation_algorithm, and the other is IEEE754 float128, which is what I imagine most software expects but nobody apparently uses because it breaks the compatibility with former generation code. Furthermore, both modes are mutually exclusive. I had a chat this morning with some folks in the HDF5 community and I’m told this is a known issue with HDF5 and P9, and there’s a working session on the subject at the upcoming HDF5 conference. A workaround for some users who can live with it has been to disable support for long double on P9.
+I attached a stand-alone psi4 program to repro, derived from QMolecule (qiskit-aqua/qiskit/chemistry/qmolecule.py). I'm sure I can whittle it down to something much smaller, with no qiskit code and using only python+hdf5; regardless, the attached input.dat file can be run simply with the psi4 command. You can then examine the resulting hdf5 file, /tmp/p9test.hdf5, with an hdf5 browser, e.g., h5nav or HDF5's HDF5View, which will show the values for any 128-bit fp value in it as NaN (or QMolecule.load() and QMolecule.log() it to see the same), e.g., the values for atom_xyz.
+Note: You will nee to change the sys.path in the attached test program.
+Correct 128-bit fp (long double) values serialized-to/deserialized-from hdf5 files on P9.
+Fix hdf5. Or, why not add json as an option for serialization/deserialization, since hdf5 seems like a heavyweight solution for this particular use? Or, can psi4 be used as a library from within aqua, in which case you wouldn't need a temp interchange file?
+input.dat.txt
+Oops...premature send...still editing.
+What version of h5py do you have installed? The latest 2.10 as released a short while ago?
+pip show h5py
+Name: h5py
+Version: 2.9.0
+Summary: Read and write HDF5 files from Python
+Home-page: http://www.h5py.org
+Author: Andrew Collette
+Author-email: andrew.collette@gmail.com
+License: BSD
+Location: /u/jlatone/anaconda3/envs/qiskit-dev/lib/python3.7/site-packages
+Requires: numpy, six
+And, someone from the HDF5 community acknowledged the issue for POWER9, as I stated above: "...I’m told this is a known issue with HDF5 and P9, and there’s a working session on the subject at the upcoming HDF5 conference."
+Can you give 2.10 a try? - it talks about changes related to long double. It only came out a couple of days ago.
+I don't yet see a 2.10 version for P9 (linux-ppc64le), Steve. I'd have to try to build one.
+Sheesh, sry for not posting this from my IBM enterprise github account (2 github accounts--1 regular + 1 enterprise--with the same email is messy). Anyway, I'll continue as is.
+Quick question about HDF5 and h5py: Do I need to build+install both, or does h5py contain a copy of HDF5? I tried building HDF5 and it didn't build out-of-the-box without test errors so I was going to go look at h5py before digging deeper.
+Joe, if you have HDF5 installed it seems that h5py should be able to be built against this, but needs the dev headers are available, according to the h5py install instructions http://docs.h5py.org/en/stable/build.html#source-installation
+I have always installed this from pre-built wheels and do not have any experience of installing from source as described there.
+I have always installed this from pre-built wheels_
+Not a luxury I have on P9.
+What I'm asking is: I assumed h5py was simply the Python interface to an underlying HDF5 install, no? In which case I have to build both HDF5+h5py. Or, is h5py a full implementation of the HDF5 standard?
+To my other questions: Can't this be done with json? There's probably a python component to serialize/deserialize a python object in json. Or invoking psi4 as a library to avoid the intermediate file altogether? I'm asking because given what I'm experiencing trying to build various 3rd party components on P9, it'd be much easier. And from what I'm gathering, the P9 long double issue is likely not fixed because you somehow need to deal with both modes on P9 for the same datatype.
+From my reading of the h5py install guide which I linked above my understanding was that HDF5 install was separate and as long as that was installed and you have the dev headers for it then h5py would build. As said though never done this.
+HDF5 was chosen, when we did this, since the arrays can be large. Are there other options - perhaps - if h5py still proves problematic, and/or the latest version does not fix things, then we can investigate.
+Now since HDF5 is the means by which we can save molecular information from any driver it may be possible to save an HDF5 from PSI4 on a machine where this works (which use the same mechanism for this tmp one in essence) - and then simply use the HDF5 file on the Power 9 along with the HDF5 driver. That may be less satisfactory as a solution though it might be a stop gap if we have to do something else to get data back from PSI4.
+To answer my question: h5py depends on HDF5 (see https://h5py.readthedocs.io/en/latest/build.html) and HDF5 is the root of this issue, and I don't believe it's been fixed. I'll nonetheless try to build the latest (2.10.5) HDF5 for P9 in the coming days/weeks to verify, but given my discussions I'm not optimistic.
+possible to save an HDF5 from PSI4 on a machine where this works
+I did try, and it sort of worked only because other machines (my laptops) saved the values as float64, not float128, which may be a better quick fix if I can tell qmolecule.py/HDF5 to save the values as float64.
+Found a work-around, explicitly use dtype="float64", e.g., in QMolecule:
+g_geometry.create_dataset(name="atom_xyz", data=self.atom_xyz, dtype="float64")
+If the workaround does the trick then we can look at doing that.
+From the 2.10 h5py release notes they had this Disabled the longdouble type on the ppc64le architecture, as it was causing segfaults with more commonly used float types (:issue:1243). I am not entirely certain what the net result of this is - was hoping things would default to something that worked ok! Hence the thought to try it.
+I verified the workaround works, so incorporating it somehow would be appreciated.
+I could see why the HDF5 folks need to think more about long double and why this isn't a simple bug fix for them given P9 operates in two modes: HDF5 tries to be a platform-independent format while at the same time preserving the highest fidelity within a platform, so a simple single type for fp128 across all platforms isn't going to work. My observations are NaN's and core dumps, so a work-around for now may go a long way in getting aqua/chemistry to work properly on P9.
+Here's how I fixed qmolecule.py (latest version in master) and it seems to work (tested on P9 and Mac). I'm not going to create a pull request (I'm not sure how you all want to address the issue, I'm not sure what else is affected by this problem in aqua, and there's probably a more elegant way to do it in the code).
+qmolecule.py.txt
+@jlatone, a fix was added to qmolecule.py on PR #689 .  Could you please run again using master code to make sure it works ? Thanks
+Thanks, @manoelmarques, for the (more elegant) fix. I ran it against master (as of a couple days ago) and it works. :)
+Do you want to close this issue or shall I?
+@jlatone No problem, I will close it. Thanks @woodsp-ibm for your help too.

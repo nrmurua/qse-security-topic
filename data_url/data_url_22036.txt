@@ -1,0 +1,85 @@
+Using Artiq 3 on a KC705 I see a very large change in transfer rate depending on what model of Ethernet switch I connect the KC705 to. In some cases the transfer rate is essentially zero.
+Switch models I have tested:
+Netgear FS605 v3 : 10/100M cheapo switch
+DLink DES-108 : 10/100M switch
+DLink DGS-108 : 10/100/1000M switch
+Netgear ProSafe 16 JGS516 : 10/100/1000M switch
+The two 10/100M switches work without issue, giving transfer rates of 2.3-2.4 MB/s from master to core device, and vice versa.
+The DGS-108 switch at the auto-negotiated 1000M gives transfer rates of ~20 kB/s master to core, but the normal 2.4 MB/s core to master (dump).
+The Netgear Prosafe 16 switch at the auto-negotiated 1000M does not respond at all. The core device only responds to ~1 in 100 pings. Modifying the runtime to print out all packets received by the MAC shows that very few packets are received by the MAC (i.e. the lack of ping response is due to the ICMP request packets only infrequently being output from the MAC).
+I modified the runtime to access the PHY configuration registers (via MDIO). The PHY status registers are the identical for the two 1000M switches, showing that the difference in performance between the two switches is not at the link level.
+Via MDIO I forced the PHY to 100M. With this I now see master to core transfer rates of ~200 kB/s on both 10/100/1000M switches.
+Forcing the PHY to 10M gives master to core transfer rates of 500kB/s - 1MB/s for both 1000M switches.
+So it seems like the system behaves worse with the 1000M capable switches, even when they are throttled down to 100M or even 10M.
+/cc @whitequark @enjoy-digital
+I don't think there's anything I can do on network stack level if PHY doesn't hand me packets.
+AFAICT this is actually "received from the MAC" (hence the printing), with the MAC being involved as well. And IIRC there were changes to the MAC as well.
+Have a look at the the dump. A big part of the problem are 2974 octet frames.
+A big part of the problem are 2974 octet frames.
+This might be automatic reassembly on the Linux side of things, though, unless @cjbe disabled it.
+Is there anything reported in the core device log at the DEBUG log level?
+@whitequark there is nothing interesting reported in the core device log
+@jordens here is a dump with the same conditions as before, but with all segmentation offloading disabled - in this run the master-to-core rate was 88 kB/s.
+Has a good start,
+
+then looses the full window,
+
+takes >3s to recover the four lost packets with multiple retries being unanswered in the meantime
+
+and does so a couple of times
+
+@jordens I have an idea. Could this be related with the rate at which the MAC can fill the RX buffers versus the speed at which smoltcp can empty them? Maybe at 100M our four buffers just happen to be just enough for decent performance, and at 1000M they can be filled in less time than smoltcp can process even a single packet. (This didn't happen with lwip because lwip never achieved the 2.3 MB/s transfer rate in the first place.)
+@cjbe This can be easily verified by changing _NIST_Ions.__init__ to pass ethmac_nrxslots=6, ethmac_ntxslots=2 (I don't think we ever use more than one TX buffer, but you could also try ethmac_ntxslots=4 if you want the experiment to be cleaner), and then updating ethmac.rs in the obvious way. (If you wait a bit I'll make it easier to play with the buffer count on the Rust side.)
+@whitequark Maybe. But that doesn't explain the lack of any reaction to the resends for more than 3s.
+From the trace, the situation is a bit different: it looses two packets even though there should be rx buffers in the MAC (there are only two in in use just being ACKed) and then does not react to anything that follows.
+
+(Just pushed e7dac53 that makes ethmac experimentation easier.)
+@cjbe Can you please:
+@whitequark I followed your instructions, setting the UART logging level to WARN so the system was not slowed down by UART traffic, and modifying the EthernetTracer to log as info, rather than just a straight print.
+corelog.txt
+dump.pcapng.zip
+@jordens No incoming packet after outgoing packet 17 makes it through to the core device at all. (This is not a case of the poll function not being called because otherwise it'd extract all four buffers in rapid succession.) Not sure what's going on.
+Well. We need to determine whether the packets are lost in the switch, in the PHY, or in the MAC, or in the smoltcp interface to the MAC. There are several options:
+Also note that the first SYN|ACK response from the core device got lost and needed retransmitting. That should be unlikely.
+Add debugging circuitry to the PHY(-interface) and to the MAC. @enjoy-digital should probably jump in here.
+A frame counter in both the PHY and the MAC should be sufficient, and is very simple to implement. I can do that, I think.
+A frame counter in both the PHY and the MAC should be sufficient, and is very simple to implement. I can do that, I think.
+It would be great if you could follow up on this, if not done so already – we are a bit busy with putting things together at the moment, so we've just been working around the issue for now.
+@klickverbot Sure, let me implement it.
+Does it make sense that Oxford send us some problematic devices so that we can reproduce this locally? We also have a 1G switch here, I can try connecting the KC705 through it (it's on another 100M one at the moment for the current tests).
+Yes.
+Lab KC705 is now on the 1G switch. That switch then connects to the 100M switch, and the computer is on the 100M switch.
+@sbourdeauducq Which 1G switch is it? I appear to be unable to reproduce the issue with it, at least.
+Joe's switch that was breaking lwIP (#456) - Netgear GS608.
+@cjbe I haven't been able to reproduce the issue on any of the network hardware we have. Please send us  both of the problematic switches. Before that, please recheck with the master branch, since I've added CRC error and dropped packet counters to MAC, and any changes in them will be logged at WARN.
+@whitequark I have tested this again using the current gateware:
+DLink DES-108 (100M) : ~4 occurrences of ethernet mac: rx dropped: 1 per 10MB RPC transfer
+DLink DGS-108 (1000M) : similar behaviour to the above
+Netgear ProSafe 16 JGS516 (1000M) : no CRC errors or dropped packets, but still badly broken.
+I have now tried this with a more KC705s, and there seems to be some difference between boards:
+With the DGS-108, on one board (the one I used when opening the issue) I get ~20 kB/s, with another board I get ~1.0 MB/s, and with another I get ~1.7 MB/s (c.f. 2.4 MB/s with the 100M switch).
+With the JGS516 I do not get any successful TCP transfers with any boards, from one I get ~98% ping loss, and with the other 2 I get ~70% ping loss.
+I will send you a JGS516, as it seems like this has the best bet of reproducing the issue reliably. I assume I should post this to the HK address on the M-Labs website?
+@cjbe Could you also send your DGS-108, just for completeness sake, and on the off chance there is a different bug with it?
+@whitequark will do.
+I assume I should post this to the HK address on the M-Labs website?
+Yes.
+Switch received and installed between kc705 and main router.
+Problem is very apparent even just with ping:
+The packets are dropped because of (at least) preamble errors. AFAICT we don't actually need to check for preamble errors, just look for 55 55 D5 pattern:
+< azonenberg> as far as TX goes, the 4b5b has a control character for idle and one (well technically two in succession) for "start of stream"
+< azonenberg> So theoretically you could have the preamble be omitted and just have the dest MAC right after the SSD (start of stream descriptor)
+< azonenberg> Most compliant MACs would complain
+< azonenberg> It's basically there so you can easily bridge a 100baseTX frame to 10baseT without injecting and removing a preamble
+< azonenberg> The spec still requires it for this reason
+The funny thing is that some packets still get through...
+@sbourdeauducq If there is jitter of 1 octet at the beginning of the preamble that will also do the job. And it looks from my experiments like there's a probability of 4/5 that the preamble is not recognized.
+Triggering frame just on SFD instead of the preamble+SFD should fix this.
+Waiting on m-labs/misoc#64
+@cjbe: please test with current master.
+Works in our tests with the problematic switch.
+@jordens this seems to be a substantial improvement, but there still seems to be something odd going on.
+I can now ping through all the problematic switches without loss (no loss in 1e4 packets).
+Focusing on the JGS516, I now typically get transfer rates of 1.8 - 2.0 MB/s. However for a while (~20 runs of the transfer benchmark, ~10 minutes wall time) this dropped down to 50 kB/s. When this occurred I saw the following in the log:
+This continued up to the message ... mac: rx dropped: 523. Unfortunately the transfer rate went back to normal before I got a packet dump. With the transfer rate back to normal I did not see any dropped packets.
+Please open a new issue, this looks different enough from the initial problem.

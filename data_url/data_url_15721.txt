@@ -1,0 +1,44 @@
+It would be useful if the XY gate could be added to the existing circuit library https://qiskit.org/documentation/apidoc/circuit_library.html
+The use case is for a basis gate for the qiskit transpiler.
+Hi @epelofske-LANL, just to clarify: do you mean XY as in Pauli-X on qubit 1 and Pauli-Y on qubit 2 or the R_{XY} rotation gate as in exp(it XY)?
+@Cryoris I mean the 2 qubit gate R_{XY}
+Hi, if possible, I'd like to work on this!
+If the gate is defined as Rxy(theta) = exp(i theta/2 XY), I think the decomposition would be:
+Which gives us the matrix:
+
+If it is defined as Rxy(theta) = exp(-i theta/2 XY) (with a negative sign, which I think is more common), I think the decomposition is:
+Which gives us the matrix:
+
+Let me know which one is the intended decomposition :)
+It should be defined with the minus sign, so option 2 😄 I'll assign you @epelaaez!
+The implementation should be pretty similar to the RZX gate (in qiskit/circuit/library/standard_gates/rzx.py) if you want to have a look.
+It should be defined as e^(-i * angle/2 * (XX+YY)/2) (as in https://arxiv.org/pdf/1912.04424.pdf, where the unitary is shown in equation 1 on page 1).
+I think Qiskit follows the convention of defining rotation gates as exp(-i theta/2 R) where R is the desired rotation, as you can see for the RZXGate, RXXGate, etc. To get, exp(-i  theta/2  (XX+YY)/2), I think you could do RXX(theta / 2)RYY(theta / 2). And both of these are already in Qiskit's library.
+I made the following snippet to make sure this was right.
+Both output the following matrix:
+
+As I said, I think the convention is to go with exp(-i theta/2 XY), but if needed I'll do it as exp(-i theta/2  (XX+YY)/2). Any thoughts @Cryoris?
+Ok, I see, thanks for referencing the paper @epelofske-LANL! In Qiskit we usually use R_{XY} to denote exp(-i t X \otimes Y) but this is not the gate you're looking for. Maybe XYGate would be the correct name for that since this is what it's called in the paper.
+However I don't think the decomposition XY = R_XX R_YY is ideal since that'll use 4 CNOTs. Maybe @ajavadia can help us out for that 😄
+@Cryoris - This makes sense to call it the XYgate.
+@Cryoris, yes, I agree that doing XY = R_XX R_YY directly would be very much not ideal.
+@epelofske-LANL do you happen to have any source with the ideal construction of such gate?
+@Cryoris @epelaaez
+Here are two  references for the XY gate:
+https://rsl.yale.edu/sites/default/files/files/RSL_Theses/jmcthesis.pdf
+https://arxiv.org/pdf/1912.04424.pdf (it is a native gate on Rigetti systems)
+Here is an implementation with only two CNOTs (but I am not sure if it is optimal)
+https://algassert.com/quirk#circuit=%7B%22cols%22%3A%5B%5B%22H%22%2C%22H%22%5D%2C%5B%22inputA2%22%2C1%2C%22%2B%3DA2%22%5D%2C%5B1%2C1%2C%22Y%5E%C2%BD%22%2C%22Z%5E%C2%BD%22%5D%2C%5B1%2C1%2C%22%E2%80%A2%22%2C%22X%22%5D%2C%5B1%2C1%2C%7B%22id%22%3A%22Ryft%22%2C%22arg%22%3A%22pi%20t%22%7D%2C%7B%22id%22%3A%22Ryft%22%2C%22arg%22%3A%22pi%20t%22%7D%5D%2C%5B1%2C1%2C%22%E2%80%A2%22%2C%22X%22%5D%2C%5B1%2C1%2C%22Y%5E-%C2%BD%22%2C%22Z%5E-%C2%BD%22%5D%5D%7D
+Thanks, @epelofske-LANL. Using that as a reference, the circuit would be
+Which gives the matrix
+
+This matrix is equal to the one in arXiv:1912.04424 with β=0. Does this look good to both of you?
+Looks good. Optionally, you could include a negative factor in the angle, this would make XY=RXX*RYY
+I would probably not use YGate().power(0.5) but the direct decomposition in native gates as
+but other than that it looks good (up to the negative factor @epelofske-LANL mentioned).
+Thanks @Cryoris, I'll do that.
+For the negative factor, since in the paper it is defined as some phase for some β, wouldn't it make sense to let the user determine what β is? So XYGate would be a two-parameter gate. If this is not necessary, then yes I'll just go with the option to make it XY = RXX RYY. Once this is decided, I'll implement it :)
+Adding an option with some default value is definitely a good idea. Since the paper defines XY(theta) = XY(beta=0, theta) I think using 0 as default, as you have right now, makes sense.
+Sure, sounds good!
+Sorry for the delay, but I've created a draft pull request adding the gate, feel free to leave any comments.
+@Cryoris I am not sure about the way I implemented the default value for beta in QuantumCircuit.xy and in XYGate, could you check that out and tell me if I should make any changes? Also, what tests should I create/modify for the new gate?

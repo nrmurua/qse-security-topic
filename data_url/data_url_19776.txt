@@ -1,0 +1,74 @@
+As described in https://arxiv.org/abs/1604.03076
+For now do the brute force Tr(rho^2) which takes 3^n circuits (for each random sequence you need to do nothing, pi/2 around X and pi/2 around Y tensored for each qubit).
+There are maybe some more efficient implementations using sampling, but we can look at that after we have the full approach implemented.
+@dcmckayibm - could you please elaborate some more on the purity RB algorithm?
+@dcmckayibm - could you please elaborate some more on the purity RB algorithm?
+Yes
+Yes
+As long as the sim sequences are the same dimension
+No
+No, you add up the correlators from those 3^n exps and fit Tr(rho^2) to the exponential
+A few more questions:
+In case of simultaneous RB:
+we need to check first that the pattern contains only 1-qubit , or only 2-qubits etc.
+Now, to all the simultaneous sequences we add the same last gate before the measurement
+(e.g.  nothing or R_X(pi/2) or R_Y(pi/2).
+So, if we run simultaneously m 1-qubit sequences we get  3m circuits,
+if we run simultaneously m 2-qubit sequences we get 9m circuits etc.
+The input to the function randomized_benchmarking_seq would include a new parameter:
+is_purity=False
+The output circuits would be of the form:
+purity_rb_final_%s_length_%d_seed_%d where %s is in {Id, Rx, Ry}
+We should write a new fitter class, say: PurityRBFitter (independent of the RBFitter class)
+How should we compute Tr(rho^2)? Should we use state tomography?
+In the paper (page 7, last paragraph), it's written that:
+For purity RB we measure the trace of ρ^2 (ρ is measured from state tomography) after the RB sequence;
+A few more questions:
+That's what I meant above when I said simultaneous but the same dimension (either all 1Q rb or all 2Q rb)
+Ok
+Ok
+Yes
+For purity RB we measure the trace of ρ^2 (ρ is measured from state tomography) after the RB sequence;
+We can compute it from sum_i <Pi>^2 where i is over all n-qubit paulis
+Example of circuits names:
+1 qubit (3 circuits):
+2 qubits (9 circuits):
+(where Z stands for do nothing, X for Rx(pi/2) and Y for Ry(pi/2) )
+When generating the purity RB sequences I verify that:
+The output of rb.randomized_benchmarking_seq is: rb_purity_circs, xdata, npurity
+where:
+Summarizing the calculation of the purity Tr(rho^2):
+Assume that we have n=2 qubits, then we made 9=3^n experiments and got 4=2^n expectation values per experiment:
+Purity_ZZ: <II> <IZ> <ZI> <ZZ>
+Purity_XZ: <II> <IZ> <XI> <XZ>
+Purity_YZ: <II> <IZ> <YI> <YZ>
+Purity_ZX: <II> <IX> <ZI> <ZX>
+Purity_ZY: <II> <IY> <ZI> <ZY>
+Purity_XX: <II> <IX> <XI> <XX>
+Purity_XY: <II> <IY> <XI> <XY>
+Purity_YX: <II> <IX> <YI> <YX>
+Purity_YY: <II> <IY> <YI> <YY>
+So, the purity is defined as the following sum of 16=4^n squares (divided by 4=2^n):
+( 1 + (sum<IZ>/3)^2 + (sum<IY>/3)^2 + (sum<IX>/3)^2 + (sum<ZI>/3)^2 + (sum<XI>/3)^2 + (sum<YI>/3)^2 + <ZZ>^2 + <XZ>^2 + <YZ>^2 + <ZX>^2 + <ZY>^2 + <XX>^2 + <XY>^2 + <YX>^2 + <YY>^2 ) / 4
+Since <II> is 1 , and <IZ>,<IY>,<IX>,<ZI>,<XI>,<YI> appear 3 times each.
+From each experiment we get 2^n=4 counts from which we calculate 4 expectation values as follows:
+If we have 4=2^n counts 00 01 10 11
+then:
+For <II> we take: + + + +
+For <IZ> we take: + - + -
+For <ZI> we take: + + - -
+For <ZZ> we take: + - - +
+(and this is the same for all 9=3^n outputs)
+According to https://arxiv.org/abs/1604.03076 page 8:
+Assuming pure depolarizing noise γ, the density matrix after n Cliffords  (starting in the ground state density matrix ρ0) is:
+ρ(n) = γ^n*ρ0 + (1 − γ^n)*I/d
+Then:
+Tr(ρ^2[n]) = (1-1/d)*γ^(2n) + 1/d
+Therefore, we fit the data to A*γ^(2n) + B and label the quantity
+E = 3/4 * (1 − γ^(2/3)) as the purity error (per gate)
+#218 (comment):
+A good test of whether the code works is to look at the same circuits with coherent errors and with incoherent errors. In the first case the purity RB will give 0 error, but the error from standard RB will be non-zero. In the later case the purity and standard RB should give the same answer
+So, after getting alpha from fitting the standard RBFitter A*p^m+B (p=alpha),
+we calculate new alpha and its error:
+And the purity error per clifford (pepc) and its error:
+#218

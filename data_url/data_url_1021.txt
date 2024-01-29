@@ -1,0 +1,20 @@
+Right now in cirq and all modules in the main cirq repo, the cirq_type field used in json serialization is the unqualified object name.  This has not caused any naming collisions yet.
+I had always imagined that different packages would have a namespaced cirq_type. For example: cirq_google.PhysicalZTag or cirq.google.PhysicalZTag instead of PhysicalZTag.
+In fact, cirq.obj_to_dict_helper has an optional namespace argument. I tried to use this for a new cirq_google object, but the testing procedure uses the unqualified object name to assert that a data file should exist.
+While playing around with #4375 I think it would be more robust to decouple the "object generation" from any semantic meaning. Instead, we generate all the example objects and keep track of the types we've successfully round-tripped. Afterwards we can check if there are public objects that weren't round-tripped.
+#4527 adds a hook into the current testing infrastructure to make it possible to make namespaced objects pass the tests, although it requires manually adding a mapping from unqualified class name to cirq_type, which doesn't solve the disambiguation problem.
+Tentatively putting pre-1.0 onto this issue.  It sounds like this issue is mostly done.  Tagging relevant people to update the issue and retriage.
+cc #4698
+Namespacing has received some upgrades for users of Cirq.
+The testing infrastructure is what isn't set up for it. There's a workaround merged into the testing spec.py, which you can see in action for all of the cirq_google.workflow dataclasses. I think we'd need a pretty big re-work of the JSON testing framework to truly fix it. The only quote-unquote real issue would come if we had to classes with the same name but different namespaces in the Cirq repository. I don't think there are currently any need for this, and is probably bad form anyway.
+Moving to time/after-1.0 and noting that this should be part of a broader json testing rework.
+To add some data points, the discussion of namespaces came up in two places recently:
+I would advocate for requiring all newly created classes in vendor directories to have a JSON namespace in order to minimize future collisions. If the full enforcement mechanism will take time to build, we can start by documenting the policy, and cirq-maintainers could act as gatekeepers for now. If we fix this only after seeing lots of collisions, it would be too late because we can't change existing JSON serializations AFAIU.
+I would advocate for requiring all newly created classes in vendor directories to have a JSON namespace in order to minimize future collisions. If the full enforcement mechanism will take time to build, we can start by documenting the policy, and cirq-maintainers could act as gatekeepers for now.
+This is actually really easy to enforce. Currently all classes whose module starts with 'cirq' default to a blank namespace: 
+Changing line 595 to if type_obj.__module__.split('.')[0] == 'cirq': is likely sufficient. The hard part is converting existing types - a backwards-compatibility map will be required for all vendor-module types in violation of this rule, which notably includes several types in cirq-google.
+You could have an explicit list of grandfathered-in exceptions on line 595. Not the prettiest thing but effective
+@95-martin-orion didn't you implement a requirement for namespaces to be required?
+@95-martin-orion didn't you implement a requirement for namespaces to be required?
+It looks like #4693 does this (and more specifically this line, as seen in my previous comment), but we never went as far as my suggestion above. Notably, cirq_* modules all fulfill the startswith('cirq') condition, so they're technically allowed to not specify a namespace.
+Probably the reason for this is that cirq_google has several namespace-less types to work around, and this wasn't a priority in the push to v1.0.

@@ -1,0 +1,31 @@
+Hi!
+I've recently installed QuantumOptics.jl and tried benchmarking solution of qubit dynamics with time-dependent field.
+$$H(t) = \frac{\Omega(t)}{2} (\left|g\right>\left< e \right| + \left| e \right> \left< g \right| )$$
+I receive enormous amount of allocations when using timeevolution.schroedinger_dynamic compared to explicit implementation using DifferentialEquations.jl. Can you please tell me what I'm doing wrong?
+Implementations in QuantumOptics.jl that I tried:
+Results of benchmarking:
+Implementations in DifferentialEquations.jl
+Results for implementation in DifferentialEquations.jl:
+I run my code in Jupyter(IJulia v1.24.2) and use QuantumOptics v1.0.14. I decided to do the benchmarking because simulations for 5-level system in my current project allocate up to 8GiB(
+I suspect your use of TimeDependentSum is incorrect. Currently in H2 you create a new TimeDependentSum object (which allocates new operators, etc). Rather, you want to create a single TimeDependentSum object and just update the scalar weight in it.
+Check out https://docs.qojulia.org/timeevolution/timedependent-problems/
+In particular, it seems the constructor should be
+H2 = TimeDependentSum([t -> 1.0 .+ 0.1*sin.(t), t -> 1.0 .+ 0.1*sin.(t)], [σge, σeg])
+Notice that H2 is NOT a function anymore, so it will not be creating a new TimeDependentSum instance. Rather the solver will be appropriately updating (in-place modifying) the single instance you give it.
+@Krastanov, thank you for your answer. I tried examples from https://docs.qojulia.org/timeevolution/timedependent-problems/ and different constructor for H2 that you suggested. They work slightly better than my initial versions, but still far from realisations with DifferentialEquations.jl(
+I also tried example from tutorial with larger tspan:
+Do you have the same performance on your computer?
+Indeed, I confirm that I see the same large number of allocations on QuantumOptics v1.0.14 and julia 1.9.3
+@amilsted , I think you are most familiar with this portion of the code. Any ideas?
+There are a couple of (related) things going on:
+Now we're much closer to DiffEq. The other thing is that you're effectively hardcoding a sparse representation of the operators in the DiffEq case, this probably accounts for the rest.
+Btw, there's no need for . broadcasting syntax in defining the time-dependent operator. This
+H5_ = TimeDependentSum([t -> 1.0 + 0.1*sin(t), t -> 1.0 + 0.1*sin(t)], (σge, σeg)) is marginally faster.
+By the way, you should find you can use static arrays in the QO case too. Operator(my_basis, some_static_array) and Ket(my_basis, static_vector) should work.
+Thank you so much!
+I changed tspan and operator definition both in example and my project, everything works fast now.
+It seems like static arrays don't help here:
+Without SA:
+With SA:
+One thing I don't really understand is why there is an error when I pass ψ0_static with H8:
+Ah, yeah - that's a point. We try to do in-place updates of the statevector and that won't work with static arrays.

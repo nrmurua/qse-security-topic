@@ -1,0 +1,72 @@
+I'm using artiq 2.0.dev-py_482+gitc5ba44b on my virtual machine.
+If I try running the following code,
+Nothing happens. I have set the tca and pca already. On the ttl panel, ttl0 is still listed as an input. I have the same issue on windows except that it identifies the mismatch between the gateware and software.
+Has something changed with how the ttls are set from 1.1 to 2.0? If I use gateware  (1.1+14.gb5901db.dirty) the ttls seem to work. I'm wondering if I also messed up generating the gateware for 2.0 somehow. I followed the same steps as for the previous version as far as I can tell. I don't think the conda release included a bitstream.
+https://m-labs.hk/artiq/manual-master/core_drivers_reference.html?highlight=output#artiq.coredevice.ttl.TTLInOut.output second line.
+Even with a delay nothing happens. Is my gateware messed up somehow?
+There is no indication of that.
+Insisting that wrong code should lead to consistent results seems the wrong approach here.
+Switching to the 1.1+ gateware I ran into an RTIO collision error without the delay. That didn't happen using the 2.0 gateware.
+I should add that I can't really set DDS` either.
+Does nothing and even faulty code like this that should result in an underflow don't trigger any errors.
+They just run without doing anything.
+I've attached the binaries I generated if that's maybe useful.
+binaries_0711.zip
+Try a few things from https://m-labs.hk/artiq/manual-master/getting_started_core.html or the unittests.
+And if you want to compare with what we would build, just trigger a bitstream build yourself. I did it for you just now.
+What do you mean by trigger a bitstream build? If I try conda install artiq-kc705-nist_qc2 it asks me to downgrade to artiq 1.0.
+Trigger builds like this on IRC: http://irclog.whitequark.org/m-labs/2016-07-07#16919899
+Triggered build: http://buildbot.m-labs.hk/builders/artiq-kc705-nist_qc2/builds/173
+Package: artiq-kc705-nist_qc2-2.0.dev-py_482+gitc5ba44b
+And there are also a few other 2.0.dev nist_qc2 bitstream packages that should work. Do you have your channels set up correctly?
+I'll look at those thanks. I haven't changed the device_db to what we were using before. Unless they've changed from 1.x to 2.0 they should be right.
+I tried flashing it from your version and I'm still seeing the same issues. Looking at the unit tests it looks like it's just skipping a lot of them.
+Which was the same for my bitstream.
+Strangely your bitstream only wrote until sector 73, while mine was till sector 79.
+The outputs were
+m-labs bitstream
+my bitstream
+I tried generating another bitstream and flashing the coredevice again but I still can't talk to the hardware. I'm using Vivado to generate the bitstream, has anything changed with regards to that in 2.0? But I guess that probably won't be the issue since I have the same issues with the bitstream from m-labs. I've attached the vivado log anyway in case that's useful.
+vivado_log_0713.txt
+Are you running the most recent version of Vivado? We have recently checked in some code that tickled a toolchain bug, which resulted in broken bitstreams. I don't know the exact version where this is fixed, but @sbourdeauducq does.
+I'm currently using Vivado v2015.4. If the bitstream is broken, can it still be generated without any errors?
+We're using Vivado 2016.2. And yes, the problem was exactly that there were no errors during synthesis or PAR, but the bitstream didn't work.
+Yes. Vivado 2014.2 will silently generate a broken bitstream, and 2016.2 will work. I don't know what happens with Vivado versions in between.
+Okay, I'll try to get the latest version on this machine then. That still doesn't explain why I couldn't get it to work the version I got through conda yesterday, though, unless that was also generated using an older version of vivado.
+I tried flashing it from conda today using
+And I still don't seem to be able to talk to the hardware. Has the above gateware been verified to be working?
+The unittests need a device db to discover the hardware. E.g. ARTIQ_ROOT=run python -m unittest discover -v artiq.test.coredevice if there is a device_db.pyon in run.Otherwise they just skip all hardware tests.
+Is the only symptom that the TTLs and DDSs don't seem to do anything nor give exceptions? Do the LEDs work? Do the inputs work?
+Artiq 2.0 is not released. It is likely that that particular bitstream has never been tested.
+LED works just fine here with 2.0.dev-py_485+gitc0d5914
+Was that using the nist_qc2 configuration? I tried the following code,
+It doesn't work with the 2.0dev py_485+gitc0d5914 gateware but works with the 1.2 gateware.
+My device_db entry for the LED is
+Yes. Obviously I am using the gateware in question.
+Your code gives me the expected RTIOUnderflow. If I fix it (according to the links I gave you) it does exactly what I expect.
+The LED is a TTLOut.
+Why would it trigger an underflow? Our RTIO clock period is 10 ns at 100 MHz. I can get the led to turn on without an underflow with 1.2 gateware but the 2.0 gateware does nothing. If I change the device_db entry to TTLOut, I see it listed as an out but I still can't turn it on. Even the override doesn't seem to do anything.
+I should maybe point out here that our kc705 is using the the SMT-2 JTAG adaptor as discussed in #440. Not sure if that's the cause of the problem but I'll try with another KC705 we have.
+This is using both the virtual machine and on windows, the windows with software (2.0.dev+497.g9785b39) however.
+I tried flashing the bitstream on a separate KC705 that has its original SMT-1 adaptor and I still run into the same issue. The following code,
+Runs using the 1.2 gateware and the LED turns on but not with the  2.0dev py_485+gitc0d5914 gateware.
+If you want to debug this yourself, go ahead.
+I am still waiting for you to execute the examples as described in the manual (see above) or the unittests with hardware (also see above).
+And when you are swapping back and forth between 1.x and 2.x, can I assume that you either don't have an idle kernel or that you are swapping it as well?
+Looking at the unittest, using 2.0
+Strangely after running the unittest, I tried starting the dashboard on windows and I can turn on the LED now and seemingly set TTLs and DDSes. I tried reflashing the board with the same gateware again, and had the same issues as before which disappeared upon running the unittest. I'm not sure what changed with the unittest.
+Edit: This was from my original smt-2 machine.
+Edit: Happened on the other smt-1 KC705 as well, where it initially did not work but worked after the unittest.
+Output from unittest,
+What do you mean by swapping the idle kernel? I've kept it as it is, which is just to turn the bdd ttl on. Do I have to change it every time I change the gateware version?
+Edit: The other kc705 was fresh out of the box so I'm assuming it didn't have an idle kernel.
+Look at the seamless handover mechanism in 2.0.
+Don't assume that "just turning on a ttl" is handled the same way under the hood forever. Yes. You need to update (compile and flash) the idle kernel every time something significant in the runtime or gateware or in your very own device_db.pyon changes. Since we don't track gateware/runtime API versions or your device_db.pyon, you need to do that yourself for the idle kernel. When you upgrade, just follow the manual again. No need to take shortcuts.
+Your unittests look fine. Nothing unexpected is breaking. Please don't post this amount of text inline. Use a file or gist or something else. It makes this issue unreadable.
+I don't know what "the other kc705" is. But yes. Fresh devices don't have an idle kernel.
+Still waiting for you to follow and try the examples in the manual (see my third comment all the way at the top).
+@r-srinivas I guess that essentially you need to add a RTIO reset. Make sure you are reading the manual for 2.x (https://m-labs.hk/artiq/manual-master) and not for 1.x.
+Looks like the reset was it, thanks! Could that be added to the release notes, please? A brief description of it in the getting started with the core device section could also help.
+Side note: trying the examples from the manual would have resolved this a week ago.
+Sad but true. I had taken a look at the release notes and didn't see it there so hadn't realised the explicit reset had been put in. Fortunately I only spent that one day last week on it and we were running the experiment after that. On the bright side at least I can continue with the 2.0 testing now.
+I should also maybe try it out with the bitstream I had before.

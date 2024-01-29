@@ -1,0 +1,49 @@
+It seems that #1116 has caused the constant time tests to fail, see https://app.circleci.com/pipelines/github/open-quantum-safe/liboqs/1822/workflows/698260d6-a9f1-4ecc-8586-e24e3368014b/jobs/15792.  @christianpaquin can you take a look?
+I'm having trouble running the constant time tests on my WSL install; all tests are failing due to missing components in my linux distro. Anyway, I created an ubuntu VM to test this. I've build (following Michael's guidance) using:
+And tested with
+I didn't see any errors, all I get is little 's', which I assume means skipped. I'm not sure how to repro the CI results (I also tried using the default and haswell (like in the failing CI test) OQS_OPT_TARGET; no luck. Any idea, @dstebila, @baentsch, @xvzcf? I'm getting errors when I try pytest --numprocesses=auto -k 'test_constant_time'. What's the proper way to launch the test?
+Can the existing picnic exceptions conflict with this new commit?
+The "little s"s leave me puzzled: When I run the command, my machine goes to 100% running valgrind and eventually one dot after another appears (showing passes). That said: Do you have valgrind installed? Did you try running our default CI docker image to be sure you've got all dependencies?
+I'm getting errors when I try pytest --numprocesses=auto -k 'test_constant_time'. What's the proper way to launch the test?
+Which errors are you getting? This also sounds like some prerequisites are missing. This command works for me.
+You need to update the line numbers here:
+
+according to how things changed here:
+https://github.com/open-quantum-safe/liboqs/pull/1116/files#diff-c057fffe45139e8fc510a3e7066c62a0974274ebc3c2c9b525ad1441fef0b865
+For instance the first use of challengeC has moved from src:picnic3_impl.c:685 to src:picnic3_impl.c:673. It's a little tedious, but at least there are only 9 entries.
+Thanks for the pointer @jschanck.
+Regarding my script errors, @baentsch, yes I have valgrind. I think the errors were due to a wrong invocation; looking at the circleci yaml file, when I invoke the tests like this (is this correct?):
+the tool runs but skips all the tests.
+How can I figure out why the tests are skipped? I'd like to be able to run them before playing around with the exclusion files.
+How can I figure out why the tests are skipped? I'd like to be able to run them before playing around with the exclusion files.
+Are you building liboqs in a subdirectory other than build?  Just now I was trying this and chose to do it in a different subdirectory build-linux, and the tests were getting skipped, but then when I renamed it to build, it worked.
+Also check the contents of build/include/oqs/oqsconfig.h to make sure that OQS_ENABLE_TEST_CONSTANT_TIME and OQS_DEBUG_BUILD are really being set.
+Are you building liboqs in a subdirectory other than build?
+Yes.
+Also check the contents of build/include/oqs/oqsconfig.h to make sure that OQS_ENABLE_TEST_CONSTANT_TIME and OQS_DEBUG_BUILD are really being set.
+They are set.
+Puzzling...
+Are you building liboqs in a subdirectory other than build?
+Yes.
+Also check the contents of build/include/oqs/oqsconfig.h to make sure that OQS_ENABLE_TEST_CONSTANT_TIME and OQS_DEBUG_BUILD are really being set.
+They are set.
+Puzzling...
+Right, so I think the problem is building in a subdirectory other than build.  Try doing this build in the subdirectory build, or alternatively setting the environment variable OQS_BUILD_DIR.
+Alternatively, ninja run_tests from the build directory should include the constant time tests as well, even if the directory is named differently than build.
+Are you building liboqs in a subdirectory other than build?
+Yes.
+Sorry, I meant no! (yes, I'm using build; pre-coffee brain...)
+Are you building liboqs in a subdirectory other than build?
+Yes.
+Sorry, I meant no! (yes, I'm using build; pre-coffee brain...)
+:)
+Are you using your own VM or a Docker image?  I was running inside an OQS Docker image:
+I'm running in an Azure ubuntu VM. I'll try docker...
+How can I figure out why the tests are skipped?
+Could it be this, i.e., your valgrind version is insufficient/not properly installed?
+I found the issue; needed to install a debug lib to allow valgrind to work in my WSL distro. Anyway, I can run the constant time tests now, and I'm only building the picnic algs (with the OQS_MINIMAL_BUILD build option). The test fails on the non-enabled ciphers (vs. skipping them), which doesn't seem like the desired behavior (and spits out an annoying large amount of data); I'll look into that as well.
+Weekly run still/again failing
+I fixed it for OQS_OPT_TARGET=generic, but it now (still) fails for OQS_OPT_TARGET=haswell; I need to update the constant time exceptions for the AVX2 Keccak files as well. I'll create another PR.
+@baentsch, is it possible to run the weekly test on PR #1124?
+I wouldn't know how to trigger that remotely without changing .circleci/config.yml. For checking that your fix is OK, I'd personally recommend a local run (circleci local execute --job  constant-time-x64-extensions). Otherwise (if you want to run the test at CircleCI) I think the only way is by moving that test from the weekly to the regular jobs section.
+I was able to repro the error on my machine with the right cmake config, and this PR fixes it locally; so it should be ok until the next weekly test.

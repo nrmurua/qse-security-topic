@@ -1,0 +1,17 @@
+From time to time I see the following error message when using the IBM backend, and would like to know whether you are also experiencing this and maybe have an idea what is the root cause:
+While running a circuit that normally executes just fine, I get the following exception log
+and on the console I then see:
+The frequency of this error seems to be independent of the type of circuits I run and I get this from time to time, independently of the type of internet connection I use, so that I can exclude simple connection problems on my end.
+Running with verbose=true reveals that the source of the error is in _run(self) around line 260 in _ibm.py, namely:
+i.e., res = send(...) did return None instead of actual results.
+An strait forward workaround for me is to simply run send(...) until it returns a non-None result, e.g,,  as follows:
+In practices I virtually never need more than a second attempt to get a result. This makes me believe that the problem is also not related to me sending too many queries or other rate limiting mechanisms.
+I have found other people having similar spurious 502 errors on blumix. Their application is (probably) not at all quantum related, so maybe we are just suffering from some classical middleware misconfiguration?
+Could/Should ProjectQ handle such errors more gracefully?
+Digging a little deeper, I see that send() calls _get_result() and this already has a retry mechanism built in. The only way I can see in wich _get_result() and then send() can return None without raising an Exception is if the json of the return value of requests.get() contains the element r_json['qasms'][0]['result'] and this element is None. I can thus also fix the problem by adding the and qasm['result'] is not None  in the last but line of the following code in _get_result():
+On a related note: Aren't the default values num_retries=3000 and interval=1 of _get_result(), which result in a total waiting time until the timeout of nearly one hour a bit long? Wouldn't it be nice to make those user customizable?
+Thanks for your detailed report and for digging in deeper 💯
+I have never experienced this, but I haven't run jobs on IBM Q in a while.
+The default values are set to be rather high since one can always do ctrl+C and then retrieve the results from the job ID (which is what I usually do).
+But we can definitely expose, e.g., the num_retries setting to the user if you find it useful. Also, feel free to change the retry-loop in a PR if it fixes this issue.
+Excellent. I will submit a PR early next year.

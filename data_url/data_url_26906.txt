@@ -1,0 +1,94 @@
+Version 1.0 of the DBCSR is ready for the inclusion in DBCSR. Let's start a discussion on how we can achieve that (submodule, copy, ...)
+Great news!
+I still think copy is the way to go...
+What's important is that people get their changes officially accepted into DBCSR before CP2K starts to depend on them. Otherwise we risk to end up with incompatible forks of DBCSR.
+So, if we can agree on this, then I see no need for sub-modules and a simple copy the DBCSR development branch will do.
+Yes, I can add a check for pull requests that protects the DBCSR directory.
+Great, then this solution is feasible.
+People can make local changes, but then they cannot commit them from the CP2K. The best is if they get a warning whenever they try to commit any change in the DBCSR directory, suggesting that the library is locked and they have to use the DBCSR repo.
+Note that only official DBCSR release (i.e. with tag) will go in CP2K.
+Of course, we have to make a way that some special users can commit to CP2K-DBCSR...
+Alternatively, we could use code owners. This is something I've been contemplating anyways as it would allow us to hand out commit access for subsystems more liberally.
+Personally, I don't care if CP2K tracks the development branch or releases. However, in the later case, people will surely start to demand more frequent DBCSR releases.
+I really dislike how we are re-inventing the wheel here, again.
+The Copying-solution requires a whole lot of machinery, from CI checks to protect it, to scripts and people doing the actual upgrade while at the same time making it harder for people working on both DBCSR and CP2K (or alternatively require even more changes to build system to remedy that) and it requires extra data management to be able to determine which version of DBCSR is now in CP2K.
+Everything for which a Version Control System was built in the first place.
+What I've tested with Git 2.16.4 for submodules so far is:
+... everything inside Git, without yet another script.
+Tiziano, I really appreciate your effort, but I'm still worried that there is considerable risk remaining. What about older git version, other git front-ends, and git-aware editors? And even when all the tooling holds up, it still increases the cognitive load of every developer, ie. remember to use --recurse, etc.
+making it harder for people working on both DBCSR and CP2K
+This solution is meant to simplify the lives of non-DBCSR developers. People who want to work on both projects should simply clone both repositories.
+The Copying-solution requires a whole lot of machinery,
+Actually, most of the machinery is already in place. So, I'm happy to make this (small) one-time investment, if it saves us from dealing with submodules for the years to come.
+The copy solution might be primitive, but we know that it'll work for sure.
+The Patrick fork for the dbcsr inclusion (PR #86 ) is "almost" ready to go.
+It passes all tests. There are few changes to do for the arch files (the new GPU part) and the documentation. At this point, I found very convenient to use submodules and I will go for that.
+DBCSR v-1.0-RC1 is ready to become the first official DBCSR version. There are other developments waiting in the pipeline, therefore I will proceed to merge the PR as soon as possible.
+I never doubted that submodules are convenient for git experts. My points it that they will probably be quite frustrating for everybody else. So, we should expect regular questions on the google group about this etc.
+However, I guess this is a minority opinion unless someone else wants to chip in.
+I've prepared the update for https://www.cp2k.org/download as follows:
+... and based on feedback from discussions with a guest in our group I'm preparing a full developer's guide.
+I'm still pondering on this...
+What is your opinion on installing DBCSR explicitly as a separate package?
+I always believed that, as the two projects part CP2K should eventually treat DBCSR as a regular dependency. So, maybe we should just skip the transition phase?
+The installation of DBCSR would then be handled by the toolchain. We can still point it at a SHA or tag from the development branch - just as we would do with submodules.
+In my opinion, such a clean separation is actually better for working on both packages simultaneously. It gives e.g. more control over compilation. Currently, any change to DBCSR triggers a full recompilation of CP2K, which pretty much kills productivity.
+Currently, any change to DBCSR triggers a full recompilation of CP2K, which pretty much kills productivity.
+This is true, however it is not suggested to develop DBCSR within CP2K. Actually, we have to discourage such a case, otherwise the DBCSR standalone would be pointless.
+Even if you make it as an external (or whatever), a change in DBCSR would require to recompile CP2K (because of module changes).
+Even if you make it as an external (or whatever), a change in DBCSR would require to recompile CP2K.
+A recompilation of CP2K is only required when DBCSR's API changes. And even then only few CP2K modules might be affect. In most cases just re-linking should be enough.
+Even if you make it as an external (or whatever), a change in DBCSR would require to recompile CP2K.
+A recompilation of CP2K is only required when DBCSR's API changes. And even then only few CP2K modules might be affect. In most cases just re-linking should be enough.
+Well, actually the problem is when the API changes. In this case, we can just recompile some modules and relink (as you said). Assuming so, from the CP2K point of view, how can you understand which modules are depending on DBCSR and need to recompile? It is an external library now... I think we have to hack makedep...
+Again, this is doable with the submodule. However, this is against my first consideration: any development in DBCSR should be part of the standalone repository. CP2K will get only official releases (every 6 months?), so I don't see the point of doing a full VS partial recompilation of CP2K if you do a change in DBCSR twice a year...
+To be more precise, the line which triggers CP2K recompilation upon DBCSR change is:
+https://github.com/pseewald/cp2k/blob/3d05a97b63c286177d4caaf715be4c9b24e3469f/Makefile#L190
+where
+https://github.com/pseewald/cp2k/blob/3d05a97b63c286177d4caaf715be4c9b24e3469f/exts/Makefile.inc#L3
+I think (but I'm not sure) we can change it with a dependency on dbcsr_api.mod and add the library dependency only when we link.
+I'm sorry. My second sentence was not helpful. I agree that API changes will be rare. So, we should just leave it up to the developer to handle them. Any mistakes will be caught by the linker. The much more common case will be that one does some internal change in DBCSR and then runs CP2K to check performance and correctness.
+Furthermore, these nested build systems will also confuse a lot of users. We have to keep in mind that compiling DBCSR itself is not trivial. It has several dependencies on it's own: Cuda, libxsmm, python, fypp, cpp, g++, gfortran. And things will get even worse when DBCSR switches to cmake. Hence, I'm increasingly leaning towards the complete separation solution.
+The Makefile compilation will remain there for DBCSR, with full compatibility with CP2K (as it is now). All the requirements you are mentioning are already part of CP2K (Cuda, python, fypp, gfortran), with a special treatment for CUDA, libxsmm and g++. Nothing that we cannot document (actually, they are already documented ;) )
+It is a design question: DBCSR is not a dependency, it is a requirement (you can build CP2K without it). It would be just great that people get installed DBCSR (like BLAS and LAPACK) and link to it with CP2K, but at least for the first release we made a decision that CP2K compilation has to trigger the DBCSR compilation. In the future, we can think to have to entirely separate package and use the toolchain to install DBCSR. So, the current design is made on purpose and we always think to improve it if it doesn't work...
+So, to summarize: exts/dbcsr is not supposed to be used by developers, changes only every ~6 months, and will most likely disappear in a year or so. Then I really don't understand why your are pushing for submodules?
+The summary is almost correct, we are on the same line for the main points.
+Let me write all again:
+Now, what if there is a bug in DBCSR, which is CP2K specific? This is not rare since CP2K is heavily using DBCSR and DBCSR unittests are not covering all possibilities. The two packages are tightly coupled (DBCSR needs CP2K for testing and CP2K needs DBCSR for working). It turns out that the best match for solving this case is to use the submodules:
+a) Easy DBCSR testing: we can have a regtest for CP2K will uses DBCSR develop branch
+b) Easy DBCSR fixing within CP2K: @dev-zero suggested to have a "cp2k" branch in DBCSR to cover those cases (bug fixing) so that CP2K can evolve before making an official DBCSR release (and sync once is done)
+So, I add another bullet for the requirements:
+I don't see any deadline (did I say 1 year?). We have to try and start somewhere. The entire discussion is useless if we don't start. Then any change be done later on.
+This is true, however it is not suggested to develop DBCSR within CP2K. Actually, we have to discourage such a case, otherwise the DBCSR standalone would be pointless.
+Why should we discourage such a case? I thought the whole point of using git submodule is to allow tightly coupled development on CP2K and DBCSR in the future even though DBCSR is a standalone repository
+exts/dbcsr is not supposed to be used by developers, changes only every ~6 months, and will most likely disappear in a year or so.
+exts/dbcsr may rarely change on CP2K master branch, however CP2K/DBCSR developers will point the dbcsr submodule to their own DBCSR fork. This is how I imagine CP2K/DBCSR development in the future, and it is the only solution that does not involve any complication over the status quo (except of some knowledge required how to deal with git submodules).
+I think we are not ready yet to make DBCSR fully external to CP2K, especially now that we are about to change dbcsr_api module (cp2k/dbcsr#109)...
+@pseewald
+Sorry, when I say that people should not use CP2K for developments, I was referring to the fact that CP2K should not use the DBCSR develop branch *as official release. Then, I'm not stopping people for doing anything they want with develop branch (or any other branch) in CP2K. I care about DBCSR, so (see my 4. bullet above) the development must be entirely consistent with DBCSR.
+From my point of view, I don't see any difference if I do commit within the submodule or directly in DBCSR...
+From my point of view, I don't see any difference if I do commit within the submodule or directly in DBCSR...
+No, there is no difference, except that with submodule tightly coupled cp2k/dbcsr development and testing is much easier than if DBCSR is fully external (for instance if you want to create a pull request to dbcsr develop but first test with CP2K).
+Wait, are you planing to point the submodule at the branch head, like #86 currently does? I always assumed that we would point the submodule at a fixed sha or at least a tag. Otherwise we'd lose track over which combinations work.
+Of course pointing it at a sha means that it will always take two PRs to a make a combined cp2k/dbcsr change. The first PR will get the change into DBCSR. And the second PR will point CP2K's submodule to the new version of DBCSR. Furthermore, if the change is not a bug fix then one has to wait on average three months between the two PRs for the next release of DBCSR.
+...it is the only solution that does not involve any complication over the status quo ...
+It seems to me that the development process will have to change considerably in any case. I don't see how submodules can prevent this. I still believe that cloning the two repositories individually will gives the best developer experience because it helps to keep these two PRs apart.
+Wait, are you planing to point the submodule at the branch head, like #86 currently does? I always assumed that we would point the submodule at a fixed sha or at least a tag. Otherwise we'd lose track over which combinations work.
+This is the case for any CP2K version on the development (no official release) only (and only) when CP2K requires a bug fix in DBCSR which cannot wait for an official DBCSR release. This is (I hope) a rare case and it should become less and less common in the future.
+Of course pointing it at a sha means that it will always take two PRs to a make a combined cp2k/dbcsr change. The first PR will get the change into DBCSR.
+Correct.
+And the second PR will point CP2K's submodule to the new version of DBCSR.
+Correct. Similar to say that you have to download/install a new version if you think to have a separate package...
+Furthermore, if the change is not a bug fix then one has to wait on average three months between the two PRs for the next release of DBCSR.
+I'm lost. Bug fixings are OK and CP2K will get a branch on DBCSR repo for that. Eventually, we will merge cp2k-dbcsr branch to develop-dbcsr branch and then master-dbcsr.
+New developments are a different issue, don't mix them. We can prioritize a new DBCSR release if this is the case and CP2K will get a new official release. Just for statistics, in the last year the rate of new stuff in DBCSR was 0.
+...it is the only solution that does not involve any complication over the status quo ...
+It seems to me that the development process will have to change considerably in any case. I don't see how submodules can prevent this. I still believe that cloning the two repositories individually will gives the best developer experience because it helps to keep these two PRs apart.
+I do not comment on that... to me, it is a matter of taste, in a way or the other you have to download two packages and keep them in sync. I always see two PRs:
+Ideally the DBCSR submodule always points to a DBCSR release (in the DBCSR master branch).
+But there may be times when we need a change for CP2K in DBCSR prior to making a completely new DBCSR release (because the next DBCSR release would include other changes CP2K was not yet adapted to or tested with). For this case we can have a separate CP2K branch in DBCSR which collects those changes (a hotfix branch in the git-flow terminology) and let the DBCSR submodule point temporarily to it.
+No matter what you do, there will always be two PRs: one for DBCSR, one to update the DBCSR version in CP2K and they have to be kept in order. With submodules the order is pre-defined: DBCSR always has to go first since the SHA the submodule points to will otherwise not exist.
+Furthermore we can ensure that a specific version of CP2K always uses a well-defined version of DBCSR without extra version tracking or checking (similar to Python's setup.py requirements pkg==x.y.z, but in the Python world there is a packaging system which ensures this properly).
+we can ensure that a specific version of CP2K always uses a well-defined version of DBCSR
+Ok, good. Thanks for clarifying.
+I guess, when it comes to the developer experience submodule vs toolchain is indeed a matter of taste.

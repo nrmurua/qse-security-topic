@@ -1,0 +1,16 @@
+There is a test in tests/backend/test_fock_measurement.py which takes a long time to run, and crashes my computer when run locally. We should pinpoint which test this is and mark it for refactoring.
+@co9olguy Looks like the issue is related to ram usage as my computer starts to swap during those tests... looking into this, but it appears that if you reduce the NUM_REPEATS parameter in the test significantly (currently it is 50) then the tests run and pass without ram issues. I do believe the problem is with this test:
+The ram usage however is probably a bug in prepare_fock_state or measure_fock, which we should address as well (but need more profiling for that).
+That's weird - I don't remember this happening in the past. In this something we can trace to a specific PR or change in either the codebase or the tests?
+but it appears that if you reduce the NUM_REPEATS parameter in the test significantly (currently it is 50) then this the tests run and pass without ram issues.
+Oh, this could be an issue with TF not correctly clearing the graph between repeat runs? @co9olguy
+This is definitely not a new issue. I've observed it for months now, but just got fed up enough to report it as issue now
+After some testing, the issue with the slow test appears to be a memory leak specific to pytest while it executes test_normalized_conditional_states with the Tensorflow backend only. I.e. it is not related to the actual code or actual test (executing the same commands outside pytest does not manifest this issue). It's possible that it's related to how the backend fixtures are set up but it will take more digging to figure this out. I will have to look at it in more detail some other time.
+Note however though that the test is still pretty slow even outside of memory leak issues, it just gets extremely slow if it starts swapping.
+Thanks @zzzeid. It's enough to know which test was causing it and flag it for refactoring.
+What likely happened is someone designed a test which would suit a particular backend, but forgot to account for the implementation/performance needs of other backends.
+Memory leak specific to pytest while it executes test_normalized_conditional_states with the Tensorflow backend only.
+I agree @zzzeid, my suspicion is that there is a backend initialization fixture which isn't being reset after evaluation, or is using the wrong scope.
+It might be something that is easily fixed by modifying the fixture to include tear down, i.e.,
+(question: does yield work inside a fixture that returns a function? It might not.)
+It might be a simpler solution: just call setup_backend within the loop (though I'd like to remove looping wherever possible)

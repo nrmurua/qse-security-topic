@@ -1,0 +1,65 @@
+A blocking get implemented by always calling get after set solves two problems
+I think this makes sense as a default behaviour for any set function. The parallel processing of the measurement loop should ensure the desired non-blocking behaviour for other cases and ensures proper waiting for completion before moving on to a critical step
+Note: this does not involve any parallel processing but it will also break loops using parallelism if they wait for a non-block condition.
+The get-command should wait for the initial instrument to finish setting.
+It waits for the command to finish (that is the command to be dumped in the TCPIP queue) but python concludes the command is completed before the action has been executed on the hardware.
+Add an argument to parameters (upon initialization) that is get_after_set. When this is True it will always call the get_command of the instrument after the set command. This will ensure the stored value in the log is correct (as sometimes instruments round values or do similar changes).
+I expect the wait for the response on the get will ensure the command is only considered complete after the device has updated it's setting (as it goes over the same communcations).
+This can be tested in a testsuite by having some virtual instrument in which there is an artificially long set-command and multiple communications to the virtual instrument.
+Winows 7
+cf4d6f3
+@AdriaanRol
+I am not immediately in favour. Wouldn't this mechanism prevent you from setting multiple variables at once? I can imagine that you want to change AWG settings while oyu are sweeping the IVVI. Both are quite slow processes and can be performed at the same time.
+Doing get_after_set is, I think, purely context dependent and not parameter dependent.
+I was thinking, if you are measureing so quickly after a set on a different device, How do you make sure that the effect has propagated to the measurement device? Having a set_after_get will not give you the ensurance you want, and it further complicates the parameter.
+Solutions I can think of:
+Having a method in an instrument that checks if the queues are empty such that you can check if all sets have been completed
+Manually put a get in your loop if you want to make sure the set has been completed
+Put a sleep after your set to give the system time to execute your commands.
+I hope I didn't miss the point of your issue, but I am hoping we can come up with a more elegant solution than get_after_set. Added to this, If get after set is indeed implemented, then I would also like to make a case that it shouldn't do this by default, but I will ramble about that when we get there.
+@damazter ,
+Wouldn't this mechanism prevent you from setting multiple variables at once?
+No, the built in parallelism of QCoDeS is supposed to take care of this, it was introduced to take care of this in the first place in the case of other (GPIB) instruments that do have a blocking set. This will only change that if you expect to be done you really are done.
+How do you make sure that the effect has propagated to the measurement device?
+You are in principle correct, however in many instruments (i.e. microwave sources) this effect works on a faster timescale than I can operate my machine on, the effect you are taking care of are communication related effects (such as a TCPIP queue).
+Having a method in an instrument that checks if the queues are empty such that you can check if all sets have been completed
+This does not work as it is not about the queue on the PC being done but also about the receiving end being done handling the queue, something you ensure by the get_after_set handshake.
+Manually put a get in your loop if you want to make sure the set has been completed
+What we do now, I would argue this is sensible to have as default behaviour.
+Put a sleep after your set to give the system time to execute your commands.
+I would be against this as it introduces an unnecesarry delay for all the times when the comm is fast and would be quite hard to get down to the minimal required delay. Especially when I am doing experiments where my time is the thing I want to optimize (say speed tuning )
+hoping we can come up with a more elegant solution
+I would also like that, Also critical feedback much appreciated 👍  (still think we should do this though ;) )
+Last week I had some live discussions with @damazter on this subject. We came to a solution/approach along the following lines (@damazter correct me if I'm wrong, it's been a week ;) ).
+I would appreciate input on this from @giulioungaretti and @alexcjohnson
+@core Today I ran into this problem again.
+I have implemented a very simple snippet that makes a parameter always check execution.
+Could someone (most likely @alexcjohnson ) let me know what you think of this implementation?
+I don't like this implementation because it will always verify commands, leading to a potential slowdown. However it does solve the immediate problem in a "nice" way.
+@AdriaanRol @damazter  the current implementation is to use sleeps after every set (aka delay).
+@AdriaanRol yes, I see your issue but how do you decide when or not to verify commands?
+@AdriaanRol  does is depend  on the connections  I am not sure how it's different between TCP and GPIB  !
+@giulioungaretti . The downside of sleep is that it sets a fixed delay, there is no way to know if this delay is enough so you usually end up with a delay that is most of the time too long. This implementation asks the device if it has completed the command (as per standard SCPI standard).
+@AdriaanRol yes, I see your issue but how do you decide when or not to verify commands?
+You specifiy it when adding the parameter to an instrument. You either use StandardParameter (in which case you do not do this) or you use this subclass of the parameter.
+@AdriaanRol  yes, the sleep is far from optimal, that's what was put in qcodes waaay before my time.
+@AdriaanRol so what you want is a blocking set, no ? 🍷
+@giulioungaretti No. A blocking set is my immediate workaround for an issue I have now.
+What I want is an optionally blocking set, denoted by the use of keyword arguments in the set command as proposed by @damazter and me back in June.
+@AdriaanRol the issue starts with this sentence:
+"A blocking get implemented by always calling get after set solves two problems"
+so I got confused by what is that is not right for your use.
+@AdriaanRol  and yes, I like that! We need that!
+I would not want to ab-use kwargs for that but rather have a differently named function/method.
+But  the question is if it has to be implemented with SCPI commands? or other ways
+@AdriaanRol the issue starts with this sentence:
+The beauty of historical issues :)
+That was the original idea, discussion with @damazter led to the more general solution.
+Glad you like it :)
+@AdriaanRol  got it!
+@AdriaanRol Yes, I think this is a good solution. It only solves the first problem in the original statement, but I imagine the second one (reading back in any rounding or converting the instrument did) was a bit of a happy side-effect rather than the rationale.
+Two possible concerns we may want to build into it:
+@alexcjohnson I agree on both comments. I think allowing any function to be defined in the validate option is the way to go (possibly even specify both as a function and as a string). My example with *OPC?was just my initial solution. In any case OPC is supported by the SCPI standard so it should be fairly common.
+If you can implement a version that implements your suggestions (I'm quite wary of meddling with the instrument parameter), that would be great.
+@AdriaanRol  let's wait for @alexcjohnson PR and documentation  before adding new APIs.
+@AdriaanRol this an old one, but don't we think that instead of using the parameters //intrumetns to do this. It should be the loop responsibility to orchestrates the sequences of the actions ?

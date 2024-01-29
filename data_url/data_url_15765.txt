@@ -1,0 +1,23 @@
+Creating a circuit with many Parameter objects per gate scales worse than instead creating many gates with fixed parameters per gate. For this test the following function was profiled,
+This function was run with two of the arguments fixed at 4 and the third varied from the list [8, 32, 128, 512, 2048, 8192]. In all cases the total number of parameters in the circuit remains the same but when the argument scaled is param_per_gate the scaling is worse.
+
+
+
+Here is the function call dependency where one can see most of the time is taken in parameterexpression.py,
+add ---> _apply_operation ---> _raise_if_parameter_names_conflict ---> dictcomp ---> name
+
+In the diagram the format is,
++------------------------------+
+|        function name         |
+| total time % ( self time % ) |
+|         total calls          |
++------------------------------+
+where:
+total time % is the percentage of the running time spent in this function and all its children;
+self time % is the percentage of the running time spent in this function alone;
+total calls is the total number of times this function was called (including recursive calls).
+Improve performance of adding many parameters to a gate.
+Which OS are you testing on? If it's spending most of the time in __add__ my first thought was this could be all time in symengine or sympy (sympy would scale terribly as the number of variables in the expression grows). If you were on windows it would use sympy instead of symengine by default.
+But I don't think that's what's going on. After looking at the profile call graph and the code, the issue is in: https://github.com/Qiskit/qiskit-terra/blob/4030839248237c223ce857c861f1762716798157/qiskit/circuit/parameterexpression.py#L205-L222
+is iterating over the parameters in the expression multiple times which gets worse as the number of parameters in the expression grows. I feel like we need to leverage the self._names cache a bit more there so we're not traversing over all the params on every operation and just doing set lookups. Especially since we know the names of all the parameters when we create the output object we can prepopulate that and make the conflict detection scale better
+@mtreinish I was running on linux with qiskit version 0.19.0.dev0+7ea4d6e

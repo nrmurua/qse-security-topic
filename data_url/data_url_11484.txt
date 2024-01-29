@@ -1,0 +1,40 @@
+I believe the stable_set.get_operator() function is incorrectly interpretting the  adjacency matrices handed to it. For the simplest case -  a path graph of 3 nodes - an incorrect qubitOp is created.
+(EDIT: Code Edited to show full import paths)
+gives
+
+which is not the correct function as the weighting of the different nodes are not equal.  The weights of the quadractic term do not have any particular bearing on the functional outcome, as long as it is greater than 1 ( this is the unweighted problem). The simplest solution is just to set all quadractic weights to 2.  [1].
+A correct  docplex function would instead be:
+
+I'm afraid the code is impenetrable to me.
+[1]
+
+which comes from this paper https://arxiv.org/pdf/1004.2226.pdf.
+Hi, the code you refer to has been moved to qiskit-optimization, and has since been refactored, so that rather than producing an operator directly, it creates a quadratic program, which can then be used in an optimization problem,  and can also be converted to produce an ising operator if desired. See https://github.com/Qiskit/qiskit-optimization/blob/master/qiskit_optimization/applications/stable_set.py
+Now I will transfer this issue to qiskit-optimization in case there is any aspect of building out the quadratic program that might relate to your discussion above. If so the code can be fixed there. The code here is Aqua in being deprecated at the next release.
+@a-matsuo I made a comment above on the problem. If this is something that we could/should fix in Aqua for its last deprecated release we can do that too. I wanted to ensure though we fixed any issue here that might have been brought over from Aqua and might still exist - though of course the code is rather different now in creating a QP.
+Apologies, I didn't realise that aqua and optimisation were seperate modules. To be clear, I've edited my code to show where I've imported my various functions from. The class you linked too seems different so I  will have a look with that !
+Forgive me if this is the wrong place to ask, but is there a difference between qiskit.optimization and qiskit_optimization? When I try using pip install qiskit-optimization I get the requirements already satisfied message, but then why the difference formatting : " _ " ?
+qiskit.optimization is a package inside qiskit-aqua. qiskit_optimization is a package inside the qiskit-optimization library. They are contained in different pip installable libraries (qiskit-aqua & qiskit-optimization). qiskit-aqua is being deprecated. The new code is being added to qiskit-optimization.
+I recalculated and figure it out. The code forgot to divide some coefficients by 2. It should be as the following code.That's why the converted Ising Hamiltonian doesn't make sense (The converted Ising Hamiltonian is wrong. from_ising is working correctly and the new stable_set.to_quadratic_program() is working correctly as well). Shall I fix it in Aqua?
+@a-matsuo Thanks for checking this out. Since this is really just a bug in Aqua I will move the issue back there.  It would be nice that it were fixed for the next/final release even though the code will all be deprecated. Since you figured out what needs doing it should be quick to do right.
+@charlieh108
+Apologies, I didn't realise that aqua and optimisation were seperate modules
+The work to split out Aqua and move core function (algorithms, opflow) into qiskit-terra and other domain logic into their own packages is ongoing work for the next release. I would not have expected most people to know that. The domain code for optimization started off from what was here in Aqua, and since that will be the base of code developed/maintained goings forwards, with Aqua being deprecated at the next release, I wanted to ensure first and foremost that if the issue remained there, following the copy/refactor which was done, that it was addressed there. Hope that makes sense.
+Thanks ever so much for this ! I'll change a stackexchange post I made which touched on this error.
+To implement the changed  code, would the best way be to create a new environment then use pip install -e qiskit and then manually copy in @a-matsuo's new code into the relevant file ?
+@woodsp-ibm
+Sure, I will fix it.
+@charlieh108
+Ya, it should work if you install qiskit with the editable mode and replace the code manually.
+The functions in stable_set.py don't make sense... Even unittests😞
+https://github.com/Qiskit/qiskit-aqua/blob/39067b4f9d345ca0fb2eeab41b231e263f828209/test/optimization/test_stable_set.py#L45
+For a graph with 5 nodes, obviously, the answer of a stable set problem can not exceed the total number of nodes. The actual answer is 3 for the case in the unittest. It can not be 38... (ignoring the minus sign)
+Sorry to be bearer of bad news but the code pushed to the fix for this doesn't work. The culprit is an extra set of brackets which have  wormed their way in from @a-matsuo 's comment here, to the finished code in https://github.com/Qiskit/qiskit-aqua/blob/master/qiskit/optimization/applications/ising/stable_set.py.
+The erroneous brackets are on lines 52 and 59: pauli_list.append([1/2, Pauli((z_p, x_p))]) should be pauli_list.append([1.0, Pauli(z_p, x_p)]).
+The code appears to work with these altered.
+Do you mean the code, pauli_list.append([1/2, Pauli((z_p, x_p))]), does not work in your environment? or the coefficient is wrong? The code is working in my environment at least.
+https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/quantum_info/operators/symplectic/pauli.py
+The coefficient is correct but I get the error   File "ibm_qaoa_mis.py", line 57, in <module> qubitOp, offset = get_operator(path) File "ibm_qaoa_mis.py", line 43, in get_operator pauli_list.append([1/2, Pauli((z_p, x_p))]) File "/Users/charlie/anaconda3/lib/python3.8/site-packages/qiskit/quantum_info/operators/pauli.py", line 89, in __init__ self._init_from_bool(z, x) File "/Users/charlie/anaconda3/lib/python3.8/site-packages/qiskit/quantum_info/operators/pauli.py", line 138, in _init_from_bool raise QiskitError("x vector must not be None.") qiskit.exceptions.QiskitError: 'x vector must not be None.' in my environment, which hasn't changed since the first comment.  Has there been a change to the Pauli function ?
+The code here is always updated to work with the latest master code of Terra. There the Pauli was changed such that instead of passing z and x separately they need to be passed in as a Tuple (z, x) that is why you see the extra brackets ie instead of Pauli(z, x) as it used to be its now Pauli((z, x)) with the tuple containing the z and x (The use of z and x, had we called the params by name instead of position, is still supported for the time being but deprecated). Since you still have the original Terra there is now a mismatch with the code here in master for you - hope that explains things
+https://github.com/Qiskit/qiskit-terra/blob/1986c95b5ca037dd9f48797b6968f0917208ee1a/qiskit/quantum_info/operators/symplectic/pauli.py#L149-L161
+Ya, if you use the latest Qiskit terra, the code should work. As another option, you can use the code I pasted in the above with Qiskit terra in your environment.

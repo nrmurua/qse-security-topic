@@ -1,0 +1,44 @@
+Fails unittests: http://buildbot.m-labs.hk/builders/artiq/builds/2364/steps/python_unittest_2/logs/stdio
+Presumably some constant propagation and folding is not happening anymore. The test_clock_generator_loopback (test_rtio.CoredeviceTest) and the 1*MHz line.
+First failing build (AFAICT) was http://buildbot.m-labs.hk/builders/artiq/builds/2344/steps/python_unittest_2/logs/stdio (rust update).
+The test_host_to_device test has become slower after (i.e. not by) the rust update.
+Yes. The root cause is I removed the unconditionally_dereferenceable LLVM patch because it was unsound while upgrading to LLVM 6.0. I am reimplementing that in the ARTIQ compiler now.
+Any update?
+Yes. I tried to fix this purely in the ARTIQ compiler, and it didn't work. Specifically, hoisting invariant loads requires inlining, which requires devirtualization, which is quite hard to implement due to Python's semantics. (We had devirtualization to support compiler-assisted interleaving, but it broke a while ago, and I wasn't successful in fixing it).
+A proper solution here would probably be to completely change the semantics of ARTIQ Python to make it more amenable for analysis, but that's not going to fly in the 3.x branch, so now I'm looking at the LLVM side of things. A loadable pass is a nightmare to debug, so I think I'll add an LLVM and llvmlite patches to conda to add a pass to LLVM globally.
+@whitequark ping
+After this gets fixed, we should add a device unittest for this. The clock generator loopback test is not a good one, and I made it pass in d2c8e62 to stop polluting the CI results, which had been going on for way too long @whitequark.
+also c.f. #686 for tracking various aspects of coredevice performance
+@whitequark can you give us an update?
+With all the time that this painful issue is taking, it seems that meanwhile a number of people have been using development versions that have the problem. How much of an impact does it actually have? Does it make sense to delay releases further? @cjbe @dhslichter @jordens
+I can work around it in most cases. But it's unacceptable to not fix it and I don't like to see this receive less attention.
+I agree with @jordens -  this kind of issue adds a lot of friction to new users especially, and we should make sure it is fixed.
+However I don't think this should block the release, since there is so much good stuff in the 4 release.
+Agreed, having a 4 release would be very good.  In the lab, we are only running on release versions, not dev versions, and just suffering through bugs for now while we wait for new releases.  We could run on dev versions, but we tend to be paranoid about upgrading in the middle of data-taking for a given experiment.  The Magtrap will upgrade directly from ARTIQ 2 to ARTIQ 4 if the release come soon.
+I agree with @jordens and @cjbe that it is absolutely critical to fix these kinds of things.  We run into major issues with compiler speed such as #804 and #709 when we try to run scans with many loops/iterations in order to build statistics for our experimental data.  Running a scan with a few tens of thousands of individual trials in total can take minutes to compile in Artiq 3.6, for example, which I think is related to things in this issue as well.
+No, this issue is not related to compilation speed. It slows down execution in several cases where floating point is used, and can be worked around by using the _mu functions.
+Should there be a 3.7 release with other bugs fixed and but this slow-down present? The bugfixes and this cannot be easily decoupled due to Rust/LLVM version incompatibilities.
+@dhslichter Is the scan compilation slowness you mention due to #804 or another already reported issue? If not, can you open a new one with a repro?
+We use the _mu functions always just because it has always provided better performance.  I would go ahead and release all the other bug fixes in 3.7, and let this one slide to version 4.  In the balance of making things better/easier for new users vs. bringing bug fixes to current users, I think here the best way to go is to push bug fixes for current users while we can.
+@sbourdeauducq I am not sure if it is due to #804 or another, to be honest I haven't tried benchmarking it.  I have just noticed that it happens.  I will write up some code to test this out and open a fresh issue if it appears to be unrelated to existing stuff.  First I need to figure out if there is a particular feature of the code that is causing it...
+We could run on dev versions, but we tend to be paranoid about upgrading in the middle of data-taking for a given experiment.
+Is that because of potential conda issues or potential problems with flashing the core device? If the former (and you are running Linux), you should give nix a try - it's harder to use but works much better than conda.
+More about the core device flashing issues; we get paranoid about doing this in a live experiment unless we have to.  Note that this is just generally true for changing/upgrading any component of the experiment that is not the fundamental limit on the experiment's performance -- including lasers, electronics, cryogenics, etc.  The time for upgrades is while the paper is being written :)
+The time for upgrades is while the paper is being written :)
+That way, when the reviewers ask you to take some extra piece of data you can reply "sorry, broke the experiment already, no can do!" :)
+That way, when the reviewers ask you to take some extra piece of data you can reply "sorry, broke the experiment already, no can do!" :)
+Fine, so maybe you wait until the paper is published :)
+A proper solution here would probably be to completely change the semantics of ARTIQ Python to make it more amenable for analysis, but that's not going to fly in the 3.x branch,
+What semantics changes are you thinking about?
+What semantics changes are you thinking about?
+For example, right now all calls are virtual, for several reasons but one of them is that the following code is valid Python:
+and so is this code:
+but of course calls have to be devirtualized to get any reasonable performance. Compare this to e.g. Rust, where if you have...
+no particular tricks are required to lower a call to foo to a single machine jump instruction.
+What do you propose? Removing all run-time devirtualization, i.e. all method calls must be resolvable at compile time?
+Yes, effectively turning Python classes into Rust traits, which are a much better runtime model. That would also give us a sane way to implement polymorphism.
+@dhslichter @jordens @cjbe @dtcallcock @klickverbot Thoughts on doing this?
+Again it would help to have a repository of actual ARTIQ experiments we can use as a reference for compiler design (and performance aspects).
+Conceptually fine. But can we please maintain and manage the current ARTIQ-Python first? Starting a new revision of ARTIQ-Python while the current state waits for regression fixes, documentation, performance metrics, speed improvements, and block releases is too early and too risky for my taste.
+@dleibrandt
+I agree with @jordens above.  For now, we use the _mu methods as a workaround so this particular bug doesn't seem to be a major issue.  I am much more concerned about compilation slowness than this issue.

@@ -1,0 +1,33 @@
+Given that we've now had our first proper performance bug (kak_decomposition being very slow), I think it's time that we added some kind of performance benchmarking process that can be run by the continuous integration scripts.
+On another project, the way I did this was by decorating tests with a "performance goal" like this:
+And the test would fail if the code ran slower than the goal (and warn if it ran significantly faster than the goal). One particularly nice aspect of this approach is that the decorator can use the expected time to decide how many repetitions to perform, in order to balance statistical noise against total running time.
+Overall, this issue involves:
+A particularly tricky issue here is that performance bugs introduced by PR A may start causing flaky failures in PRs B-Z. It's not clear that we should block merging due to performance bugs, but then it's also not clear how we incentivize actually fixing the issues.
+Can we have CirqBot create a new issue for every performance test that fails? Maybe for each pull request that breaks performance tests; as there could be too many issues created with the first approach.
+That's a decent idea. Test performance on PRs, but only really test it on master commits. When one of the perf tests starts failing open an issue (or update existing issue).
+Assuming that the assert statement is in the decorator, If
+fails, pytest will show that it failed in the decorator instead of in test_kak_decomposition(). How do you get around that?
+The decorator should produce a new test method that performs the actual testing. The new test method can also output stats such as what time was actually measured (since you usually want to hover somewhere around half of the goal due to statistical noise).
+Something like this:
+After some thought, I believe that using pytest-benchmark: https://pytest-benchmark.readthedocs.io/en/latest/ is better than rolling our own solution. The recent pull request calls benchmark() with our tests; which could mean slower build times. This begs the question: Do we want to run the benchmarks on every build? We could separate the benchmark tests and run them occasionally (once a week?). This could be done by passing --benchmark-skip(skip running any tests that contain benchmarks.) to pytest-benchmark on regular builds.
+Addressing the comparisons, pytest-benchmark generates a .benchmarks/ which contains information about the performance of the benchmarks in the form of .json when provided with a --benchmark-autosave.  This data can be compared with future builds using --benchmark-compare. Travis doesn't persist this data, so we will need to post it to a cloud storage and wget it when needed.
+@Strilanc Having a file_perf_test.py will  (almost) duplicate code. For example:
+decompositions_test.py
+decompositions_perf_test.py
+Is that fine?
+Yes, that's fine.
+We now have performance tests, right?  Should this be closed?
+Not yet. The current implementation is not reliable because we don't persist performance data between builds. What we need to do is upload the .jsons that are generated to a remote location so we may reference them and implement a script that creates an issue if incremental  benchmark results fall below a threshold
+OK so now it looks like we have this working checking for regressions.  Close?
+@vtomole probably in a week or two we'll have a GCP project where we will be able to store these files, and I will be able to add you as a collaborator - are you interested in finishing this work then?
+Currently, we have a bunch of performance tests using pytest-benchmark and the goal is to have an infrastructure where performance tests can be visualised across commits so that it is easy to monitor the trends across commits. (something similar to https://pv.github.io/numpy-bench/)
+To achieve this, we can consider one of the following two options:
+Project Link: https://github.com/airspeed-velocity/asv
+Project Link: https://github.com/marketplace/actions/continuous-benchmark
+I was looking into Airspeed Velocity for this before other things stole my time so i'm a bit biased towards it. I  still vote for it cause the charts look so much better than the Github actions charts. Those pretty charts are worth the bigger investment! Please bring this up at the Sync and be sure to show the Airspeed charts 😀.
+One thing I love about ASV is that it makes it easy to see a long history of the repo with the thumbnail charts (e.g the numpy one has the first commit from 2015 - though it is not the oldest commit, they started in 2005 or something?)
+Did you explore how you could do that with the github action benchmark?
+One aspect is to know the current performance, but it would be important to see the trends over time. Is it just a matter of running a job that generates the json data historically? I guess we'll have to do that for ASV as well.
+Generating historical data and plotting it is something that we'll have to figure out for the both the approaches. Once setup, both the approaches would automatically generate the performance data for every commit on master and show the numbers on the plots over time.
+For github actions, they have a max-items-in-chart parameter that can be used to control how much history we want to preserve for each chart. Also, for github actions, charts are rendered using Chart.js and it should be possible to modify the index.html to render better charts using the same data, if needed.
+The bigger question probably is that which one of pytest-benchmarks or asv do we want to use as a testing framework.

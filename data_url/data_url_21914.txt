@@ -1,0 +1,56 @@
+any thoughts @enjoy-digital or @gkasprow?
+Edit: possibly related to #908
+Well, sometimes it passes mem test even with the RTM:https://hastebin.com/upijulaten.rb But, even then the eye scans look bad, which isn't the case without the RTM.
+On both my Sayma setups (AMC-RTM) I see consistent passing of mem tests.  I’ve been using a build from master circa 20180326 with SAWG.
+Can you just plug the RTM and not load the RTM FPGA?
+@hartytp: that was one of my suspicion when i was having better results than you with your AMC alone. (i was able to get errors but less than what you had). With the work we did around SDRAM, i was no longer able to get errors, so we improved things.
+As @gkasprow is suggesting, i would test with/without RTM FPGA loaded and try to see if there is a voltage drop or some noise when RTM is connected.
+(i was able to get errors but less than what you had). With the work we did around SDRAM, i was no longer able to get errors, so we improved things.
+@enjoy-digital Yes, the data that you and others took shows that the changes you made to the SDRAM made a real improvement. FWIW, I'm not certain yet whether this is an ARTIQ/Misoc issue or a hardware/etc issue.
+Can you just plug the RTM and not load the RTM FPGA?
+I believe that all my tests so far were done with the RTM FPGA unloaded. I built a fresh version of the gateware/firmware, as always with python -m artiq.gateware.targets.sayma_amc followed by flashing with artiq_flash -t sayma --srcbuild ./artiq_sayma. Then I power-cycled everything and opened fiterm. I left the filterm connection open (the UART is bus-powered) while repeatedly power cycling the board's +12V supply, plugging/unplugging the RTM while the board was powered down (i.e. I didn't use artiq_flash -t sayma start).
+IIRC, the slave FPGA loading hasn't been implemented yet, so this won't load the RTM FPGA.
+As @gkasprow is suggesting, i would test with/without RTM FPGA loaded
+How do you want me to test this with the RTM FPGA loaded? IIRC, the AMC resets the RTM FPGA during boot, so there is only a short window to load the RTM FPGA before the men test begins.
+try to see if there is a voltage drop or some noise when RTM is connected.
+Yes, I'll have a look at the 12V line tomorrow with a scope. Not sure what else I should look at (but if anyone has suggestions then let me know). I can't remember what the Exar firmware status is, but if that's available now then I'll update that as well.
+@enjoy-digital I'm not really up to speed on the details of what happens on Sayma AMC during boot. From the gatware/firmware side of things (i.e. not considering PI etc for now), what difference does having the RTM plugged in make? e.g. are all the JESD lanes/ser-wb held in reset until after mem tests, or do things start powering up straight away?
+The question is if it is power supply that causes that failure. You can check with unpowered RTM. The easiest way is to disable the Enable signal that goes from I2C extender to the power supply block.
+just short pin 2 with pin 3 of T5 on bottom side of the RTM
+
+
+@hartytp: current AMC gateware does not load RTM, so your RTM FPGA is not loaded. The JESD lines are kept in reset until AD9154 are initialized, so in your case in reset. serwb is trying continously to detect a link, but that's the same behaviour with or without RTM.
+The question is if it is power supply that causes that failure. You can check with unpowered RTM.
+@gkasprow Thanks for the suggestion, I'll do that. Thanks also for the detailed description -- that transistor might not have been easy to find without the images.
+However, I'm not sure how much this test tells us: disabling the RTM power supply changes many things, so it wouldn't confirm whether this is a gateware/frimware or a hardware issue.
+One thing I was thinking about is depopulating all the AC coupling caps on the GTX lines etc to try to disconnect all signals from the AMC FPGA. If the SDRAM problem persists when there are no signal lines between the AMC FPGA and the RTM then this has to be related to PI/MMC etc doesn't it? However, I'm not sure if I can do that, because not all signals from the AMC FPGA are AC coupled or have 0R resistors.
+@hartytp: current AMC gateware does not load RTM, so your RTM FPGA is not loaded. The JESD lines are kept in reset until AD9154 are initialized, so in your case in reset. serwb is trying continously to detect a link, but that's the same behaviour with or without RTM.
+@enjoy-digital Thanks for the clarification!
+So, to be clear, you don't expect there to be any differences in the init sequence between having the RTM disconnected and having it connected but unloaded, right?
+@hartytp let's try disabling power rails first.
+Instead of depopulating JESD links caps, you can disable DAC power instead.
+I'd focus on power sequencing and related issues. It's quite possible that one of the FPGA IO lines is active before the FPGA bank is supplied which may cause the issue. So if disabling the RTM power helps, then let's disable the power rails selectively.
+@gkasprow As expected, mem tests look good with the RTM power supply disabled (T5 shorted as you suggested).
+I'm not up to speed on Sayma power sequencing, so could you suggest a list of things for me to do to enable the supplies one by one in an appropriate order to help track this issue down?
+Thanks!
+To disable only the Exar chip that supplies the FPGA, please short pin 1 and 4 of the programming connector. Make sure that the jumper on T5 is removed.
+This will disable Exar chip but will also lower the enable signal because remaining chips will get 3.3V divided by 10k : 2k divider. So to make sure that other railes are on, connect external 3.3V between pin 2 (gnd) and pin 3 (+3V) of T5 via 30..2000R resistor
+
+This will make sure that only Exar chip is diabled.
+If this won't give any conclusion, you can disable remaining power rails selectively by shorting the slow start capacitors.Try with 2 and 4V rail first since it supplies DACs and ADCs (C685, C686).
+
+To disable +6V short C688
+
+To disable +/- 12V short C703 and C704
+
+To disable -6V, short C705 and C706
+
+Updating the Exar firmware didn't change this (sinara-hw/sinara#358 (comment)), so I'll proceed as Greg suggested soon.
+@gkasprow I have shorted  pins 1 and 4 of the programming connector and connected pin 3 of T5 to the AMC 3V3 supply via a 1k resistor (using the 3V3 PG LED).
+What LEDs should be on on the RTM? I can see that LD6, LD7 and LD8 are off.
+An mem test is still bad https://pastebin.com/SWsce1wt
+@gkasprow Disabled 2V and 4V rails and mem tests are now fine. https://pastebin.com/70XxRknh
+So, it seems that there is something nasty about the DACs/ADCs on my board. Either a PI issue, or something about their connection to the AMC FPGA.
+Any ideas about what I should look at next (or would you prefer me to post the board back to you for investigation)?
+Currently, this looks more likely to be a hw issue atm given the symptoms so moving this to the Sinara repo.
+Thanks @hartytp. Good find. This was moved to sinara-hw/sinara#541

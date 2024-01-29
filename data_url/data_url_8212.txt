@@ -1,0 +1,13 @@
+This is causing test failures in all CI builds against scipy 1.5 currently.  The other failing tests on scipy 1.5 are due to changes to the handling of csr matmul operations, which is fixed in patch #1298.
+As far as I can see, there is no way to recover the exact same behaviour as existed in scipy < 1.5 (there's optimisations of the lwork input to the LAPACK routine), and consequently we are not getting the exact same set of eigenvectors for problem dimensions > 32.
+This does not mean that brtools is suddenly doing something wrong.  It just means that the test assumed we would have the exact same output as scipy, and we don't any more.
+This is an annoying problem to fix, I think.  Two possible methods:
+2 is a better solution, but harder to implement, especially in the presence of degenerate or near-degenerate eigenvalues (of which there are likely a lot around 0).  1 is very unsatisfying, but might be enough.
+In general, this problem will hopefully be solved a bit more thoroughly when brmesolve is updated to use the new data layer types, and we standardise the calculation of eigenvalues and -vectors across QuTiP.
+Hopefully someone has a better idea than me?  @Ericgig, @nonhermitian.
+In brtools's tests, we could check that the results eigenvector are mathematically right, without matching scipy's result. Should be quite simple and we would more resilient to changes in scipy.
+Did anybody check if it solves the segfault issues on Mac yet?
+Certainly the zheevr segfaults on my machine with scipy < 1.5 and doesn't with scipy 1.5, but that's hardly a perfect test - segfaults are pretty intermittent at the best of times.
+It's easy to test that all eigenvectors are mathematically actually eigenvectors with the correct eigenvalue, but the harder bit is ensuring that we've actually found all the eigenvectors, especially when we're dealing with a lot of eigenvalues that look like (0, 0, 0, 1e-17, -1.1e-17, ...).  Degeneracy is a more annoying to check that we've got the full spanning set of the degenerate basis, and it's even harder when we've got eigenvalues like 1e-17 which is almost certainly actually degenerate with 0, but hasn't been detected as such.  This is roughly what I was trying to get at with method 2.
+Actually, I suppose it's much easier than I was fearing - we don't actually need to test the degeneracy or anything.  We know they're the eigenvectors of a Hermitian matrix, so taken all together they should span the Hilbert space.  Testing that they're all linearly independent I think is a bit of an easier test.
+#1301 should fix this.

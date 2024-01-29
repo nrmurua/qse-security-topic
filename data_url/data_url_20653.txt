@@ -1,0 +1,34 @@
+With one of the recent merges, the list of default KEMs was significantly reduced (commit ddc21b0).
+While there are ways to specify non-default KEM for openssl s_client/server, this causes issues for situations where the curve can not be explicitly specified (e.g. cURL) but has to rely on whatever OpenSSL API exposes as defaults.
+May I therefore suggest to use a slightly different approach than just brute-force disabling: I'd like to propose the use of build defines to allow a fine grain selection of which KEM alg is enabled and which is not.
+In  ssl/t1_lib.c:
+(A) For each KEM which should be enabled by default, use:
+(B) For all other KEMs, use
+<KEX> obviously would be a KEM name, like kyber1024 or p256_newhope512cca. 0xabcd is the placeholder for the related KEM 16-bit code.
+To keep the code readable, a further layer of define wrappings is proposed to be used to wrap the two defines above into a one-liner each, like so:
+During build, one can simply add (just as examples) -Dno_p256_kyber512 and/or -Dwith_kyber1024.
+Anything that speaks against such an approach?
+I'm fully aware of the desire of the OQS team to have control over available KEMs and that long default lists can lead to ussues.
+On the other hand, OpenSSL also allows enabling/disabling algos during build time - and I do have an issue now being unable to use kyber1024 in my test environment.
+@martinschmatz Thanks for the suggestion. This is certainly a sensible extension of the enable/disable concepts from liboqs.
+Until we get to this, the PR above contains a patch for curl enabling it to set the client-requested algorithms in the same way as you can do it with openssl s_client, i.e., when you use an OQS-curl built with this patch (e.g., from https://github.com/open-quantum-safe/oqs-demos/tree/master/curl ) you can access your Kyber1024 server like this: curl --curves kyber1024 https://your-kyber1024-server-address.com
+@baentsch Many thanks!
+Just for test purposes, I applied the patch to my cURL build. Now I can have a connection from cURL using --curves kyber1024 and it works (as far as tested).
+Having said that, I still would most certainly prefer control over algs in OQS rather than patching third party apps to make those fit. (BUT: having --curves in upstream cURL would be a good thing in any case).
+So for the time being, I'll revert to patching ssl/t1_lib.c before building OQS OpenSSL as outlined above.
+Just FYI (read: adding it here in case somebody else could benefit):
+The default list of curves seems to be generated using scripting. Therefore, rather than using the above described approach using defines, I'm using for the time being...
+sed -i  '/static const uint16_t eccurves_default/ a 0x0211, /* OQS kyber1024 */' ssl/t1_lib.c
+... right before make-ing OQS OpenSSL to re-add kyber1024 to the (very top of the) list of default curves.
+kyber1024 is just used as an example above - one can obviously add any other curve(s) to the default list of curves as well, hybrid or not, oqs or not, by just adding the corresponding 16-bit curveID(s) plus a comma. Hence ...
+sed -i  '/static const uint16_t eccurves_default/ a 0x020F, 0x0210, 0x0211, 0x0310, 0x0311, ' ssl/t1_lib.c
+... will add the whole range of kyber curves, hybrid and non-hybrid, back to the default list (Note: 0x30F for p256_kyber512 is already in the default list, hence is missing in the above).
+Note: Use sed -i  '/OQS_TEMPLATE_FRAGMENT_ECCURVES_DEFAULT_HYBRID_END/ a 0x0211, /* OQS kyber1024 */' ssl/t1_lib.c to add the curve at the very end of the list of default curves, and sed -i  '/OQS_TEMPLATE_FRAGMENT_ECCURVES_DEFAULT_HYBRID_START/ a 0x0211, /* OQS kyber1024 */' ssl/t1_lib.c to insert it right before any oqs 'standard' defaults.
+I'd strongly suggest refraining from tweaking NIDs directly as those are a) generated and b) subject to change (e.g., #168). I  already provided one alternative for you above and now did a PR (#175 ) with another, syntactically identical one for build-time config. As this is a long-standing discussion topic, I'd prefer to have wider agreement before publishing this (or another compromise).
+@baentsch Totally agree that using curveIDs is far from what is wanted for long-term (and might need adaptations if the underlying definitions changes), hence my comment '...for the time being...'. It is what it is: A poor man's solution to avoid patching third party code, but nevertheless enabling flexible testing.
+Your PR #175 seems to be right on the spot of what I'd prefer to have, many thanks for providing it! Will happily test it once merged.
+Closed by PR #175
+Adding...
+-DOQS_DEFAULT_GROUPS="prime256v1:secp384r1:secp521r1:X25519:X448:kyber512:kyber768:kyber1024:p256_kyber512:p256_kyber768:p256_kyber1024"
+...when ./Configure-ing OQS Openssl worked for me.
+Many thanks!

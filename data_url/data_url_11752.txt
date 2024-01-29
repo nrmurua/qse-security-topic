@@ -1,0 +1,22 @@
+In the VQE algorithm, the generation of the matrix from the Pauli Product representation is a costly process. For 14 qubits, it can take tens of seconds. By using bitwise operations, we can make this operator run faster. This operator is implemented in Terra, in quantum_info.operators.pauli.Pauli.to_spmatrix. A possible faster implementation is demonstrated in the pull request : Terra Pull Request.
+The algorithms uses the fact that in every pauli matrix, if we have an element in (x,y), we have another element in (1^x, 1^y). For example, the X gate has elements in (1,0) and  (1^1,1^0)=(0,1). We begin by finding a first element, and then run this xor operation on the rows and columns of each entry in the matrix. Since we are dealing with a sparse matrix representation, we can generate only the necessary 2^n elements and work with them directly.
+To find the value of a specific element, we need to find a global phase, due to the X,Z representation, which is equal to:
+We also need to find a local phase, that is only due to the Z gates. This phase results in the number of multiplication of (-1) from the Z matrix, and for the i'th element, is the number of set bits in Z&i (we assume here, importantly, that Z is in binary representation and not a True/False array). So in pseudo code this is:
+The full implementation is in the pull request.
+For up to 20 qubits, this algorithm performs much faster than the current implementation. For high number of qubits, it is noticeably slower. For best performance, both algorithms should be switched depending on the number of Qubits. For details, see figure:
+
+Comparison of the bit-wise operation with the current Terra implementation averaged over 20 runs. For the comparison code, see below.
+My concern is that the conversion is usually a one-time thing and that part might not be a major bottleneck of an algorithm. E.g. for VQE as you mentioned, we only need to convert it once when doing the classical simulation on the converted matrix. However, most of the time take in the VQE is finding the best parameters instead of converting from pauli to matrix.
+On the other hand, if we use Aer provider, there is no need to convert pauli to matrix when performing VQE (Aer has a snapshot instruction to compute the expectation w.r.t to the Hamiltonian.)
+Nonetheless, I am positive to have a faster conversion if there is no drawback; furthermore, I do believe the conversion would be only used for small-qubit system, for a large-qubit system, it is not realistic to use a matrix to represent a Hamiltonian.
+One comment on the proposed conversion. does the following line involve 2^(n+1) memory?
+Thanks for the response Richard!
+I agree that this is probably not a major bottleneck for the algorithm, but I am not sure I understand your point about Expectation value using snapshots. Using either the code example on qiskit.org, or on Aqua's Github page, the code does run the "to_spmatrix" function ~n^4 times for a a given Hamiltonian. Is there a faster way to execute this using snapshots?
+Regarding the line:
+It only involves $(2^n)+1$ memory, as is required for the sparse matrix representation of an $(2^n) \times (2^n)$ matrix.
+Lastly, I found a faster way to count the number of set bits, so the current version is slightly faster:
+
+regarding the snapshots, it depends on how you run the VQE, for the current stable version of Aqua, there is an operator_mode argument, which controls the representations of the Hamiltonian, and I think the example codes in qiskit.org is using the matrix mode, which means that we always convert the Hamiltonian into a matrix (we used to represent the Hamiltonian via weighted paulis for compact representation for the Chemistry application.)
+Nonetheless, there is a paulis mode you can use it the VQE, which does not convert the Hamiltonian into a matrix.
+The different modes are selected based on how you would like to perform your experiments.
+Thank you for your response Richard.  Since the pull request was merged, I am closing the issue.

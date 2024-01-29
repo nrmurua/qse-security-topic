@@ -1,0 +1,22 @@
+Description of the issue
+If cirq is imported before importlib_metadata, the behavior of importlib_metadata.distributions() is changed.
+In particular, the returned iterable includes two copies of each distribution, instead of one, with one of the copies missing fields (name and _normalized_name). This doesn't happen if cirq is imported after importlib_metadata (but before distributions() is called)
+This behavior is not present in importlib.metadata, but for Python 3.8 and 3.9 it is still provisional.
+How to reproduce the issue
+Running the following snippets should produce the same result, but produces different results (the last snippet prints a value that is twice the value printed by the first and second snippets)
+Cirq version
+0.13.1
+@MichaelBroughton - I can take a stab at this, feel free to assign to me.
+@ravidalon - I can't reproduce this.  I have installed cirq and importlib_metadata to a fresh virtual environment for Python 3.9.8 using
+I have verified the installed cirq is at the current master e97768c.  All 3 snippets in your example gave me a same-length lists of distributions with the same name and _normalized_name values.  I have also tested with cirq in editable mode, ie, after setting PYTHONPATH with dev_tools/pypath, and all still worked as expected.
+Please check again.  If you still see the error, please provide the exact Python version, Cirq git commit, and installation steps for a new virtual environment.
+@pavoljuhas you are right, this is solved in the the latest pre-release (e97768c). Thanks!
+@ravidalon - I have checked again and could see the bug in v.0.13.1.
+Bisection shows the problem was fixed in 21b9be3 - specifically the issue appears to be in the calls of _compat.deprecated_submodule.
+If I reintroduce such call, for example, by applying the patch below, the bug starts biting again.
+@MichaelBroughton, @tanujkhattar - should I try to fix the root cause in deprecated_submodule()?
+Chances are this bug will reappear with any use of deprecated_submodule in the future.
+break-importlib_metadata.patch.txt
+I think that'd be a worthwhile fix for sure. I don't think we make extremely heavy use of it now, so it might be the perfect time to get a clean fix in while the stakes are a little lower. For #4722 I think we don't need the ability to deperecate a submodule (since Cirq puts everything on the global namespace) and we can just get away with being able to deprecate functions and modules. Does that make sense for your @tanujkhattar ?
+We would need to deprecate cirq.optimizers, and I do expect people to use from cirq import optimizers. That being said, since we would be gradually deprecating all methods and classes and moving them over to cirq.transformers, I think we can get away with only deprecating functions and classes and once all deprecated objects have been moved, we can remove the cirq.optimizers submodule.
+@ravidalon - please reopen, I think I should get a fix for this soon.

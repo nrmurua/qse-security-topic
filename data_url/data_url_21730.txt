@@ -1,0 +1,19 @@
+Transferring integer arrays from coredevice to host is more than a factor of ten slowe than the raw binary data transfer rate.
+Some data rate similar to the 2.4 MB/s of test_device_to_host
+211 kB/s
+This is likely because of the serialization code. I think the proper solution is to add fast paths for specific kinds of arrays.
+Is this something reasonably easy to fix?
+This behaviour is very surprising to newcomers, since one expects that the compiler particularly optimizes this case away. Also, list/array transfers are used all over the place, including in the examples (e.g. kasli_tester). Bytearrays probably work around the problem but are not really convenient in high-level code.
+@jordens @whitequark Do you have an update/statement on this? Thanks!
+@airwoodix The speed is inherent in the current implementation. It doesn't seem many people are currently limited by it or would be able do do new things if this was tuned for high data rate array transfers.
+But absolutely, IMO this is something definitely worth improving and it doesn't sound too invasive.
+Ok, thanks for the feedback. I'm a bit surprised but if no one else complained, then they're not limited, fair enough.
+We typically stream out data as it is acquired to work around this, and don't currently have any large data (e.g. AWG waveforms) we'd want to dynamically load onto the kernel CPU. Networking on the core device used to be so amazingly bad that a certain amount of complacency has set in.
+This is also hit when pushing Sampler data to the host.
+If you only need a single channel from Sampler, you can get ~30 KSPS by reducing the amount of data sent by the core:
+in the above.
+@airwoodix Did you find out whether using bytearrays works around this?
+PR #1510 and #1511 should resolve some of the performance issue. However the performance of device to host transfer of integer array is still limited by endian conversion for or1k. We currently loop over each integer, do endian conversion, and append it to the vector. This involves quite a lot of code, and the vector append may require additional allocation (O(1) is amortized only, the constant factor is not small, and we need a lot of reallocation when the vector starts small). So, the integer array/list device to host performance is pretty slow.
+For zynq, we mitigated the issue by copy the array into a new vector, do the byte swap, and copy the entire vector into the writer. This requires allocation for copying the array, otherwise we have to swap, copy and swap it back which normally takes more time. Also, this requires fast memcpy performance, which I am not sure for or1k platform.
+Wondering what if we just use the device endian, and do the endian conversion in the host. I think the host should be able to handle that pretty quickly.
+NB: Most host systems will also be little-endian, so the endian conversion can just be a no-op.

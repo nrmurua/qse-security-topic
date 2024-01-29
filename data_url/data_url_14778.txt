@@ -1,0 +1,19 @@
+Based on the discussion in #11531
+PrimitiveJob today inherits from JobV1. While it's not actually documented (because it predates the use of type hint), the .result() method of JobV1 is expected to return a Result object. This of course is not true for a PrimitiveJob.
+In addition, there are a number of improvements that we can do to Job. But since we already have PrimitiveJob, it's easier to just change PrimitiveJob instead of coming up with JobV2 for PrimitiveJob to inherit.
+Here's my proposal:
+fyi @ikkoham and @t-imamichi
+@jyu00 this all makes sense. I'm wondering if you have ideas for how to maintain support for those things tha rely on how submit() is currently implemented (setting up the thread pool and making the future based on init function, etc). Add a PrimitiveJobV1(PrimitiveJob) or something?
+We can change known primitive.run() to
+If you worry there are other primitive implementers that rely on this, we can (1) deprecate submit() in 0.46 and remove in 1.0 or (2) start versioning PrimitiveJob.
+I prefer (1) since there is less maintenance, but the runway is pretty short.
+Since PrimitiveJob.submit is supposed to be invoked internally and not expected to be invoked by users explicitly, I agree with (1) to deprecate submit. I think there is an option to make submit method private, e.g., _submit, not to repeat the thread pool part in Estimator and Sampler.
+On point 3: this is one place where you might want to make the return value a generic type.  As you say, the status field is unlikely to port between implementations of a primitive (if you make it a string or generic, you encode that users must not assume it ports for all primitives, though doubtless some will try anyway), but if you make the relevant part of the job:
+then IBM Runtime (say) can define their job
+and then a user of the IBM primitives specifically can get type hinting and checking against the proper return value.  If they're working with primitives interchangeably, their type checker will complain at them.  If it's hard-coded to be a str, users will still try and compare to known values and whatnot, and we risk creating a system where a sort of de facto convention pops up, so people will then want the string values to be the same for everything, etc, etc, and there's no scope for implementors to have rich status returns in the future.
+Bear in mind that making running, cancelled, etc abstract is a breaking change to an interface.  To keep the interface backwards compatible, you'll likely need to have those methods continue to have concrete implementations that do what they do now (with JobStatus), and just say that now the class is generic / stringly-typed, implementors must override them if they don't return JobStatus.
+@t-imamichi would you be able to take this one on?
+Also, ignore my comment here.
+I realized JobV1 is an abstract class and PrimitiveJob isn't. So really we can have a new BasePrimitiveJob that replaces  JobV1 as the parent, does not have submit() etc. Then PrimitiveJob can continue to have a submit() that will be deprecated and replaced by _submit().
+OK. I take this issue.
+I made #11552. Could you check whether this follows the discussions?

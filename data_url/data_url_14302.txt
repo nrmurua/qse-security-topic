@@ -1,0 +1,10 @@
+We expect a custom measurement pulse schedule is attached after transpiling the following circuit. Preset pass managers in Qiskit have the pulse gate pass that automatically checks backend instruction schedule map and calls .add_calibration if it finds a custom gate definition both in the circuit and instruction schedule map.
+{}
+Currently this is not applicable to measurement instruction because of two reasons.
+In Qiskit circuit Gate and Measure are different subclass and pulse gate pass is not aware of measurement instruction in the circuit. You need to update the logic of the superclass. It only loop over .gate_nodes but we need to check all nodes with .op_nodes.
+https://github.com/Qiskit/qiskit-terra/blob/247c29899e5d3e5b46b7aab63156c175e974579a/qiskit/transpiler/passes/calibration/base_builder.py#L64
+After you fix the issue1, you need to consider the mapping of the circuit creg index to pulse schedule MemorySlot index. The instruction schedule map is creg index agnostic.
+https://github.com/Qiskit/qiskit-terra/blob/247c29899e5d3e5b46b7aab63156c175e974579a/qiskit/transpiler/passes/calibration/pulse_gate.py#L92
+The custom_meas pulse defined in the above example has hard-coded memory slot index of 0. However, the qc uses the register index 2. This sometime causes a serious bug. When you have two different measurement schedules for different qubits and they have the same memory slot index, the cregs conflict at schedule level and only single qubit result is returned from the backend even if you specify different creg index from quantum circuit. So we need some mechanism that modify measurement schedule on the fly (i.e. new function in qiskit.pulse.transforms).
+For completeness, you may want to implement new transpiler pass, that checks DAG circuit .calibrations dictionary to detect inconsistency of creg index mismatch. The pass may call above transform function to align register index if needed.
+@nkanazawa1989 , please assign me as we discussed.

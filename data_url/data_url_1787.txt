@@ -1,0 +1,24 @@
+Is your feature request related to a use case or problem? Please describe.
+The Operation has a gate property which is frequently used to identify its type. However, not all Operations are GateOperations, meaning that this field is not always populated.
+Until recently this has been a relatively minor problem, since the vast majority of Operations are GateOperations. However, with the introduction of CircuitOperation (#3580) this issue is becoming more pronounced.
+Related issue: #3235.
+Describe the solution you'd like
+Remove gate field in Operation and replace with a get_operator abstract method, defined in implementations. This will require deprecating the field and replacing it across the Cirq repo.
+[optional] Describe alternatives/workarounds you've considered
+What is the urgency from your perspective for this issue? Is it blocking important work?
+P1 - I need this no later than the next release (end of quarter)
+This confounds work on CircuitOperations, as they do not have a value in their gate field. Continuing work in that space without resolving this issue requires workarounds which will increase the cost of an eventual fix.
+We don't assume that operations have gates; that's why the gate field has type Optional[cirq.Gate] as opposed to cirq.Gate. Why not just have return None for the gate property on CircuitOperation? I'll admit I'm biased here because I was the one who initially added the gate field (we explicitly made it optional to accomodate all operations). This change got rid of helper functions that we used previously to identify GateOperations and extract their gates and check the gate type, etc. and simplified a lot of code so I'd prefer to keep it.
+Why not just have return None for the gate property on CircuitOperation?
+This is the current behavior for CircuitOperation. If we keep this behavior, every line of code that relies on op.gate to recognize the type of an operation must separately check for CircuitOperation - which itself is awkward, because simply checking isinstance(op, CircuitOperation) fails to identify CircuitOperation(...).with_tags(...), which is a TaggedOperation.
+Separately, this is an example of the interface segregation principle: Operations that are not GateOperations should not be required to have a gate field, even if that field defaults to None.
+The example of this which prompted me to open this issue was serializable_gate_set.py, which uses op.gate to choose which serializer to use.
+It may be worth revisiting whether a subcircuit should really be modeled as an operation. An operation is plausibly something that's instantaneous, that plays out in a single moment. A subcircuit spans moments and runs in sequence in sync with the main circuit.
+Either way, seems like there should be something in the class hierarchy that distinguishes between instantaneous and sequential. Maybe an algebraic data type would be better here than subclassing?
+@daxfohl: Subcircuits as they are implemented today are just as "instantaneous" as any other operation. Consider this circuit:
+There are two things to note about the second moment of the top-level circuit:
+(These items are true even without explicit cirq.Moments wrapping each moment; I just added those to clarify the structure.)
+For more details on why CircuitOperation was implemented as it is, you can read the original RFC here: https://tinyurl.com/cirq-circuitoperation-rfc.
+Create a module-level function ops.try_get_gate(op: Operation)? That way it's still a one-liner but it fixes ISP and is obvious it can fail.
+Short term solution: #3893
+Long term solution: #2536

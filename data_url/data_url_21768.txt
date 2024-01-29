@@ -1,0 +1,32 @@
+Expectation is that setting DDS does not shift the timeline cursor.
+dt = 1258
+Zero explanation, arguments, deliberation, or rationale given for this request. Closing.
+Expectation is that setting DDS does not shift the timeline cursor.
+@jbqubit I don't understand the reasoning behind this expectation. Generally, I would want and expect these methods to advance the timeline by the duration of the SPI transaction. Otherwise, users would manually have to add extra delays in the code, which is cumbersome.
+To see where the delay comes from, have a look at the urukul coredevice code. It's quite simple and essentially just wraps the spi2 coredevice driver which has explicit (and documented) delays, such as the write method:
+
+If you feel that some more general documentation, say in the master manual, would help to set user expectations correctly, then probably the easiest thing to do is submit a doc PR.
+In @jbqubit's defense, I think this expectation comes from the way the ad9858 and ad9914 drivers worked.
+The delay here is purely an artifact of the hardware.
+In @jbqubit's defense, I think this expectation comes from the way the ad9858 and ad9914 drivers worked.
+To be clear, I was aiming for helpful rather than attacking in my tone there.
+IIRC this was discussed from multiple perspectives. The rule AFAIR is that APIs that are either intrinsically parallel-izable with other APIs that use the same resources (by virtue of having zero length, setting an idempotent state in a single RTIO cycle, typically also replaceable) or have some parallelism support with other APIs using the same resources (e.g. through batching) can be exposed as zero length. The rest should advance by the duration of the resource usage. Part of the rationale is the timeline management overhead at the user end and misunderstandings like #1174.
+A bare and unfounded statement of an expectation doesn't meet minimal criteria of a useful or fair issue report.
+The problems with the AD9914 parallel bus are the same as with the AD9910 serial bus, except that transfers take longer to complete with the latter. The Urukul is just as batch-compatible as the NIST AD9914 hardware.
+Ideally, a DDS "set frequency" operation just happens at a point in time and does not have a duration. The difficulties associated with achieving this transparently with DDS chips and their buses were one reason for the AWG.
+AFAICT the reason for the API difference is not the feasibility of implementing batching but the fact that batching was implemented for AD9914 (hence the adherence to the preivous zero-duration set()) while it wasn't and isn't implemented for Urukul. That makes the ad9914 driver a bit tedious to use since batching was completely removed.
+If batching was reintroduced it should probably become a more generic transactional scheme that can be implemented and applied to the DDS drivers, Zotino, Urukul attenuators, the Urukul CPLD config, or SUServo. A transactional scheme might even address issues like interrupted split SPI transfers that are a pitfall with AD9910.
+A bare and unfounded statement of an expectation doesn't meet minimal criteria of a useful or fair issue report.
+My expectation is that the changes the timeline are explicit. Hidden modifications to the timeline obscure causality.
+Generally, I would want and expect these methods to advance the timeline by the duration of the SPI transaction.
+The current implementation violates the RTIO model. An RTIO PHY is expected to do whatever preparatory work is required to permit an action too be effected when the scheduled time matches rtio_counter. If actions are scheduled too close together in time to be actionable by the PHY, a Busy Error is to be emitted.
+The rest should advance by the duration of the resource usage.
+No, timeline advances should be explicit. If there's any place where a real-time system ought to indulge verbosity, it's in timeline modifications.
+The delay here is purely an artifact of the hardware.
+AFAICT the delay is an artifact of the PHYs failure to support 'zero-duration' methods. Seems like this isn't insurmountable. #1174
+Looking forward to seeing expectation replaced by contributions through high quality PRs with improved documentation and implementation or through feature requests and funding.
+AFAICT the delay is an artifact of the PHYs failure to support 'zero-duration' methods.
+This doesn't have much to do with the PHY, as I said before the situation with the AD9914 bus is the same.
+AFAICT the reason for the API difference is not the feasibility of implementing batching but the fact that batching was implemented for AD9914 (hence the adherence to the preivous zero-duration set()) while it wasn't and isn't implemented for Urukul. That makes the ad9914 driver a bit tedious to use
+I'm not sure which behavior (add a delay to match the bus hardware or not) is more tedious to use in practice. In theory, I tend to be with @jbqubit on this one, there is no "duration" to a DDS frequency set, and tying it to the ARTIQ hardware is arbitrary.
+Keeping phase alignment for different frequencies just ends up being annoying.

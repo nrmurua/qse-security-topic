@@ -1,0 +1,24 @@
+In a discussion with @rupeshknn, we found a bug when passing the kwarg qargs to Statevector.probabilities_dict, which seems to occur when there are subsystems with dimension > 2. I haven't tested extensively, but it seems like things are working when all subsystems have dim = 2, so there could be some baked-in assumptions of all subsystems having dimension 2.
+Create a Statevector:
+Under the standard tensor-product convention (implemented in np.kron), and with outcome strings being in reverse order relative to the tensor product convention (and relative to the indexing of dims), this is a uniform superposition over the outcome strings: 00, 01, and 12.
+Calling state.probabilities_dict(), or similarly, state.probabilities_dict(qargs=[0, 1]) (i.e. using qargs to say we want to include all subsystems), we get the correct value under the described expectations of the above paragraph:
+If we call state.probabilities_dict(qargs=[0]), we are requesting to get the probabilities of the subsystem indexed with 0 (the 3 dimensional one), so we expect to see:
+however the output is:
+Similarly, for state.probabilities_dict(qargs=[1]), we expect to get:
+but instead this actually outputs:
+which isn't even a probability distribution.
+Another error case is calling state.probabilities_dict(qargs=[1, 0]) (i.e., requesting the probability distribution over all subsystems but permuting the results). For this we would expect:
+however we get:
+which is almost correct, however somehow the middle outcome is now interpreted as 11 rather than 10.
+The correct outputs are included side by side with the errors.
+This will likely boil down to figuring out where the errors are occurring in the array manipulation and numpy calls inside Statevector.probabilities_dict. As mentioned, I haven't been able to find any erroneous outputs if all subsystems have dimension 2 (even with up to 3 subsystems), so it very well could be linked to the computations implicitly assuming this.
+An update: the guess that it may implicitly assume dimension 2 is now being updated to the guess that it is implicitly assuming all subsystem are of equal dimension.
+If we pad the above example with 0.s to make it an example with both subsystems having dimension 3, the correct results are obtained. I.e., for:
+Calling
+correctly returns
+Calling
+correctly returns
+and calling
+correctly returns
+As pointed out by @chriseclectic , this could be related to #8899
+I think this bug is fixed by replacing https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/quantum_info/states/quantum_state.py#L457 with

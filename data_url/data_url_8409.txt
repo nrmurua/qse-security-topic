@@ -1,0 +1,38 @@
+qutip crashes for moderately big tensor products:
+In the following example, the result should be identity, and due to operators being stored in a sparse format, I'd expect qutip to handle this without problems
+I've also seen segmentation faults for examples where not all operators where the identity
+Oh, I see... it's actually the index integers in the sparse representation that overflow, so not really much you can do about it. Feel free to close.
+That being said, what I actually want to do is to set up a state which I then want to project into the single-excitation subspace (with qobj.extract_states). Any obvious way of doing that?
+@goerz We are actually discussing a plan to move to int64 for the the indexes #850 . So we will keep this open.
+There is a cost, other than the work. Do you have any opinion on this idea? If so, then please comment in #850
+Having int64 integers for indexing could certainly be useful, although in this particular case I was tired/stupid, and trying to do something impossible.
+That being said, I wonder whether the use of sparse matrices in QuTiP could be encapsulated completely, allowing do drop in arbitrary (external) sparse-matrix implementations. Importing the desired implementation could happen dynamically at import-time. This would allow to use int32, int64, or infinite bigint implementations (if any exist), as well as allowing to switch between pure-python implementations and the standard cython-optimized ones. Pure-Python would obviously be slow, but it would get around the segfaults that happen occasionally (#674).
+Hi! I am also having trouble at this step. Any (temporary) solution for me?
+OverflowError                             Traceback (most recent call last)
+Cell In[79], line 11
+9 ad = a.dag()
+10 n = qutip.num(fock_trunc)
+---> 11 mode_fields = [tensor_out(a + ad, i) for i in range(n_modes)]
+12 mode_ns = [tensor_out(n, i) for i in range(n_modes)]
+13 linear_part = dot(fs, mode_ns)
+Cell In[79], line 11, in (.0)
+9 ad = a.dag()
+10 n = qutip.num(fock_trunc)
+---> 11 mode_fields = [tensor_out(a + ad, i) for i in range(n_modes)]
+12 mode_ns = [tensor_out(n, i) for i in range(n_modes)]
+13 linear_part = dot(fs, mode_ns)
+Cell In[15], line 5, in tensor_out(op, loc)
+3 op_list = [qutip.qeye(fock_trunc) for i in range(n_modes)]
+4 op_list[loc] = op
+----> 5 return reduce(qutip.tensor, op_list)
+File ~\AppData\Local\anaconda3\envs\epr_analysis\Lib\site-packages\qutip\tensor.py:84, in tensor(*args)
+82     out.dims = q.dims
+83 else:
+---> 84     out.data  = zcsr_kron(out.data, q.data)
+86     out.dims = [out.dims[0] + q.dims[0], out.dims[1] + q.dims[1]]
+88 out.isherm = out.isherm and q.isherm
+File ~\AppData\Local\anaconda3\envs\epr_analysis\Lib\site-packages\qutip\cy\spmath.pyx:328, in qutip.cy.spmath.zcsr_kron()
+File ~\AppData\Local\anaconda3\envs\epr_analysis\Lib\site-packages\qutip\cy\spmath.pyx:673, in qutip.cy.spmath._safe_multiply()
+OverflowError: value too large
+If you install from source from the master branch with the environment variable CI_QUTIP_WITH_IDXINT_64=1 set, you should be able to use matrix with size up to 2**63-1.
+I've opened #2278 for documenting this feature.

@@ -1,0 +1,26 @@
+When the same circuit is executed many times but with a different set parameters every time, quite a significant amount of time is taken by QuantumCircuit.assign_parameters(). This is very important in variational algorithms where a large number of circuits is executed in an algorithm.
+A quick profiling of the script attached below finds that out of total 40.7 seconds assigning parameters takes 16 seconds. The script is derived from the circuits you may find in quantum machine learning. The same circuit is executed 1200 times in a single iteration. There are 5 iterations in total, thus 6000 circuit executions in total.
+Here is a screenshot from smakeviz:
+
+If we drill down we see that almost a half of the assign_parameter calls is taken by circuit copy and a third of the time is taken by parameterexpression.py.
+
+If we could reduce these timings we would speed up variational algorithms.
+Setup:
+Here is the script to profile:
+We are planning to entirely overhaul how classical parameters are handled, beginning in 0.20, though it might take longer for all the benefits to be fully realised.  The two main points you've identified here we 100% know about, and the implementation of #7624 should fix them, which should be in 0.20.
+The main issue is that the current model was never really designed for these use-cases; params were originally fixed numeric values, and a lot of handling in circuits and instructions assumes that they will not change.  There are various points during the current applications workflows where circuits and instructions need to create new internal objects, which depend on the params, and so when we're then asked to "rebind" a parameter, we have to churn through everything that was already calculated and effectively re-do it.  ParameterExpression and calculations with Symengine reduce a little bit of the numeric load, but in the scheme of things, the numeric calculations are miniscule compared to the weight of all the data we have to duplicate to create an entirely new circuit with different parameters.
+In some cases, it may be faster to build a new circuit each time with fixed numeric parameters than it is to call assign_parameters - a lot of this is because we don't need to reconstruct internal objects (like Instruction.definition) in this form, but can re-compute them on demand.  #7624 will effectively codify that as the only data flow, and the way Terra reasons about its objects, and should make things a lot more efficient.
+I'm just curious which OS are you running on and do you have symengine installed? On windows symengine isn't installed by default because of limitations in platform markers but it is installable. When I run your profile script it takes ~5.6 seconds per iteration and the parameter assignment is faster than the instruction copy under assign_parameters() What @jakelishman is referring to should address the copy overhead bottleneck and is definitely the path forward here. But more I'm just wondering if I'm just seeing local environment differences (hardware, python version, etc) or if this is partially symengine vs sympy.
+That being said in this particular case you actually avoid the overhead here by leveraging parameter binding in aer directly. if you pass your parameter table to backend.run(). Something like:
+instead of the for loop in test_backend(). It's independent of this issue because there is a performance bottleneck in terra, but just a workaround in the meantime.
+I got roughly similar relative timings to the top post with symengine on Mac (about 7s per iteration for me) - I was slightly surprised as well, because that was my first thought.
+The other part of new classical parameters is that we'll be promoting the workflow Matthew suggested (passing parameters to Aer) up to first-class status, because that'll be a more complete way to handle dynamic circuits in general. In the future, you'll be able to use the outputs of measurements to influence the classical values used in parameters, etc while on the actual quantum hardware.  There'll still be support for this current style of compile-time rebinding, but there'll also (eventually) be proper support for some degree of classical calculation at runtime.
+@mtreinish Initially, my data was collected on Windows. It is a 3+ years old laptop.
+I do have symengine and sympy installed:
+Although they may be outdated.
+On Mac I see pretty much the same picture:
+
+Timings may vary, but in general it is similar.
+Mac setup:
+In QML we deal with QuantumInstance and changing the way how it handles parameters may take a while and I'm not sure it's worth implementing this workaround since new primitives should arrive in terra soon (I hope) and replace QuantumInstance as I understand.
+@jakelishman Is there a single place where I can keep track of such changes/improvements in terra? A few times I was told that QML algorithms are slow compared to other frameworks, let us not name them, so speeding up variational algorithms in general is sort of crucial.

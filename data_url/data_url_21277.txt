@@ -1,0 +1,26 @@
+A code that is supposed to write a single frequency ramp into the AD9910 RAM and then play this sometimes causes RTIOUnderflows that can not always be fixed by adding very long delays.
+Code: dds_ramp_test_minimal.txt
+I use one of the two Urukul modules connected to my Kasli board.
+Creating single frequencies and amplitudes on the channel I am using is no problem.
+I use the code above to create a linear frequency ramp in a suitable format for the RAM. I initialize the DDS, set up the RAM profiles, write the data and then enable the RAM with an I/O update pulse.
+A frequency ramp is generated and can be observed on a spectrum analyzer. The code should work the same every time I execute it.
+Sometimes the code just goes through as expected. But sometimes (e.g. after the system was turned off, or when other work was done on other parts of the system or other DDS channels...) an RTIO underflow occurs, see example of an exception log:
+
+This is seemingly caused by the line writing the data to the RAM. I tried to remove the underflow by placing long delays (I sometimes tried >1s) before and/or after this line, but it did not always remove the exception.
+The Underflow then sometimes causes other exceptions, e.g. AUX_DAC mismatch, as described in other issues.
+Is there something fundamentally wrong with the way I try to use the RAM or do you have an idea of how to make the code more robust? I want to go for more elaborate examples later and try to get the basics right.
+Your examples look fine. You may want to have a look at the core analyzer analysis of the slack to see whether that is sufficient.
+3µs is marginal. This is most likely a cold cache (on switching experiments or reboot as you say). If you increase that delay(50*us) to delay(100*us) my guess is that you should be fine. Alternatively maybe setting kernel_invariants = {"f_ram"} in your class would make a difference. If none of those help then we need to add a bit of slack in AD9910.write_ram() to guarantee no underflows for practical conditions. Let me know how this goes.
+If a SPI split transaction gets interrupted (by e.g. an RTIO underflow) then the AD9910 locks up
+(#1141). That tends to surface later as an AUX_DAC mismatch.
+I've been using the Urukul RAM mode and I believe that I ran into the same problem of unpredictable underflow errors around RAM writes. In my case no additional delay was sufficient to avoid the errors. I found that the code behaved correctly if the writes were made in smaller chunks, rather than writing all 1024 words at once. Typically I've gotten good performance when writing up to ~450 words at a time, but it's been spotty with much beyond that.
+I just ran into the same issue and started looking at the core analyzer log. To see what's happening, I added rtio_log messages to AD9910.write_ram():
+The following two figures shows the VCD analyzer trace of an experiment performing 1ms delay to build up slack (long incline in the beginning) and then writing data.
+50 values written:
+
+200 values written:
+
+After - in this case - 124 transactions of self.bus.write(data[i]), slack suddenly drops. As pointed out earlier by @dtell42, the amount of delay before calling write_ram(data) turned out to be inconsequential.
+There must be a condition in one of the functions called by artiq/firmware/ksupport/rtio.rs: output causing it to return with significant delay. This could either be csr::rtio::target_write, csr::rtio::o_status_read or, maybe more likely, dealing with RTIO_O_STATUS_WAIT? I didn't trace the CSRs any further at this point, but I hope this information can help to resolve this issue.
+this issue seems stale, but we still observe this problem with ARTIQ 7. I am wondering if #1987 is related to this since the SED depth seems to be 128 and in the example mentioned earlier, transaction 124 fails. Coincidence?
+at this moment, the only workaround seems to be writing RAM in smaller parts, which is not always an option. any renewed ideas for solutions or workarounds? adding a self.core.break_realtime() before each self.bus.write() in AD9910.write_ram() might be a workaround, but will probably be a major performance hit.

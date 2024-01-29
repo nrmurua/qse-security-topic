@@ -1,0 +1,40 @@
+It appears that qutip assumes that you are using the same time-dependent function(s) when computing the propagator using the rhs_reuse flag.  As a result you can get an incorrect answer if one isn't aware of this assumption.
+Here is a demonstration of the issue:
+import qutip as qtp
+S = qtp.jmat(1/2.)
+I = qtp.qeye(2)
+odeOpts = qtp.Odeoptions(1e-10, 1e-8)
+H0 = qtp.tensor(S[2], I) + 0.1_qtp.tensor(I, S[2])
+Hint = 0.1_sum([qtp.tensor(S[i], S[i]) for i in xrange(3)])
+print "H0:", H0
+print "Hint:", Hint
+print "Turning interaction on linearly:"
+print qtp.propagator([H0, [Hint, 'w*t']], 5, [], {'w':1/5.}, opt=odeOpts)
+print "Turning interaction off linearly with rhs_reuse (bug):"
+odeOpts.rhs_reuse = True
+print qtp.propagator([H0, [Hint, '1-w*t']], 5, [], {'w':1/5.}, opt=odeOpts)
+print "Turning interaction off linearly without rhs_reuse (more like it):"
+odeOpts = qtp.Odeoptions(1e-10, 1e-8)
+odeOpts.rhs_reuse = False
+print qtp.propagator([H0, [Hint, '1-w*t']], 5, [], {'w':1/5.}, opt=odeOpts)
+print "A solution is to keep the time function the same but change the arguments."
+print "Turning interaction on linearly 'a+b_t':"
+print qtp.propagator([H0, [Hint, 'a+b_t']], 5, [], {'a':0, 'b':1/5.}, opt=odeOpts)
+odeOpts.rhs_reuse = True
+print "Turning interaction off linearly with rhs_reuse but same 'a+b_t':"
+print qtp.propagator([H0, [Hint, 'a+b_t']], 5, [], {'a':1, 'b':-1/5.}, opt=odeOpts)
+Hi
+Thanks for reporting this problem. I'm not sure if I'd call it a bug or not, but I understand that this behavior can be a bit confusing. With odeOpts.rhs_reuse = True the same function will be use until rhs_clear() is called, which in your case would be
+qtp.rhs_clear()
+qtp.propagator([H0, [Hint, '1-w*t']], 5, [], {'w':1/5.}, opt=odeOpts)
+when yo change the time-dependency function strings.
+Maybe this needs to be emphasized more in the documentation, or perhaps rhs_clear() could be called automatrically from within propagator, but this could prevent one from really reusing the rhs function for several propagators with the same rhs function (for example with different H0 or Hint).
+I'll leave this ticket open for now so we'll remember to think some more about how this issue should be handled in the best way.
+Thanks again for your feedback!
+Your welcome and thanks for looking into this.  I understand that there are functionality considerations to be made.  Perhaps a simple assertion check would strike the right balance -- giving the functionality you want while avoiding the danger of faulty assumptions.
+Hi
+I have looked into this a bit more and there was a bug in how rhs_reuse was used if an Odeoptions instance was not given to the propagator function. This commit fixes that problem: ea7fd97
+I have also tentatively added warning if the RHS functions are reused (374c4b6) due to that the user has set rhs_reuse=True in Odeoptions, but might make it a warning in the docstring for the propagator function instead.
+With the current development code your examples look like this:
+http://nbviewer.ipython.org/5487153
+Thanks again for your help with improving qutip!

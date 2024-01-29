@@ -1,0 +1,90 @@
+Multichannel gateware servo to control an Urukul DDS amplitude based on a Novogorny ADC input.
+Design and implementation funded by Oxford.
+Code development: https://github.com/m-labs/nu-servo
+A. Design, resource usage, and feasibility (without hardware)
+B. Implementation and integration. With hardware.
+Waiting for
+Should this be part of ARTIQ 4.0? 5.0? Not in ARTIQ?
+Will merge into ARTIQ when working. Let's try to hit 4.0.
+@hartytp The code has landed. I currently don't have Sampler to test it with but the signals look good and the Servo, RTIO, DDS interface work fine. Docs still pending.
+But have a look at the example and the gateware/coredevice code and let me know what you think.
+https://github.com/m-labs/artiq/blob/master/artiq/examples/kasli_suservo/repository/suservo.py
+
+Nice! Thanks @jordens.
+I'll make reviewing/testing that a priority for next week.
+No rush. Play with it and file issues. I'll be AFK all next week and won't be able to start working on it until 2018-05-09 or thereabout.
+From a read through of the core device class, this looks really nice. Other than the # FIXME/not implemented parts, the only thing I can see which we need, and which is not provided by this, is some non-real time diagnostic info.
+edit: moved to m-labs/nu-servo#4
+Done. Please file separate issues about bugs.
+@jordens Are there instructions on how to setup a minimal system with Kasli and configure?
+@jbqubit how far have you got with trying to set this up? Did you try building the su servo variant of Kasli? The hardware connections you need are pretty self-explanatory (
+FWIW, we funded documentation to be written on the basis that the user should already have a working knowledge of the hardware/PI loops/etc. So, it needs to be clear what the code does (and if you think it's not then feel free to file issues) but I'm not expecting high-level docs explaining how to set the system up, tune loops, etc.
+It's fair to assume users know about feedback at for example the level of Bechhoefer's tutorial.
+On the setup side it would be helpful to know what clocks need to be applied. Is there a writeup that bridges the gap between implementation plans and what was actually implemented? It looks like information that was operative during the planning and execution stages can be found at several places. But they're now obsolete.
+This repository only contains the history and legacy code to test, prototype, and evaluate the design.
+https://github.com/m-labs/nu-servo
+Provisional plans for using Novo as a low-bandwidth (>100 kHz loop bandwidth) feedback controller, generally servoing a Urukul DDS amplitude.
+https://github.com/m-labs/nu-servo/blob/master/doc/NovoUrukulServo.md
+I see that the API calls are documented in the manual.
+http://m-labs.hk/artiq/manual-master/core_drivers_reference.html?highlight=servo#module-artiq.coredevice.suservo
+It's difficult to read the suservo.py example without knowing in physics language what it's setting out to demonstrate.
+https://github.com/m-labs/artiq/blob/master/artiq/examples/kasli_suservo/repository/suservo.py
+@jbqubit I definitely agree with you that this all needs more documentation. However, I don't think that much of it is SU-servo specific. e.g. Kasli, Urukul and Sampler all need proper docs (as do the other EEMs), explaining the connections they need in a way that physicists understand. We also need some higher-level docs explaining how the Kasli/EEM ecosystem works and how all the various parts are intended to be used/interact.
+But, this issue (and, indeed, this repository) isn't the place to discuss that.
+I'll give you a short run down of the SU-servo setup as far as I understand it, with the caveat that I'm out of the lab atm and writing some of this from memory. Maybe @jordens will correct me if I'm wrong. If you need more info that this then the ARTIQ mailing list might be a better place to discuss it.
+SU-servo connections:
+I think that's all. So, give that a try, and post to the mailing list if you have any issues.
+Oh, and I'd generally tend to run Urkul's system clock at 1GHz. But, IIRC, you can use more or less any Urukul clock frequency you want with the servo. Essentially, the servo just takes control of the SPI port on Urkul, but leaves everything else alone. The SPI port is independent of the clock frequency IIRC (but, in case of doubt/questions, refer to the AD9910 data sheet)
+I've done some preliminary testing on the servo using a 423B between the DDS and ADC. Next step is to put it onto an ion.
+There are one or two things I still need to look at, so some more small issues might turn up. But, overall I'm very happy with it -- it's exactly what I wanted out of the project, so thanks @jordens!
+Comments:
+There is one question that we may want to look at:
+The IIR state, ADC, etc have higher resolution than the DDS ASF (14 bit). If that 14 bit quantization dominates over all other quantizations and random noise sources, there is no "natural" dithering anymore and AFAICT the servo should oscillate in the LSB. But maybe it's harmless.
+But maybe it's harmless.
+Personally, I'm not too fussed by that. Assuming 12 bits of effective resolution (e.g. running DDS no lower than 25% ASF) this noise is still at the 0.02% level, which should be harmless of any application I have in mind.
+Sustained event rate for ADC reading is something like 1/3us, so 300kSPS. That should be fast enough to have a play with autotuning.
+As previously discussed, we'd like to use the SUservo with Sampler 10m away using a pair of VHDCI_carrier cards as SCSI<->IDC adapters. Initial SI testing on Kasli suggests that this should be possible from a HW perspective.
+10m cable is something like 100ns RTT (assuming v=0.7c). So we need something like 12 clock cycles for RTT. Let's say 15 to be safe. Rebuilding with t_rtt=15+4 to test this.
+Thanks @jordens for altering the servo sequencing to make this possible!
+@jordens hmm...had a quick go at that. With t_rtt=15+5 all the red LEDs are on on my Urukul. Do you expect (SI asside) that running the gateware with this t_rtt will work? If so, I'll look into what's wrong on my setup in the morning.
+The red LEDs should go dark with SUServo.init().
+But larger t_rtt should work fine. Let me know what you see and I'll try to reproduce then.
+Thanks. I suspect it's something daft like a loose cable in my setup. But, I just wanted to check that there is no obvious reason why this won't work. I'll dig into it in the morning. This is the last test I want to do on the bench before using the servo in experiments.
+As expected, just a silly code bug. With t_rtt = 15 + 4 and a 1m SCSI + 2xVHDCI_carriers, this looks fine. e.g. rms noise hasn't changed.
+Nice. I wonder whether the LVDS return current path (one pin plus shield) on the VHDCI cables will become problematic at some point. Especially given the usually separate power supplies.
+Some more data on this. I'm reading the ADC at 1 sample per 4us (nb plot x axis incorrectly uses 3.5us sample time) and plotting the ADC (not servo x) code with the mean subtracted. I'm running with 350mV at Sampler's input, G=1 no termination.
+First, using 1m SCSI cable, Kasli/Urukul and Sampler run from separate PSUs.
+
+rms noise is 100uV, so same as having a "local" sampler attached directly to Kasli.
+Now, 10m SCSI cable, separate PSUs:
+
+RMS seems to vary between about 300uV-400uV, with some periods of increased noise.
+Now 10m SCSI cable and using the same PSU for sampler and Kasli/Urukul by tying the power connectors on the VHDCI carriers together.
+
+RMS is about 300uV, I don't see the periods of increased noise.
+Edit: disabling the iir during the acquisition does not affect the results.
+Hmm. What do you mean by "not servo x"? Is this in-loop or out-of-loop?
+And could you quickly check whether there is a difference between an odd and an even ADC channel in the long-cable case? And is this with the 5V ADC supply at 5.25V?
+Spectrum of that last data using np.fft.fftfreq and np.fft.fft:
+
+Edit: so, assuming i've got my normalization correct, it looks like 50kHz SMPS noise.
+Finally, same as before (10m SCSI cable, same PSU for everything) but 50R terminate the input and increase the gain to 100. Set-point is not 35mV:
+
+
+RMS is not about 16uV, so pretty close the the system noise floor. (Probably
+not be such a surprise, since poor grounding and high-impedance inputs is often a recipe for trouble).
+I would have expected any major SI issues to show up in this testing, so tentatively I'd conclude that -- modulo standard grounding issues -- remote EEMs work fine. cool.
+NB I had a half-hearted go at scattering ferrite CMCs throught my setup without seeing any noticeable improvement.
+And is this with the 5V ADC supply at 5.25V?
+No, I didn't get around to that yet. I might get better results (noise etc) if I did.
+What do you mean by "not servo x"?
+Unless I've misunderstood things, the ADC machine units used by SUServo are different to the ones used by Sampler (cf 
+And could you quickly check whether there is a difference between an odd and an even ADC channel in the long-cable case?
+Will do. All of the above was on ADC 1. I'll repeat the no termination measurement on ADC 0.
+Is this in-loop or out-of-loop?
+I looked both with the IIR enabled and with it disabled. I didn't see a noticeable difference.
+And could you quickly check whether there is a difference between an odd and an even ADC channel in the long-cable case?
+Done. Results look exactly the same as ADC ch1. ADC ch 0, G=10, no termination, 350mV Sampler input, 10m SCSI, Kasli and Sampler using the same PSU, IIR enabled. RMS noise is 300uV.
+So, unless there is anything that anyone else wants to see, I'm happy to conclude my servo bench testing there.
+ACK. Thanks.
+The Servo ADC MUs (17 bit signed) are half the raw Sampler MUs. The LSB is 0.

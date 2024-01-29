@@ -1,0 +1,25 @@
+Hi, I report a strange behavior of propagator method.
+propagator with collapse operator fails to dimension validation on composite system.
+At first, single system works correctly.
+The output is
+(I'm not sure why this is not 1. I guess it's limited by the numerical precision.)
+However, same code on composite system fails.
+The differences are only H, c_ops, and rho0, using qt.tensor(*, qt.qeye(2))
+My environment is following.
+Thanks Kosuke-san!  This does look like a genuine bug, seems to be because when constructing the propagator, the dims on the initial state are not set, and this clashes with very recent fixes done on mesolve (e.g., #1459 )
+This wasn't caught by the tests during the above fixes because it seems like the only composite system test is done on a noiseless system, so mesolve isn't called in the propagator construction for that test.
+thanks for pointing this out.
+Yeah, this feels like a bug in propagator - I bet at some point we do qeye(L.shape[0]) instead of qeye(L.dims[0]).  There's sometimes quite a bit of that in older code - it used to slip through because we weren't super strict about dimension handling, so in certain cases (like this one), we'd accept bad dimensions.
+I might try and have a look tonight (UK time), if I have time - I've wanted to break up the large propagator monolith into smaller components for quite a while.
+About numerical precision: if you want to try increasing the precision of the integrators, try passing options=qutip.Options(nsteps=1_000_000, atol=1e-12, rtol=1e-10) to propagator.  atol and rtol are absolute and relative tolerances respectively, and nsteps is the number of subdivisions the integrator is allowed to take (if it reaches its tolerance goals, it won't take all of them).  You'll find that atol and rtol will have only a loose relation to the tolerance of your fidelity value, because there's a lot of floating-point operations between those points in which the errors compound, and there's a hard limit on the tolerances the integrator can achieve, so you might not be able to get a perfect answer.  The fidelity calculation involves finding the square root of a density operator, so that's another large possible source of error.
+About times: if you only care about the state at the last time, setting tlist = np.linspace(0, x, 201) is quite inefficient.  Instead, set tlist = [0, x], and then pass options=qutip.Options(nsteps=<very very big integer>).  It's more efficient because it doesn't need to achieve tolerance goals and construct/store Qobj instances at every intermediate timestep.
+Temporary workaround: this is very temporary, and generally a bad idea in QuTiP, but you can "flatten" all your operators into a single space for now, while we implement a fix.  To do that:
+@nwlambert: here's a thought - do you reckon it's worth implementing a test on the rank of the Hamiltonian/Liouvillian on input to propagator?  If it's significantly less than full-rank (which it almost invariably will be), there's probably a really good speed-up to be had by evolving the system in a rotated frame.
+Ah no, never mind - time dependence would mess you up, and actually the sort of tri-diagonal systems I had in mind aren't so low-rank anyway.  Maybe I'll look into it, but it won't be anywhere near as good as I had first thought.
+I've made a very rough attempt at a minimal fix for this issue an another bug I found in #1588. I've leaving a bigger rework of propagators for the QuTiP version 5 branch.
+@KosukeMizuno @nwlambert @jakelishman -- a review of #1588 and suggestions for better test cases would be appreciated.
+@KosukeMizuno Thank you very much again for finding and reporting this error. We've addressed the issue in #1588. This fix will be included in the 4.6.3 release.
+Thank you very much!!
+Thank you very much!!
+Pleasure! :D
+Thanks for the fix! Just running into this on 4.6.2, working on '4.7.0.dev0+b71625e'  :)

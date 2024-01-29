@@ -1,0 +1,38 @@
+This example comes from: #112
+As @rmlarose noted, this is from the conversion (with the H^dagger gate). Apparently the conversion maps H (Cirq) -> H (Qiskit) but maps H^dag (Cirq) -> Ry Rx Ry (Qiskit).
+Because of the conversion to cirq and back behaving that way, this circuit actually has two more gates then would be expected from the folding method. This adds more noise then is intended. I'm not sure I know what the right solution is here.
+I'm not sure if there is anything we can do for the general case, since the decomposition into hardware gates is platform-dependent.
+Even when this circuit is run on an IBM backend, the Hadamard's will be decomposed into products of X and Y rotations in a similar way that the H^dag gate is, so there will be even more gates. For whatever reason, in this example the conversion back to Cirq exposes the hardware representation of H^dag but not of H.
+The only way to guarantee a specific number of gates which are folded would be, I think, to start with native gates, otherwise we'll always have the possibility of a decomposition introducing more gates.
+I suppose we could add options to folding functions which account for these things. For example, adding a flag which says to first decompose the input circuit to some native gates, then fold those. Or, to only express the folded circuit in terms of the original gates in the circuit (i.e., no decompositions).
+So I guess the heart of the matter is whether to allow decompositions or not, and at which point to do them.
+I agree with Ryan that, since the circuit is supposed to be compiled, this is probably not an issue for practical proposes.
+The user could pre-compile the circuit into native gates before using mitiq, in case he/she wants to be more rigorous about the gate counts. However, I think it is a very reasonable assumption that the folding operation and the compiling operation will approximately commute.
+Still, if we think that this strange gate conversions could be confusing or not nice to see, we could "mitigate" this problem with a workaround. E.g. before converting back to qiskit, we can manually replace H**-1 gates with H.  The same could be done with Pauli gates.
+Thank you @willzeng for opening this issue, it is very interesting for me to understand better the implications of folding, and @rmlarose and @andreamari for the comments.
+One question: Is it correct to say that unitary folding is not invariant under arbitrary decomposition?
+My understanding is that the stretch of folding, while obtained through the simple inclusion of unitaries, is also due to the fact that "time keeps running". Behind the scenes, error models add noise to the gates. Physically, these depend on time.
+These are not really only code issues, but maybe theoretical ambiguities that may be resolved only at pulse-level description of circuits, which in turn, usually, requires underlying devices.
+It is comforting that @andreamari thinks this is not a big deal, in practice. Would be interesting to investigate for research purposes the impact of native gates and decompositions on folding?
+Would it make sense to split folding operations on two levels, one a transformation at intermediate representation level and another one an execution that is device-aware and hence native-gate aware and noise-model aware?
+I'd be more keen to raise some flags, as proposed, than to give back to the user an output that is what he/she expects, but which is not what actually happens behind the scenes. Or this two things could go together, with a "report" of the folding procedure.  A disclaimer could be written somewhere, if an internal check finds that A^dagger is not exactly (A)^dagger on the returned Cirq circuit, but an equivalent decomposition?
+It would be better to keep things general and flexible, to enhance portability and so on, but maybe is something to keep in mind in general.
+Apologies if my understanding is flawed on some of these points w.r.t code or theory.
+One question: Is it correct to say that unitary folding is not invariant under arbitrary decomposition?
+That's right. Unitary folding works best under the following assumptions: (i) noise scales with the number of gates and (ii) we are folding the final gate representation of the circuit.
+The user could pre-compile the circuit into native gates before using mitiq, in case he/she wants to be more rigorous about the gate counts.
+I believe that this is likely our best course of action to keep things simple. In our docs we could point out that ZNE with folding methods work best if you are already passing in a circuit that is as close as possible to the native gate set of what is run on the hardware.
+Some potential good news on this issue which came from revisiting the IBMQ backends example. Before, the function random_identity_circuit was written in Qiskit. This function now uses a conversion from Cirq to Qiskit, which introduces more gates, including some trivial ones. For example, a depth 10 circuit looks like:
+
+The results for scaling look pretty good, except for one example (very last one).
+Here are results for depth = 100.
+
+Results for depth = 150:
+
+Good results for depth = 200:
+
+Bad results for depth = 200:
+
+I think the bad results may be due to a bad execution on IBMQ? It's also a different random circuit each time, so maybe the second depth = 200 bad results were indeed due to conversions, it's not clear.
+Regardless, its good to see similar results as in the paper when explicitly using conversions now.
+This was fixed by #283.

@@ -1,0 +1,27 @@
+Attempting to pip install a bare repo no longer works since the pulse simulator branch was merged into master with: 40d9037
+Running from a clean local clone of the aer repo yields:
+pip install git+https://github.com/Qiskit/qiskit-aer
+or
+Pip will build and install the aer python package
+Fix the issue introduced from the pulse simulator
+@atilag It also looks like building wheel manually is broken unless you install requirements first too. Using anaconda I have
+returns same cmake error message as @mtreinish posted.
+But running the following builds successfully:
+(running pip install -r requirements-dev.txt; pip install . still fails)
+Editing setup.py to include:
+and
+and
+got me a little bit further (bdist_wheel build works), and pip install . now gives following error:
+Oh, I don't think building without previously installing dependencies have ever worked, it was a mandatory step.
+We can surely change setup.py to avoid this and force installing all deps at pip installation time.
+The problem here is because the way we look for pybind includes in the build system is not compatible with how pip install works (by creating temporary directories where everything is installed).
+Will try to look for a fix
+I have been playing around with setup.py and can confirm underlying issue is pybind11 headers.
+If i modify setup to fix requirements:
+Calling pip install . fails due to not being able to find hte pybind11 C++ headers. It seems that
+calling subprocess.call([sys.executable, '-m', 'pip', 'install', 'pybind11>=2.4']) we currently have in the setup.py isn't doing anything (must put the headers in a temporary location that CMake cant find)
+Calling pip install pybind11; pip install . works.
+We probably need to fix this in the CMakeLists and remove the pip call from setupy.py?
+This might be useful. An example pybind11 build project from scikit-build repo:
+https://github.com/scikit-build/scikit-build-sample-projects/blob/master/projects/hello-pybind11/CMakeLists.txt
+Our travis script should really be updated so that the compile stage tests without installing terra and requirements first (ie python setup.py bdist_wheel in a clean python env)

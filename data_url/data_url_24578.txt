@@ -1,0 +1,16 @@
+When uplading a program which for some reason has multiple segments of equal waveforms in a TaborProgram, the _find_place_for_segments_in_memory-function does not check for unique values but uploads all segments from this batch of segments regardless.
+It seems to me thast this may be preventable by checking for unique hashes. Is this assumption correct?
+Equal waveforms should already have been detected and deduplicated in TaborProgram itself.
+That would have been my expectation, too, but in the case in which we observed this behavior - multiple AWGs connected - it somehow did not happen. Does it explicitly check for duplicate waveforms on this device, or duplicate segments in the whole program?
+What nesting level does the program have?
+The deduplication should happen based on the sampled waveforms. Here is where:
+https://github.com/qutech/qupulse/blob/master/qupulse/_program/tabor.py#L670
+https://github.com/qutech/qupulse/blob/master/qupulse/_program/tabor.py#L712
+Are you sure the waveforms are equal? Both channels and markers have to be equal for that.
+I am quite certain that the waveform are physically equal, since the hash values are equal later on when it's uploaded (and from PT definition I know they are equal [but just for this channel pair]).
+The nesting level is such that it is parsed in parse_aseq_program, if this is what the question aims at. There, interestingly, the waveform objects differ from one another (they are of type SubsetWaveform and the waveform_loop has a waveform of type TransformingWaveform). How does it check if the waveforms are physically equal?
+It seems to me as if - due to the sequence being non-equal on other channels - different waveform_loop objects are present, which then consequently are not evaluated to be equal objects when the subset-waveform is called; is this the correct way to interpret it?
+My error, the deduplication happens based on the Waveform not on the TaborSegment. The equality of Waveform requires structurally equivalent objects (same classes and the same attributes) implemented via the compare_key property.
+Looks like we need another deduplication step after the sampling.
+Greatest difficulty is to not get confused with 0-based and 1-based indexing. I think that the translation to 1-based indexing only happens directly before loading the segments and tables to the instrument but I am not sure.
+Does the hacky approach from #796 have (non-)obvious bugs/drawbacks to be aware of when using it in the meantime?

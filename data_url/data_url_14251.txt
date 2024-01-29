@@ -1,0 +1,28 @@
+The recently revised array_to_latex() in qiskit.visualization overly "simplifies" real & complex components in matrix elements.
+In line #191 in qiskit-terra\qiskit\visualization\array.py, the array_to_latex() function calls:
+outstr = _matrix_to_latex(array, decimals=precision, prefix=prefix, max_size=max_size)
+This function then calls:
+_matrix_to_latex(matrix, decimals=10, prefix="", max_size=(8, 8))
+which in turn calls:
+_num_to_latex(raw_value, decimals=15, first_term=True, coefficient=False)
+which in turn calls a sympy routine to find a formula that matches the value:
+raw_value = np.around(raw_value, decimals=decimals)
+value = sympy.nsimplify(raw_value, rational=False)
+The problem is sympy is overly aggressively searching for a formula to replace even pedestrian scalars.
+From https://docs.sympy.org/latest/modules/simplify/simplify.html#nsimplify:
+For numerical expressions, a simple formula that numerically matches the given numerical expression is sought
+(and the input should be possible to evalf to a precision of at least 30 digits).
+In a Jupyter notebook:
+b = np.array([3.890 - 5.741j])
+display(array_to_latex(b, prefix=r"\mathbf{B}="))
+The output should be a LaTeX formatted row vector with unmangled scalar components that match the original
+[3.890  -5.741i]
+What the current array.py produces - as a result of using sympy.nsimplify() - is this numerically accurate (award-winning, truly) but rather unpleasant-looking "simplification":
+[389/100 - (98*2^(110/411)*3^(65/411)*5^(126/137)*7^(32/411)i)/125]
+I had to verify with Mathematica that the multiple prime number fractional exponents in array_to_latex() function output does equal the original complex component -5.741
+The sympy.nsimplify() function supports more inbound parameters to control the result.
+However, the exposed current array_to_latex() function does not allow a caller to request those options.
+This could be a bug in sympy, but it appears to users of Qiskit to be an oddity in the array_to_latex() function.
+I was wondering, why using sympy.simplify.nsimplify at all in this case? Clearly, to my understanding, array_to_latex is used for visualization purposes, therefore the exact accuracy of the represented numbers is not that important. Instead it makes sense for me to just round numbers to some amount of digits after the decimal point.
+Anyway, feel free to assign me for this one.
+FWIW - The prior code was fixed in #7234 and #7518 and worked well, following the approach @ohadlev77 suggested of keeping things simple. Sometime after 1/14/2022, the array.py code was switched to use sympy. I understand some folks may want to see Sqrt[2] when possible to reinforce a visible connection to common operator basis - but I think using sympy here, without the ability to tell it to leave noncommon scalars "alone" - is causing unnecessary complexity in the generated LaTex.

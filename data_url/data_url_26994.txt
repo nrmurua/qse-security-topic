@@ -1,0 +1,71 @@
+I installed QUICK according to docs and I did not noticed any problems during installation.
+But already when I tried to run tests with ./runtest --cuda I got problems ( ./runtest --serial works fine)
+I was thinking this could be just some small change with respect to reference, so I tried to run optimization of H2O molecule.
+It explodes, Also it is writing that some operation in CUDA code is not supported:
+There is even bigger problem when I try to run pbe rather than rhf
+I guess this may be problem with my CUDA installation or system/hardware. But I don't know what to do to identify to exact problem and correct it. I have some experience with OpenCL programing, but not so much with CUDA.
+My system setting is following:  Linux Ubuntu  22 LTS
+I also attached input and ouput file from quick
+quick_cuda_opt_H2O_fail.zip.zip
+I noticed in docs si -DQUICK_USER_ARCH=volta, my GPU is ampere
+So I tried now to recompile it with this settings:
+cmake .. -DCOMPILER=GNU -DMPI=TRUE -DCUDA=TRUE -DQUICK_USER_ARCH=ampere -DCMAKE_INSTALL_PREFIX=${QUICK_INSTALL}
+Still the problem is the same
+Now I also tried it on our cluster with A40 GPU, the same result
+Hi @ProkopHapala, is there a possibility that something else was running on the device during the calculation?
+Hi @ProkopHapala, is there a possibility that something else was running on the device during the calculation?
+I don't think so:
+@Madu86 After holydays I would like to revive this issue. If you have any suggestions what else I ca try, or what other information I can give you, please let me know. Thanks.
+Hi, what you are getting is a device memory error. As I mentioned, you have to ensure there is no other process running on the device when you execute QUICK. You can check this withnvidia-smi command. If you are working in a shared environment, for example on a development node with 4 GPUs, make sure to select an unused GPU using export CUDA_VISIBLE_DEVICES=GPU_ID environment variable. Here GPU_ID could be 0-3. I just compiled and tested the latest development QUICK version on RTX3080Ti. Both compilation and testing went smoothly. Please see the attached log files. In build.log, you can find information about my compiler versions, cmake configuration and build output. Test output is located in runtest.log.
+build.log
+runtest.log
+@Madu86 thanks for suggestions.
+If you are working in a shared environment, for example on a development node with 4 GPUs
+No I work on my desktop computer under ubuntu 22 LTS linux with Xfce Desktop. Do you think that other process is using my GPU  in this environment?
+This is output of nvidia-smi on my desktop with GTX3060 GPU
+This is output of nvidia-smi on our cluster GPU node (with A40 GPU)
+still I'm getting the same error:
+Watter with PBE:
+Watter with RHF:
+Hm, this is odd. I just compiled the code with CUDA 12.0 and ran tests on A100. All tests pass. Which CUDA version did you use for the compilation and for testing? I see two versions on A40 platform: 11.2 and 12.0.
+(base) (BULLSEYE)prokop@luna206:~/QUICK$ nvcc --version
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2021 NVIDIA Corporation
+Built on Sun_Feb_14_21:12:58_PST_2021
+Cuda compilation tools, release 11.2, V11.2.152
+Build cuda_11.2.r11.2/compiler.29618528_0
+------------ GPU INFORMATION ---------------
+| CUDA ENABLED DEVICE         :        1
+| CUDA DEVICE IN USE          :        0
+| CUDA DEVICE NAME            : NVIDIA A40
+| CUDA DEVICE PM              :       84
+| CUDA DEVICE CORE FREQ(GHZ)  :     1.74
+| CUDA DEVICE MEMORY SIZE (MB):    45450
+(BULLSEYE)prokop@luna206:~$ nvidia-smi
+Mon Jul 10 14:20:12 2023
++-----------------------------------------------------------------------------+
+| NVIDIA-SMI 525.105.17   Driver Version: 525.105.17   CUDA Version: 12.0     |
+|-------------------------------+----------------------+----------------------+
+| GPU  Name        Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf  Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|                               |                      |               MIG M. |
+|===============================+======================+======================|
+|   0  NVIDIA A40          On   | 00000000:61:00.0 Off |                    0 |
+|  0%   34C    P8    12W / 300W |      0MiB / 46068MiB |      0%      Default |
+|                               |                      |                  N/A |
++-------------------------------+----------------------+----------------------+
+Hm, this is odd. I just compiled the code with CUDA 12.0 and ran tests on A100. All tests pass. Which CUDA version did you use for the compilation and for testing? I see two versions on A40 platform: 11.2 and 12.0.
+as I posted before:
+This is what returs nvcc:
+This is what is written in the ouput of quick.cuda :
+aha, so you think the problem is that CUDA version is different that cuda supported by the drivers ?
+According this it should not be a problem
+In most cases, if nvidia-smi reports a CUDA version that is numerically equal to or higher than the one reported by nvcc -V, this is not a cause for concern. That is a defined compatibility path in CUDA (newer drivers/driver API support "older" CUDA toolkits/runtime API). For example if nvidia-smi reports CUDA 10.2, and nvcc -V reports CUDA 10.1, that is generally not cause for concern. It should just work, and it does not necessarily mean that you "actually installed CUDA 10.2 when you meant to install CUDA 10.1"
+Yes, can you compile the code with nvcc and use the libraries from CUDA 12? You will have to find the CUDA 12 installation path on your system and set CUDA_HOME environment variable as appropriate.
+Yes, can you compile the code with nvcc and use the libraries from CUDA 12? You will have to find the CUDA 12 installation path on your system and set CUDA_HOME environment variable as appropriate.
+perhaps not, I don't have any control over CUDA instalation on the cluster.
+Possibly I may ask admins to upgrade CUDA installation, but it is always pain to arrange it.
+OK, so the problem on cluster (with A40) was probably because cuda modules were badly loaded. I did the following to purge and load proper modules:
+then I recompiled QUICK, and now it works fine on cluster if GPU is not occupied by any other process
+@Madu86 : Thank you very much for your help !
+Glad to hear that you were able to solve this problem. I am closing this issue.

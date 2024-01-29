@@ -1,0 +1,46 @@
+Ideally, I would like to use this for the global experiment control:
+https://exopy.readthedocs.io/en/latest/
+However, this program really expect the connection to instruments to be instantaneous.
+My current thinking is that we should have the instance of pyrpl running all the time with a SCPI server waiting for instructions on TCPIP.
+Any thoughts ?
+Exopy can easily accommodate an instrument that does not use VISA for the communication. The instruments using directly a dll (found in https://github.com/Exopy/exopy_hqc_legacy/tree/master/exopy_hqc_legacy/instruments/drivers/dll) can serve as examples.
+Exopy does not expect the communication to be instantaneous but does test whether the instrument is present or not a different stages. This is done by default by opening the instrument but can easily be set a less costly operation if necessary. During a measurement, the driver is started a single time in which case the overhead of the start should be negligible (save if the measurement is really very short).
+My current thinking is that we should have the instance of pyrpl running all the time with a SCPI server waiting for instructions on TCPIP.
+There is a large demand for this kind of feature, i.e. a process manager for running multiple instance of pyrpl all the time, with the ability to connect to them at will. An SCPI server would not be the worst for this kind of feature, especially if we could natuarlly map the python API to SCPI commands (should not be too hard with the module and setup_attributes hierarchy we have, the only uncommon thing would be the flexibility of the setup-commands).
+Do you know if there is a python library implementing a nice SCPI server? We could of course also write this from scratch.
+I am ashamed to say that after spending at least 2 days googling and trying various things, I could not even make a dummy "hello world" Visa instrument, that could be accessed via the standard visa interface.
+This would totally be the natural way, but at the moment I really got lost in the complexity of the Visa specifications, and could not find a working example anywhere.
+An alternative strategy would be to have our own TCPIP server protocol, but of course this would be less "standard"...
+You could use VISA over a raw socket to avoid the pain of the VXI11 specification.
+You could use VISA over a raw socket to avoid the pain of the VXI11 specification.
+I agree, since VISA was originally intended to be just a wrapper around different interfaces like USB and TCP (I think), why dont we create an SCPI service, and upgrade it to be VISA compliant when we have nothing better to do, since the benefit of that seems to be only marginal and the work >> 2 days.
+Just to make clear what I wanted to achieve:
+My goal was to have a service that can be discovered by doing:
+This is what I could not achieve in > 2 days, but maybe I just didn't find the the right way to attack the problem...
+Depending on which VISA implementation you use (NI, Keysight, etc) you may need to manually add the resource (through Keysight Connection Expert for example) since TCP resources are not always scanned. I would say what you really want is to be able to create the resource rather than list it and answer to something like *IDN? .
+This is what I could not achieve in > 2 days, but maybe I just didn't find the the right way to attack the problem...
+Would this be easier if we had a "gateway" application running on the Visa computer, allowing to talk to all Redpitayas on the network? This could solve two problems: facilitate discovery, and implement an application making sure that all Redpitayas are running pyrpl.
+Depending on which VISA implementation you use (NI, Keysight, etc) you may need to manually add the resource (through Keysight Connection Expert for example) since TCP resources are not always scanned. I would say what you really want is to be able to create the resource rather than list it and answer to something like *IDN? .
+Yes, sorry, I probably arrived at the point where I could create the instrument, but I had a dummy HTTP server running, and when I tried to ask strings such
+inst.ask("Hello world?")
+I didn't manage to have the server reply something like 'hello world' in a way that is understandable by the visa instrument.
+But maybe you are right that I should use a socket rather than an HTTP server. Also, I will try to link code snippets suh that we discuss on more tangible facts!
+Wanna share your code, maybe we can debug it here (or a separate github repository)?
+Here is the code on the server side (it uses the QTcpServer from Qt)
+I run it in a first console, and then on the client side I run the following:
+I get some encouraging stuff happening the server side (the socket is created and the reply is sent properly to the client), however, the client is expecting some well defined reply to accept the connection : I get the following error on the client side:
+Apparently, the viOpen function within visa is expecting the instrument to return a 16 bytes string to acknowledge proper connection, since I get on the server-side either a timeout (VI_ERROR_TMO) or a protocol error (VI_ERROR_INP_PROT_VIOL) depending on whether the string sent by the server is below or above 16 characters...
+My next problem is that I don't know what string is expected to avoid the VI_ERROR_INP_PROT_VIOL exception...
+You could connect a raw socket or putty to an existing VISA instrument, e.g. a scope, and check what it returns..
+However I have one big doubt with this endeavour: are you sure visa will discover the open socket automatically on the network? Otherwise you would still have to manually enter the ip address and port, and the visa approach would not have any advantage over a raw socket.
+Another option: go through the visa source files mentioned in the traceback to dind out what string is expected. If you end up with a dll reference, try pyvisa-py instead (should be open source if you select the non-NI backend).
+Are you sure the client is not automatically sending a command and gets no reply, e.g. IDN or so?
+Another option: go through the visa source files mentioned in the traceback to dind out what string is expected. If you end up with a dll reference, try pyvisa-py instead (should be open source if you select the non-NI backend).
+Done that: in windows (regular pyvisa module), one indeed ends up with a dll function, so no insight to gain here. In pyvisa-py, inspecting the source code makes me think your example would work.
+Here is an example implementation: https://github.com/coburnw/python-vxi11-server
+It think it makes no sense to just try to implement the initialization stuff, rather if we go down this road we would have to fully stick to the VXI-11 or HISLIP protocol. Or just try
+Thanks Leo,
+I had already seen this library, unfortunately, it really doesn't work "out of the box"...
+I have posted a message on the issues of the project (coburnw/python-vxi11-server#2 (comment)), it looks like it might be a linux/windows problem (underlying rpcbind function doesn't exist ?!) but this goes way beyond my confort zone.
+I am really starting to think that indeed if we want this to work anytime soon, we would have to fallback on a simple TCPIP socket, since anyways, translating this in a Qt eventloop framework would require to fully digest the code...
+I would advocate to go with the socket, unless the reply in coburnw/python-vxi11-server#2 (comment) is sufficient to get that working. Or is this feature not needed any more?

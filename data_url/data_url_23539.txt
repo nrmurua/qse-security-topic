@@ -1,0 +1,143 @@
+Hi, I have been trying to use a qcodes driver for the Network Analyzer but getting an attribute error. My Instrument Channel has a parameter called 'magnitude', but it does not get bind to the parent instrument and giving this error when I try to measure it:
+AttributeError                            Traceback (most recent call last)
+ in 
+1 # Run a measurement
+2 meas = Measurement()
+----> 3 meas.register_parameter(vna.magnitude)
+4
+5 with meas.run() as datasaver:
+~.conda\envs\qcodes\lib\site-packages\qcodes\utils\helpers.py in getattr(self, key)
+396         raise AttributeError(
+397             "'{}' object and its delegates have no attribute '{}'".format(
+--> 398                 self.class.name, key))
+399
+400     def dir(self):
+AttributeError: 'NetworkAnalyser_S5048' object and its delegates have no attribute 'magnitude'
+However, I have no trouble when setting the parameters which are added to the parent instrument. If anyone knows how to bind the Instrument channels with the main instrument, then please respond to this issue.
+Many thanks in advance.
+Hi @Saba-Mehshar
+Is there a particular reason why it needs to be bould to the instrument.
+Normally I would just supply the full path to the parameter.
+vna.channel.magnitude where channel is the name that your channel is registered under.
+A few more questions to help understand what is going on.
+Hi @jenshnielsen
+Thank you very much for your quick response!
+I have used the both vna.channel.magnitude and vna.magnitude.get() , yet getting the similar attribute error.
+This is a copper mountain S5048 2-Port 4.8 GHz Analyzer, and I have been using a Qcodes  Keysight Network Analyzers  N5245A driver (have only made fewer changes). I can control my VNA with this driver (frequency, bandwidth and power etc.) and have never got any issue but cannot plot the results.
+This is how my code looks like in jupyter notebook:
+No error up to this point. I think my instrument channel is not added to the parent instrument. I can send you the driver code if needed.
+I have been getting this error for a week but couldn't resolve it. Please give me some suggestions. Thank you very much.
+As far as I can read from the driver of the N52xx I would expect that you need to use:
+vna.traces.magnitude
+to get the values
+Hi, I have got the following error
+Did you add a parameter to measure with the trace like here. https://qcodes.github.io/Qcodes/examples/driver_examples/Qcodes example with Keysight Network Analyzer.html?highlight=n5245a
+Hi @jenshnielsen
+yes, I have added a parameter :
+but I am still getting the same attribute error:
+AttributeError: 'NetworkAnalyser_S5048' object and its delegates have no attribute 'trace'
+I think there is some problem with my Qcodes driver(I have made some changes in N5245A!).
+I am now trying to use 'QCoDeS driver for the HP 8753D Network Analyzer'. It seems to work a bit, but readable snapshot says, 'couldn't update s_parameter and display_format'. Because of this I am unable to take a trace.
+Here is my output in Jupyter notebook:
+Please give suggestion with this one because HP 8753D Network Analyzer is quite similar to my VNA. Thank you very much.
+I am a bit confused. Are you trying to use a driver for first a Keysight and now an HP VNA for a instrument from a completly different vendor ? That is very unlikely to work. If you need a driver for the that instrument you will most likely have to write it from scratch. You may be lucky that some of the commands are the same but in general that is very unlikely to work
+@jenshnielsen
+I have rewritten all the SCPI commands for Copper mountain (have written the driver from scratch!) but I have been following the script of Keysight/HP VNA Qcodes driver. Cannot I follow the script of these drivers?
+The error that you show indicates that the instrument does not understand the command send when you execute VNA.trace.prepare_trace() so there is some kind of issue related to whatever you send to the instrument
+Thanks @jenshnielsen .
+Yes, there was two commands missing in my vna driver!
+I am now getting "AttributeError: module 'qcodes' has no attribute 'Measure'." This is how my output looks like:
+%matplotlib notebook
+import qcodes as qc
+from qcodes.instrument_drivers.networkanalyser.VNAS504 import VNAS504
+from functools import partial
+VNA = VNAS504('VNA', 'TCPIP0::localhost::5025::SOCKET')
+Connected to: CMT S5048 (serial:14027062, firmware:19.3.0/2) in 0.10s
+VNA.reset()
+VNA.print_readable_snapshot(update=True)
+IDN                :	{'vendor': 'CMT', 'model': 'S5048', 'serial': '14027062'...
+averaging          :	OFF
+display_format     :	SWR
+display_reference  :	0
+display_scale      :	10
+number_of_averages :	10
+output_power       :	0 (dBm)
+s_parameter        :	S22
+start_freq         :	20000 (Hz)
+stop_freq          :	4.8e+09 (Hz)
+sweep_time         :	0 (s)
+timeout            :	5 (s)
+trace              :	Not available
+trace_points       :	201
+VNA.display_format('Lin Mag')
+VNA.s_parameter('S11')
+VNA.start_freq(30e3)
+VNA.stop_freq(1e9)
+VNA.display_scale(0.12)
+VNA.display_reference(-0.1)
+VNA.averaging('ON')
+VNA.number_of_averages(20)
+VNA.print_readable_snapshot(update=True)
+IDN                :	{'vendor': 'CMT', 'model': 'S5048', 'serial': '14027062'...
+averaging          :	OFF
+display_format     :	SWR
+display_reference  :	0
+display_scale      :	10
+number_of_averages :	10
+output_power       :	0 (dBm)
+s_parameter        :	S22
+start_freq         :	30000 (Hz)
+stop_freq          :	1e+09 (Hz)
+sweep_time         :	0 (s)
+timeout            :	5 (s)
+trace              :	Not available (dim. less)
+trace_points       :	201
+VNA.trace.prepare_trace()
+tracedata = qc.Measure(VNA.trace).run()
+plot = qc.MatPlot(tracedata.arrays['VNA_trace'])
+AttributeError                            Traceback (most recent call last)
+ in 
+1 # Now aquire a trace
+2 VNA.trace.prepare_trace()  # this must be called prior to a Measurement or Loop
+----> 3 tracedata = qc.Measure(VNA.trace).run()  # this returns a dataset
+4 plot = qc.MatPlot(tracedata.arrays['VNA_trace'])
+AttributeError: module 'qcodes' has no attribute 'Measure'
+from typing import Union
+from functools import partial
+import logging
+import numpy as np
+from qcodes.instrument.visa import VisaInstrument
+from qcodes.instrument.parameter import ArrayParameter
+import qcodes.utils.validators as vals
+log = logging.getLogger(name)
+_unit_map = {'Log Mag': 'dB',
+'Phase': 'degree',
+'Group Delay': None,
+'Smith': 'dim. less',
+'Polar': 'dim. less',
+'Lin mag': 'dim. less',
+'Real': None,
+'Imag': None,
+'SWR': 'dim. less'}
+def CMTIntParser(value: str) -> int:
+"""
+Small custom parser for ints
+class TraceNotReady(Exception):
+pass
+class VNAS504Trace(ArrayParameter):
+"""
+Class to hold a the trace from the S5048
+class VNAS504(VisaInstrument):
+"""
+This is the QCoDeS driver for the VNAS5048 Network Analyzer
+"""
+Not sure where I am making mistakes.
+Sorry, this has been really long comment.
+You are using the old qcodes measurement where the import has changed. I just fixed the hp notebook so it can run
+I would suggest that you worry about getting the driver working first.
+Then you should read this notebook https://qcodes.github.io/Qcodes/examples/DataSet/Performing-measurements-using-qcodes-parameters-and-dataset.html to understand how to do the measurements
+Could you make a pull request against https://github.com/qcodes/qcodes_contrib_drivers with your new driver so we can look at it in a better interface
+Hi @jenshnielsen
+I have pulled a new request against https://github.com/qcodes/qcodes_contrib_drivers .
+Thank you very much for your consistent assistance.
+This has moved to the contrib driver pr QCoDeS/Qcodes_contrib_drivers#78 and seems to be more of a question of how to develop a driver than an error so closing this one

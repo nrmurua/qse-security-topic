@@ -1,0 +1,68 @@
+The grabber only detects 0 counts in a region of interest, even though the camera image shows non-zero counts.
+print("ROI sums:", n) displays the correct counts, i.e. the counts of the camera image, which are read out after the experiment. For the given ROIs and camera settings around 50000 counts per ROI are observed.
+Print out is ROI sums: [0, 0].
+The method grabber0.input_mu(n) actually puts in 0s in the list n. This was tested by initializing n with non-zero values. The result printed was still 0.
+This bevaior is seemingly independent on the ROI coordinates. The same happens for the following ROIs as well:
+I am not surprised the last one has only 0s, as the ROI edges are outside the actual image (512px X 512px). But the other ROIs should give some non-zero values, as far as I understand.
+This result does not dependent on external triggering of the camera, as done in the above example. Even using the video mode / internal triggering of the camera produces the same zero result.
+Connecting to the Medium link input, instead of Base, blocks execution. This is probably because the Grabber does not get any input during the ROI gate time. (The same thing happens if CameraLink option of the camera is off).
+This also indicates, that grabber.input_mu(n) actually registers inputs (or at least an image), but for some reason the counts are 0.
+Camera Link cable length is 5m.
+Sorry, that I took a while to answer. I wanted to wait on the answer from Andor about the newest camera firmware before replying.
+Here are the answers to your questions:
+It also does not contain any messages from the grabber, AFAICS.
+The first input message for channel 25 is the maximum of a signed 32 bit integer, while the second input contains the 0 counts returned at the end. The actual image, as readout via USB, only shows around 125,000,000 counts over the whole image.
+Does anyone know how to check, what the camera sends over the link output? Besides using a different frame grabber, e.g. from Bitflow?
+Does anyone know how to check, what the camera sends over the link output?
+With Migen microscope. This is how it was initially developed:
+https://github.com/quartiq/grabber
+Or just a scope on the clock and one of data lanes. Either on grabber or directly on the cable. There are LVAL/FVAL/DVAL which will toggle on RX2. But if you look on any of the other three data pairs you should see bits. Your observation would mean flat zeros. The signal standard is LVDS.
+
+https://en.wikipedia.org/wiki/File:Camera_link_serialization.jpg
+Also there should be grabber messages about the recovered pixel clock frequency during boot (of Kasli or the camera). Check whether those make sense. You may need to look at the actual serial console (the third USB interface on the Kasli USB connection is the serial port, 115200-8n1).
+ping @JKiethe
+Is this resolved? If yes, how?
+Sorry for not answering for such a long time. It is not yet resolved, as I did not have time to investigate further.
+I will work on it this week and get back to you in a few days.
+I've had a look at the LVDS signals on an analog scope. The camera was running in video mode, ca 120ms exposure, with only a sub-image read out. The shutter is closed, i.e. the pixel data are just noise.
+There are three consecutive bits on X2 which I assume to be the L/F/DVAL data for now *
+I see three different kinds of data, some with just DVAL high, some with DVAL and FVAL high and some with DVAL, FVAL and LVAL high. The latter two have random high values of the bits on X0:
+
+
+
+There are no clock cycles at all in which DVAL is low.
+On the serial console, I see
+when the cameralink is activated.
+*They appear a bit early with respect to the clock, but it's hard to be sure with the limited timing resolution. I'm waiting to borrow an analog scope with 4x the sampling rate, as I don't have a quick way to convert LVDS to single-ended right now. If there is an easy way to check for such a misalignment on the FPGA, that would also help.
+There isn't really an automatic way to fix clock-data-skew by entire bits. The data lanes are supposed to be aligned to the clock.
+But thanks a lot for the data and the analysis! This is already helpful.
+The camera link clock rate is independent of any CCD readout settings. The signal on Xclk and DVAL bits X2 keep running even without any exposures (for completeness: the horizontal shift rate was 17MHz, the line shift time 0.5us).
+I don't ever see that message. The only ones from the grabber are the two quoted above when the camera link is activated, and "lock lost" when it's turned off.
+This sounds like the kind of test I had in mind - using the already available data on the FPGA rather than setting up new hardware to analyze the LVDS signals. We currently have no environment set up for compiling things ourselves though, but I'll look into it in the next couple of days.
+Stretching the definition of "couple of days" a bit, but I have some good news:
+Changing the expected clock pattern to 0b1000111 did it. The grabber now detects the correct frame size (and reports changes on the console) and outputs nonzero values for the ROI counts.
+I will get in touch with Andor about this and keep you posted here.
+I'm afraid the success was rather short-lived. Today we discovered that it only works intermittently. I'll keep looking into it and share more details once I have a clearer description.
+Ok, this is awkward: The problem was solved by ordering a new MDR cable (and using the unmodified firmware, i.e. the originally expected clock pattern 1100011).
+For completeness: The new cable is 3m long (vs. 5m for the one we had the issues with), but my guess would be that there was an issue with that specific cable / connectors rather than one with cable length.
+I think this issue can be closed now.
+Thanks for hunting this down!
+Do you have a part number for the working and broken cables?
+I seem to remember that years ago the cables that came with these cameras looked "home built", i.e. had shrink tubing at the connector ends indicating cable-connector size mismatches and mechanical fragility.
+Cable quality doesn't seem to be the issue, it was a professionally made cable (no heat shrink etc)
+After digging out the model number of the "old" cable (3M 14526-EZ8B-500-07C), I think the issue is with the wiring. While the pinout is correct, the individual LVDS pairs aren't on twisted pairs. XClk+ is on an individual wire, for example.
+While looking into this, I realized that the working cable has a (differently) wrong wiring as well. I wish I had looked into this a bit earlier; seems like we got lucky. Since I would get a different one next time, I don't think stating the part number here makes sense.
+For reference, the correct wiring can be found at http://www.volkerschatz.com/hardware/clink.html:
+
+XClk+ is on an individual wire, for example.
+Good grief!  Wow, a frustrating situation but glad that the solution in the end turns out to be relatively simple.  It is definitely terrifying to see the variety of "creative" cable manufacture that exists...
+Thanks for tracking this down @jkellerPTB. I updated wiki with cable advice. https://github.com/sinara-hw/Grabber/wiki#overview
+I am not sure, where the following information is placed best. It is interesting for users of the Andor iXon Ultra 897 and the Sinara Grabber, which is why I added it to this issue.
+@jordens & @sbourdeauducq: If I should move/copy it somewhere so that it reaches the ARTIQ community better, please tell me.
+Bug in FPGA of Andor Ixon Ultra 897
+In the CameraLink implementation of the Andor Ixon Ultra 897 (i.e. the 512px x 512px variant) is a bug, which occurs due to some error in the FPGA of that camera model. This leads to the following behaviour on ARTIQ side:
+Andor is aware of this behavior and can reproduce it with a different frame grabber card. They suspect an error on the camera FPGA and are currently working on fixing this, but it might take some months to supply a patch.
+For anyone working with the specific combination iXon Ultra 897 and Grabber, keep in mind that readout of non-quadratic subimages can lead to corrupted pixels on the Grabber side.  To circumvent it, either
+Remark: For the iXon Ultra 888, i.e. the 1024px x 1024px model, this bug does not occur. The readout over the CameraLink works correctly independent on the sub-image dimensions.
+@JKiethe Thanks for all that valuable info!
+I'm unsure where the best place for it is. Putting it here is certainly not a bad choice.

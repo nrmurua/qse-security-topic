@@ -1,0 +1,14 @@
+Could have a single build that does shared, noshared, openssl, noopenssl, clang, gcc, rather than separate builds.  Would reduce overall CI usage (though make that job a little longer).
+Having thought a bit how to implement this (a script doing all alternatives in one build task, probably) I wonder whether this really gains us very much: CCI resource consumption, possibly; time-to-finish, probably not: Here's the thinking:
+Presently we have three CCI jobs doing this (albeit sparse) "matrix". They do run in parallel in 13 mins:
+
+To prove jobs in our CCI workflow setup already do run in parallel, here's how the ARM jobs are presently executing:
+
+On this basis, what if we move this all into one job? Isn't it so that this job will run (nearly - we save docker setup and clone) 3 times longer if it's just doing the same combinations (and considerably longer if we'd test the full matrix)? It needs to build all the same objects from source with the same fixed set of CPUs (within one CCI job) that we already use at maximum availability building with ninja.
+When looking at using CCI job parallelism (instead of that delivered by workflows as already used in our CCI config) and the option to at least run the tests of the different builds in parallel (after having built all objects in different build directories of one job), another problem appears: Our pytest harness only permits testing a single build folder; one presently cannot specify running tests on executables in different folders, say build_clang_noopenssl and build_gcc_openssl) as per (for example) 
+Asking for feedback especially from @xvzcf and @jschanck : Am I completely misunderstanding the proposal here? Or misunderstanding what CCI offers?
+We have 3 ubuntu-focal jobs and the 2 alpine jobs that ask to be run in docker containers. CircleCI gives us 4 docker containers at once, so two jobs will get stacked. We just don't currently control which two.
+Each of the alpine jobs takes ~ 9 minutes. Each of the ubuntu-focal jobs takes ~ 13  minutes. If you stack two alpine jobs, you have a depth of 18 minutes. On the other hand, if you stack two ubuntu-focal jobs, you have a depth of 26 minutes.
+The situation was worse before we disabled centos and debian; it might not be worth changing unless we want to run more jobs.
+OK -- if we target running the 4 parallel jobs we have, what about moving ubuntu-focal-noopenssl to the require_testapproval test-batch? a) It most likely won't tell us "early news" (that alpine-noopenssl wouldn't already tell us) and b) is running slower than the alpine run but faster than the arm ones, thus slowing no-one down. That way we'd have the same 4 jobs running in each "batch" (unless we want to run more jobs).
+#964 was the last PR optimizing stuff -- and doing that well: We're at 25mins for a pretty complete CI coverage. Anyone objecting to closing on this note, please re-open the issue.

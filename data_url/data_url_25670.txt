@@ -1,0 +1,11 @@
+As others have already pointed out in a different issue. The MNIST tutorial fails to train the ML model when using Covalent. Cell 14 shows a training accuracy of approximately 10%, the same accuracy as from random guessing.
+The reason is that we're "using Covalent wrong". Users must remember that electrons cannot manipulate external data structures passed by reference. Since the electron can potentially run in a separate process or even on a separate computer from the Covalent server,  any references to objects returned from another electron (which are stored in the Covalent server's memory) will surely break. Consequently, Covalent must make deep copies of all inputs to each electron*.
+Here's an excerpt from Cell 10 of the tutorial:
+get_optimizer and train_model are separate electrons, defined in Cells 6 and 9 respectively.  Here's get_optimizer:
+Now let's take a look at train_model:
+When this electron is executed, the optimizer argument refers to a different Optimizer instance from what was returned by get_optimizer in Cell 10. Indeed if we want to run this electron using the Slurm executor or in a separate worker process using Dask, we must make deep copies of all inputs; a remote server has no way to manipulate the Optimizer instance living on the Covalent server. Similarly, model is an independent copy of the model defined in the original workflow.
+These two objects are not connected. When train_model calls optimizer.step() (see train_over_one_epoch), the optimizer object modifies its own copy of the model parameters while the parameters in model remain unchanged.
+One remedy is to eliminate the get_optimizer electron and instead instantiate the Optimizer inside train_model using the model passed to train_model, something like
+*This tutorial worked in older versions of Covalent (v32.3 and before) because the local executor that was used by default didn't make deep copies of inputs to electrons. I would expect the tutorial to fail if one had tried a remote executor for train_model. This commit introduced (effectively) a deep copy for all executors, including local. And nowadays, we default to a multiprocessing-based Dask executor which would require copies of inputs even without that commit.
+@cjao this was fixed if I recall correctly?
+Yes, I think this can be closed now.

@@ -1,0 +1,27 @@
+It is now easy to multiply a wf by a constant, I think we could use it to allow the user to rescale a wf wouthout changing its global shape. I'm thinking of 2 potential uses :
+The user might try to change the duration of the pulse while keeping the shape fixed. A method might be useful in the case of a Compositewaveform, when it's not straightforward to do it by hand. From a given waveform, the user might specify a new pulse duration. Something like `setnewduration(wf, newduration)'
+Similarly, one might specify a given waveform and apply it several time with different total pulse area. One could then be interested in a way to rescale the pulse (in the sense of multiplying wf by a factor) so that its area is a0.
+This makes more sense for the amplitude that keeps a constant sign, than for the detuning that can change sign and have a 0 area.
+Do you think it is something that might be useful?
+I think that the first point causes a lot of issues. Considering an arbitrary waveform, what does it mean to increase or decrease the duration? Do you take specific points and do a spline? In a Blackman waveform, do you keep the area constant or the values it reaches? It just seems to introduce too much trouble for its value.
+As for the second point, I can see it coming in handy, yes. Especially when the waveform is not a BlackmanWaveform. I think the idea still needs to be fleshed out a bit more, but I agree it's worth pursuing.
+Here are my 20 cents. 😁
+Foreword: There's already a change_duration() method in the parent class, raising a NotImplementedError. We could keep this name instead of setnewduration().
+ConstantWaveform and RampWaveform: Pretty straightforward.
+CustomWaveform: Would not make much sense. Raise a NotImplementedError?
+BlackmanWaveform:
+InterpolatedWaveform: Simply interpolate again on the new duration with the same values and times, but with the new duration.
+CompositeWaveform: Apply ratio (new_duration / duration) to the duration of each waveform and concatenate? That might raise a NotImplementedError along the way. The sum of durations might be slightly below or above the requested duration, because of rounding. In that case, we could adjust the duration of the first or last waveform by a few units. Or, as usual, we could simply raise a NotImplementedError.
+Any future waveform: Well, we'll think about that... in the future. 😉
+Hi @LaurentAjdnik , thanks for reminding me of this somewhat forgotten issue. Indeed, many of the features suggest here have been implemented in the meantime, in some shape or form.
+One thing to note about change_duration() is that its main purpose is to adapt the duration of a waveform when it is added to a channel, if its duration is not compatible with the channel's clock_period and min_duration. When this can be done in a clean way, then the waveforms have a change_duration() method defined. The criterium here is usually: "Is the duration an explicit parameter given upon initialization?". If it's not, then the NotImplementedError is raised and the users have to take care of it themselves. We would rather have them ensure the duration obeys a device's restrictions than change their waveform in an unexpected way without them knowing about it.
+With this in mind, you will find that most of your suggestions have already been implemented exactly in the way you suggest (because it's the obvious way to do it, as it should). Nonetheless, I still have some comments:
+BlackmanWaveform:
+The meaningful parameter behind the BlackmanWaveform is indeed its area, so it is always what's chosen to be kept constant. In practice, the max value can be important, but only as an upper bound that should not be surpassed. For this reason, changes in duration always round up. The idea behind this method is: "Make this waveform as short as possible without going over this value", so it's okay to increase its duration slightly when it's necessary.
+So, we currently allow changes in duration for the BlackmanWaveform in general, always keeping the area constant.
+CompositeWaveform: Apply ratio (new_duration / duration) to the duration of each waveform and concatenate? That might raise a NotImplementedError along the way. The sum of durations might be slightly below or above the requested duration, because of rounding. In that case, we could adjust the duration of the first or last waveform by a few units. Or, as usual, we could simply raise a NotImplementedError.
+This natural behaviour for this one is unclear, which is why I chose to leave it out. I vote for having it raise the NotImplementedError, as it currently is.
+Thanks for the feedback.
+So I guess we can close this issue?
+So I guess we can close this issue?
+Yup!

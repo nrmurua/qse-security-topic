@@ -1,0 +1,36 @@
+Updating two Fastino DACs at once causes a silent RTIO collision which does not rise any exceptions and lets the kernel continue.
+Run the experiment with artiq_run:
+Kernel should crash with some uncaught exception during cycle 1.
+Log shows 10x ERROR(runtime::rtio_mgt): RTIO collision involving channel 36
+...which is how the error in your kernel is reported.
+Expected Behavior
+Kernel should crash with some uncaught exception during cycle 1.
+Exceptions would either:
+c.f. https://github.com/m-labs/artiq/blob/9214e0f3e25dc8f0036970213acf90ee0cc56fb5/doc/manual/rtio.rst#collisions
+Thank you for the docs; my bad, I've indeed missed it. Wouldn't it be possible to set a flag that there were errors during a last kernel/experiment execution and make artiq_run at least throw a "there were errors" into the console if there were any?
+From a beginner end-user perspective, who will usually use artiq_run as recommended in the docs for "the first steps", you execute you kernel, you get no explicit errors and will not realize analog channels were not updated.
+IMO in an ideal world, the real time guarantee that ARTIQ provides would be "everything happens exactly as your program dictates or there is an exception". In practice, there are some kinds of error that are hard to catch synchronously without incurring significant performance (latency) penalties (the same is true of sequence errors).
+asynchronous exceptions would be ...messy
+Thank you for the docs; I've indeed missed it. Wouldn't it be possible to set a flag that there were errors during a last kernel/experiment execution and make artiq_run at least throw a "there were errors" into the console if there were any?
+From a beginner end-user perspective, who will usually use artiq_run as recommended in the docs for "the first steps", you execute you kernel, you get no explicit errors and will not realize analog channels were not updated.
+Yes, I did wonder whether an API with a flag that one can query would be helpful here. In which case, one can add some api that raises exceptions synchronously but after the fact.
+I'm aware that the current behavior isn't ideal, and I was considering terminating the kernel and running a (possibly user-defined) error handler asynchronously. There could be critical sections in the main kernel where execution of the error handlers is suspended, so race conditions could be avoided.
+Note that if you have DRTIO with a lot of latency, or if you have collisions with timestamps far in the future, errors could even happen after your kernel has terminated. It's not so easy to reliably report them at the end of artiq_run, you'd basically have to query and synchronize every DRTIO node.
+Note that if you have DRTIO with a lot of latency, errors could even happen after your kernel has terminated. It's not so easy to reliably report them at the end of artiq_run, you'd basically have to query and synchronize every DRTIO node.
+Indeed, thank you for the reminder
+And this reliable reporting of collisions would also not play nice with seamless kernel handover.
+How about having a run-time managed async exception set-on-error, cleared-on-read flag - this could be polled by the user at sensible times (eg after each measurement, to chuck away data on error), and returned to the host when the experiment ends (the host could then report the error to the log / dashboard, or be reported by artiq_run).
+This would mean that users see that a bad thing happened without having to do anything, while allowing more sophisticated users to handle this in a custom fashion to exclude bad data-points / report / exit on error
+Agreed, I was thinking something like this as well, as it nicely avoids the "exception origin problem". Unless specifically disabled, this would also be checked at the end of experiments by default.
+(Or maybe the default should be on for artiq_run, where seamless handover seems like a very rare use case, and off for regular master experiments unless enabled in the device db such as not to break backwards-compatibility with experiments actually using seamless handover. I can't really comment on the latter, as we aren't (intentionally) using seamless handover here at all.)
+From a user's perspective, this would also integrate nicely with the event submission performance improvements we discussed a year ago or so, where we would add a context manager/… that can be used to temporarily disable synchronous RTIO exceptions until end of the block (increasing the steady-state event rate by avoiding the CDC round-trip latency penalty on each write), and only query for errors at the end.
+I should add that, in my experience, this isn't just a new user's problem; even people who have been working with ARTIQ experiments daily for a few months and have read the RTIO manual invariably run into mysterious "disappearing events"/… at some point. I would personally find it much more ergonomic if my first reaction to "something weird is happening" wouldn't need to be "check if the core log controller is still working" too.
+Collisions are detected by the sorting network in RTIO, i.e. only when events are executed. So your API will still be tricky to use and your automatic check at the end of the experiment will not be reliable.
+In practise I think the above outlined approach will cover most cases. Normally experiments generate a lot of output events, then block on input events (of one kind or another) to read back the results, hence all events will have executed before the experiment ends.
+IMHO having a mental model where, if we don't get any errors, we know that "all events that have executed more the 10us before the experiment ends completed successfully" this would cover the overwhelming majority of use cases.
+(10us here is a random choice for an upper-bound on DRTIO error propagation latency)
+Collisions are detected by the sorting network in RTIO, i.e. only when events are executed. So your API will still be tricky to use and your automatic check at the end of the experiment will not be reliable.
+The API would synchronize the CPU with the RTIO timeline, that is, wait for the counter to reach the last event (plus enough slack to get all the exceptions).
+Sure, there are cases where you don't want to do this (e.g. seamless handover), but it seems to be an eminently sensible default.
+ping @sbourdeauducq @dnadlinger @cjbe has there been agreement/implementation of a solution here?
+We can probably print the warning message on the host at the end of kernels as @cjbe suggested.

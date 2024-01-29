@@ -1,0 +1,35 @@
+related to #1286 but I'm not using conda and have trouble at installation, not import
+pip install qiskit-aer==0.9.1 fails with the following stacktrace:
+Try pip installing straight from the main GitHub branch using:
+pip install "git+https://github.com/Qiskit/qiskit-aer.git"
+The reason your installation seems to be failing is that there are no Qiskit Aer binaries on pypi for M1 Macs (at least not yet- it is in the works. See #1362.), so it is attempting to build it from source, which fails because Qiskit-Aer 0.9.1 uses openmp 8.0.1. A minimum version of openmp 12.0.1 is needed to build from source for  M1 Macs. There have been fixes discussed in #1286 and merged to the main branch (see pull request #1348), so installing straight from the main GitHub branch or building from source using a clone of the main GitHub branch should work.
+thanks @JoelHBierman
+I tried what you suggested in a fresh env, but it still doesn't seem to work. I can see that it's using openmp 12.0.1 now though
+This is bit of a strange and interesting issue. I have two M1 machines: an M1 MacBook Pro which I updated to Monterey and the newest version of Xcode command line tools along with it and an M1 Mini which I have kept running Big Sur and an older version of the command line tools just in case Monterey or Xcode had breaking changes in them. The MBP is using Clang 13.0.0 and the Mini is using Clang 12.0.5. The Aer build fails on the MBP with Monterey and clang 13.0.0, but succeeds on the Mini. This suggests that there might be some breaking change issue with either Monterey, Xcode, clang, Conan, or some combination of these and how they interact. (Of course there are other differences in the environments between the two machines so it could be due to other build dependencies as well.) I wonder if there is a way to force using Clang 12.0.x or to install an older version of Xcode command line tools? I might test this out later if I have the time, but it is something you could try.
+@mtreinish @vvilpas  This seems to be a separate issue from the fixes discussed in #1286 and could be related to why the arm64 wheel jobs in #1362 are failing. This is possibly related to MacOS 12.0.1 and/or the latest version of Xcode command line tools/Clang. There don't appear to be any issues with Qiskit Aer running on a machine with MacOS 12.0.1 (You can pip install from the main GitHub branch with the previous Xcode command line tools version and MacOS 11, then install the wheel on MacOS 12 just fine), but there do appear to be new issues with building it on this setup.
+This was closed by #1362 because that PR added the release time CI jobs to build and publish arm64 macos wheels. The precompiled binaries will be published to pypi automatically as part of the next qiskit-aer release. If there are any issues after the next release running on macOS with arm64 feel free to reopen this or open a new issue.
+Hi,
+I'm running into ERROR: llvm-openmp/12.0.1: Error in source() method, line 57 with:
+Qiskit Aer version: 0.10.2
+Python version: 3.9.10
+Operating system: MacOS 12.2, MacBook Pro (13-inch, 2020), Apple M1, 16GB RAM
+Is this because of MacOS 12.2/clang version 13.0?
+Thanks for any help!
+Cheers,
+Stephan
+Never mind, python version 3.9.8 works.
+I can reproduce the same error message on a 2019 Intel 16 inch MBP
+The cause seems to be relocation of c++ headers files in recent XCode.
+The Command Line Tools package installs the macOS system headers inside the macOS SDK. Software that compiles with the installed tools will search for headers within the macOS SDK provided by either Xcode at:
+References:
+However, this change was introduced in 2019 so I am not sure why it was working for the Mac Mini with Big Sur and an older version of command line tools.
+This is bit of a strange and interesting issue. I have two M1 machines: an M1 MacBook Pro which I updated to Monterey and the newest version of Xcode command line tools along with it and an M1 Mini which I have kept running Big Sur and an older version of the command line tools just in case Monterey or Xcode had breaking changes in them. The MBP is using Clang 13.0.0 and the Mini is using Clang 12.0.5. The Aer build fails on the MBP with Monterey and clang 13.0.0, but succeeds on the Mini. This suggests that there might be some breaking change issue with either Monterey, Xcode, clang, Conan, or some combination of these and how they interact. (Of course there are other differences in the environments between the two machines so it could be due to other build dependencies as well.) I wonder if there is a way to force using Clang 12.0.x or to install an older version of Xcode command line tools? I might test this out later if I have the time, but it is something you could try.
+Can we modify the path to include files in the build system
+similar to this answer on StackOverflow?
+The first line in your answer should be the default sysroot for your compiler on Mac automatically - if it isn't, it's likely something's misconfigured with your compiler locally. Make sure that the C compiler you're trying to use is the system clang, and not some other version (you can configure those to work, it's just trickier). We don't want to support non-system compilers on Mac because it's a lot of configuration work, and Apple change what we'd need unfortunately frequently. You can also try rerunning xcode-select --install, and if that doesn't work, uninstalling the command line tools completely and reinstalling them - I've had similar path issues after updates to macOS or XCode before.
+That StackOverflow answer is incomplete too - if your compiler is failing to find those includes, it will likely fail to link system libraries as well. You'd need to set the sysroot, not just the include path. But in this case, I think it's much more likely to be a local misconfiguration somehow.
+Also, what exact error are you getting? You said you were reproducing the errors in the issue, which are about the LLVM dependency (which we don't get from the system), but then your comment is about failing to find standard library headers.
+(Note that in theory, xcode-select should let you choose the macOS API version it targets without reinstallation, but in my experience if thing suddenly stopped working, I could never get the normal selection methods to work.)
+@jakelishman Thanks for your quick reply and advice. Let me see if I can get it working. Is this issue about LLVM dependency? I must misread something but I see the line of missing string.h header file is similar to what I saw so I thought it's the same issue. Below is the full error message I see.
+The dependency is on OpenMP, and the reason "llvm" appears in its name is that we need the OpenMP library for the LLVM suite, since the system Mac compiler is clang, which is part of LLVM.  Unfortunately, the system one doesn't ship with OpenMP support (no idea why Apple limit it like that).
+In this case, it's quite possible that it's just a dirty build environment messing you up.  Try removing the entire _skbuild directory in the repo root, and trying to rebuild.

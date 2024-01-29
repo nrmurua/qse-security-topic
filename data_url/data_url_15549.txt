@@ -1,0 +1,15 @@
+A simple modification to a doc example from https://qiskit.org/documentation/tutorials/circuits_advanced/04_transpiler_passes_and_passmanager.html#Different-Variants-of-the-Same-Pass
+yields
+Run above
+It should work.  It works if calling from transpile with routing_method='stochastic'
+No response
+This appears to have been fixed on main already for me, probably as a result of #7658 - could you check locally to see if the problem persists for you on main?
+Yes.  This now works on main.  Although still curious why it worked via transpile but not directly.
+My guess is that it worked with transpile() because transpile() will run a layout pass (which by default will be DenseLayout) prior to running stochastic swap. With the layout applied the input dag to stochastic swap will have ancilla qubits for all the idle physical qubits and also a different order based on the layout. I expect that all makes it easier for it to find a valid mapping. As to why it's fixed on main I'm actually just assuming it's random chance because we're using a different rng with the rust re-implementation in #7658
+So the backend in question has bi-direction coupling for qubits 0->4.  But then this circuit fails:
+If I pass a restricted coupling map:
+which is contained inside of the original then it works.  So it appears that the swap mapper requires the circuit to be of the same width as the device given by the coupling map.  Indeed the exact same circuit but over 20q works.  We should probably throw a better error if passing a circuit to a swap mapper where that is not the case.
+I am not sure how rust changes things here.
+Functionally there is no difference between the rust and cython implementations. The rust just runs the trials in parallel instead of serially and is using a different rng (each thread has a thread local PCG64MCG rng and the seeding is different)
+Yeah but the above fails no matter which seed you use, which is why I am confused.
+Looks like StochasticSwap originally used to reject all DAGs/layouts that had a mismatch in the number of qubits, but #2598 relaxed the constraint, and I don't see a particular reason in that PR why.  Perhaps smaller DAGs worked at that point, and our tests never caught the point at which it stopped working.

@@ -1,0 +1,36 @@
+Using (2.0.dev+563.gc4559fc) on windows, the following code,
+has the error,
+This was working before in 1.x. I can move any operations into prepare, and then it works,
+But it's useful I think to be able to manipulate gui arguments in the build section if you're constructing dependent gui variables.
+Yes, in 2.0 all arguments are None during scan/examine (to build the GUI).
+What exactly are dependent GUI variables? Can't your code be written in another way?
+I had some microwave code for example that defaulted the pi time based on what electrode was selected,
+But I suppose that self.mw.electrode comes from the default value so I can work around these. There were other instances where I determined the actual frequency to send to the dds based on the gui arguments,
+But I suppose that could be moved into prepare. That's just how we've been doing it till now and it seemed to work. We can rewrite the code, but could this maybe be added to the release notes?
+I've also been doing math on GUI arguments in build.  In addition to scenarios similar to @r-srinivas 's above, another scenario where I find it useful is similar to the SubComponent1 class in arguments_demo.py.  I often want to do some math on the GUI arguments of something like SubComponent1.  Putting it in a method SubComponent1.prepare() is annoying because I would have to manually call this from the parent.  Putting it in SubComponent1.do() is no good if the math takes a long time and this is a kernel.  Thus, I have been putting it in SubComponent1.build().
+How about adding a way to tell if the experiment is being examined (not run) so you can skip the otherwise failing computations?
+It would look like:
+When would that computation be executed then?
+When the experiment is submitted and run normally.
+This would mean you still couldn't do something like,
+Right? That's not a big deal, but would these means that such values won't be pre-computed then?
+Edit: I guess this would occur along with prepare?
+Write it like this:
+Using the returned argument values like you do is problematic: the order of the get_argument calls determines the order of the widgets, so you could only have the default value of a widget depend on the default values of the widgets above it, which is artificial. This is why 2.0 prevents this code pattern by giving you None for all arguments during scan/examine.
+I like the self.examining idea.  To solve @r-srinivas 's first scenerio, one could do something like:
+Although I suppose one could alternatively just check if str(self.mw.electrode) is None.
+Datasets are accessible during scan/examine.
+Proper testing for None is x is None, no strings involved.
+I should rewrite my code to take defaults as you suggested, but it would be useful to be able to calculate in build as @dleibrandt suggested. The self.examining idea is fine with me, as long as it doesn't affect slack during the experiment in anyway, which it seems like it shouldn't.
+it would be useful to be able to calculate in build as @dleibrandt suggested.
+What exactly did he suggest that is not possible right now?
+If something like this occurs in a subcomponent,
+It would raise an error. It would be nice to have it this way as opposed to calling the default value of self.axial_frequency if for some reason you want to change the frequency and scan at that value instead.
+This would then be possible using self.examining, right?
+Well yes, but prepare is the intended location for such computations, to keep build light and fast.
+How about changing the default Experiment.prepare (which is empty right now) so it automatically calls prepare on the experiment's children?
+That sounds good to me.
+I think so too. Basically as long as it's called automatically in the children, it doesn't matter whether it's in the build or prepare method to me.
++1 from me as well for prepare calling any children's prepare as well, by default.
+The order in which they are called would be depth-first alphabetic (and not order of instantiation). And if you override prepare() you would need to take care of calling the parent's prepare() or do everything yourself.
+We can do order of instantiation, the child just has to notify the parent.

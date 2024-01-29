@@ -1,0 +1,262 @@
+Qiskit Aqua version:
+pip list | grep "qiskit"
+qiskit                 0.10.1
+qiskit-aer             0.2.0
+qiskit-aqua            0.5.0
+qiskit-chemistry       0.5.0
+qiskit-ibmq-provider   0.2.2
+qiskit-ignis           0.1.1
+qiskit-terra           0.8.0
+Python version: 3.73
+Operating system: OSX
+What is the current behavior?
+I'm trying to run QSVM algorithm in IBMQ experience, want to run in one of those real quantum computers.
+from qiskit import IBMQ
+IBMQ.load_accounts()
+print("Available backends:")
+IBMQ.backends()
+[<IBMQSimulator('ibmq_qasm_simulator') from IBMQ(ibm-q, open, main)>,
+<IBMQBackend('ibmqx4') from IBMQ(ibm-q, open, main)>,
+<IBMQBackend('ibmqx2') from IBMQ(ibm-q, open, main)>,
+<IBMQBackend('ibmq_16_melbourne') from IBMQ(ibm-q, open, main)>,
+<IBMQSimulator('ibmq_qasm_simulator') from IBMQ()>]
+backend = BasicAer.get_backend('ibmq_qasm_simulator')
+With the BasicAer I realize I'm using IBMQ's simulator and not the actual IBMQ device. if I chose 'ibmq_qasm_simulator', it works!!!
+device = IBMQ.get_backend('ibmq_16_melbourne') # ibmx4
+#Choose a real - device
+quantum_instance = QuantumInstance(device, shots=100, seed=seed,
+seed_transpiler=seed)
+result = qsvm.run(quantum_instance)
+The above code which is supposed to use real Quantum computer "ibmq_16_melbourne" throws me a
+KeyError                                  Traceback (most recent call last)
+ in 
+1
+----> 2 result = qsvm.run(quantum_instance)
+3 print("testing success ratio: ", result['testing_accuracy'])
+4 end = timer()
+5 print("timedelta: " , timedelta(seconds=end-start))
+/opt/conda/lib/python3.7/site-
+packages/qiskit/aqua/algorithms/quantum_algorithm.py
+in run(self, quantum_instance, **kwargs)
+62                 quantum_instance.set_config(**kwargs)
+63             self._quantum_instance = quantum_instance
+---> 64         return self._run()
+65
+66     @AbstractMethod
+/opt/conda/lib/python3.7/site-
+packages/qiskit/aqua/algorithms/many_sample/qsvm/qsvm.py in _run(self)
+306
+307     def _run(self):
+--> 308         return self.instance.run()
+309
+310     @Property
+/opt/conda/lib/python3.7/site-
+packages/qiskit/aqua/algorithms/many_sample/qsvm/_qsvm_binary.py in run(self)
+127     def run(self):
+128         """Put the train, test, predict together."""
+--> 129         self.train(self._qalgo.training_dataset[0],
+self._qalgo.training_dataset[1])
+130         if self._qalgo.test_dataset is not None:
+131             self.test(self._qalgo.test_dataset[0],
+self._qalgo.test_dataset[1])
+/opt/conda/lib/python3.7/site-
+packages/qiskit/aqua/algorithms/many_sample/qsvm/_qsvm_binary.py in train(self,
+data, labels)
+71         """
+72         scaling = 1.0 if self._qalgo.quantum_instance.is_statevector else
+None
+---> 73         kernel_matrix = self._qalgo.construct_kernel_matrix(data)
+74         labels = labels * 2 - 1  # map label from 0 --> -1 and 1 --> 1
+75         labels = labels.astype(np.float)
+/opt/conda/lib/python3.7/site-
+packages/qiskit/aqua/algorithms/many_sample/qsvm/qsvm.py in
+construct_kernel_matrix(self, x1_vec, x2_vec, quantum_instance)
+243
+num_processes=aqua_globals.num_processes)
+244
+--> 245             results = self.quantum_instance.execute(circuits)
+246
+247             if logger.isEnabledFor(logging.DEBUG):
+/opt/conda/lib/python3.7/site-packages/qiskit/aqua/quantum_instance.py in
+execute(self, circuits, **kwargs)
+192         qobjs = compile_circuits(circuits, self._backend,
+self._backend_config, self._compile_config, self._run_config,
+193
+show_circuit_summary=self._circuit_summary, circuit_cache=self._circuit_cache,
+--> 194                                  **kwargs)
+195
+196         if self._measurement_error_mitigation_cls is not None:
+/opt/conda/lib/python3.7/site-packages/qiskit/aqua/utils/run_circuits.py in
+compile_circuits(circuits, backend, backend_config, compile_config, run_config,
+show_circuit_summary, circuit_cache, **kwargs)
+195                     transpiled_sub_circuits =
+compiler.transpile(sub_circuits, backend, **backend_config,
+196
+**compile_config)
+--> 197                     qobj =
+circuit_cache.load_qobj_from_cache(transpiled_sub_circuits, i,
+run_config=run_config)
+198                 else:
+199                     qobj = circuit_cache.load_qobj_from_cache(sub_circuits,
+i, run_config=run_config)
+/opt/conda/lib/python3.7/site-packages/qiskit/aqua/utils/circuit_cache.py in
+load_qobj_from_cache(self, circuits, chunk, run_config)
+178                 if not hasattr(compiled_gate, 'params') or
+len(compiled_gate.params) < 1: continue
+179                 if compiled_gate.name == 'snapshot': continue
+--> 180                 cache_index = self.mappings[chunk][circ_num][gate_num]
+181                 (uncompiled_gate, regs, _) = raw_gates[cache_index]
+182
+KeyError: 0
+Steps to reproduce the problem
+Above code
+What is the expected behavior?
+I expect to connect to the IBM-Q backend, not a simulator.
+Just to add a little more information, the user stated that they were receiving this error when they were running this tutorial: https://github.com/Qiskit/qiskit-tutorials/tree/master/qiskit/artificial_intelligence, I am assuming qsvm_classification.ipynb. (User stated this in the original stack exchange question https://quantumcomputing.stackexchange.com/questions/6295/how-to-run-quantum-svm-algorithm-from-qiskit-in-real-ibm-quantum-computer-using)
+I tried running through this tutorial on ibmq_16_melbourne, and received the same error. This is what the logger showed before throwing the error:
+Do you mind elaborating more details on the size of dataset or do you mind sharing the full scripts?
+I just tried the notebook with ibmq_16_melbourne backend, and it does not crash.
+To test that, I reduce the size of the dataset to avoid submitting too many circuits. (4 training samples, 2 testing samples, and 2 unknown label samples)
+https://github.com/Qiskit/qiskit-tutorials/blob/master/qiskit/artificial_intelligence/qsvm_classification.ipynb
+Qiskit version:
+Here is the log I had, it is still running but at least one of jobs is completed
+I am unsure about the original user, however when I received the error I was using the defaults for everything. Whatever was already set in the notebook was what I was using.
+However, when I made the changes you had made (changing the number of training samples and testing samples) the job was sent.
+So it seems to work if run on a 20q machine.  Fails on the 14 and 5 qubit devices.  I had to dig into the internals to check, but it seems that the circuits use only two qubits, so it should work on all the devices.  The fact that it gives an key error means that the chunks are likely not being computed correctly for the public devices.  The public devices have different circuit limits than the larger devices, so perhaps that is not being taken into account correctly.  So this is indeed a bug.
+how do we fix this? And how do we know how many qubits are we using? Is this an error from our code or from qiskit (then this needsa bug filing)
+It needs to be fixed in aqua. I dug into the internals to find the number of qubits. But the aqua developers can probably point out an easier way.
+@nonhermitian and @hykavitha
+Regarding the number of circuits in a job, Aqua is based on the backend property max_experiments to split the number of circuits into jobs. E.g. if you submit 100 circuits, but the max_experiments is 50, Aqua will automatically split the circuits into 2 jobs each with 50 circuits and then get back a single result for you.
+Regarding the required number of qubits, you can check out the qiskit-tutorial to learn how the QSVM encodes the data into a quantum state. E.g., the default QSVM requires the same number of qubits to the dimension of data. The data we used in the example is two-dimension; thus we need two qubits.
+https://github.com/Qiskit/qiskit-tutorials/blob/master/qiskit/artificial_intelligence/qsvm_classification.ipynb
+Furthermore, if you have a circuit whose qubits is larger than the targeted device, I believe that qiskit-terra will raise an error.
+Regarding the key error for circuit caching in the first question, I can reproduce the error if I do not reduce the problem size. Will check that later in the stable branch. On the other hand, the error you encounter should already be fixed in the master branch.
+In the meanwhile, you can disable the circuit cache and do qobj validation in the quantum instance to avoid the error, you should be able to run on the real device then.
+I just ran the codes with the above modification (with the original amount of data) on ibmq_16_melbourne. here is my log, It seems that there is some issues on the api to the backend. will update the post if I can successfully run on public devices. (I am able to run on the 20q device without an issue,)
+updated: the jobs are completed on ibmq_16_melbourne
+Ok great. So it is fixed in master.
+If I wanted to programmatically find out the number of qubits used, perhaps by accessing the underlying circuits or the like, how would I go about doing that?
+Yes, for any algorithm and components, we usually have a construct_circuit method e.g. in QSVM https://github.com/Qiskit/qiskit-aqua/blob/master/qiskit/aqua/algorithms/many_sample/qsvm/qsvm.py#L174
+But each algorithm/component might need different parameters to get the circuits.
+You can get the circuit easily after you construct the algorithm object.
+E.g., QSVM uses the circuits to calculate the overlap between two data; thus, its construct_circuit method requires two data and an optional flag to add the measurement gate or not.
+like in the tutorials
+and this is the circuit.
+
+@chunfuchen : thats great to hear its fixed in the master branch. does it mean, this works at IBM-Q experience now? Also does we can access ibm-Q computer from a general public accessing public devices?
+Also, i have 2 questions,
+wanted to know how are you printing while qsvm.run(quantum_instance) is running?
+I'm running the algorithm for training size 4 & test 2, its been 10 mins still that statement is executing with no sign of output. how did you get those informative print-outs while your qsvm.run() is happening?
+
+in your circuit output, its using just 2 qubits q0, q1 & using  U & C gates. When its using 2 qubits, shoudl it behave like a classical computer with two states (0 or 1) ?
+@nonhermitian & @chunfuchen : I ran the test as per chunfuchen suggestion to get the qsvm work on tranining size 4 & testing size 2 I still couldnt use real Q. Here is the code & output -error
+print("Available backends:")
+IBMQ.backends()
+Available backends:
+[<IBMQSimulator('ibmq_qasm_simulator') from IBMQ(ibm-q, open, main)>,
+<IBMQBackend('ibmqx4') from IBMQ(ibm-q, open, main)>,
+<IBMQBackend('ibmqx2') from IBMQ(ibm-q, open, main)>,
+<IBMQBackend('ibmq_16_melbourne') from IBMQ(ibm-q, open, main)>,
+<IBMQBackend('ibmqx4') from IBMQ()>,
+<IBMQBackend('ibmqx2') from IBMQ()>,
+<IBMQBackend('ibmq_16_melbourne') from IBMQ()>,
+<IBMQSimulator('ibmq_qasm_simulator') from IBMQ()>]
+backend = IBMQ.get_backend('ibmq_16_melbourne', hub=None)
+print(backend)
+backend = IBMQ.get_backend('ibmq_16_melbourne', hub=None)
+print(backend)
+​
+ibmq_16_melbourne
+quantum_instance = QuantumInstance(backend, shots=1024, seed=seed, seed_transpiler=seed)
+print(quantum_instance)
+Qiskit Terra version: 0.8.1
+Backend: 'ibmq_16_melbourne (<qiskit.providers.ibmq.ibmqprovider.IBMQProvider object at 0x7f400abfd3c8>)', with following setting:
+{'basis_gates': ['u1', 'u2', 'u3', 'cx', 'id'], 'coupling_map': [[1, 0], [1, 2], [2, 3], [4, 3], [4, 10], [5, 4], [5, 6], [5, 9], [6, 8], [7, 8], [9, 8], [9, 10], [11, 3], [11, 10], [11, 12], [12, 2], [13, 1], [13, 12]]}
+{'pass_manager': None, 'initial_layout': None, 'seed_transpiler': 10598}
+RunConfig(max_credits=10, seed=10598, shots=1024)
+{'timeout': None, 'wait': 5}
+{}
+{}
+Measurement mitigation: None
+result = qsvm.run(quantum_instance)
+KeyError                                  Traceback (most recent call last)
+ in 
+----> 1 result = qsvm.run(quantum_instance)
+/opt/conda/lib/python3.7/site-packages/qiskit/aqua/algorithms/quantum_algorithm.py in run(self, quantum_instance, **kwargs)
+62                 quantum_instance.set_config(**kwargs)
+63             self._quantum_instance = quantum_instance
+---> 64         return self._run()
+65
+66     @AbstractMethod
+/opt/conda/lib/python3.7/site-packages/qiskit/aqua/algorithms/many_sample/qsvm/qsvm.py in _run(self)
+306
+307     def _run(self):
+--> 308         return self.instance.run()
+309
+310     @Property
+/opt/conda/lib/python3.7/site-packages/qiskit/aqua/algorithms/many_sample/qsvm/_qsvm_binary.py in run(self)
+131             self.test(self._qalgo.test_dataset[0], self._qalgo.test_dataset[1])
+132         if self._qalgo.datapoints is not None:
+--> 133             predicted_labels = self.predict(self._qalgo.datapoints)
+134             predicted_classes = map_label_to_class_name(predicted_labels,
+135                                                         self._qalgo.label_to_class)
+/opt/conda/lib/python3.7/site-packages/qiskit/aqua/algorithms/many_sample/qsvm/_qsvm_binary.py in predict(self, data)
+120             numpy.ndarray: predicted labels, Nx1 array
+121         """
+--> 122         predicted_confidence = self.get_predicted_confidence(data)
+123         binarized_predictions = (np.sign(predicted_confidence) + 1) / 2  # remap -1 --> 0, 1 --> 1
+124         predicted_labels = binarized_predictions.astype(int)
+/opt/conda/lib/python3.7/site-packages/qiskit/aqua/algorithms/many_sample/qsvm/_qsvm_binary.py in get_predicted_confidence(self, data, return_kernel_matrix)
+52         svms = self._ret['svm']['support_vectors']
+53         yin = self._ret['svm']['yin']
+---> 54         kernel_matrix = self._qalgo.construct_kernel_matrix(data, svms)
+55
+56         confidence = np.sum(yin * alphas * kernel_matrix, axis=1) + bias
+/opt/conda/lib/python3.7/site-packages/qiskit/aqua/algorithms/many_sample/qsvm/qsvm.py in construct_kernel_matrix(self, x1_vec, x2_vec, quantum_instance)
+243                                     num_processes=aqua_globals.num_processes)
+244
+--> 245             results = self.quantum_instance.execute(circuits)
+246
+247             if logger.isEnabledFor(logging.DEBUG):
+/opt/conda/lib/python3.7/site-packages/qiskit/aqua/quantum_instance.py in execute(self, circuits, **kwargs)
+192         qobjs = compile_circuits(circuits, self._backend, self._backend_config, self._compile_config, self._run_config,
+193                                  show_circuit_summary=self._circuit_summary, circuit_cache=self._circuit_cache,
+--> 194                                  **kwargs)
+195
+196         if self._measurement_error_mitigation_cls is not None:
+/opt/conda/lib/python3.7/site-packages/qiskit/aqua/utils/run_circuits.py in compile_circuits(circuits, backend, backend_config, compile_config, run_config, show_circuit_summary, circuit_cache, **kwargs)
+195                     transpiled_sub_circuits = compiler.transpile(sub_circuits, backend, **backend_config,
+196                                                                  **compile_config)
+--> 197                     qobj = circuit_cache.load_qobj_from_cache(transpiled_sub_circuits, i, run_config=run_config)
+198                 else:
+199                     qobj = circuit_cache.load_qobj_from_cache(sub_circuits, i, run_config=run_config)
+/opt/conda/lib/python3.7/site-packages/qiskit/aqua/utils/circuit_cache.py in load_qobj_from_cache(self, circuits, chunk, run_config)
+178                 if not hasattr(compiled_gate, 'params') or len(compiled_gate.params) < 1: continue
+179                 if compiled_gate.name == 'snapshot': continue
+--> 180                 cache_index = self.mappings[chunk][circ_num][gate_num]
+181                 (uncompiled_gate, regs, _) = raw_gates[cache_index]
+182
+KeyError: 0
+@hykavitha, to see the log, you can turn Aqua log as we mentioned in the first cell of the notebook
+On the other hand, as I posted above, I am able to run the experiment with the original data size on the public device ibmq_16_melbourne at the stable branch with the following modification:
+@hykavitha do you still encounter any other issue? if no, I think we can close this issue.
+@chunfuchen : I still face this issue. Once its fixed and confirmed after release is when you would close? or its fixed & tested at qiskit aqua developing stage?
+@hykavitha what is the issue you encounter now? could changing setting of the quantum instance be a workaround?
+I think this is fixed in the master branch. I can run the notebook as is if the master branch is used.
+@chunfuchen : I still cant use the IBMQ device from my public account. Qiskit errors out with error key 1.
+When you say its fixed in the master branch. What does it mean for us having these versions of qiskit.
+I have these versions:
+Qiskit Aqua version:
+pip list | grep "qiskit"
+qiskit 0.10.1
+qiskit-aer 0.2.0
+qiskit-aqua 0.5.0
+qiskit-chemistry 0.5.0
+qiskit-ibmq-provider 0.2.2
+qiskit-ignis 0.1.1
+qiskit-terra 0.8.0
+Python version: 3.73
+Operating system: OSX
+I mean that you need to install everything from the source code, here is my qiskit version
+however, do you mind posting the error log when you turn off the circuit cache? Thanks
+This should no longer occur in Aqua 0.6. Closing, if the problem that you experienced still continues for you either reopen or raise a new issue.

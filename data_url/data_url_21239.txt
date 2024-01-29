@@ -1,0 +1,25 @@
+The core analyzer tool is reporting unknown exception types - this suggests data corruption somewhere on the core device.
+Over several different Artiq setups, we have observed that the core analyzer frequently fails with an exception along the lines
+ValueError: 188 is not a valid ExceptionType
+(where the exception number changes over runs)
+Adding some diagnostic prints, from one run we see a variety of exception types:
+From the gateware here it looks like there should only be two valid exception types, underflow (0b00010100) and overflow (0b00100001). Hence it is concerning that we are getting these "impossible" exception messages.
+From the collective experience at Oxford, it seems like we see this on all our systems, and has been around for a while:
+I am working from the current Artiq master, using a Kasli 2.0. I have seen this over at least 3 separate core devices, running different builds of gateware, over several versions of Artiq, and I believe on Kasli 1 as well as Kasli 2.
+All our systems have at least one DRTIO satellite, and use SUServo.
+May or may not be related: I've seen it now three times that a bitstream was broken to the extent that it did not boot at all (no messages on the terminal). Reproducibly broken across rebuilds of the same bitstream. But random gateware changes or in at least two cases just reordering device instantiations in the bitstream made it work. No hardware changes, Kasli 2 in all cases, no RTIO, SU-Servo involved. There is always the chance that Vivado does something wrong but it seems a bit too frequent.
+May or may not be related: I've seen it now three times that a bitstream was broken to the extent that it did not boot at all (no messages on the terminal). Reproducibly broken across rebuilds of the same bitstream. But random gateware changes or in at least two cases just reordering device instantiations in the bitstream made it work. No hardware changes, Kasli 2 in all cases, no RTIO, SU-Servo involved. There is always the chance that Vivado does something wrong but it seems a bit too frequent.
+I had that issue a lot with Sayma. Haven't hit it with Kasli myself though
+@cjbe Can you dump the entire raw analyzer buffer when the problem occurs? There may be more corruption than the exception number, but the rest is is more silent.
+And just checking - did your bitstream meet timing?
+Can you dump the entire raw analyzer buffer when the problem occurs? There may be more corruption than the exception number, but the rest is is more silent.
+Here is a raw dump that includes some corruption: dump.zip
+You are right - there is some additional misbehaviour. As well as 2 unknown Exception types, there are 4 Stopped messages.
+And just checking - did your bitstream meet timing?
+Yes! I have seen this on dozens of different builds, with different Artiq versions, and different gateware targets, all of which have met timing. Hence it seems likely that this is a true logic bug somewhere, than a miscompilation.
+I believe I have seen this with different versions of Vivado as well (but not sure about this)
+One thing to check: we are seeing that (since the external ref clock now with Kasli 2 goes to the FPGA first and not the Si5324) even a slightly high reference clock (powers that are below the usual ref clock power in a lab) will reliably cause very hard-to-trace failures (e.g. the ethernet link not working sometimes, probably depending on the skew w.r.t. the si5324 clock). Plausible, since the ESD diodes will happily forward the reference clock to the supply rails. @SingularitySurfer is filing an issue with some more details.
+@jordens good to know!
+I don't think that's the issue here - I have seen this on lots of systems without external clocks.
+@jordens: Just to double-check, what should roughly be the limit for "safe" powers at the input (wiki states +10 dBm)? Not sure I'm looking at the right FPGA pin docs.
+I'm not sure. 10 dBm sounds high. The wiki may well be referring to v1.

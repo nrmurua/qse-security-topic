@@ -1,0 +1,48 @@
+On both kernel and comms CPUs, we mostly use memory-safe code (or will use, once Rust on comms CPU ships), so it is largely unnecessary to have a full-blown MPU. However, memory-safe code relies on detection of stack overflows, and currently that would not happen--indeed, overflows on both CPUs would silently corrupt data and crash some time later.
+I propose a trivial MPU to alleviate this problem. It would work as follows:
+n would be configurable; on kernel CPU we need one, on comms CPU we need the same n as number of threads.
+It is only necessary to trap on a region 4k long because LLVM and Rust support stack probing, intended to be safe in presence of guard pages; when allocating a stack frame, LLVM will write a dummy value to stack every 4k bytes.
+Isn't stack probing slow? And if it can do that, can't it check the stack pointer in software?
+Isn't stack probing slow?
+I'm not sure what leads you to this conclusion, but no, it isn't. In any case probing per se only happens on frames with stack objects larger than 4kb (and a few other specific circumstances), in almost all cases the normal stack accesses are enough to ensure a crash on overflow.
+And if it can do that, can't it check the stack pointer in software?
+This is not only significantly slower but also much more complex, because the machinery that does this depends on thread local storage to store the stack pointer. This machinery is not available without an OS, or in static executables, or in the OR1K LLVM backend, or in Rust (anymore), and in the case that it would be implemented for all of the above, it would have to involve a function call in every single function prologue. On top of all this it's not compatible with C code, so if e.g. a Rust thread calls into lwip and lwip overflows stack, that would result in a crash as usual.
+because the machinery that does this depends on thread local storage to store the stack pointer. This machinery is not available without an OS, or in static executables, or in the OR1K LLVM backend, or in Rust (anymore),
+What about this threading library you are porting?
+On top of all this it's not compatible with C code, so if e.g. a Rust thread calls into lwip and lwip overflows stack
+If the C function allocates a large buffer on the stack, it can still overflow even with your proposed MPU.
+Can stack probing be done with a read and not a write? This way we would not have to quash the bus transaction on error (which would increase memory latency by one cycle).
+What about this threading library you are porting?
+It relies on stack probing, of course.
+If the C function allocates a large buffer on the stack, it can still overflow even with your proposed MPU.
+Yes, but I don't think lwip does that.
+Can stack probing be done with a read and not a write?
+Sure, the way it's implemented is that the backend inserts a call to __probestack.
+It relies on stack probing, of course.
+My question was about thread local storage, which I am surprised it does not provide.
+My question was about thread local storage, which I am surprised it does not provide.
+Thread-local storage is a pretty annoying topic; if you are running in a hosted environment (and the library is designed to work in one also), then there's no real way to integrate with the standard thread-local storage that is done via ELF sections. In effect, compiler-provided thread-locals aren't usable with any usermode scheduling libraries. In addition to that, this is almost completely missing from both the OR1K LLVM backend and the linker, and since there is no published specification for how this should be implemented for OR1K I don't even know where to start.
+Of course, you could always define a global variable yourself, but then you have to maintain a fork of LLVM forever, because the upstream split-stack machinery (which was (ab)used for stack overflow checking) is not flexible enough to support that out of the box and is not supposed to do this anyway.
+Basically, all other methods are much more work than stack probes, create problems with upstreaming and most of them are slower on top of that.
+Is a bus error exception appropriate on protected memory access?
+Does the gateware really need to handle those N "pages"? Can't it protect only one "page" and the software moves it around when context switching?
+Is a bus error exception appropriate on protected memory access?
+Sure.
+Does the gateware really need to handle those N "pages"? Can't it protect only one "page" and the software moves it around when context switching?
+Sure.
+This is now in MiSoC, it needs to be tested and hooked up in ARTIQ.
+mor1kx ignores wb.err on read cycles, so looks like this will not work so easily.
+Removing from 3.0 because of #544 (comment).
+Moving from #569; this will also need stack probe fixes in LLVM (https://reviews.llvm.org/D9653) to work correctly.
+Stack probes were merged a good while ago in LLVM. There'll need to be some minimal work for OR1K for them to fully function.
+Funded by Duke.
+I propose a trivial MPU to alleviate this problem. It would work as follows:
+Adding a Physical Memory Protection (PMP) unit on the RISC-V core should be able to do that. Accessing the protected memory region without necessary privilege/access right will cause an exception from the CPU. Just like a guard page.
+To make PMP work, we will need to swap to a lower privilege level (e.g. user). Currently, we use the highest privilege level (machine), and stay there forever.
+Does the gateware really need to handle those N "pages"? Can't it protect only one "page" and the software moves it around when context switching?
+Sure.
+We can perform an environment call (ecall) to transfer from lower privilege level to machine privilege level when the arch::swap() function is invoked in libfringe. Then, handle the generated interrupt/exception due to ecall and adjust the PMP regions with machine privilege.
+There are n registers, each containing a base address for a region 4k long and aligned on a 4k boundary.
+It is probably better to align the thread stack on 4k boundary as well. Then, we make the stack 4k larger as well when spawning a thread and put the lowest 4k into a PMP region as the stack guard.
+The problem is liballoc_list does not support large alignment (> 16 bytes) ATM. Though, adding a case that deals with allocator Header not aligned to the required alignment should not be too hard.
+Also, I might be able to remove this hack. It was to fix a heap corruption issue in moninj.

@@ -1,0 +1,19 @@
+The current exception handling code may be sub-optimal.
+Related code:
+
+We currently emit landingpad as cleanups even if they may not be cleanup. We also did not specify the catch clauses. According to LLVM exception handling docs, a cleanup pad will always be entered and is usually being used to implement things like destructors. So if I understand it correctly, we will visit the catch block every time we return/raise an exception, regardless of the exception type, and perform a bunch of name comparisons even if they might not be needed.
+We should at least make catch blocks cleanup=False, and we should probably implement the catch clauses appropriately. This requires support from the personality function to check for the match condition according to some presentation slides. We should also add a resume instruction if no exception clause is matched, according to the slides and code emitted from clang.
+I am unsure about the performance implication of this and if my understanding of this is correct. I will try to fix this and give a simple microbenchmark.
+In addition to this, according to the comments, the name should be a unique global pointer for each type. If so, can we speed up the comparison by only doing a pointer comparison instead of memcmp of the whole string?
+Furthermore, the following code would trigger compiler exception:
+Error:
+And the following code will produce incorrect LLVM IR:
+Error:
+https://git.m-labs.hk/M-Labs/artiq-zynq/pulls/161
+Addresses the landing pad issue.
+There are two problems with the IR generation and dead code elimination. The first problem is due to dead code elimination, landingpad clauses are not removed properly, a simple fix would do:
+However, the second issue is a bit more complicated. Firstly, our deadcode eliminator cannot trace indirectbranch especially when the location is set in a local (not sure if phi could work), so some cases will trigger assertion errors due to invalid erases. Secondly, LLVM cannot reason about such control flow and will complain about instruction does not dominate all uses. Consider the simple example:
+The IR output is something like this:
+Basically, what it is doing is:
+However, LLVM cannot understand that %try.raise is dominated by %landingpad, because the predecessor of %try.raise is %finally, which has two predecessors %invoke and %landingpad even though the path through %invoke is impossible.
+It seems that the only way to fix this issue is to modify the IR generation and duplicate the finally block. I am not sure if there are better ways for this.

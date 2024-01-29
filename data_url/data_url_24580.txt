@@ -1,0 +1,31 @@
+I am unsure whether this is intended. When deserializing this pulse template (convert to json first) and doing the following:
+The following output is returned:
+Which indicates that the fourth measurement window actually occurs much later than the following windows.
+The question is now, is that list the ultimate authority for which the order of returned measurement results is? i.e. can I just sort this list as well as the results for each window in pairs? Or is this list sorted before the measurement is performed, i.e. the results are already returned in time-order, in which case i would have to sort the measurement window start points alone.
+Is this even intended? The vast majority of measurement windows are sorted.
+Without looking at the details: Could it be that some measurement windows are longer than their pulse templates?
+From what I remember how the windows are collected the result should be ordered as long as each Loop's windows are fully contained in [0, loop.duration]. There is no sorting going on. If you need to sort just do
+Without looking at the details: Could it be that some measurement windows are longer than their pulse templates?
+From what I remember how the windows are collected the result should be ordered as long as each Loop's windows are fully contained in [0, loop.duration]. There is no sorting going on. If you need to sort just do
+There shouldn't be any measurement window longer than their pulse templates as all measurement windows are defined within corresponding PT. The expression of window length and pulse time interval are literally same.
+As you can see in the output of
+print(pulse_program.get_measurement_windows()["read"])
+that was originally posted, length of all measurement windows are identical without flooring/digital error. Just an exception happens to the forth item whose begin is 1.11738880e+09 appearing at a wrong place. It suppose to be the 12-th "read" in real time.
+Upon looking again in the code I need to correct myself: The output of get_measurement_windows is not sorted if mutliple levels in the structure define measurement windows.
+After further investigation it seems like (in this case) that the returned results are in time order which disagrees with the measurement windows. Sorting the windows manually, which formally disconnects the result order from the returned measurement windows, yields expected results.
+@terrorfisch This needs to be reopened therefore
+Why? This is no required behaviour of the function. What do you mean with "formally disconnects the result order from the returned measurement windows"?
+There is a combined optimized sorting and conversion function already in qupulse.utils.performance.py that can be used by the backend with an appropriate sample rate because this can be an actual bottleneck when there are many measurement windows. Therefore I would like to avoid sorting if it is not necessary. But this also means that the measurement windows are already sorted and adjusted to the backend sample rate at some point in the program.
+I have the feeling this is a XY problem. What do you actually want to achieve?
+The Problem is the following:
+When having multiple measurements repeated in a single scanline, the measurement results returned can not be differentiated, as they do not contain a timestamp.
+The only thing that provides timestamps is get_measurement_windows, which does not provide the correct timestamps for the actual measurements, as the actual measurements are returned in time-order.
+This behaviour is fine, if it would be clearly communicated what is in time-order and what is not.
+This behaviour also leads to the following situation:
+Assume you want to display all results in a scanline vs. the time when they were acquired. You then have to extract the possible acquiring times from get_measurement_windows as well as the results with card.extractNextScanline(). You then create the timestamp array from the measurement windows as well as extract all results and flatten them from the scanline.
+Now you have to sort the time-array manually and separately from the voltage-array. This does not seem the right thing to do, as it formally disconnects the indices of these arrays. But as they were never related anyways, this is correct.
+AcquisitionProgram contains the sorted and sample rate adjusted measurement windows but there is no interface to get them yet.
+This should work:
+IMO this interface is something that belongs into the data acquisition backend.
+Close in favour of #789
+Please re-open if you disagree

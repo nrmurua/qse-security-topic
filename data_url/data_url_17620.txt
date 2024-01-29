@@ -1,0 +1,12 @@
+If a user passes a coupling map from a real device (like ibmq_16_melbourne, 16-qubit machine) to a statevector simulator, the output dimension of the statevector will not be the number of qubits used in the circuits.
+In general, a customized coupling map with more qubits than the number of qubits in a circuit could result in the incorrect output dimension of statevector. (QASM simulation is okay since the measurement is specified.)
+Code script: using the coupling map from a real device. The same error is found for both Aer and BasicAer providers.
+Now, the vector dimension is 16384=2^14 but the dimension should be 4 since only two qubits are in the circuit.
+The output dimension should be aligned with the number of qubits used in the circuit.
+It seems that the number of qubits in the qobj is over-mapped.
+E.g., for the above code, the compiled qasm looks like this, and then the backend use 14-qubit for simulation.
+@chunfuchen I revisited this issue, and I think the way we have it now is probably the expected behavior. When you use a coupling map, you are embedding a circuit within a device. So, for example you have a 14-qubit experiment, even if only 2 of the qubits are being acted upon. It is hard to interpret intentions and know that a user is not interested in the other qubits (why else would you embed it)?
+In general this is not a problem when getting counts, as you only see classical bits active in the measurement. But for the statevectors, would it help if there was a transpiler pass RemoveIdleQubits that a user can invoke to eliminate extra qubits? Even with this, note that the statevector could be different to the unmapped case, as qubits may be swapped during transpilation.
+@ajavadia Yes, if a circuit measures the used qubits, the result is correct. Even though the idle qubits are removed, the result could be wrong if there is qubit swapping happened.
+I think it might be related to how the users use the statevector simulator along with the transpiler.
+It makes sense for me that if a user uses the statevector simulator, he/she probably should not include those setting in the transpiler.

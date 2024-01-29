@@ -1,0 +1,30 @@
+Hi,
+I just wanted to bring you guys to the attention a small package authored by a colleague of mine to compute the steady state of an lindblad markovian system. It basically solves the system L\rho = 0 by also enforcing the trace normalization.
+It's a very efficient method, allowing for finding the steady state of quite big systems.
+In our group we've been using the method for quite some time and it works very well. Maybe you'd be interested in getting in touch to integrate that in QuantumOptics...
+Thanks for pointing to that package, it looks really good. As the steady-state solvers in QO.jl either solve the ODE or diagonalize the Liouvillian there is definitely room for improvement.
+From our/my side this would certainly be a good addition to the steadystate module. As SteadyState.jl is still a WIP, though, it might eventually go beyond the scope of a sub-module, in which case it might be better to keep it as a separate extension. What do you think? Do you know if there are plans for further extending SteadyState.jl?
+Hi,
+I am the author of the above-mentioned SteadyState.jl.
+It was first written in a generic way so as to be able to handle operators provided as any kind of matrix, in the perspective of taking advantage of the performance of running such iterative solvers in GPUs. Yet I have very recently refactored its code in such a way that its signatures are somehow consistent with those of the solvers within QuantumOptics.steadystate. Strictly speaking, the solver itself is only 30-line long, the rest being almost a copy/paste of code from src/master.jl. Only lazy operators currently pose problems as they are not really reducible to matrices.
+Such iterative methods usually converge within a few seconds for non-pathological systems of a few hundred states and prove especially more efficient than brute-force integration when a very low tolerance is required.
+As a benchmark of the method, I consider the case of the periodic driven-dissipative transverse-field Ising model with N spins at the crossover between an ordered phase and a disordered phase, as given by:
+From this one measures (on 6 CPU threads):
+This works with CuArrays too. For N=11 spins (2048 states) and greater precision, we get:
+Achieving this precision by brute-force integration is rather hopeless, even for very small chains, due to the very slow relaxation of the system for these parameters.
+If you think this would be a useful addition to QuantumOptics.steadystate, I would be very glad to contribute.
+@david-pl As a side-note: this method, is crazy fast compared to steadystate.master or steady state.eigen. It's probably more similar to an eigenstate solver in that it targets directly the lowest lying eigenstate.
+Even for small systems, you get a considerable (>x10) speedup, and as a bonus you can scale scale up to a rather large number of sites.
+Hi @Z-Denis,
+Thanks for your comment. I have to admit I'm very impressed by the benchmarks. As @PhilipVinc says, even when I run your code for N=2 the steady-state solvers currently implemented hardly compare to your method. So from my side this would be great to have available in QuantumOptics.steadystate.
+One thing we could discuss is switching from the BLAS.gemm! methods to the gemm! methods implemented in QuantumOptics. On the one hand this would have the following two advantages: 1) we have a gemm! method for sparse-dense multiplication, which would allow to keep H and J sparse without having to use the fallback method. 2) This would also take care of lazy operators since there are also gemm! methods for them.
+On the other hand, this doesn't work with CuArrays, which we definitely don't want. We could write separate methods for this, though.
+Do you think this is worth looking into?
+So bottom line: If you're willing to contribute this, I would be happy to add it to QuantumOptics. Would you like to create a PR? I'm also happy to have further discussions!
+After discussing with @PhilipVinc we have a few thoughts on this:
+We believe that there are two possible ways to implement this in QuantumOptics.jl:
+Sure, that would be okay.
+No argument there. I did not mean to suggest to remove the generic method for matrices. I just meant that one could probably specialize on the methods for sparse and lazy operators.
+Good point. The thing is that when solving time evolutions, the actual limiting factor in storage will usually be rho which is a dense array. So when working with sparse or lazy H and J, storing an extra copy of those is not so bad. Of course what you say is still true then: we're wasting some memory here. However, we don't have gemm! methods for complex conjugation/transposition implemented. So doing this in general would require implementing one such method for sparse arrays and each lazy type. I'm not sure how much work that is, but I'll have a look.
+Regarding your suggestions on how to proceed: I would be fine either way, but I'm slightly more inclined to go for the first option. The other option depends a bit on what your plans are with SteadyState.jl. If you plan on making a lot of changes, it might not be the best idea to make QuantumOptics depend on SteadyState. But it's really your choice, so just let me know how you want to go about it.
+In any case, I will clearly point to your package on QuantumOptics' front page so people looking for efficient steady-state solvers for master equations have an easy time finding it.

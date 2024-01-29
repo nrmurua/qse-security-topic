@@ -1,0 +1,86 @@
+When running an experiment, I do want to save all available data I can gather.
+Right now, running a loop will only save the datafile.dat with a header including names, and dimensions.
+Running an experiment should also save the available metadata, this includes the station.snapshot() and a measurement.snapshot().
+The Station
+The station.snapshot() currently provides information on all added instruments, and their parameters.
+This should be extended to include a general overview of the whole setup.
+This could include data that is specific to a measurement setup and could be saved locally, where the station can access it. I can for instance think of:
+I guess you get the point. It is nice to look up the fridge filtering at a later point.
+The instruments
+Right now only Parameters are saved, but there might be information that is not really a parameter.
+For instance, I think instuments complying with the SCPI (?) standard, do have to respond on the *IDN? with a <vendor>,<model>,<serial>,<software>, this should be part of a standard driver meta-information that is saved with it, maybe like this::
+Right now I can think of:
+Also I do think that the instrument should make a snapshot of itself with the update=True argument upon initialization, then we have the time-constants and whatever in the station from the beginning.
+There should also be a way to not do a measurement upon initialization that could potentially harm anything or take long time.
+Maybe the driver itself should specify what info to gather upon init.
+The loop
+For the loop or in general a given measurement I want to be able to reconstruct it.
+For that I need to know exactly what has happened during the loop.
+That information should be able to link me back from the data to the instruments used to get that data.
+What I can think of now:
+Manual Setup additions
+There are other things, really valuable to keep with the data:
+Flexible on-the fly user additions
+I think a lot of this should be standardized as much as possible, i.e. instrument stuff, setup stuff and absolutely the loop stuff.
+I would make an aditional experiment container, that gathers all this info, and contains a Measurement-loop.
+Just some thoughts
++1 for this
+I would like the the framework to store the basics (data, snapshot, instruments, etc.) and also provide an option for the user to store an arbitrary object. In my case this would be a python dictionary with arrays, strings and some objects.
+That is a good point @peendebak, we need an easy way for the user to add metadata :) I'll add it above
+@MerlinSmiles , Related to/part of #62 ?
+Also a big 👍  for addressing this. So let me go over the points you raise.
+The station.snapshot() currently provides information on all added instruments, and their parameters.
+This should be extended to include a general overview of the whole setup.
+What you are describing to me sounds like the ability to add parameters (ManualParameter) to the station. I think this would be a good addition. (@alexcjohnson , I cannot avoid making links to the concept of the meta-instrument we have but I'll try to save that for another issue)
+Right now only Parameters are saved, but there might be information that is not really a parameter.
+Maybe the name parameter is a bit misleading because it has all sorts of meaning associated with it, but to me the concept is much more general and the things you list all fit the parameter class perfectly, and as such would be logged in the snapshot just fine.
+I am a bit weary of introducing an extra _metadata argument I prefer not to introduce extra concepts unless they clearly reduce complexity. On the other hand I can see the appeal of putting some parameters in a "meta" group, just not sure yet.
+You also mentioned setting/getting these parameters on init. I tried to set the convention to always get *IDN at the end of the init and then print (or write to logging.info if/when we implement a logging module) the time it took to initialize and the IDN information of the instrument. Getting a parameter will ensure that any subsequent snapshot will have the right values.
+👍 for your proposed split up of the IDN command, I'm not sure if all manufacturers obey the VISA standard so well though.
+Besides any text comments you add (e.g. your thoughts on the influence of the weather on your mood etc) how about a text-snapshot (excuse the word) of the code that executed it? In the group where I did my master the script that was called was saved alongside the datafiles. This may be a bit harder in an interactive notebook environment but it is still a potentially powerful idea.
+Good point, we still struggle with those. Usually it is just a physical drawing we have around and in the lab notes. If we want to truly integrate this into the codebase it will need to be easy to use, and provide a benefit to doing it this way.
+This probably means there needs to be good integration with the analysis side (maybe some simple spice like circuit simulator/model) and something visual/gui like to see where what is inserted.
+For now I guess it would suffice to have a single instrument that holds all these parameters so that a snapshot will snap them correctly.
+P.S.
+As a side note, we are currently running QCodes sans Loop but with our own "MeasurementControl" (MC), with that we safe all our data in hdf5 including a station.snapshot that contains all the metadata, and meta data from our MC including timestamps, a measurement name etc. One of the first things I want to do next is make an (hdf5) formatter for QCodes and update our analysis to be able to read it such that I can make both formats work together and we can start slowly replacing MC with Loop
+@AdriaanRol Yes indeed it is somewhat related to #62 but this should be independent from the actual IO and 👍 for hdf5
+What you are describing to me sounds like the ability to add parameters (ManualParameter)
+Indeed, I am starting to use them too, also i just had to write a Parameter subclass which also should be added.
+Maybe the name parameter is a bit misleading because it has all sorts of meaning associated with it, but to me the concept is much more general and the things you list all fit the parameter class perfectly, and as such would be logged in the snapshot just fine.
+I am not so sure about this.
+If I want to add instrument information, why would I wrap a model name into a parameter with 600 lines of code? I do like simplicity.
+I am a bit weary of introducing an extra _metadata argument I prefer not to introduce extra concepts unless they clearly reduce complexity. On the other hand I can see the appeal of putting some parameters in a "meta" group, just not sure yet.
+There is nothing that has to be introduced for this, the instrument inherits from Metadatable we just need to fill it up. But we should do this in a unified way.
+You also mentioned setting/getting these parameters on init. I tried to set the convention to always get *IDN at the end of the init
+This is exactly what I want this discussion to lead to. Conventions and Requirements to i.e. instruments, setups, ...
+Also when an instrument is added to a setup, it should have all parameters updated, do you do this at the moment too?
+👍 for your proposed split up of the IDN command, I'm not sure if all manufacturers obey the VISA standard so well though.
+Actually that is not visa but SCPI (http://www.ivifoundation.org/docs/scpi-99.pdf page 19)
+IEEE 488.2 is purposefully vague about the content of each of the four fields in the response
+syntax. SCPI adds no further requirement, but here are some suggestions:
+All devices produced by a company should implement the *IDN? response
+consistently.
+Field 1, the Manufacturer field, should be identical for all devices produced by a
+single company.
+Field 2, the Model field, should NOT contain the word “MODEL”.
+Field 4, the Firmware level field, should contain information about all separately
+revisable subsystems. This information can be contained in single or multiple
+revision codes.
+For some reason they forgot field 3 🐙
+While a manufacturer wont make everything perfect, we could still comply to this, and let the driver take care of hickups.
+or write to logging.info if/when we implement a logging module
+I do see some logging in different files already, but it might have do be revised.
+This  resource talks about the root logger and others. Maybe we should require something inspirated from that:
+This logging however is a whole other topic, and in my mind I'm already planning an issue on that.
+Besides any text comments you add (...) how about a text-snapshot (excuse the word) of the code that executed it?
+👍 for that!
+Good point, we still struggle with those. Usually it is just a physical drawing we have around and in the lab notes. If we want to truly integrate this into the codebase it will need to be easy to use, and provide a benefit to doing it this way.
+My thoughts didn't go as far as providing a whole drawing of the setup. More a collection of important things, i.e. voltage dividers that are crucial in the data analysis later.
+And maybe a link to parameters that should use them.
+For now I guess it would suffice to have a single instrument that holds all these parameters so that a snapshot will snap them correctly.
+Yes, actually I was just writing a driver for an Ithaco current-amplifier, that one is manual operation only, so I use ManualParameters for the settings. Now the user has to take care of telling the setup what happened to the instrument, but if she/he does all amplification factors are added to the snapshot.
+Additionally I added another parameter as mentioned above, which uses a third instrument to read the current-amp, and outputs an array of data [raw-voltage, actual-current] so we save both raw and converted data :) @alexcjohnson is currintly winding his head around how to make this more general, as there are some piping issues here.
+So as we can see, many solutions are already in place.
+But we do not have 'good practice' and 'required practices' for anything, which I think we should.
+But we do not have 'good practice' and 'required practices' for anything, which I think we should.
+I think we are reaching the point where we can no longer avoid the QCodes style guide.md

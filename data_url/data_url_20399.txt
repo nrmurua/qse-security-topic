@@ -1,0 +1,46 @@
+Hi,
+I've noticed what might be a bug in the Kyber public key generation.
+In the (indcpa.c) gen_matrix function, the three coefficient arrays (a) that are generated, appear to be identical. An incrementing domain code is used to initialize Keccak's state to unique values inside the inner loop, and a different domain code should yield a completely different output from SHAKE, even with the same seed, but in this case, the coefficient arrays produced are all identical.
+I have traced this to the (sha3.c) OQS_SHA3_cshake128_simple_absorb function. That function adds the domain code to the first state member, transforms the state, and then calls the keccak_absorb function, passing in the modified state. At the top of keccak_absorb, the state is zeroed, in effect, erasing the permuted domain code from the state, and hence the identical output is generated.
+Can someone confirm this?
+That's really weird.  We didn't make any changes in the SHA3 code (beyond renaming functions) that we got from Supercop.  I'll try to take a look.  @tlepoint do you have any insight compared to your other Kyber implementations?
+The simplest fix would be to remove the keccak_absorb call from the shake absorb function, and add the latter half of the keccak_absorb function code in directly.
+Rather than trying to fix our code, which is really just a copy of another implementation, I'd prefer to track down a different implementation that we have greater confidence is correct.
+I have an implementation (in C++), and it is correct, it passes rigorous stress testing (including statistical) and every KAT test I could find, you're welcome to it..
+I confirm the bug, congrats for catching it. It's probably my mistake when integrating...
+I'll work soon on integrating the new version of Kyber (submitted to NIST) which no longer use cSHAKE, so it should get rid of the bug.
+No problem, glad I could help..
+John
+I will also take a look at replacing the SHA-3 implementation -- even though Tancrède's new Kyber won't use it, others still do, so we definitely need to fix that.  John, do you have any recommendations for a C implementation?  One that comes to mind is the Keccak code package (https://keccak.team/software.html); for the NIST competition, NIST said that it would be part of the reference environment, so that seems promising.
+Hi Douglas,
+I think replacing the implementation may be a bit of an over-reaction, I understand the impulse but.. I think it might be better to just rewrite it, and test Keccak (and SHAKE) with the official KATs, (the reasoning being, trying to untangle all that from the Keccak package and put it into a compact form, may actually introduce new errors).
+I can re-write this for you, including tests, if you think that would be helpful..
+@dstebila  While you are at it, AES should be tested with at least Fips197, and the modes with vectors from SP800-38a, and ChaCha with its official vectors as well..
+@dstebila Just a small update.. I started rewriting that class (just for something to do..), and the cause of the bug has become more apparent. Two, possibly three different programmers (judging by syntactical style, and the sporadic use of standard int) were involved in authoring that file. So.. someone pulled the absorb and permute functions from the Keccak distribution, and then wrote around them, in order to create compact, static implementations.
+The state should not be cleared in any of the absorb functions (keccak/shake/cshake); initialization should instead be done by the caller (just about every secure coding standard I know of prohibits passing an uninitialized object into a function parameter). So that means zeroing the state where it has been declared.
+I'll clean this up, bring it up to Misra C standards, test the hell out of it, then push it to CEX++ (probably by the weekend), and put the link here (if you're interested), I guess you can decide if you want to use it after that ..and I totally understand if you want to use some official version instead, (but that doesn't mean you don't have to test it!), in which case in answer to your original question, yes, use the Keccak code package, it's what I used as a reference when I authored my implementations.
+That sounds like a good plan.  Please do post a note here when you've done so, and I'll take a look.  If you are confident in the code you write, that would be a good sign for us.  I won't be looking at this in any depth till a bit after Christmas, but probably before New Year's.
+OK, no worries.. I'll give it a tuneup, test everything against the Nist vectors, and drop the link here when it's done.
+Hi Douglas,
+I got time to finish this today, and uploaded the files to my project:
+https://github.com/Steppenwolfe65/CEX/tree/master/Test/Misc
+I included tests, and documented their origin (sha3_test.h), so it should be easy to verify.
+I'll send an email to the address on your Frodo paper with a summary tomorrow.
+Hope this helps.. and happy holidays!
+Cheers,
+John Underhill
+Hi John! Thanks for the code.  I've started to incorporate the code from your project into our directory under pull request #202.
+In your sha3_test file, there were several build failures because some of your calls to OQS_SHA3_shake256_squeezeblocks (and similar functions) were being given 4 arguments when they should only take 3.  I've fixed in the copy I made in PR #202.
+Is your sha3_test.h also under public domain like sha3.c?
+In your email to me you also commented about how cSHAKE with N="" and S="" doesn't produce the same output as the standard (SP800-185 3.2).  This seems like a problem to me, and something we should fix.  But I wasn't sure from your email if you thought it was okay to leave as is.  Can you explain more?
+Douglas
+Hi Douglas,
+I see the unnecessary rate parameter in the extended tests, fixed now (sorry!), also some of the documentation was updated, so please use the newest version.
+The license is public domain, not a part of my library (which is GPL'd), so you are free to use it in any way you like.
+As for the 'simple cSHAKE' implementation.. it has been optimized as a counter construction, which is how it was used in the Kyber gen_matrix function (the only place it was used, and soon to be replaced).
+I don't see anything wrong with the function (be mindful of the short counter period of course), and it is part of the Fips package, and widely distributed as part of fips202.c, so.. it should be fine (though cSHAKE is of course a more flexible design).
+I could add a proper implementation of cSHAKE if you like (next week?), let me know..
+You do have to zero the state if using the long-form of the (c)SHAKE api now, (if a function creates the state array, it should be initializing that array, before passing it to another function).
+I only see SHAKE used in Kyber and oqs_rlwe_msrln16_generate_a (but do a search, my version is older..).
+John
+Closed for now since Tancrede has removed the old version of Kyber.  We will be re-adding the new NIST submission of Kyber in the coming months.

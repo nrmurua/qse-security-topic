@@ -1,0 +1,19 @@
+If the host begins a message but does not complete it, any kernel CPU messages and watchdogs should be processed.
+This seems quite troublesome to implement.
+This seems quite troublesome to implement.
+This worked with the C runtime.
+This worked with the C runtime.
+Yes, it's easy to do if you buffer the entire packet in RAM, but we don't anymore.
+Why not do it again? We have plenty of RAM.
+That pessimizes large RPCs. We have to spend the RAM twice: once on the comms CPU (to buffer the packet), then on the kernel CPU (to actually unpack it). And every time someone complains, we need to do the layout change dance, which is what prompted me to fix it.
+Also, higher RPC latencies, since right now the RPC will start decoding immediately and not just when it gets completely received.
+I suppose one way we could fix this without changing the networking code is add a separate watchdog thread that interrupts the session thread if the watchdog ever expires. But this is annoying because of all the data sharing.
+You could also do the message processing in a fiber, context-switching back to normal execution every time you block waiting for input. Then again, requiring 2 x max_message_size in RAM isn't unreasonable, especially since you usually have to unpack the contents of the message somewhere else as well (making it 3x anyway). You could also think about application-side chunking for very large datasets, if that is the issue.
+(Fibers/green threads/… would also give you proper handling of multiple connections for free, although I must admit I'm not quite sure what the current story with the Rust runtime is there.)
+We already use cooperative multitasking on the core device. That was one of the major points of migration to Rust.
+Then again, requiring 2 x max_message_size in RAM isn't unreasonable, especially since you usually have to unpack the contents of the message somewhere else as well (making it 3x anyway).
+I don't think so. Right now there is no restriction on message size at all other than ksupport RAM size, and there are no temporary buffers used during unpacking. I think this property is quite nice.
+If a connection is accepted and the magic string isn't sent, any other connections should proceed.
+Done in the new runtime at https://git.m-labs.hk/m-labs/artiq-zynq
+If the host begins a message but does not complete it, any kernel CPU messages and watchdogs should be processed.
+Processing kernel CPU messages does not seem relevant, but watchdogs could be done.

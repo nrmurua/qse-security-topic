@@ -1,0 +1,54 @@
+Hi,
+Is there interest in making the suspend_chains feature a part of find_embedding.hpp (or wherever is better)?
+I'm asking because I'd be interested in collaborating to implement this.
+Any reason why this is kept in the parser?
+The primary reason is that I don't consider suspend_chains to be a "real" feature, as it's just a convenience wrapper for a common use case for fixed_chains.  I appreciate you asking this question, and I'm open to having my mind changed.  I'll walk through my reasoning a little bit and I'd love to hear your response.
+At present, the suspend_chains feature can create redundant nodes (which tends to slow things down a bit and needlessly inflates memory footprint).  The peculiar list-of-lists format is structured in a way that can prevent duplication... but I haven't done that yet because the implementation details look hackish / unsafe (though, I've committed worse sins in this library, and this certainly isn't off the table).  Alternately we can incur some upfront computational cost.  I'll walk through the Python implementation, since it exists, but identical issues arise in the C++.  My personal design philosophy differs from language to language, hence the discrepancy.
+Presently, we have:
+So what happens if one blob occurs in the component lists of twenty source nodes?  Twenty identical source nodes, and twenty identical target nodes, will be created.  So the hacky-looking de-duplication would take pointers to the blobs,
+which provides the absolute fastest route to my performance goal -- but if a user isn't careful about preserving is-ness of identical blobs, then they won't get that.  So, a less-hacky de-duplication would take the form
+So this gives best-possible performance once we hit C++, at the cost of a bunch of redundant computation.  On the balance, my expectation is that allocating those frozensets is going to be a bigger bottleneck than the performance hit taken in C++, so the Python implementation remains as-is.  (which, as I'm reasoning through this, makes me question the list-of-lists datatype)
+So then it comes down to design philosophy: I expect C++ users to be "power users" who prefer a bit of hard to work over getting railroaded into a performance hit.  As mentioned before, a C++ implementation would incur the same considerations -- we can allow duplication, do weird pointer stuff and clearly document it, or do a bunch of redundant computation.  Or there's a fourth choice: treat C++ developers as "power users" and expect them to create their own auxiliary nodes and fixed embeddings thereof (and this is where I've landed for the moment).
+What do you think?
+About implementation for performance, if you're doing de-duplication, it's not just about having the pointers to the blobs. From what I understand, you have a pin node in Sg, a pin qubit in Tg, and you fix the pin node to the pin qubit. If you avoid duplication, wouldn't you have pin nodes assigned to the same pin qubits? I guess you could allow overlap for them... or maybe I'm wrong about this. I'd like to know if that's the case.
+However, from my point of view, I wouldn't expect minorminer to handle duplication. suspend_chains are costly. However, as a power user, I see the point of being able to provide each blob as a pointer to a list. But, again, once I provide those lists I'm assuming the cost of adding identical pins.
+On a simpler point... regardless of moving that feature into C++ or not, I still wonder if it belongs in _input_parser. Adding suspend_chains modifies the graphs, which makes me think it should be its own pass.
+For example, I'm interested in experimenting with variations of the find_embedding method and I think it would be useful to have child classes of _input_parser to which I could add my own parameters. But this is made difficult if suspend_chains  are used, because the graph is being modified.
+This is not critical at all, and probably makes you wonder if you should even support that metafeature... but maybe that's something I could help with. Parsing suspend_chains  there, but moving the modification of the graph elsewhere (not necessarily C++, that's a bigger discussion).
+If you avoid duplication, wouldn't you have pin nodes assigned to the same pin qubits? I guess you could allow overlap for them... or maybe I'm wrong about this. I'd like to know if that's the case.
+When a source node has a fixed chain, all of the qubits (target nodes) contained in that chain are also "fixed" -- minorminer will never use those qubits for any other node.  More accurately, you can have multiple fixed chains that contain a particular qubit, but that qubit will never be used for non-fixed nodes.  So if you've got multiple pin nodes fixed to the same pin qubit, that's actually completely alright.
+But I think you're missing a detail.  In the two deduplication strategies I present above, each "pin"
+will have exactly one source node (source pin) fixed to exactly one target node (target pin) with an identical label.  Since the pins on both sides are covered by fixed_chains, (a) the chain of the source pin will never change (since it's fixed) and (b) the target pin will never be included in the chain of any other node.
+What happens when you perform deduplication is that multiple source nodes will be adjacent to the same source pin.  Typically, the target pin will be adjacent to multiple target nodes.  The neighbors of the target pin are not affected by fixed_chains and can be used by anything.
+However, as a power user, I see the point of being able to provide each blob as a pointer to a list.
+This is actually quite simple, even from Python, if the first deduplication strategy is employed:
+But the motivation for this is a subtle impact on runtime, which, IMO, doesn't warrant the required documentation.
+As for the other point... I think it warrants more thought and discussion.  I'm just about to go on vacation in a few minutes, but I'll think about it and return to the conversation when I can.  My initial reaction is to encourage you to break features in your child class (with a NotImplementedError or somesuch), if they're incompatible with your desires.  I'd love to hear more about what you're planning.
+This is one detail I missed:
+you can have multiple fixed chains that contain a particular qubit, but that qubit will never be used for non-fixed nodes.
+I'll look deeper into that.
+Thanks a lot for your answers. Enjoy your vacation!
+OK... so, I went on and coded an example of what I'm planning.
+https://github.com/joseppinilla/minorminer/tree/topo
+Idea: Create a new "flavour" of minorminer, where you provide source_layout and target_layout
+and that info is used to assign "candidates" to either: initial_chains, restrict_chains, fixed_chains, or suspend_chains. (I know the format of suspend_chains is different, that wouldn't be an issue)
+Issue: If metafeatures like suspend_chains are implemented inside _input_parser then it's not
+possible for me to use it after parsing the inputs. Therefore, the code duplication.
+My solution (not fully implemented):
+Proposed solution:  Make metafeatures independent from _input_parser. It's OK if the value is parsed, as for initial_ fixed_ and restrict_chains, because they can just be ignored.
+Then, topo_embedding could use a child of _input_parser as its parser, with added params source_layout and target_layout.
+Let me know what you think. I'm sure this is not the only or best approach, but I believe it's an interesting use case that I thought you'd appreciate.
+BTW: I'm sorry if I butchered that code.
+This is awesome!  I haven't read anything other than your description here, but I'm excited for the collaboration.
+Don't worry too much about code duplication.  I've gone through elaborate pains (e.g. C++ templates) to avoid duplication, and while that's worked, it's also been a source of bugs.  I recently read [1] which has made me question some of my habits...
+I'll do my best to review this code in the next couple of weeks; but this sounds like a good start at the very least.
+[1] http://number-none.com/blow/john_carmack_on_inlined_code.html
+Okay, so I've read through what you've got so far.  From where I sit, this proposal looks structurally quite similar to the suspend_chains feature (where suspend_chains imposes some changes to fixed_chains; your find_candidates will impose changes to the initial_chains parameter).
+I submit that your findCandidates could interoperate with suspend_chains quite effectively: for any node (in either graph) that does not have layout information, simply omit that node from the findCandidates algorithm.
+Therefore, I would propose a much more unified structure (which, indeed, has a lot less code duplication):
+Just for context.  We (@stefanhannie and myself) are currently working on other layout-aware hinting algorithms, so my proposed minorminer.layout submodule will hopefully grow to contain several good approaches.  My prefered development pattern for such an expansion is
+Nice!! I'm very glad this is taking part of the development from your part.
+I like your proposal. If anything, I hope my input serves as one of the approaches to consider in the development.
+I'd be OK closing the issue since this takes part of a bigger conversation.
+But, in general, I think the (very minor) issue I raise would still exist in this case, because findCandidatesByBinning will need to parse the graphs, bins, and eventually other parameters for the hypothetical "binning algorithm", including (i.e random seed, threads, verbosity) which is why I was trying to go around that.
+Thanks a lot for the responses!

@@ -1,0 +1,35 @@
+Describe the bug
+When installing QRL, it errors out with "No such file or directory" and "no repository found" errors:
+To Reproduce
+Steps to reproduce the behavior:
+Expected behavior
+QRL is updated and runs with no errors.
+Desktop (please complete the following information):
+I have finally gotten back to this, and the same error still occurs with newer versions as well:
+I am going to try cloning the git repository directly and seeing if the output is more useful there.
+Much more useful... maybe:
+(Home directory replaced with "~" by me)
+So... why is it looking for ".hg", and what is supposed to create it?
+Try to run following command inside the QRL repo before building it
+hg init
+Thank you! Now the error is...
+Pretty much the exact same thing, but a bit less verbose. Hmm.
+Much more useful when made verbose:
+...So maybe it has to do with "license_file"? But now the question is which line of code prints that, and which line of code is asking for the file or directory '': ''?
+setup.py seems to call setuptools to use pyscaffold in some way, but I know pretty much nothing about these tools making it really hard for me to debug. Usually I would just follow the layers of functions until it got to something useful, but everything is so abstracted that I do not know where anything is.
+Modifying setup_package to be:
+To use pdb.
+Then stepping through the entire setuptools program using:
+(Line numbers will probably change if you have a different version of setuptools than me)
+I have finally isolated the file not found error to the function walk_revctrl(dirname='') in /usr/lib/python3.9/site-packages/setuptools/command/sdist.py at this line:
+So the problem is whatever is calling that function.
+That appears to be the following line in /usr/lib/python3.9/site-packages/setuptools/command/egg_info.py:
+Uh huh...
+I had made a thread to test if this is a Pyscaffold error and it looks like it may be one indeed? Still not sure yet.
+Edit: Actually, it does get beyond self.resolve(). Hmm... I guess I must still step more granularly.
+In pyscaffold/pyscaffold#484, I was recommended to try running the command without the .hg.
+In doing this, the process to get to get an error is a bit different. .hg seems to be missing in the find_sources command in egg_info.py(295)run(), run by the egg_info in the build_py class of usr/lib/python3.9/site-packages/setuptools/command/build_py.py. I get there using the following sequence of operations, this time operating on an unmodified setup.py with command python -m pdb setup.py build, as this is a newly-cloned repository:
+Upon debugging more, this seems to be an error in yet another invocation of walk_revctrl, in /usr/lib/python3.9/site-packages/setuptools/command/egg_info.py(581)add_defaults():
+Upon going into the function, after the following series of steps:
+ep.load()(dirname) is successful at returning items until... around versioneer.py? Anyway, rather than manually go through all of these each time, I decided to look at the documentation to see if there is a way to break once a variable is a certain value, and there indeed is. So, my commands to get to the point of this are now:
+I've done some more debugging, with a fresh repository, and this time making comments to know what it's doing:

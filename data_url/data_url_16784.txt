@@ -1,0 +1,34 @@
+I tried to transpile the same circuit without and with initial_layout but the transpiler is returning an error message:
+KeyError: "The item Qubit(QuantumRegister(20, 'q'), 0) does not exist in the Layout"
+qr = QuantumRegister(3)
+cr = ClassicalRegister(3)
+qc = QuantumCircuit(qr, cr)
+qc.cx(qr[0], qr[2])
+qc.cx(qr[1], qr[2])
+qc.measure(qr, cr)
+trans_qc = transpile(qc, device)
+ini_layout = trans_qc._layout.get_virtual_bits()
+trans_qc2 = transpile(trans_qc, backend=device, initial_layout = ini_layout)
+The initial layout is derived from the same circuit so the transpiler should return the same circuit.
+trans_qc in the second transpile is an "embed" circuit.  If what you want is to transpile the same circuit without and with initial layout, you should run transpile(qc, backend=device, initial_layout = ini_layout), or am I missing something?
+Let me clarify it here. I wanted to test whether the transpiled circuit "trans_qc" changes if I transpile it again with the same initial_layout.
+I derived the initial layout from the transpiled circuit "trans_qc"
+ini_layout = trans_qc._layout.get_virtual_bits()
+And transpiled it again:
+transpile(trans_qc, backend=device, initial_layout = ini_layout)
+But this will raise an error.
+Is that because the transpiled circuit "trans_qc" and the original circuit "qc" are in different formats?
+An "embed circuit" does not have a layout. I think you can reach your goal by running trans_qc2 = transpile(trans_qc, backend=device) without initial_layout. If you print the circuits after each transpilation, you will see the physical layout allocation.
+This questions raises many thoughts:
+@kdk @ajavadia  ideas?
+I see. Is there any function/method that I can use to get the physical layout allocation rather than reading the printed circuits? It is difficult to manually check the figures. I thought trans_qc._layout should return the physical layout, but the result doesn't match with the printed circuit.
+The property trans_qc._layoutreturns something like the following:
+That means that the original qr = QuantumRegister(3) created a quantum register called q3 and qr[0] is being allocated in the physical qubit 5. The ancilla entries were added by the transpiling process, because the backend I used has 20 qubits.
+Thanks for @1ucian0 's explanation. There are two things that confused me:
+Based on the naming, trans_qc._layout should be the layout for the transpiled circuit. However, the quantum registers in trans_qc._layout are actually the quantum registers in the original circuit.
+If we call trans_qc.qregs we will get [QuantumRegister(20, 'q')].
+But the trans_qc._layout returns:
+Layout({ 5: Qubit(QuantumRegister(3, 'q3'), 0), 7: Qubit(QuantumRegister(3, 'q3'), 1), ... 19: Qubit(QuantumRegister(17, 'ancilla'), 16) })
+There's a mismatch between the quantum registers names in trans_qc.qregs and trans_qc._layout.
+The quantum register names in transpiled circuit are too simplified. The quantum registers are named from q[0] to q[n]. But it is difficult for the user to infer that q[0] is actually mapping to the physical qubit 0. Perhaps change the name to "physical_qubit[0]" or explaining it in the documentation.
+This is not a bug and I will close it.

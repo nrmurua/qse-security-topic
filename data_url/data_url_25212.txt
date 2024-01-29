@@ -1,0 +1,34 @@
+Through a very specific set of circumstances, Python simply hangs upon importing Covalent, likely due to issues with a locked config. I describe the precise steps needed to reproduce this issue and what my hunch is.
+Tagging @wjcunningham7 and @santoshkumarradha who I discussed a very related issue with weeks ago that I thought was due to the pickling process but is likely entirely independent of that after further investigation.
+Note that I am doing this on the Perlmutter HPC machine by NERSC in my /pscratch/sd/r/MyUserName directory, for the sake of full reproducibility.
+The test.py file contains:
+The job.sh file contains:
+Covalent should not hang.
+I am nearly certain this has to do with the config file locking mechanism. If at the end of the above steps you run rm -r ~/.config/covalent and then run import covalent again in a Python console on the head node, then Python does not hang anymore.
+Hitting Ctrl+C while it's hanging yields the following traceback, further supporting this:
+Interesting ! We actually do manual tests for config corruption.
+@kessler-frost / @AlejandroEsquivel can you take a look at this ?
+Hey @arosen93 ! Unfortunately, even after multiple tries, I wasn't able to reproduce this issue locally (i.e. w/o slurm) on my end 🤔 . I have a suspicion that it might have to do with using fcntl on an NFS (which I thought you might be using according to the "/global/homes/r/rosen/..." dir structure). Related SO: https://stackoverflow.com/questions/48770531/how-to-do-proper-file-locking-on-nfs.
+Have you been able to locally reproduce it? That would make it even more interesting o.O. The machine I tried on is an Ubuntu 20.04, and I repeated the exact same steps as you mentioned, except the slurm job submission part, I instead ran this python test.py>test.out in a bash script.
+Sadly, I can only reproduce it with the Slurm job submission step! 🫠 I understand that makes debugging extremely challenging. I will see what happens if I switch directories and get back to you!
+@kessler-frost: I have a small update.
+I ran the exact same steps but from my home directory rather than the scratch directory. As before, I got the same stalling issue where the Slurm job does not complete the import process (and locks the config during this). I only observe this behavior when the Slurm job is submitted (I removed the bash export commands in the Slurm script too). Running the Covalent import on the head node causes no issues.
+Sadly, I'm not able to get any more specifics than this (except that it's not a temporary issue --- I ran into the same problem a month ago but thought it was due to something else).
+If it might help, I would be happy to hop on a Zoom call to debug remotely if it might help pinpoint the problem. Otherwise, please let me know if there is anything else I can/should do to provide more useful information for you. I wish I had more details I could provide!
+@arosen93 One thing you can try if you're not too worried about what the config is, is that you can try changing the config directory in the slurm script using os.environ.set("COVALENT_CONFIG_DIR", "something/else") - basically changing the COVALENT_CONFIG_DIR environment variable, since that's the first thing covalent checks, whether it exists or not and creates the config file there if it does, whenever imported. This change in the slurm script is because I'm assuming it's trying to acquire a lock from a different process when submission to slurm happens. This way it should create a new config file and ideally shouldn't get deadlocked. Although I do understand this is not an ideal solution but lmk if that helps.
+If it doesn't then I think we'll need to switch to a different mechanism to acquire/release the lock on the config file which is compatible with NFS.
+@kessler-frost: Another update.
+I took your suggestion and defined COVALENT_CONFIG_DIR in the Slurm script before anything is run. In doing so, there is no hanging and everything closes gracefully. Of course, this isn't really a long-term solution as you noted, but it does confirm your suspicion about what is happening at a high-level and does offer a potential (if somewhat inconvenient) workaround.
+I am going to keep the issue open because I think it is still important for this to get resolved "for real." Longer term, I think there is also some value in considering a different mechanism because if Covalent switches to a different locking scheme that is OS-agnostic, then it is actually quite trivial for Covalent workflows to run on Windows as a completely unrelated side benefit. There are also fewer concerns about NFS then too.
+Thanks for trying it out @arosen93 ! I agree, this is not a fix, based on this exp we have atleast narrowed down the problem. It should be quite trivial to have a OS agnostic lock mechanism, there are quite a few libraries that does this as well. We will definitely tackle this.
+Sounds great to me! As always, happy to test things out whenever the time comes. 👍 Thanks, all, for the help with digging into this!
+@wjcunningham7, @kessler-frost:
+I found this message on the NERSC slack:
+I'm experiencing some issues with the filelock Python package; I can no longer acquire file locks on Perlmutter. Is this related to the DVS filesystem change? I seem to recall on Cori, there was some issue related to file locking and the HDF5 package https://docs.nersc.gov/development/languages/python/parallel-python/#parallel-io-with-h5py, also related to DVS.
+Yes, DVS doesn’t support file locking unfortuantely. You should be able to use this on Perlmutter scratch though
+This suggests to me that this Perlmutter-specific issue may be because my config, by default, was stored in my ~/ directory. When switching the COVALENT_CONFIG_DIR to the scratch directory, jobs don't seem to stall even when the config file is already present. One downside of this is that a config stored in scratch means you have to touch it regularly or it gets lost, but that's a side-comment for NERSC. I'll continue trying this and see if I am understanding it correctly. As you know, it's all a bit finnicky...
+Thanks @arosen93 🤘!
+I was working with @arosen93 this morning and we trigged a bug on Perlmutter when loading in covalent. I checked though the code and it seems to be file locking causing the issue and triggering the bug.
+It looks like in ConfigManger you are opening a file to read the configs and locking the file. Then in the same context you try to write the config file which locks the file again. Gaining the lock on the file that has already been locked by the same process seems to confuse and freeze the filesystem mounted with DVS.
+Thanks a lot for looking into this @tylern4 !
+Thanks to @tylern4 's PR I have closed this issue. If this issue arises again, we can reopen this.

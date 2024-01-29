@@ -1,0 +1,59 @@
+In making the IBMQ provider tutorial I have some questions. Also please go read that tutorial and help improve it.
+ Why Is IBMQ, backend, and the job got double methods when I tab autocomplete?
+ IBMQ.available_backends() -> note to remove when update and there is no deprecating warning
+ IBMQ.aliased_backend_names() -> if needed cant this be a hidden function
+ IBMQ.deprecated_backend_names()  -> if needed cant this be a hidden function
+ backend.calibration() -> note to remove when update
+ backend.parameters() -> note to remove when update
+ backend.provider -> should we turn this into a method
+ backend.hub, group, and project -> should that be turned in methods
+ job.backend_name -> note to remove when the update
+ job.id. -> note to remove when the update
+ job.error_message -> what does this do and can I get a use case so I can document it in the provider tutorial
+ job.submit -> Why do we have this. I dont want jobs to be submitted unless they go from a backend using the backend.run(qobj) method. Can I get a use case for this?
+ job.queue_position() -> when the job is initializing this returns None. What are the returns for this for the use case Initializing, queued (that's a number great), done?
+I don't see this. My tabs just show me the methods, and then i can autocomplete.
+I agree with emitting a warning here.
+Yeah these can be made into private functions with _, and hidden.
+Yeah the DeprecationWarning serves as a note for us to remove them in the next release. We did this in 0.5->0.6 too.
+I do think it's awkward to remember that backend.name() is method, but backend.provider is property. But maybe @diego-plan9 can comment which is better. Don't mind either way.
+put a reset in your circuit, then send to device. You'll get errors. You can later see the status of your job and its job.error_message().
+Maybe this can be refactored when IBMQProvider becomes standalone. But @delapuente might know better.
+@ajavadia the notes for depreciation are just to remember to remove not to ask why. Sorry for not being clear
+I get the concept of error_message but if you have a job in your history with an error when you grab it by job_id it does not show that with this method.  If an error happens while running we get the message while checking status.
+It’s more if we keep it which I think we should we should make some examples and show it’s use.
+Two things here:
+The error handling of IBM Q jobs (including when to use error_message) is explained in detail in the IBMQJob documentation:
+https://qiskit.org/documentation/_autodoc/qiskit.backends.ibmq.ibmqjob.html?highlight=ibmqjob#reference
+job.submit -> Why do we have this. I dont want jobs to be submitted unless they go from a backend using the backend.run(qobj) method. Can I get a use case for this?
+Submit exists to separate initialization from other side effects such as sending something through the network, so doing this:
+has become:
+However, I think you're right, @jaygambetta, when pointing out that submit and run methods are redundant. After writing this, I think submit is an implementation detail of our jobs and should not be in the spec. Going further, as Thomas added in the spec, a Job is a contained and should not "send itself" (nor in the constructor, nor in the submit), it should simply be manipulated by a backend. Does it make sense?
+Quoting some of the points, Ali's style:
+Why Is IBMQ, backend, and the job got double methods when I tab autocomplete?
+Hmm I also can't reproduce it - can you give more info? If you are referring to the deprecated methods (as in, showing available_backends() and backends()) inheritance might play a part in it (and would be related to other points, as Ali mentioned).
+IBMQ.available_backends() -> note to remove when update and there is no deprecating warning
+The deprecation warning was intentionally not added for "end user convenience", as a warning is already emitted during wrapper.available_backends() and it would result in three warnings for the end user of the wrapper function (function + Aer + IBMQ). We can probably work around this if needed (ie. making wrapper.available_backends() call provider.backends()), although I'm not sure it is worth the effort it we are going to remove the functions altogether "soon" (the documentation does mark the base method as deprecated as a hint).
+IBMQ.aliased_backend_names() -> if needed cant this be a hidden function
+IBMQ.deprecated_backend_names() -> if needed cant this be a hidden function
+I'm also fine moving them to private functions - they were left as public mostly as they were public in the previous implementation too. Actually, I'd love to eventually have that information returned by the API, probably as backend properties or similar - this way terra would be much more future proof when it comes to deprecations and name changes (as in, as thing stands, technically we need to release a new terra version and patch the old ones if a new alias comes up).
+backend.provider -> should we turn this into a method
+backend.hub, group, and project -> should that be turned in methods
+Can you elaborate on the rationale for turning into methods? In general I tend to prefer that, if a function call does nothing but return an object, and the object is already an attribute of the class ... just have it as an attribute instead of a method, as it feels more natural and simpler: the user of the attribute just don't need to be concerned about what a function does, it is just automatic. However, I can see the point if it's about consistency, though (I recall conversations about not using properties, but personally if we started this class from scratch I'd go for having values such as .name be a property - again, for simplicity).
+Cool. I think most agree with me for most things to fix. I make a screeen shot of what I see for the double methods.
+I get the error_message but try to retrieve a job that has an error.  There is no message. I have not found a use case where the error message is needed as if it breaks on run I get that error already. I like the idea but I want a use case to highlight in the tutorial and I like the idea of looking back at my jobs trying to see what the error was.
+Salva this is exactly how I want the submit. The job is created by the backend.  I think there is no need to have a submit known to the user. I can see when we make the run smarter that it can take a qobj bigger than the backend and it splits it up into little jobs that internally we may need this to handle this mega job. But I don’t think a user needs to know it’s a detail of the run method of the backend.
+I get the error_message but try to retrieve a job that has an error. There is no message. I have not found a use case where the error message is needed as if it breaks on run I get that error already. I like the idea but I want a use case to highlight in the tutorial and I like the idea of looking back at my jobs trying to see what the error was.
+Can you file a bug with this? I think the job is extracting the error from the web API, it should say something!
+after we add to https://github.com/Qiskit/qiskit-tutorial/blob/c763c706244d732faa96d6bcd4838302f3d33367/qiskit/basics/the_ibmq_provider.ipynb a use case I submit a bug. But first, I want to highlight its use.
+Is it clear from the documentation what error_message is for or do you need further clarification?
+Screen shots showing the double
+
+
+I have updated the checkboxes - after #1447 (which takes care of the aliased/deprecated methods), the only remaining are:
+I think this is not needed, as backends now have a .provider() that is part of the base definition and the encouraged way to handle fetching information about its provider. Hub, group and project are not part of the base, and only relevant for IBMQ backends.
+job.error_message -> what does this do and can I get a use case so I can document it in the provider tutorial
+job.submit -> Why do we have this. I dont want jobs to be submitted unless they go from a backend using the backend.run(qobj) method. Can I get a use case for this?
+job.queue_position() -> when the job is initializing this returns None. What are the returns for this for the use case Initializing, queued (that's a number great), done?
+Those three are a bit different than the ones for Provider and Backend, as the Jobs are arguably more related to terra than the specs (even if defined in the specs, the definition is quite loose and most of the complexity is not modelled in the specs, and is ibmq-specific). I'd suggest revisiting them in another post 0.7 issue if needed, and hopefully closing this issue - @jaygambetta ?
+Oh and the autocomplete remains a bit of a mistery 😁

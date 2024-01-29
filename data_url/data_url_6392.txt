@@ -1,0 +1,53 @@
+Benchmark tests on platforms limit the memory used because of the hardcoded amount of qbits in benchmarks.cpp. I would like to see the amount of qbits passed via a commandline variable, and when not entered the current default.
+Right now i recompile qrack with more qbits ( in the example 30 ) in line 35 of benchmarks.cpp
+
+Maybe something elegant such as an automatic section of amount of qbits based on the declared memory in the opencl enum in benchmarks_main.cpp.
+23qbits eat ±256MB, so a factor 2 until the amount of avaliable memory is exhausted.
+This would help working on massive core massive memory machines.
+You got it! This shouldn't be hard. I might even be able to implement this tonight, but definitely some time over the weekend.
+@twobombs Since this enhancement is primarily to serve your purpose, for now, let's talk about what's actually going to be most useful, for you.
+Would it be useful, or just clutter, to have a minimum qubit setting in addition to the maximum setting, so you could control both ends of the range?
+What about the Grover's search algorithm test? You might have noticed that we hard-coded a lower qubit maximum for that one particular test, because it can take a comparatively very long time. Should we just do away with the two-tier setup, and run everything for the same qubit count, or do you have a preference or suggestion?
+You say you'd like the current setup as default, but you also mention an automatic scaling to OpenCL resources, which I like. Should we trigger the calculated scaling with a command line flag (or maybe an input parameter like --max-qubits = -1) or would you prefer this to replace the old defaults?
+So far I've not seen one OpenCL ICD implementation fully use all system resources with one instance. Most of the time, to get to full system load, you need to run the workload 2, 3 or sometimes even 4 threads to get to the 100% resource system usage.
+Also, one system can hold more then one OpenCL ICD because it has both CPUs and GPUs on board. The container image that I've build makes it easy to deploy on all sort of systems, x64 and ARM64.
+But to test what system (setup) is most effective I want to get the most out of it with the least effort. So there comes in the request for a feature to enter an arbitrarily amount of qubits on the command commandline for benchmarks.cpp
+As one system with both CPUs and GPUs could have 10 or 12 benchmarks threads running to max out to full performance.
+After that comes the application part, in that those separated parts are sown into one virtual qbit machine that also will require some orchestration, but I think I've got that covered on the infra side with rancher 2, the k8s/k3s system and elasticsearch.
+The automatic detection of the maximum amount of memory ( and therefore maximum number of qbits ) will serve to detemine the max sizing of the qbit machine inside a server max resources.
+The max qbits command line setting will help to set the machine blocks of with one qbit machine is made of inside a server.
+I hope I explained the usage scenarios enough. Setting the amount of qubits might also help the folks that are working on very, very small memory footprints ( with less then 256mb memory ) and then again it would be fun to see 100's of small qbit machines bounce around inside a big server and look at the syncing of those into Elasticseach, but that's just me rambling :)
+
+Thank you, you've given me a pretty clear use case. I'll try to outline the changes that serve the use case and likely have something implemented for your by Sunday night. If it's not exactly what you need, we'll iterate on the pull request.
+I'm getting to work on this, now. By the way, I wanted to mention, (though you might already know,) GPUs I've worked with generally segment their device RAM, such that maximum allocation for a single array is significantly less than total device RAM at least by a factor of 2 or 4, I think. If Qrack is not hitting full processing element utilization, that might be room for improvement, depending on how much further we can mask or reduce the RAM bus latency, but we'd have to split the state vector arrays on the segment boundaries and work in 2 or 4 pieces to hit full device RAM usage with a single engine.
+We've tried doing something like that, in effect, with the old QEngineMulti prototype, but it's a challenge, to get it to perform efficiently and to keep a general API. On the plus side, though, some gates on those couple of out-of-segment qubits become as simple as reindexing the segments themselves, with no actual cross-segment amplitude exchange or transformation.
+"QUnit" takes a very different approach, though. It limits to a maximally-entangled representation, worst case, in which case it needs a single RAM segment for its state vector. However, by default initialization it starts with as many independent "segments" as qubits. It's common enough that certain algorithms or programs will never hit the maximally-entangled representation limit. Like, depending on what your input is for a QFT, you get some better cases and some worse ones, but you generally peak at less than that limit, for most inputs. (Worst case does hit the limit, though.)
+I'm interested in improving performance as well, obviously. Maybe I should stay on-topic and get to work on the implementation now, though.
+@twobombs You could review #231, if you would. I could probably bother Benn to scrutinize it, but this is first to serve your use case.
+Great! Will build and look into this tomorrow ( CET time )
+-- single    works, it jumps straight into the last qubit, the default when--max-qubits is not set
+--max-qubits    works, also in combination with --single
+
+I saw a coredump when the amount of qubits rises above 29 ( eg: 30, 31 ) I expect that this is because the memory reservation is too high. ( 29 qubits took 25%-30% of the memory  on a 32GB machine ) Running 3 instances of 29 qubits benchmark runs looks like this:
+
+These features help immensely, thank you very much !
+The "-1" value for --max-qubits isn't picked up on the CLI though. Is -1 a value it can handle ?
+
+Usage is --max-qubits=-1, @twobombs.
+the -1 setting craters:
+
+
+The -1 setting calculates 33qubits on this 32GBmachine, but runs into trouble. Settings until 30 works, 33 takes way too much memory, as 30 qubits eats up 57% of system memory ( has 6% usage before starting qrack )
+Will look into the code to get some idea what goes wrong.
+Base case should be the avaliable free memory on the selected (opencl) device [?]
+
+
+^ displays malloc() error
+@twobombs, I think I figured it out. I pushed a fix candidate. I wasn't dividing by the sizeof for a single amplitude.
+Note, the -1 setting should take the lesser of both values (divided by amplitude element size) log base 2, floored, of
+I'm seeing, this might lead to less allocation than possible with all available system memory. However, this is usually the maximum number of qubits that can be allocated just with device RAM, in which case the simulation potentially stays entirely on the accelerator. Depending on where the accelerator's pool of RAM is, you might notice virtually no heap usage, in this case, (but CPUs typically identify general system RAM as their "global" device RAM, for OpenCL purposes, and therefore this will be general heap allocation).
+Looks fine, it now calculates 32 qbits on a 96 core, 128GB RAM ARM machine, which looks ok.
+Saw some runtime drama though, will test the code on a regular x64 rig tomorrow.
+The -1 setting works. As I'm testing on machines that have a lot more memory ( and therefore test with more amounts of qbits ) the hardware has different responses/performance. Very interesting results, will be able to look much better on this because of the enhancements done to benchmark.cpp.
+
+Thank you, @twobombs. Then, I'm closing this issue and merging the changes. If you need anything else, let us know!

@@ -1,0 +1,15 @@
+During a repository scan we get
+WARNING:master:artiq.master.worker:worker finished with status code -11 (RID scan)
+It seems to not be dependent on the file it is scanning. If I comment out the content of the file that causes the error, I will just get the same error at the next file.
+It seems to depend on the duration of the scan as the error appears if the repo scan takes more than 10 seconds. If I delete files to reduce the scan time to <11 seconds, then the error does not appear. I was also able to reproduce that behavior in a different repository by just duplicating experiments until the scan took >=11 seconds.
+No errors, with ARTIQ 5 we have not experienced this. This happened after switching to ARTIQ 6.
+@sbourdeauducq I tried to track down the source of this issue in the ARTIQ master code, but I was not able to find a bug. Do you have an idea?
+Return code -11 is segmentation fault:
+Are you importing any special libraries in your experiments that could cause segfaults?
+You are right, I did not dig deep enough. But you are not going to believe this. It had nothing to do with special libraries, the segfault was caused by a type annotation...
+I tracked it down to the following type annotation. ShuttleEdge is a simple class defined before ShuttlingGraph, so this should not cause any problems assuming the correct imports from typing.
+There seems to be some ways to mitigate this:
+Also very strange that this only happened if the repo scan takes more than 10 seconds. Anyway, this is solved for now. Tnx for the input!
+Sounds like a bug in Python. How exactly is ShuttleEdge defined?
+I can give you an other example I found today. https://gitlab.com/duke-artiq/dax/-/blob/master/dax/modules/time_resolved_context.py#L645 . Changing that to the code below solves it:
+Though what is weird is that there seems to be some temporal component in this bug. Practically all our experiments import this file, but only one segfault seems to occur. All other files work fine. And even the file seems to be irrelevant because if I remove the file it segfaults on, then it will just segfault on the next file it scans. The time it takes to segfault seems to depend on the number of files and their content. If there are only a few files (scan takes less than 10 seconds), no problems occur. So I have not been able to find a minimum example to reproduce this issue. Neither was I able to find a related issue on https://bugs.python.org/ .

@@ -1,0 +1,22 @@
+File notarisation / stamping functionality is present via an encoding scheme within the 80-byte field of a message_tx (see details here). This allows notarisation transactions to be created via the webwallet and tracked via the block-explorer (including third party verification by hashing a file to see if it matches the hash in the notary transaction).
+Proposed improvement
+It would be useful to extend the grpc API to allow creation of a web portal (i.e. firstseen.theqrl.org or notary.theqrl.org) enabling search within all message_tx transactions stored in the chain. This would involve creation of a new pair of grpc API calls: GetMessageTxDataReq/Resp and extension of state machine to track the message_tx data payloads explicitly.
+GetMessageTxDataReq would take an up to 80-byte bytes argument.
+GetMessageTxDataResp would return True or False and an array of matching transaction objects.
+Initially this would allow very simple services such as a notarisation query service, but it could also be utilised by third parties wishing to provide services on the QRL such as memo.cash or other services with custom encoding schemes using our message_tx capability.
+Activation of this optional API function should be a node configurable setting.
+Would something like this not better be served by a third party app, and indexed in something like Elasticsearch? This seems overkill for the node to provide full text search on the blockchain state.
+Valid question. But is it any different than searching for a txid or address? It is an optional setting and were volume of message_tx traffic to become significant then the answer to your question becomes a resounding yes! :-)
+I would expect it to be vastly different. To query an address or txid you're simply doing a lookup for a full field value in a key value store, whereas searching for specific strings within all message_txs becomes quite a heavy computational task. We should always consider large volumes of these transactions exist in the blockchain state, as eventually there will be anyway. Imo this really is a layer 2 app feature.
+Just a clarification - this is simply searching via a key value store search in leveldb to match an 80byte bytes field within a dedicated portion of the state machine which holds a list of message_tx data payloads and their respective txhashes.
+Computationally it is no more intensive than a simple txhash lookup. The tradeoff is the need to store the above additional key-value pairings.
+I agree that any actual string searching should take place in a chain-derived database for most future applications. In fact most third party applications should ideally be using a database rather than directly slurping data out of the node upon request.
+But allowing users to access the data in their chain via the grpc API should be something we provide (optionally) IMO and it will be beneficial for our own notary services in particular to implement this..
+This is the classic discussion about monolithic vs modular design.
+I think the node should be kept minimal and specific for a lot of good architectural reasons.
+This is not for this feature only, but in general. I believe the ecosystem should be built around the core, not in the core.
+It is easy for any third party to write something that indexes without having to include this functionality in the core node. More non-core features, more on/off settings => more complexity, less maintainability, higher risk.
+As the number of use case will increase with time, the requirement of API which are scalable will increase too. Storing into leveldb, could only be a temporary solution, but the API will fail to handle a large number of request and will be responsible for bottleneck. Thus a db like Elasticsearch or Solr will be needed which will be storing the required data from the blockchain. Using db will solve the scalability issue and will be able to handle a large number of request.
+A classic:
+https://stackoverflow.com/questions/184618/what-is-the-best-comment-in-source-code-you-have-ever-encountered/778275#778275
+Purist consensus seems to be for pushing this into layer two.

@@ -1,0 +1,36 @@
+must use smart scheme for missing data (i.e. dont include them)
+It looks to me like it is solved. Do you confirm ?
+I just tried it and get no more error. However, the missing points for an incomplete acquisition are automatically set to zero. I would advocate to simply not insert missing datapoints into a curve. Another option would be inserting nan's, which usually leads to other problems sooner or later.
+Do you agree with not saving missing points?
+Done, I hope that didn't introduce extra bugs in particular with the pyinstruments interface. I also corrected the way the trace_avg number was incremented (now starts at 0 instead of 1)
+the fix 858c704 causes a lot of failures in nosetests. im trying to fix that right now, unless you have a better idea..
+total of 22 errors and 2 failures in  858c704:
+the commit just before (83e0092) only has 1 error, 1 failure (all tests done in python 3.4)
+weird, it should have been tested... I am running the tests here to compare
+those commits still contain some other failures due to IIR that have been fixed in more recent commits - just ignore those... but the text posted up there seems to come from that one commit. let me know if the failures dont appear in python 3.5 or 3.6
+OK, I get plenty of errors as well, I am also looking
+OK, I see the first problem...
+We access the curve and data_x via 2 different attributes. It was fine as long as the length of these tables was not constantly changing, but now, if you don't call data_x exactly at the right time, you end up with a different number of points in x and y.
+some things are pretty clearly wrong (at first look, for example the confusion between _data_x and data_x). I guess I can leave it to you to fix since you are more into this. Ill pick a docstring convention in the meantime
+Yes, data_x is the "variable-length" version of _data_x, but you are right I should change the name to data_x_valid
+... what complicates even more the problem is that curve() and run_single() are 2 different ways of getting the curves, but for the moment, curve() will leave data_x unchange, while run_single will make the length of data_x change
+I foresee that if we keep variable-length array + curve + run_single this is going to be very messy.
+sounds not very good. I'm not all into your logic right now, but as an "external", I don't see why you force yourself to stick to a fixed-length version of the data array. I can see that you want to easily insert a point when it is acquired, but in that case I smell a typical use-case for a pandas series - which has been a very stable and reliable package since continuumm analytics takes care of it.
+If we choose to fetch independently x and y values (which is the case right now), it is dangerous to have variable length arrays.
+What you suggest is to use a pandas Series to fetch both at the same time. I personally find it adds a dependency that is really heavy for a hardware package...
+we had that pandas discussion somewhere else if you remember. right now we do have pandas as a dependency, even though we dont (or hardly) use it. ever since anaconda, i find that the pandas dependency is totally negligible to the pyqt dependency.
+and i believe that the transition from '_data' to 'data' is somewhat the same thing as pandas does
+but do as you please, i have never properly read the acquisition_module code
+Not to mention that fetching the x-data for every curve, eventhough they might not change between successive acquistions, is an overhead...
+i dont understand what you mean by 'fetching'. the logic i have in mind is this
+So i agree that you need an internal array of the full range of valid x-values. the actual data (x and y) come in pairs of x and y points, where all data-x-points are also elements of the 'valid x-values'
+Another option to avoid variable-length arrays is filling the full-length y-array with nan's and ensuring that the plotting logic simply ignores nans
+In the Virgo dataDisplay, I remember the invalid points are replaced by the values of the last valid point. That's probably to avoid the problems with log-scale and autoscaling of graphs, and to avoid at the same time playing with variable lenth arrays
+im strongly against that, rather in favor of nans which are simply not plotted...
+OK I take care of it then
+for example, if we have the full arrays x, y where y contains a few nan's, we can do this:
+In fact from what I see, Matplotlib is clever enough to properly deal with nan
+the question is whether pyqtgraph is smart enough, no?
+If you are concerned about the na widget, it is anyways never trying to plot the full curve at once.
+btw, I have pushed the commit... ALL 354 tests are passing in 254 s here (python 3.6)
+same here: all 354 tests passing in 375 s (python 3.4). Let's see what travis says but already close the issue..

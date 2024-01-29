@@ -1,0 +1,92 @@
+After installing (on a Windows machine) tensorflow and tensorflow-quantum as explained in the repository, I don't manage to import tensorflow_quantum, since I get the  _tfq_simulate_ops.so error (tensorflow_quantum\core\ops_tfq_simulate_ops.so not found). I installed version 2.11 of tensorflow and 0.3.1 of tensorflow quantum (I see the current version of the repository is already 0.7, so I'm also not sure why I get 0.3 when running pip install). Should I downgrade tensorflow?
+These are the installed packages and versions of the virtual environment I'm using to import tensorflow-quantum:
+absl-py==2.1.0
+astunparse==1.6.3
+cachetools==5.3.2
+certifi==2023.11.17
+charset-normalizer==3.3.2
+cirq==0.8.0
+cycler==0.11.0
+dill==0.3.7
+flatbuffers==23.5.26
+fonttools==4.38.0
+freezegun==0.3.15
+gast==0.4.0
+google-api-core==1.34.0
+google-auth==2.26.2
+google-auth-oauthlib==0.4.6
+google-pasta==0.2.0
+googleapis-common-protos==1.62.0
+grpcio==1.60.0
+grpcio-status==1.60.0
+h5py==3.8.0
+idna==3.6
+importlib-metadata==6.7.0
+keras==2.11.0
+kiwisolver==1.4.5
+libclang==16.0.6
+Markdown==3.4.4
+MarkupSafe==2.1.3
+matplotlib==3.5.3
+mpmath==1.3.0
+multiprocess==0.70.15
+networkx==2.6.3
+numpy==1.21.6
+oauthlib==3.2.2
+opt-einsum==3.3.0
+packaging==23.2
+pandas==1.3.5
+pathos==0.2.5
+Pillow==9.5.0
+pox==0.3.3
+ppft==1.7.6.7
+protobuf==3.19.6
+pyasn1==0.5.1
+pyasn1-modules==0.3.0
+pyparsing==3.1.1
+python-dateutil==2.8.2
+pytz==2023.3.post1
+requests==2.31.0
+requests-oauthlib==1.3.1
+rsa==4.9
+scipy==1.7.3
+six==1.16.0
+sortedcontainers==2.4.0
+sympy==1.4
+tensorboard==2.11.2
+tensorboard-data-server==0.6.1
+tensorboard-plugin-wit==1.8.1
+tensorflow==2.11.0
+tensorflow-estimator==2.11.0
+tensorflow-intel==2.11.0
+tensorflow-io-gcs-filesystem==0.31.0
+tensorflow-quantum==0.3.1
+termcolor==2.3.0
+typing-extensions==4.7.1
+urllib3==2.0.7
+Werkzeug==2.2.3
+wrapt==1.16.0
+zipp==3.15.0
+Support for windows was dropped after 0.3. I think the TF dependency of 0.3 was like tf 2.1.0 or something, but that's probably an error. Also see: #798
+Thanks for the answer @lockwo . I migrated to Linux (CentOS Linux release 7.9.2009) to try solving the issue, but I still get an error with the simulate_ops:
+The installed packages and versions in python 3.7.7 are:
+Yes, this is a common issue which almost always results from version mismatches. See: #800, #779, #798, #771, #757, #768, #714
+I would then suggest not to specify in the installation guide (https://www.tensorflow.org/quantum/install) to install TF2.11 if it ends up not being compatible with the current TFQ version, it is misleading.
+If this repo were not abandoned, I'm sure that would be taken into consideration
+Why is it abandoned?
+I think it would be good to clarify the version compatibility, at least to put one working version for windows and another for linux. If an external user finds that after following the installation steps, the package does not work and throws a weird error, then they would tend to look for another library that does the same thing, losing thus market share.
+I can make a PR to clarify a bit the installation procedure, if you think it'd be worth it.
+Not sure why it is abandoned, you would have to ask Google. You can make a PR, but it won't get merged, because there are no active maintainers. You can see there is a PR very similar to what you want that's been open for months: #803
+That's a pity then.
+Changing topics. Do you know how to integrate a PQC into a Sequential block of Dense layers? I'm not an expert on quantum computing so I'm not sure if this even makes any sense, but I've seen a paper doing this (on a different library tho). I created a dummy code (inspired from the Hello_many_worlds tutorial) to fit the line y=x, but get an error in the interface between Dense and PQC layers. Any idea how to implement this?
+Sure its possible, like fig 12 of https://arxiv.org/pdf/2003.02989.pdf. Feeding the outputs of a QVC into a NN is straightforward (just pass the layer outputs into sequential). To pass classical outputs to quantum requires a little work but is doable, e.g. https://www.tensorflow.org/quantum/tutorials/hello_many_worlds#2_hybrid_quantum-classical_optimization.
+Thanks for the answer.
+I assume the PQC layer cannot have a classical layer upstream. I was trying to connect a 3 neurons dense layer (dense_2) to a PQC, by artificially embedding these floats into a 0-rank tf.string, as follows:
+Unfortunately it loses the batch dimension and thus does not work (i.e. dense_2_cat_str ends up being a tf.string of shape () instead of (None,)). Any idea if this strategy could work somehow?
+In Figure 12 of the paper sent, I see quantum layers upstream from classical layers, but I'm not sure how the interface could be achieved. I guess it's probably using the ControlledPQC layer, to which you can feed classical numbers as the parameters to the quantum circuit, as in the example you provide. What I don't fully understand is how would you code Figure 13, since you are just interested in the upstream classical layer parameters, but the ControlledPQC still needs some quantum data as input, and in here we are not interested in simulating any noise as in the Hello Worlds example. Would it be correct to just change the variable noisy_preparation from:
+to:
+noisy_preparation = cirq.Circuit()
+Would this create a dummy input to the layer and thus be equivalent to a block DNN-QNN as the one in figure 13?
+Finally, I'd also like to ask you if the TFQ library has any function to transform classical data into quantum one. This could also be a work-around for the stacking of DNN-QNN layers, allowing the usage of the PQC layer and thus simplifying the code.
+Yes, if you want to use DNNs upstream of a PQC, you would probably want to use ControlledPQC or a custom layer (my go to approach, it gives you a lot of flexibility, see: https://github.com/lockwo/quantum_computation/blob/master/TFQ/data_reupload/reup.py). ControlledPQC will always have quantum data input, because that is simply the starting state of the quantum circuit (which must exist). You could always just initialize it to the |0>^N state, which I often do. Simply creating a cirq.Circuit is sufficient for those purposes most of the time as you have. There isn't any set of default for converting data, but doing encodings is very possible (see: https://github.com/lockwo/quantum_computation/blob/master/TFQ/vqc/boston_housing.py). In general, QML on classical data is probably much less potent/capable of giving any meaningful speedups/results than QML on quantum data, which is probably why there isn't a big emphasis on tooling for it.
+Thank you so much for the answer.

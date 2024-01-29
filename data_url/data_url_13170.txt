@@ -1,0 +1,56 @@
+Right now calibration supports ZNE as error mitigation technique. It would be great to also support PEC.
+https://mitiq.readthedocs.io/en/latest/apidoc.html#mitiq.pec.representations.depolarizing.represent_operation_with_global_depolarizing_noise
+https://mitiq.readthedocs.io/en/stable/guide/calibrators.html
+I would like to try to work on this! As I understand, we want to add a PECSettings for PEC, just like ZNESettings for ZNE, right?
+Hi @YuNariai, I think defining a simple PECSettings dictionary and making sure it works correctly is a good start.
+@nathanshammah, suggested more details on the description of this issue. As a first step, when defining PEC strategies, we could start from the second option proposed by @nathanshammah and we could just focus on local depolarizing noise:
+mitiq.pec.representations.depolarizing.represent_operation_with_local_depolarizing_noise(ideal_operation, noise_level) 
+only applied to two-qubit gates with different values of noise_level e.g. 0.001, 0.005, 0.01, 0.015, 0.02
+In this way the Calibrator should (hopefully) suggest the value of noise_level which gives best performances.
+Hi YuNariai, are you still interested in working on this issue?
+Otherwise, no problem, someone else will take it.
+Hi, I'm still working on it, but I may still need some time, if it's urgent, please let someone take it over.
+Sounds good! I just assigned the issue to you. For any problem or blocker, let us know. Thanks!
+I'm thinking about using represent_operations_in_circuit_with_local_depolarizing_noise to make things easier, do you think I can use it?
+I'm thinking about using represent_operations_in_circuit_with_local_depolarizing_noise to make things easier, do you think I can use it?
+That function assumes the same amount of noise for all gates. This is not realistic in a real system since two-qubit gates are much more noisy in practice.
+So, it's fine to use represent_operations_in_circuit_with_local_depolarizing_noise to get a prototype, but at some point we'll need to define representations for two-qubit gates only, such that PEC is applied only to them.  It's ok to assume that two-qubit gates can only be CNOT or CZ gates, if this restriction helps.
+This is an example in which PEC is applied to CNOT gates only.
+The recent introduction of the is_qubit_dependent option for  OperationRepresentation is probably useful.
+Ok I got it!
+so we want to try 5 noise-level: 0.001, 0.005, 0.01, 0.015, 0.02 on each two-qubit gate, and the cost is 5**(number of two-qubit gates), right?
+I think trying different noise levels for different two-qubit gates is too expensive. 5**(number of two-qubit gates) is huge.
+We can try the same noise level for all two-qubit gates in the circuit and assume all single-qubit gates are noiseless.
+So if we have 5 noise levels, we have 5 error mitigation strategies.
+when I test my code, I have a problem: I test with execute from tutorial example https://mitiq.readthedocs.io/en/stable/guide/calibrators.html
+And the circuit from benchmarks:
+And the reps use represent_operation_with_local_depolarizing_noise on two-qubit gate only.
+I run pec.execute_with_pec(circuit, execute, representations=reps), but get the error "Circuit has no measurements to sample."
+Since I already append measure to all qubits, this warning confuses me
+Sounds like a bug. I just opened an issue #1805.
+We never noticed this problem since we usually append measurements in the body of the executor.
+In practice, you can do two things:
+for the execute I used, it also returns MeasurementResult,  doesn't it append measurement in the body of the executor?
+for the execute I used, it also returns MeasurementResult, doesn't it append measurement in the body of the executor?
+with the new execute, I get a new warning
+
+Is it because pec can not handle execute that returns MeasurmentResult?
+Yes, execute_with_pec, expects an execute function that returns an expectation value (a float).
+The execute function can return a MeasurementResult only if the argument observable is not None.
+Note however that the Calibrator instead requires an execute function which returns a MeasurementResult and it internally builds a new expval_executor from it, which returns an expectation value (a float) .
+This workflow is not specific to PEC. The same is true for execute_with_zne as well and similar functions.
+I tried to append measurements in the body of the executor, but it's not supported by Calibrator. Here is the error I got
+
+I guess I'll wait for PEC bug being solved
+Hi @YuNariai, the PEC bug has been fixed. I wanted to check if you're still working on this issue or if it's ok if someone else picks it up.
+Hi @Misty-W , I just noticed #1805 was solved! So I can continue this now!
+hi @YuNariai, thanks for your response! As it turns out, we already have a PR open that will probably be merged in the next couple days and solve this issue.
+However, that PR is just a basic prototype and we'll likely want to improve it. If you're interested in making some enhancements to the PEC calibration docs or workflow, just let us know!
+OK! Go ahead to merge #1845 first! I'll check that to see if I can make any enhancements.
+Btw in my code, errors will be applied on all two-qubit-gate, not only CNOT and CZ, do you think that's useful？
+OK! Go ahead to merge #1845 first! I'll check that to see if I can make any enhancements. Btw in my code, errors will be applied on all two-qubit-gate, not only CNOT and CZ, do you think that's useful？
+Awesome, thanks @YuNariai!
+Generalizing to representing all two-qubit gates in the circuit would be a good starting point.
+OK! should I start a new pr after #1845 is merged?
+@YuNariai you could rebase your changes onto Misty's branch, and open a PR onto her branch. This might mean you will have to resolve some merge conflicts since #1845 is still in flux, but it might allow you to get some feedback sooner! Whatever works best for you, and thanks for your help.
+Thanks @YuNariai! #1845 is merged now, so you can base your changes on master. 🎉

@@ -1,0 +1,22 @@
+@mtreinish reported a case where increasing the number of trials in the StochasticSwap pass resulted in longer circuits. This should not happen with a fixed seed, because the trials should just pick the best one. Unless there is something going on with how individual layers get better with increased trials, but those layer choices combine to make the overall circuit worse. I would like to understand what's going on here, and whether we can ensure that increasing the trials gives us better circuits (at the cost of longer transpilation time).
+I don't have a particular example to reproduce here, I think the original example was a quantum volume circuit. But really a variety of examples should be investigated.
+I meant to open an issue about this, thanks for doing it. The two cases where this happens are in QV benchmarks (there might be other cases but that was the most obvious). With a 50x20 model circuit and a level 1 transpile the depth increased on the commit changing the number of trials from 20 to 50: https://qiskit.github.io/qiskit/#transpiler_levels.TranspilerLevelBenchmarks.track_depth_quantum_volume_transpile_50_x_20?commits=a8dcbe11&p-transpiler%20optimization%20level=1
+The same was true on the QV 14x14 model circuit benchmark for the same commit on level1 and level 2 transpiles: https://qiskit.github.io/qiskit/#transpiler_levels.TranspilerLevelBenchmarks.track_depth_transpile_qv_14_x_14?commits=a8dcbe11&p-transpiler%20optimization%20level=1&p-transpiler%20optimization%20level=2
+The circuits being transpiled there are generated using:
+https://github.com/Qiskit/qiskit/blob/master/test/benchmarks/utils.py#L120-L137
+with a fixed seed of 0. The transpile calls are also fixed with a seed of 0:
+https://github.com/Qiskit/qiskit/blob/master/test/benchmarks/transpiler_levels.py#L159-L163
+and
+https://github.com/Qiskit/qiskit/blob/master/test/benchmarks/transpiler_levels.py#L214-L216
+It would also be good to get an aggregate view of this on multiple instances to see if the statement is true on average.
+My only thought here besides a bug in stochastic swap is that the depth measurements in those benchmarks are not isolated to stochastic swap, it's a full transpile with the preset pass managers. Maybe the stochastic swap output is finding a case slightly more efficient but it moves things around in a way that later optimizations in the pipeline aren't able to improve things as much.  I'm gonna try and do some more in depth debugging on this today and see if I can figure out what's going on.
+It would also be good to get an aggregate view of this on multiple instances to see if the statement is true on average.
+I just ran a  sweep of 100x 50x20 quantum volume model circuits (without a seed set) with the level 1 transpiler and stochastic swap at 20 and 50 trials. It was pretty evenly split 48 of the circuits had a smaller depth with 20 trials and 52 of the circuits had a smaller depth with 50 trials.
+The script I ran is:
+I also had to modify the PassManagerConfig class and level_1_pass_manager()  function to make trials configurable.
+I also just reran that script but replaced build_model_circuit(50, 20) with qiskit.circuit.random.random_circuit(53, 10, 3, True, True, seed=seed) and got: {'20_trials': 39, '50_trials': 61, 'equal': 0} for the shorter depth from running it 100 times. It's definitely not isolated to just QV.
+Can you try with a passmanager like:
+Also, do you have an idea of the size of the differences (maybe a quick histogram)?
+@kdk Running with that pass manager with trials set to 20 and 50 instead of the full level 1 yielded: {'20_trials': 50, '50_trials': 48, 'equal': 2}
+As for the size differences I'll modify the script to build some graphs. But looking at bits of the output they're no consistent trend. Some are really close like within 1 or 2 other times they can vary by much larger numbers like in the most recent test I just found an example with a depth of 710 with 50 trials and a depth of 583 with 20 trials.
+It could be a bug, but I am wondering if greedy optimization by layer, what is currently being done, does not correlate well with global circuit swap optimization.

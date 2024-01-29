@@ -1,0 +1,17 @@
+Currently the basis gate set includes CX, and it enjoys a privileged position in the code (see, for example, commutative_cancellation.py:57 ).
+However, this is not universal:
+A QISKIT user wishing to define a new QPU with a different basis gate set should be able to do so without making changes to existing QISKIT classes (e.g. cz).
+As a programming aesthetics comments, one should probably also note the following:
+The Decompose class currently determines if a gate is atomic by checking for the presence of the "rule" member in the gate class. An explicit flag is probably preferable (and access methods for the data).
+The gate registry is currently with the QuantumCircuit class, and gates register by adding a member to the class. The registry should probably be separated from the circuit, and definitely have an explicit registration function.
+Logically, which gates constitute the basic gate set is a property of the Backend (as is the connectivity graph). During transpilation, the Decompose classes should get the information from the Backend (or explicitly via construction parameter, as is the case for the Unroller), and proceed accordingly.
+As a first step, one can add set_decomposition() and add_decomposition() methods to the Gate superclass, and use these methods to override the existing rules.
+A second step would include:
+Further out, one should allow multiple gate decomposition rules (e.g. from CZ to CX and back), essentially defining a directed (possibly cyclic) graph of dependencies. Separately, one would define which of the gates constitute the basis set. A graph traversal algorithm (e.g. BFS) would then transform this graph into a DAG, so the Unroller does not recurse forever.
+Thanks for your feedback. I agree with all.
+Decomposition currently terminates at generic SU(2) gates (U_1, U_2 and U_3), but for some purposes an additional decomposition, into a sequence of virtual Z rotations and X_{π/2}, is desirable.
+@chriseclectic has written a decomposition for this one which he will commit.
+The gate registry is currently with the QuantumCircuit class, and gates register by adding a member to the class. The registry should probably be separated from the circuit, and definitely have an explicit registration function.
+Yes (see #591), but this is a major user-facing change and we are trying to figure out how to mitigate its effects.
+Further out, one should allow multiple gate decomposition rules (e.g. from CZ to CX and back), essentially defining a directed (possibly cyclic) graph of dependencies. Separately, one would define which of the gates constitute the basis set. A graph traversal algorithm (e.g. BFS) would then transform this graph into a DAG, so the Unroller does not recurse forever.
+For simple cases the Unroller as-is would not recurse forever. It terminates when it hits the basis (which includes either a CZ or a CX). If it does not include either CZ or CX (maybe it includes iSWAP), then there must be a rule present to expand either CZ or CX in terms of iSWAP. The unroller should pick rules which get it to the final destination of that basis gate. This could become a tree traversal problem if there is not an immediate expansion rule (e.g. CX->CZ->iSWAP exists, but CX->iSWAP does not).

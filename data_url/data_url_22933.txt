@@ -1,0 +1,53 @@
+after downloading the github to my computer, i tried to run python setup.py develop command and got an error that it cannot detect the cx_freeze library. I was hoping someone could help with that since i could not find the cx_freeze library in the download (although i saw it online)
+I wanted to adapt the code to control a closed-loop controller for a mechanical oscillator (e.g. MEMS gyroscope) that has an oscillation frequency of ~10 kHz.  I found an example of a control loop at the following website:
+https://www.zhinst.com/sites/default/files/zi_appnote_mems_gyroscope.pdf
+I want to build a control loop with the following features: 1) connect the voltage output from a mechanical oscillator to the voltage input port of Red Pitaya 2) let VCO to lock on the phase of the mechanical oscillator, 3) perform IQ demodulation to measure the oscillation amplitude of the mechanical oscillator, 4) connect the output of a demodulator to a PID controller to generate a control signal, and 5) create out signal by modulating the output signal from the PID controller with the VCO that is locking to the the phase of the mechanical oscillator.
+sounds all very nice! A few remarks that might help you gain speed:
+Please use the develop_0.9.3 branch of pyrpl. That one is simply more recent than the master branch and thus has a number of bugfixes for issues that you should avoid to stumble over. I simply have no time to properly merge that branch into master right now.
+Your application idea has been on my to-do list for a long time. If you manage to implement something in this direction (even e.g. a jupyter notebook with configuration examples), do not hestiate to make a pull-request to this pyrpl repository.
+The currently missing element in Pyrpl is a VCO. From your post, it is unclear whether you want to use a digital VCO or you have an analog one. If you have an analog one, pyrpl is totally able to solve your problem, and this has been done e.g. in https://tel.archives-ouvertes.fr/tel-01467924v1, Fig. 5.23. It is also not difficult to implement a digital VCO in pyrpl, and people have done this before (requires FPGA changes). An easy way to do this is to take an input signal, route this into an IQ module and add that signal (with a scale factor) to the register defining the frequency of the modulation/demodulation frequency. Let me know if you want to do this and encounter issues.
+Thank you for your response!
+We wanted to implement a digital VCO, and are looking to download Vivado to do this, as suggested.
+Does the Vivado version matter, must it be version 2015.4? Also, do we need to make any additional downloads other than the default packages to make a digital VCO change?
+Can you suggest what kind of "FPGA changes" we would need to make if we wanted to use a digital VCO.  The ultimate goal is to make a digital PLL that locks to an input signal at 10 kHz.
+If you have any example of a digital VCO for a DPLL with an FPGA for Pyrpl, I'd appreciate it if you could share it with me.
+Thank you again I really appreciate your help.
+1: version must be 2015.4
+2: see above, modify iq module sine generator by adding input to frequency register
+3: dont have one, sorry
+Hello again,
+For the past week I've been trying to look over the /fpga/rtl/ code in hopes of trying to make the fpga code change that you have suggested, however I keep running into roadblocks on the meanings behind some verilog files. I am a little inexperienced in making changes at this level and am a little unsure in what file to start editing the code.
+You said to route an input signal into the IQ module, so I took a look at the red_pitaya_iq_block.v file and was having trouble locating the register defining the frequency of the modulation/demodulation frequency. Also I am unsure on how exactly to re-route the input signal. I was trying to look at the block diagrams in Vivado but was not able to understand as the block diagrams didn't show an IQ block or anything resembling that.
+Thank you
+Hello again,
+So I spent some time implementing the FPGA changes you had suggested in red_pitaya_iq_block.v and red_pitaya_dsp.v by adding a 14 bit shift_input [14-1:0] to the red_pitaya_iq_block.v (at line 70) and connecting that new input to the output_signal of the pid module (that was instantiated in the dsp.v file). The output of the PID module was connected in the dsp.v file using the syntax  .shift_input  ( output_signal[j] ) inside the red_pitaya_iq_block at line 392 of the red_pitaya_dsp.v file. Lastly, I connected the shift_input to the shift_phase in red_pitaya_iq_block.v.
+(I attached the implementations below)
+I compiled the code (using make.bat in the windows terminal) and it was able to complete the entire compilation without an ERROR and I was able to open the GUI from Spyder.
+My question now is how to test this code from the front end (or should I make front-end changes). I'm not exactly sure how you have programmed the interaction between the front-end python code and the verilog code (getting and setting pins/ports/values), and was wondering where I should begin to look.
+If I am able to successfully implement this, I definitely will make a PR!
+Thank you for your help.
+
+
+Hi Vivek,
+Congratulations, I think you are on the right track... From what I understand, the connections between the PID and your new IQ shift register are hard-coded, such that if everything is wired properly, outputting something on the right PID output would directly shift the IQ frequency in a transparent manner for the python code.
+However, I believe you didn't connect the right signal into your shift_register at line 416 of redpitaya_dsp.v
+First of all, if this is going to be a hard-coded connection, it should rather be a single connection that goes from ONE of the pids to ONE of the iqs. I believe you should not make this connection in the loop of line 390. Your chance here is that the third iq (iq2) is already a customized one that is defined separately from the 2 others (see the loop with only 1 iteration at line 423). The reason for this is to have the 2 quadrature outputs taken care of by the DSP multiplexer for this particular iq module (see the extra line .signal2_o line). Since this third IQ is already an "exception", you could also add there your hard-coded connection with ONE GIVEN pid output: I would add the following line:
+I believe with that, you can directly use the GUI to send some signal through PID2 (set a p-gain of 1 and use an asg as the input of pid2. send something reasonable with the ASG, then choose the right frequency that you want to modulate on your iq2, and see if the output ends up being modulated) all this should be debugged step-by step by monitoring the various signals with the scope.
+Let us know how it goes...
+As I final remark: I guess the cleaner solution for the long term would be either:
+Hello again,
+So I made the suggested code changes to the program and it compiled without any errors(i posted the updated code below just for clarity). I had a couple questions on a few things you had mentioned as well as on the testing.
+Can you explain why for the output_signal[3] you chose 3 as your pid module, since if this was starting the index at 0, wouldn't 2 reference the 3rd pid module.
+I updated the bit file (by using output_signal[2] pid module).  So far I can't see phase modulation from iq2 block when I examine the signal using the software scope.  I also found that after I updated the bit file, demodulation of a signal generated by the arbitrary signal generator with a local oscillator using iq0 does not work either.  I will keep on debugging the system.  I'd greatly appreciate if you can provide me any suggestion and guidance.
+(After I the VCO issue is eventually fixed) I want to bring the frequency of the local oscillator close enough to frequency of the input signal before before closing the PLL to lock the phase and frequency of the internal oscillator to the frequency and phase of the input signal.  The frequency resolution of the local oscillator is fairly poor (~1Hz).  Is it possible for me to increase the resolution of the local oscillator to at least  10 mHz?  I looked through all the  verilog codes, and I believe this can be potentially done by  increasing the size of the frequency register. I'd appreciate if you can teach me how to increase the frequency resolution. (The frequencies of all of my my input signal is less than 100 kHz).
+Thank you very much.
+
+
+With other words, there is no more PID3, it has been changed into an instance of the trig module.
+I cannot help you here because I am unaware of the rest of your code. Maybe post your full project on github (your account), or at least the files you changed, e.g. the _dsp.v, iq_block.v, fgen.v and so on?
+The resolution of the iq frequency setting is of the order of 30 mHz. Changing that is a little tricky. There is an issue where I commented this i think.
+This is the issue explaining the modifications needed for 3 (lowering the NA lower frequency limit is the same as increasing IQ frequency resolution): #372
+Hello again,
+As for the rest of the code, the pictures attached to the previous post show the only code that has been changed so far. A little unsure where to proceed from there, any hints would be appreciated. I will post the full code on my GitHub page under repo name "pyrpl_vivek". The only changes that have been made so far are in the red_pitaya_dsp.v file and red_pitaya_iq_block.v file (as shown in the pics of the previous post). To view the changes, if you press CTRL + F and type "vivek" you can see where I edited the code in both files.
+Tried playing around with the code to implement the change in the frequency resolution, however could not get that to work, but will continue trying to debug.
+Thank you!

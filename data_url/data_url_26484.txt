@@ -1,0 +1,50 @@
+When I try to include the flags -D__OFFLOAD_HIP, my compilation fails. The current build system is very confusing and the following are big concerns in my mind:
+Here is an example of building with -D__NO_OFFLOAD_PW -D__OFFLOAD_HIP. Note that src/dbm/*.cu and src/grid/gpu/*.cu files are being built by hipcc. I also see the src/grid/hip/* files being built with hipcc, but there is no problem there. I am able to exclude the dbm backend using __NO_OFFLOAD_DBM but the problem with the grid/gpu files remains.
+These *.cu files have some openmp pragmas for which we need to include the -fopenmp flag when compiling them. There is a problem with including -fopenmp in files compiled with hipcc because hipcc pulls in the openmp library found in llvm during linking. And since I use GNU compilers for everything else, we end up with libomp.so and libgomp.so in the final linked binary and performance drops.
+If we can remove those openmp pragmas in these files or separate device code and host code into different translation units (compiled with different compilers), that would be one solution. I'd rather not build these files if they are not needed anyway.
+Now we are including all HIP or CUDA backends by default ... This results in files not needed getting included in builds
+Yes, but those unused files should get emptied by the pre-processor. However, in the case of -D__NO_OFFLOAD_PW there were indeed two ifdef statements missing.
+When I build for AMD GPUs, the build system seems to include the CUDA backend also?
+No, but we're using .cu files for both CUDA and HIP. This allows us to have almost no code-duplication.
+There is a problem with including -fopenmp in files compiled with hipcc because hipcc pulls in the openmp library found in llvm during linking.
+Oh, this is an unexpected deviation from CUDA where we can use GCC also as host compiler. Fortunately, it was not that difficult to move the OpenMP depended code to a different translation unit.
+I've opened #2350 with those changes.
+Now we are including all HIP or CUDA backends by default ... This results in files not needed getting included in builds
+Yes, but those unused files should get emptied by the pre-processor. However, in the case of -D__NO_OFFLOAD_PW there were indeed two ifdef statements missing.
+If these files are not needed for a given compilation, it is best to exclude  them totally from the compilation.
+When I build for AMD GPUs, the build system seems to include the CUDA backend also?
+No, but we're using .cu files for both CUDA and HIP. This allows us to have almost no code-duplication.
+The question was inferring the following point. The nvidia backend for the grid module is included  in cp2k build supporting AMD hardware only. see this line here 
+including any code targeting NVIDIA hardware to a CP2K build targeting AMD hardware creates additional confusion
+If these files are not needed for a given compilation, it is best to exclude them totally from the compilation.
+Yes, but it would add complexity to the already tricky build process. A few mostly empty translation units don't cause any real problems. I assume this will become easier once we've switched to cmake?
+The -D__OFFLOAD_PW (etc) makes far more sense
+As we added more GPU kernels it became unreasonable to ask the user to enable them all individually. So, instead we're now treating GPU acceleration like MPI - it's either enabled or disabled. Those __NO_OFFLOAD_foo flags are really only meant for debugging.
+The nvidia backend for the grid module is included in cp2k build supporting AMD hardware only.
+Yes, that's on purpose because the GPU backend should work on AMD hardware as well. Its performance is probably poor, but it should give correct results. (Since I don't have access to the hardware I don't actually know.)
+In the coming months I plan to refactor the GPU backend to address #1785. In the process it'll become more similar to your HIP backend. My hope is that we can eventually merge the two and serve both vendors with a single backend.
+I also agree with the sentiment that only the files intended to be used should be included for compilation. In cases where the files differ based on the hardware used, why include the files that are not going to be traversed at all? This causes confusion. I am looking forward to the CMake build system as well so such problems can be avoided.
+Let me give an example. I tried to turn off all GPU backends by not setting -D__OFFLOAD_HIP and got these errors:
+This should not happen. GPU code must not be included if we want to compile for the CPU.
+After debugging, I figured out that if OFFLOAD_CC is set (totally not expected to be used in this scenario), GPU sources are included.
+This should not happen. GPU code must not be included if we want to compile for the CPU.
+Yes, this was indeed a bug. I fixed it earlier today via 655fccd.
+This causes confusion.
+Look, I'm not saying our build system is perfect. It's simply the only one we have at the moment. It was conceived 20+ years ago when things were simpler....
+I am looking forward to the CMake build system as well so such problems can be avoided.
+Yeah, me too. In fact, I'm holding off on further investments into our current build system in anticipation of cmake.
+If these files are not needed for a given compilation, it is best to exclude them totally from the compilation.
+Yes, but it would add complexity to the already tricky build process. A few mostly empty translation units don't cause any real problems. I assume this will become easier once we've switched to cmake?
+I solved this particular issue by only including the files related to a given option. For instance -DUSE_OPTION1 would trigger the complication of any translation unit associated to it. it is done by adding the translation files to the list of files to be compiled. The only tedious part is to add the file to the CMakeLists.txt but it is done only one time.
+The cmake build system is working. We use it internally for almost all our tests (for lumi, preliminary work on dlaf, etc). It is ready to be tested more extensively if users are interested in. As always with all these things, problems come from corners cases, for instance cosma compiled a multi threaded blas while cp2k wants a single threaded version (the default choice). It is not an issue with mkl but can be problematic with libsci or openblas.
+So far (excluding elpa dependency for now, the naming convention makes things more complicated), cp2k can be build with cmake on the following systems (with or without cuda, hip depends on rocm version but still possible)
+Using cmake was also beneficial for dbcsr as I found few inconsistencies in its build system.
+The -D__OFFLOAD_PW (etc) makes far more sense
+As we added more GPU kernels it became unreasonable to ask the user to enable them all individually. So, instead we're now treating GPU acceleration like MPI - it's either enabled or disabled. Those __NO_OFFLOAD_foo flags are really only meant for debugging.
+These options will only be visible to the user if they explicitly say -DCP2K_DEV_OPTIONS=ON. it will remove a lot of issues.
+The cmake build system is working.
+That's great news!
+As always with all these things, problems come from corners cases,
+Yes, it's the unfortunate nature of build systems that they have to deal with the combinatorial explosion created by build options and build environments. Therefore this will be one of those slow migrations where both systems have to coexist for a while. I'd also like to make at least one release in between that includes both build systems. All in all it will probably take the better part of a year before we can eventually remove our old Makefile. Nevertheless, I'm eager to get started. So, feel free to open a PR when you're ready.
+then I will most probably make a PR this week as it is a bit tedious to keep this out of the main branch. I also agree the two systems need to coexist for one or two versions. I did not modify anything in the code and used all the options already present to turn on and off dependencies.
+@oschuett , thanks for the quick fix. I can confirm that my build is successful now using your updated code.

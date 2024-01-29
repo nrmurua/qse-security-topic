@@ -1,0 +1,36 @@
+Dear all,
+Is there any limitation on these cases?
+h2o_emd.inp.txt
+h2o_rtp.inp.txt
+H2O-NMR-4.inp.txt
+I set total number of message passing processes to 2, 4, 8, 12 and only hit abort in 8.
+Reproduce Steps:
+cd tests/xTB/regtest-3
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=2 /home/vitesse/cp2k/mpich/bin/mpirun -np 8 ../../../exe/local_cuda/cp2k.psmp h2o_rtp.inp
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=2 /home/vitesse/cp2k/mpich/bin/mpirun -np 8 ../../../exe/local_cuda/cp2k.psmp h2o_emd.inp
+cd tests/QS/regtest-nmr-1/
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=2 /home/vitesse/cp2k/mpich/bin/mpirun -np 8 ../../../exe/local_cuda/cp2k.psmp H2O-NMR-4.inp 2>&1 | tee H2O-NMR-4.inp.txt
+On the architecture/host/platform:
+Intel(R) Xeon(R) Gold 6142 CPU @ 2.60GHz + V100
+CP2K error messages:
+h2o_rtp.inp and h2o_emd.inp
+H2O-NMR-4.inp
+Environment:
+CentOS
+One node: Intel(R) Xeon(R) Gold 6142 CPU @ 2.60GHz + V100
+Thanks.
+I can reproduce it with 8bc402c and popt as well :(
+So, this only affects XTB and only with 8 MPI ranks?
+I did some digging. Both, h2o_emd.inp and h2o_rtp.inp, suffer from the same problem. With 8 mpi ranks they crashes at xtb_matrices.F:1091, because the charges returned by ao_charges() are wrong.
+Interestingly, using pdbg the same regtests also fail with 6 mpi ranks at rt_propagation_methods.F:757:
+That piece of code uses cp_fm_struct_double to constructs a temporary matrix with larger blocks to speed up the following matrix multiplication. It seems this doubling somehow goes wrong, probably due to xTB's small block sizes.
+Btw, I also noticed that here are the wrong matrices beeing passed, but apparently it doesn't matter. So, maybe that IF (nimg > 1) is not needed?
+xTB + RTP/EMD fail with multiples of 8 MPI ranks
+As I've written above, it also fails with 6 ranks.
+As mentioned by @oschuett, this is due to a bug in cp_fm_struct_double that leads to an incorrect  number of global rows/columns in the doubled matrix. I am just locally testing a patch and will commit it later today.
+@schulkov after talking to Jürg it seems to right thing to do at the moment is to disable xTB for/with RTP/EMD completely since that part of the code needs more testing as there might be more bugs hidden beyond this one.
+@dev-zero This particular bug does not relate to the xTB code, but to the RTP/EMD code itself that uses cp_fm_struct_double. By the way, subroutine arnoldi also seems to be affected.
+@schulkov, it's true that cp_fm_struct_double is used throughout the RTP/EMD code. However, I believe this bug only occurs for tiny block sizes. Do do you agree? In that case disabling xTB for RTP/EMD would indeed be a reasonable mitigation, which allows us to move forward with the 2019 release.
+Nevertheless, I'm very curious to see your patch :-)
+@dev-zero, are you preparing a PR to disable xTB+RTP/EMD or should I look into it?
+@schulkov, thanks a lot for the patch. I love the ASCII art!

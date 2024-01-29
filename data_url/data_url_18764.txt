@@ -1,0 +1,29 @@
+The OpenQASM3 Spec for Arrays defines two keywords that are only used for Arrays when passed as arguments to a function:
+This PR requests the removal of these two keywords - readonly and mutable - as redundant and unnecessary.
+The semantics of readonly are covered and conveyed by the already existing type qualifier const:
+A const array passed as an argument to a function implies that each and every single element of the array is const within that function's scope. There are no loopholes in this respect in OpenQASM3, just as there are no loopholes for this case in C and its derivatives.
+The attempt to modify elements of the const array in the second example (const_function) is detected by the compiler frontend.  Specifically: either by the first phase of Semantic Analysis being performed by the AST Generator, or by subsequent Semantic Analysis passes. In qss-qasm, it's detected during AST Generation.
+The assignment expression on line 5 of const_function attempts to modify the explicitly const LHS of the assignment expression. The AST Generator will raise a Diagnostic (Error), and the transformation chain of this function will stop at that point. Any chain processing beyond this point, if any, is merely error cascading.
+Const-correctness analysis and enforcement are exclusively functions of the compiler front-end, as there are no such things as const RAM, or const registers. This property is language-independent.
+Depending on language complexity, some languages may defer parts of const-correctness analysis to subsequent passes of Semantic Analysis. Even in that case, the final outcome is identical: const-incorrectness is a compiler frontend failure.
+There is no point in traversing the entire compiler transformation chain down to its lowest level, only to discover that a const-correctness error was detected during AST Generation or Semantic Analysis, and that step had already failed.
+Let's consider the following example: the compiler decides to unroll the for loop inside the function (Conditional Branch Elimination). The loop ranges are known at compile time.
+The unrolled rewrite of the loop looks like this:
+We can all agree that Loop Runrolling is an optimization pass that happens well below AST Generation or Semantic Analysis.
+That being the case, should this Unrolling pass above even be allowed to happen for the case of the const array function argument?  The compiler already knows that every single one of these assignments is impossible:
+the LHS of the assignment expression is always const.
+The keyword readonly does not convey any additional semantics beyond what const already does. That makes readonly redundant.
+The keyword mutable is redundant because its semantics are implicitly conveyed by the absence of const. If something is not qualified as const, it is implicitly modifiable, unless the Language Specification says otherwise.
+Introducing redundant language keywords that do not convey any new, or additional, semantics beyond what existing keywords already do leads to namespace pollution, and, ultimately, programmer confusion.
+In my view, the concepts being labeled with readonly and const are actually different. A value that is const can be replaced with its initialized value anywhere that identifier is found. Meanwhile, readonly means that I cannot modify a value in a particular scope (in this case, within a def). While I understand that C uses the same keyword (const) to refer to these concepts, I think Rust and others have sensibly chosen to give these distinct labels. Consequently, my preference is to use distinct labels in OpenQASM.
+We could choose to drop one of readonly or mutable as the absence of one property implies the other, but I like the explicit nature of having to identify an array as one or the other. Consequently, I suggest keeping both keywords.
+In my view, the concepts being labeled with readonly and const are actually different. A value that is const can be replaced with its initialized value anywhere that identifier is found. Meanwhile, readonly means that I cannot modify a value in a particular scope (in this case, within a def). While I understand that C uses the same keyword (const) to refer to these concepts, I think Rust and others have sensibly chosen to give these distinct labels. Consequently, my preference is to use distinct labels in OpenQASM.
+We could choose to drop one of readonly or mutable as the absence of one property implies the other, but I like the explicit nature of having to identify an array as one or the other. Consequently, I suggest keeping both keywords.
+This is how the AST Generator will treat readonly and mutable:
+Whether the value was assigned at compile-time, via constant-folding, or not, is irrelevant to the compiler. const is const.
+A variable may be declared const absent constant-folding, and absent its value being known at compile-time:
+In the above example, j is const, although its value was unknown until runtime.
+Please note that, if the programmer didn't want j to be const, they did not have to write this:
+They just write this:
+The Lexer will evaluate readonly to const, and will return TOK_CONST, as if it had read the const keyword.
+If that is how you plan to implement it in your parser, that is fine.

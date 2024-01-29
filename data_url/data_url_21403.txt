@@ -1,0 +1,19 @@
+Since the introduction of DDMA in e9a153b, playing back a DMA sequence will consume all slack, even when the sequence is not using DDMA.
+The following experiment records a DMA sequence (which includes 128 RTIO events, 400ns apart), and attempts to play it back twice. It does not use DRTIO or DDMA (the fastino is attached to the master).
+When not using DDMA, the performance of DMA sequences should be the same as before.
+The experiment consistently underflows
+From this experiment I think I know why it would do that - at the end of local playback it's still trying to get remote results even if there's no DDMA involved - which takes some time, underflowing on second playback. I think we can pass enable_ddma to the playback function too to cut down unnecessary kernel-comms communication.
+Does it also happen on Kasli-SoC?
+Does it also happen on Kasli-SoC?
+Yes, though it may require more calls to playback_handle. The original experiment was calling playback_handle in a loop, and afraid I've only tested the simpler version on a Kasli 2.0.
+I think we can pass enable_ddma to the playback function too to cut down unnecessary kernel-comms communication.
+I was a little surprised to see how many cross-CPU messages were sent when playing a DDMA sequence. I think I was expecting playback to be handled more on the gateware side than by firwmare. I'm sure there's a valid reason, just curious about the tradeoffs - is there a design doc for DDMA anywhere?
+I was a little surprised to see how many cross-CPU messages were sent when playing a DDMA sequence. I think I was expecting playback to be handled more on the gateware side than by firwmare.
+Hm, it seemed like a natural progression from DMA on master/standalone - recording and playback is handled by the firmware. RTIO Events are recorded and copied over to the comms core for safekeeping, for one, playback is also started from firmware, albeit only from the kernel core.
+On the other side we have DRTIO itself - mostly managed by firmware - knowing which clients are connected, with a properly established link.
+From that, sending relevant parts to DRTIO satellites was the matter of extending DRTIO protocol, as latency in just copying the buffers over is not that important. While using the aux channel for managing remote traces is not the fastest way, it's good enough - once the trace is on the remote, it can just stay there, ready to be used multiple times.
+Some parts probably could have been implemented with gateware (playback trigger, or sending traces through the main channel), but we went for something simpler to understand and implement, while also promising higher performance in satellite-heavy cases.
+Still I think that the kernel-comm message overhead was limited to bare minimum. And should be even less now with #2079.
+Oh yes, definitely agreed that handling recording and sending traces on the firmware side makes a lot of sense.
+I think my main worry here is with playing sequences back. Because one of the kernel-comms round trips happens when the DMA sequence has played out, calls to dma_playback return with large amounts of negative slack (3-5ms), which definitely limits the cases where DDMA can be used.
+That said, agreed that doing things on the firmware side is easier, and I'm definitely not familiar enough with the gateware side of things to have much of an informed opinion here :).

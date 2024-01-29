@@ -1,0 +1,21 @@
+Similar issues have been noted before (#2980, #5350, #4608), but I wanted to add how density matrices behave.
+After transpiling the circuit the state vector (may be) permuted, this only affects snapshots of the state vector and not density matrices or measurements. There are two causes of this. First, the layout the transpiler chooses. This can be retrieved from transpiled_circ._layout. Second, the SWAPs inserted by the routing method permutes the qubit ordering. This can change throughout the circuit, but I don't know of any way to get this information.
+This circuit creates a circuit for a device with no connectivity between qubit 1 and 3. Which causes the transpiler to both permutate the layout and insert SWAPs. It takes three snapshots throughout the operation and compares the normal circuit to its transpiled version using both state vector and density matrix snapshots.
+Result of running:
+Circuit pre transpiling
+
+Circuit after transpiling
+
+Note how the fidelity between the state vectors of the normal and the transpiled circuit goes from 0 to 1 to 0 again, as the permutation changes from the inserted SWAPs. The snapshot of the density matrix is never permuted, neither are the measurements.
+The snapshots of the state vector should undo the permutation, as it does for density matrix snapshots.
+Not sure.
+Interesting, I agree the snapshots should undo permutations as the intent of the snapshot is to save information about the original circuit (it is easy to keep track of the permutations, starting from layout and going past each swap).
+We don't want this restoring of the permutation to be done by the transpiler using extra gates prior to each snapshot, because adding gates could affect noisy simulation.
+Snapshot (which is becoming Save instructions in @chriseclectic PRs) already has an implicit ordering on the qubits it attaches to. So I think the transpiler should just change the qargs to match the current permutation every time it encounters one of these instructions.
+I doubt this is done currently for density matrices, however, so seems like something is happening by chance to cause the permutation to be correct.
+Density matrix snapshots behave quite differently to statevector.
+So if you permute qubits in the transpiler the statevector will change, but with density matrix if you also permute qubits in the density matrix snapshot to account for this (which the transpiler does), the final returned density matrix should be unchanged.
+Maybe in the future we could add ability to permute qubits in the save statevector qubits arg (as long as its still defined across all qubits), and then it would behave like the density matrix one does.
+Ok I agree the Statevector snapshot should be constrained to be defined over all qubits, but I don't think it should be constrained to be defined over qubit order 0..N-1. We should allow that to be permuted.
+Yeah it would be good to have but simulators don't support computing that permutation at the moment. It would have to be an added feature.
+Hi @chriseclectic, is the consensus that the feature to compute permutations of the statevector should be added? If so, I'd like to work on it if possible.

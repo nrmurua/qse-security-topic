@@ -1,0 +1,32 @@
+currently the monitor shows the parameter name and value. This is a problem if there are multiple parameters with the same name eg. v and v for voltages on different devices.
+Suggested quickfix: replace name by label. The label should be in any case chosen such that it is unique
+I think I disagree with the last statement. What is wrong with having, say, all QDac channels have the label 'Voltage' and the unit 'V'? It may not be too clever, but I don't think it should be forbidden. The string representation of a parameter, on the other hand, is always unique since the instrument name is.
+@WilliamHPNielsen problem is when parameters are on the same instrument but different channels. eg cannot differentiate between the value of the power parameter S21 channel and S22 channel on the vna. Both are gruped under vna and just called 'power.'. When plotted the axes are labelled correctly with 'S21 power' which I think motivated @Dominik-Vogel s suggestion. Don't mind what we go with and what is forbidden or not just want to be able to tell them apart in the monitor
+I would also really like a fix to this. However, it is already showing the label in the monitor.
+A simple fix might be a third column for instruments with channels or adding the channel name to the label string.
+interesting. Could we just reuse the bit of code that generates the labels on the axes when you plot then? because it writes the channel name there
+Its just the channel name being added to the label string for frequency set points in the VNA. If you scan 'power' it only plots the channel name for the frequency axis. The label for power is 'Power (dBm)' same as in the monitor.
+The frequency label is '{} frequency'.format(instrument.short_name)' which is essentially what I suggested above for the monitor.
+cool, thanks for checking this. To be honest wouldn't be a bad thing to have this for power on the axes labels too so its more obvious from the plot what the axes. Definitely for the monitor though if a more extensive fix grouping things by channel isn't quick to implement
+If we group things by channel in the monitor then we should be careful about how it is done.
+For example each voltage on the on the qDac is on different channels. So if grouping takes up more space then the monitor for the qdac could become very large and unreadable due to each voltage being grouped separately.
+However, it would be nice to also show the channel names for the qDac in the monitor.
+Maybe there is a good way to do it but we should keep in mind that many instruments use channels and we should not fix the VNA monitor by making everything else look bad.
+@nataliejpg But the __str__() also returns the channel name, does it not? You get something like "instr_channel_param".
+Let me elaborate a bit.
+This is (the relevant part of) the __init__ method of InstrumentChannel:
+and this is the __str__ method of _BaseParameter:
+so as far as I can see, the relevant information will always be there.
+I think it would make sense to provide some infrastructure that can be used both in plotting and in the monitor - there should really be no difference between them. I think also the label is exactly what we want to use for it. My suggestion is to provide a better default for the label, if none is given (eg. with str()) and to provide a function to say that the label gets prepended by its location in the instrument tree (i.e. recursively through the channels). If I want to label a parameter hairy duck I should also be able to do this without it being decadac_slot01_channel_01_hairy duck
+Would it not be a sufficient solution to label our parameters well enough?
+Sounds good to me. This might be the easiest solution (pretty much what we did with the switch driver). I think it is mainly the VNA driver that needs to be fixed.
+IMHO the main problem is that the Monitor is not aware of the channels. This is not a surprise since it predates the channels
+Consider the following example from the Keithley 2600. The parameters are grouped by instrument but not by channel. There is no way to tell if this is smua or smub
+
+I'll implement a better default for the label then such that:
+default label = 'InstrumentName_ChannelName_SubChannelName_ParameterName'
+Yes that would be a solution but I think it should be without _'s
+blanks instead or hyphens?
+Yes name needs to be without spaces but label has no such requirements
+Currently we have
+So your proposal is basically full_name?

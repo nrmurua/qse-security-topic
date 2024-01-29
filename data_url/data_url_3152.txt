@@ -1,0 +1,38 @@
+Running an empty Program results in an error and then puts the QuantumComputer in a bad state.
+then
+then
+Operating System: Debian Buster
+Python Version (python -V): 3.6.9
+Quilc Version (quilc --version): 1.12.0
+QVM Version (qvm --version): 1.12.0
+Is this still open and what are some suggested modules to look at in order to fix this?
+Yes, as far as I know this is still an issue. I'm actually not sure what correct fix here is though.
+I'd recommend starting in the QuantumComputer.run method in pyquil/api/_quantum_computer.py, then follow along with the call graph into the corresponding QAM and QVM classes in pyquil/api/_qam.py and pyquil/api/_qvm.py, respectively.
+Let us know if you have questions. Happy to review a PR or discuss in this thread.
+Cool cool, off the top of my head, sounds like some state is cached or not cleared. Will check it out.
+So here's what I found. As suspected, some state is not being reset. When qvm.run starts, it sets the status to running and does not reset this after the error. So I manually called qvm.reset() but this means you could lose all the computed in-memory data so far like connection, compiler etc. unless there's a way that those can be quickly reconfigured by injecting their dependencies...
+What should probably be happening is that when qvm.run fails on an empty Program, the status should be reset immediately. This can be done by wrapping the assert in a try except?
+Or better still, status should only be set to running when load() is complete.
+https://sourcegraph.com/github.com/rigetti/pyquil/-/blob/pyquil/api/_quantum_computer.py#L133
+Here's my version of the snippet from the first comment on this issue:
+Those are my thoughts and there are probably better solutions. But it all centers around resetting the status of the machine.
+What should probably be happening is that when qvm.run fails on an empty Program, the status should be reset immediately.
+I'm not sure I like the idea of calling reset automatically in these cases. For example QAM.reset also resets the _memory_results dictionary, which would wipe out any accumulated state from previous runs. otoh, we apparently call reset on every compile when the underlying QAM is a QPU, so maybe it's not the end of the world.
+Personally, I think a better approach would be to change all the asserts that are validating the state transitions inside the QAM class to instead raise an exception with a more helpful error message telling the user they can call qc.reset themselves if they want, but that they will lose any accumulated state. So for example the line
+would change to something like
+or something like that.
+Another option would be to add a check at the top of the compile method and raise an error there if the user tries to compile an empty program. That won't work for the example in the original bug description which is passing a bare Program to qc.run without first compiling, but technically that appears to be breaking the interface, as qc.run is declared to take an executable, not a Program.
+There is a larger (philosophical) question of why attempting to run an empty program should be an error, but it seems we've already made that choice, so I'm happy to stick with it.
+There is a larger (philosophical) question of why attempting to run an empty program should be an error, but it seems we've already made that choice, so I'm happy to stick with it.
+I may have spoken too soon!  It seems there is some debate about this very topic: #1182 (comment)
+Yes, I prefer this approach too.
+would change to something like
+Along the lines of what I was thinking when I wrote
+This can be done by wrapping the assert in a try except?
+What would the next steps be
+I think a two-pronged approach makes sense, namely:
+Regarding (1), I think adding a check near the top of QuantumComputer.compile and raising an exception if program is empty makes sense. This won't prevent the error in the original example, which never calls compile, but the docstring for QuantumComputer.run says that the caller is responsible for compiling the executable argument, so I think the compile method is a reasonable place to do the empty-program check.
+Regarding (2), maybe a new exception class is overkill and we can just pass a helpful error message to the existing assert statements.
+So next steps might be something like:
+Hello, has this issue been resolved? If not, I'd like to work on it.
+Hey, @CaineArdayfio. This is still an open issue. Take a look at #1034 (comment) for some suggestions on how to tackle this. :D

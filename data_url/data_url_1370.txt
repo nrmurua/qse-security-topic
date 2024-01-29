@@ -1,0 +1,36 @@
+Description of the issue
+When a circuit containing a large (in this case, 17 qubits & depth 20) CircuitOp is passed to optimize_for_target_gateset, it generates an OOM, possibly crashing the device. This circuit is well within the realm of "easy to simulate", so we shouldn't be OOMing or should at least warn users that this has a lower threshold than simulation.
+How to reproduce the issue
+Cirq version
+0.15.0.dev
+This happens because cirq.drop_negligible_operations(circuit) transformer calls cirq.trace_distance_bound(circuit_op) for the circuit operation, which in-turn tries to compute the unitary matrix of the circuit operation which results in OOM error.
+~/quantum/Cirq/cirq-core/cirq/protocols/unitary_protocol.py in unitary(val, default)
+117     ]
+118     for strat in strats:
+--> 119         result = strat(val)
+120         if result is None:
+121             break
+~/quantum/Cirq/cirq-core/cirq/protocols/unitary_protocol.py in _strat_unitary_from_decompose(val)
+181
+182     # Apply sub-operations' unitary effects to an identity matrix.
+--> 183     state = qis.eye_tensor(val_qid_shape, dtype=np.complex128)
+184     buffer = np.empty_like(state)
+185     result = apply_unitaries(
+~/quantum/Cirq/cirq-core/cirq/qis/states.py in eye_tensor(half_shape, dtype)
+1074         The created numpy array with shape half_shape + half_shape.
+1075     """
+-> 1076     identity = np.eye(np.prod(half_shape, dtype=np.int64).item(), dtype=dtype)
+1077     identity.shape = half_shape * 2
+1078     return identity
+~/anaconda3/envs/cirq/lib/python3.9/site-packages/numpy/lib/twodim_base.py in eye(N, M, k, dtype, order, like)
+212     if M is None:
+213         M = N
+--> 214     m = zeros((N, M), dtype=dtype, order=order)
+215     if k >= M:
+216         return m
+MemoryError: Unable to allocate 256. GiB for an array with shape (131072, 131072) and data type complex128
+To fix this, we can hardcode a number N s.t. we ignore the operation if it acts on > N qubits. The hardcode can exist in:
+My preference would be to simply change the cirq.drop_negligible_operations transformer and add a hardcoded check to ignore all operation acting on > 10 qubits, for example.
+I'd be curious to hear what other maintainers think. We can bring this up in the next Cirq sync.
+From cirq sync:
+Add a special case to cirq.drop_negligible_operations and leave the other two methods as it is.

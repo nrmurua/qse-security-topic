@@ -1,0 +1,13 @@
+note how this results in two operations happening on the same qubit at the same moment
+@95-martin-orion #5502
+Yeah, don't do that. Should use with_qubit_mapping instead:
+Which gives
+What this basically comes down to is the fact that CircuitOperation is immutable by fiat and not by mechanics. CircuitOperation has maps for params, measure keys, and qubits; manually changing these will absolutely make a mess of your circuit.
+The reason I don't see tuples as a viable alternative is that CircuitOperation is meant for use in big, repetitive circuits. Performance in handling those circuits would suffer if subcircuit map-lookups were replaced with tuple inspection, and I don't really see explicit mutation protection (as opposed to the docstring "this class is immutable" warning) as valuable enough to justify the change.
+Would _qubit_map: Dict[Qid, Qid] and @property def qubit_map(self) -> Mapping[Qid, Qid]: return self._qubit_map be a useful compromise? It doesn't prevent the misuse, but at least the mypy check would catch it.
+@daxfohl, I think that's reasonable. I'd be curious to hear what @mpharrigan thinks. My feeling is that almost nothing in python is ever truly immutable and it's rarely worth trying to make it so; all we can do is communicate the intended immutability to users, and doing that in a way that tools like mypy can check is even better.
+Yes, nothing is immutable. Copying in the dictionary to a private attribute exposed by a property is as good as it gets. not copying, but still exposing behind a property -- I don't know how this works exactly. Would mypy warn if you did what I did above?
+Yes, mypy would warn for the above. Mapping is read-only.
+It'd be possible to make def qubit_map: return dict(self._qubit_map) to return a copy too if we want to be extra safe. Any hot-paths that use qubit_map (there probably aren't any) can use _qubit_map instead. (Also __post_init__ should make a copy if it doesn't already).
+The one thing is since this is a dataclass, that would change the name of the argument in the constructor to _qubit_map, which is breaking (and seems weird). Maybe it's better not to have this be a dataclass and just a regular class with private fields with public readonly accessors. Feels like contorting it into dataclass format requires more work than just implementing that functionality manually.
+Decision from Cirq sync: we'll make attributes private (_name + property name) for both CircuitOperation and ParamResolver to mitigate this, as long as it isn't terribly expensive / disruptive.

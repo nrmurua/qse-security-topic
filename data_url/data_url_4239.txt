@@ -1,0 +1,32 @@
+For example:
+@ is only available in Python >=3.5
+Hence, we cannot use it as we support also lower Python versions.
+Implementing the __matmul__ method won't cause problems in lower versions. They just won't have access to the fancy syntax. There can still be a named fallback such as a.but_first_do(b).
+Yes, just implementing the __matmul__ method won't cause any problems but as soon as it is used with the @ operator it will cause problems because the code is then not portable anymore between different Python versions (in this case not just Python2.7 vs Python3.3+ but also Python3.4 vs Python 3.5).
+We value portability between different Python versions higher than the option of a new operator for fancy syntax.
+It seems reasonable to make __matmul__ available for users of ProjectQ who are on python 3.5+, even if the ProjectQ library code itself doesn't use the @ operator to remain compatible with older python versions. This operator is a standard python construct for matrix multiplication, so it's not really "fancy" syntax but rather will look very natural to python 3.5+ users who write, say, numpy code with @ for matrix multiplication. Of course users of older versions of python cannot use newer language features, but it seems like we should not disallow the use of newer language features where applicable.
+Thanks @maffoo for clearing that up. Having it be a user feature but not an internal implementation detail is what I had in mind.
+I think we all agree that @ shouldn't be used for internal implementations as it would create compatibility issues but I'd go even one step further and wouldn't implement it as a user only feature. The reason is that we envisioned ProjectQ to simplify the sharing of quantum algorithms by scientists publishing their algorithms as ProjectQ code, e.g., alongside their paper.
+If this user code now contains @, then only people with Python3.5+ could run it directly. I can see the following issues:
+An experimental lab might be running their entire software stack on Python < 3.5+ so they cannot just take the code and exchange one line to use their ProjectQ compiler setup and run the code on hardware.
+Theorists using ProjectQ in connection with different packages might not easily be able to switch their code to a newer Python version
+So these are some of the downsides. For the intended purpose of matrix multiplications I can see that @ solves a big problem and therefore justifies the introduction of @. But I am not sure if this is the case for the proposed syntax:
+So let's discuss if this syntax extension of ProjectQ is important enough to live with the downsides of @:
+There are already good alternatives to achieve the same:
+If Y**0.25 @ Z @ Y**-0.25 is used frequently, one can define it as a new gate and add a decomposition rule which has benefits for compilation or just define a function which applies this sequence of gates.
+I haven't seen a lot of instances where a quantum algorithms applies a lot of single qubit gates to one qubit.
+In my opinion the limited potential usage of @ for single qubit gates doesn't outweigh the downside of non portable user code. What are your opinions?
+we envisioned ProjectQ to simplify the sharing of quantum algorithms by scientists publishing their algorithms as ProjectQ code, e.g., alongside their paper.
+If this user code now contains @, then only people with Python3.5+ could run it directly.
+This is really not the kind of thing a library should be worrying about. As a user of a library, I don't want it to be omitting features because the maintainers think they know better than I do whether or not my own user library should be python 3.5+ only or not.
+This new syntax only makes sense for single qubit gates
+I'd say it only makes sense for compatible register size gates. Z @ CNOT is a runtime error for the same reason that np.eye(2) @ np.eye(3) is.
+There are already good alternatives to achieve the same [i.e. define a new gate]
+This is far more succinct than defining a new gate, and doesn't require writing and registering new decomposition rules.
+I haven't seen a lot of instances where a quantum algorithms applies a lot of single qubit gates to one qubit.
+That would be unusual, since you can collapse any sequence of single-qubit gates to three rotations. But the idea of this feature is to make little savings here and there instead of huge savings all in one place. For example, reverse_below_and_above_3 = All(X) @ Minus(3).
+This is really not the kind of thing a library should be worrying about. As a user of a library, I don't want it to be omitting features because the maintainers think they know better than I do whether or not my own user library should be python 3.5+ only or not.
+In this point, I disagree. If the same thing could, e.g., be achieved using *, then I would not use @.
+That would be unusual, since you can collapse any sequence of single-qubit gates to three rotations. But the idea of this feature is to make little savings here and there instead of huge savings all in one place. For example, reverse_below_and_above_3 = All(X) @ Minus(3).
+See my point above, this syntax only makes sense for single qubit gates, where we agree that it won't be frequently used. While reverse_below_and_above_3 = All(X) @ Minus(3)works,  something like new_gate = CNOT @ All(H) would not work even though both act only on two qubits but they expect a different format:
+I am afraid that this new feature @

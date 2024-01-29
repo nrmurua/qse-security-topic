@@ -1,0 +1,81 @@
+For an experiment measuring the critical current of a superconductor I want to do an IV-trace.
+Easy enough, but Also I would like to stay in the normal state as little time as possible, so I need some way to break a loop when some condition is fulfilled, where I would want to use the last measured data...
+How would I go for this, without reading the same value again?
+Hm, I'm about to figure something out,
+I can create an Assert object which goes in a loop.each() and does:
+and if that call is true the loop can just return.
+However, I have no Idea on how to make this flexible, i.e. how do i define the comparison on runtime?
+qc.Assert(param, comparison-type, value) How do I send > < or == or other comparisons?
+Any ideas?
+Good question, we certainly need this! It seems like you also in general want some action or actions to happen after that - in this case, put k1.volt back to zero. I don't see how to do it without a syntax expansion. I'm imagining something like:
+where BreakIf(callable, *args, **kwargs) results in a break if callable(*args, **kwargs) is truthy, then we define all the magic comparisons (__ge__ in this case) to modify the condition.
+The end kwarg to .each gives the action or actions to do after break (or finishing without a break).
+Thoughts? Ways to make it more intuitive / flexible? Conceptually maybe end belongs in the Loop constructor rather than in .each, but it seems to fit better in the user's train of thought where I put it.
+The part with comparison is only understandable if you know what it is about. I recommend to at least go with BreakIf(lambda: a2.volt_fetch.get_latest >= 1).
+Further, end isn't a part of each action and neither BreakIf.
+@alexcjohnson i just cleaned up my and your loops for readability.
+Yes the end we might need, but to make sure when it is doing what we might rather call it on_break or something like that. to not confuse it with an optional end_loop version.
+@akhmerov lambda cant be pickled though.
+But we can make an qc.BreakIf, just as we have a qc.Loop and qc.Task.
+But the breaking condition has to be a boolean callable, so I'm not sure if there's a generic workaround.
+Cant we make that happen?
+For testing I just did:
+and in the loop:
+from the loop to run I did then:
+It works, but this is kind of ugly and not flexible, and I have no idea how to pass the comparison operator,
+much nicer would be:
+I guess my _latest()['value'] should be .get_latest() still learning...
+@alexcjohnson we could have an .After() just as we have an .Each() to have an at the end of the loop thing.
+@akhmerov BreakIf is part of each - you want to do the test each time through the loop when you get to that point in the action list, right? But you're right that end is NOT happening each time.
+@MerlinSmiles I like the idea of another method for this. .after seems ambiguous though, like you might think it means "execute the loop after you do these things". How about .then, which is what javascript uses for chaining actions (async promises in that case, but the semantics is the same). That would make it easy to support multiple actions:
+The syntax BreakIf(a1.volt >= 1) (or BreakIf(a1.volt.get_latest >= 1) if you just want to use the latest value, not get it again...) is certainly appealing! It would require overloading comparisons to return boolean callables, rather than actual booleans, which may confuse people at first but seems quite powerful. We should even be able to implement all sorts of arithmetic magics, creating a whole deferred logic system, and do things like
+The only thing I can think of wanting that I don't see built in is a way to overload and and or, but you can overload & and | so we could use that:
+If we define __bool__ and have it throw an error, we can help users learn this part...
+Then as far as implementation within the loop, I'd just have the BreakIf raise a custom exception, that we catch in a try/except wrapped around this block
+Thoughts?
+I totally like your ideas, and I would certainly use it.
+It would require overloading comparisons to return boolean callables, rather than actual booleans, which may confuse people at first but seems quite powerful.
+This however, I dont understand exactly, overload comparisons in the BreakIf only, or globallly? I dont think we should do a global change to such basic and standard python, hell would break loose.
+If needed we could then have (a, '>=' , b) certainly not the prettiest either.
+If only changing the BreakIf, I dont see a problem there.
+Only that users might expect that functionality everywhere.
+Speaking of end: isn't adding an action at the end of the loop just the same as adding an extra action to the external loop?
+I find the Loop(...).each(...).then(...) also not conforming to common practice: I believe that it is customary for methods that do an in-place modification of an object to return None.
+There's also a matter of python -c 'import this'|grep Flat.
+overload comparisons in the BreakIf only, or globallly?
+No, in the Parameter and related classes.  things like:
+So parameter >= value would not be a boolean, it would be a callable such that:
+(parameter >= value)() == (parameter.get() >= value)
+(edit: we can probably make all these deferred operations one or two classes, with the operator as an input argument... but you get the idea)
+If you're willing to consider magic behavior, and you're already going along the path of overloading a bunch of language concepts, you can also consider just using the full parser and re-interpret the user code.
+That way you can have something like:
+Then measurement decorator could just access the source of the function and interpret it for example.
+Speaking of end: isn't adding an action at the end of the loop just the same as adding an extra action to the external loop?
+It is the same... but if this is the outer loop then there's nowhere to put it.
+I find the Loop(...).each(...).then(...) also not conforming to common practice: I believe that it is customary for methods that do an in-place modification of an object to return None.
+We actually aren't modifying objects in place - at least not with .each and I would propose not to with .then either for consistency... so you can save Loops and ActiveLoops for reuse later. Anyway even in Python there are plenty of APIs designed for method chaining, ie every such method returns the object as it exists after the call... though you're right that it's more standard in other languages.
+There's also a matter of python -c 'import this'|grep Flat.
+Sure, adding another action in the outer .each should be preferred to using .then when there is an outer .each.
+you can also consider just using the full parser and re-interpret the user code.
+Haha that sounds more than a little complicated to implement, I'll let you contribute that one. Operator overloading actually seems pretty straightforward to me, and the only new concept from the user perspective is that the result of the expression is not a boolean but a callable that returns a boolean, otherwise it looks identical to regular logic that they know how to use.
+It is the same... but if this is the outer loop then there's nowhere to put it.
+Sure, adding another action in the outer .each should be preferred to using .then when there is an outer .each.
+But I do imagine there's a way to queue two heterogeneous actions without creating a loop?
+We actually aren't modifying objects in place - at least not with .each and I would propose not to with .then either for consistency... so you can save Loops and ActiveLoops for reuse later. Anyway even in Python there are plenty of APIs designed for method chaining, ie every such method returns the object as it exists after the call... though you're right that it's more standard in other languages.
+I only know of pandas that is designed with method chaining in mind.
+Haha that sounds more than a little complicated to implement, I'll let you contribute that one.
+I didn't mean the parser very seriously, but that's the direction you're heading. After you've implemented boolean logic, the next useful thing is math: imagine you make actions based not some nontrivial combination of parameters. How would you deal with the need to implement arccos(voltage1 / voltage2) < pi / 8?
+But I do imagine there's a way to queue two heterogeneous actions without creating a loop?
+Not at the moment, suggestions are welcome.
+I didn't mean the parser very seriously, but that's the direction you're heading.
+The idea is not to allow the user to do everything this way. Of course for arbitrarily complex logic you can always define your own boolean callable and pass that to BreakIf. But if we can come up with a clear, intuitive syntax to cover most use cases without breaking out to separate functions, we should.
+Of course for arbitrarily complex logic you can always define your own boolean callable and pass that to BreakIf. But if we can come up with a clear, intuitive syntax to cover most use cases without breaking out to separate functions, we should.
+Ah, I didn't realize that callables would also be OK.
+Ah, I didn't realize that callables would also be OK.
+I understand your concern now! Right, BreakIf is just going to call its argument every time through the loop and see if it's truthy. This deferred logic business is just about constructing those callables inline when we can do so cleanly.
+FWIW, this paradigm doesn't seem very different from what happens in numpy and pandas when you say array > 5 and you get back an array of truth values.
+And... Another cool use case for this:
+I'm not sure how this will mesh with also wanting to record the raw data from measurements like this... Although I think it may be possible to have that happen automatically as a result of such an expression (if you make this parameter from the appropriate class), which would be really helpful from a user perspective!
+Yes, this will be useful 👍
+@alexcjohnson have you had a chance to look into this? It gets really relevant here these days :)
+closed by #149

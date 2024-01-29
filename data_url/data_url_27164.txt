@@ -1,0 +1,33 @@
+PySCF fails to build as its tests don't pass. It raises an assertion error on an AM1 test case, which is not implemented. It almost looks as it is not even possible for this test to pass?
+pyscf_err.txt
+pyscf builds fine for me against the nixpkgs-unstable branch.
+That's odd. I've tried with nixpkgs-unstable (commit 9775b39fd45a61c2a53aa6a90485fac8f87ce7c6) and master and both fail with the same error 🤔 I am not fluent in python but the error is in the sources and  triggered on module import of AM1 (source line).
+I've also tried to update PySCF (this branch) but still get the same error.
+That is strange nixpkgs-unstable aebebb5 still builds just fine for me. Do run the build on NixOS or non-NixOS? Do you have sandboxing turned on?
+I am building on NixOS 20.09 and sandboxing is turned on.
+Checked with a multi-user Nix on OpenSuse and I'm getting a different error now 😅 (But it's still not building):
+Tested with nix-build --cores 1 --max-jobs 1 release.nix --arg config '{ allowEnv = false; }' --arg nixpkgs 'builtins.fetchTarball https://github.com/NixOS/nixpkgs/archive/1c16013bd6e94da748b41cc123c6b509a23eb440.tar.gz' -A qchem.python3.pyscf against commit c112eae880ff26f82dc8e4c36c7d3bb647bf7540. Gives the same AM1 error as previously. (tried with --cores and --max-jobs` just to be sure that it is not a problem of parallel builds).
+Managed to set up a hydra. It also fails there, again with a different error (and the processors are old Haswells without AVX512 ...). This times with
+So it's always some files that are being searched, imported and not working. I remember that some time ago in Nixpkgs there was a Python package for filesystem operations, that built correctly on some of the Hydra build machines, but not on all. It also didn't build on my machine. The issue was, that it's test required nanosecond resolution for file access, which not all filesystems provide. Therefore it ran on Hydra nodes, that had a ZFS but not on those, that had BTRFS (or some strange combination, I can't find it anymore, unfortunately).
+Could it possibly something like this? I am getting a different result for the tests on each computer, that I've tried it with.
+My machines all use BTRFS filesystems.
+I have not experienced file system issues so far but the way you describe it, it could be a source of trouble. I have nix stores on ZFS, BTRFS and EXT4 - all working fine. However, I use tmpfs for my /tmp mounts throughout, which means that the build itself always happens on a tmpfs. Maybe that's the main difference here?
+This might be a bit of straw but how does it work with an updated openblas (see herehttps://github.com/NixOS/nixpkgs/pull/122035 ).
+So the updated OpenBLAS did unfortunately not help for PySCF, the error is still the same.
+No I've tested with tmpfs as /tmp and ... it works. Neither BTRFS nor EXT4 work for the PySCF build for /tmp, but tmpfs is fine ... I guess this is something we should take care of, however we would do this 😅
+tmpfs is fine ... I guess this is something we should take care of, however we would do this ￼
+This is not a nice problem to deal with, but in every-day operation it will probably not be a huge issue - given that this package will be built once and then served by a cache. The CPU problem is much worse, meaning we can not run reliable tests (they will be only valid in homogenous environment).
+Hm, as soon as a BLAS override is applied (which I commonly do for MKL) the package needs to be rebuild and this is not working on any of my machines .__. Then again a simple (not too nice) workaround is to simply disable the tests for PySCF. I guess one could live with it, if we have some bats tests?
+The CPU problem is very annoying, yes. Disabling AVX512 altogether is probably the only safe way for OpenBLAS, i guess?
+I built a test jobset with an override openblas, which builds and passes its tests:
+Yep, I've done it in my Hydra now, too and this solves the Chemps2 problems luckily (and didn't introduce other failures). It unfortunately does not fix the PySCF test suite. On the hydra build machines, there is unfortunately simply not enough memory for tempfs.
+You have identified the Python package that causes the FS related error? I would recommend opening a bug report with the developers of the respective package so that the problem get eventually fixed.
+In the short term I see no other option than using a different filesystem type for /tmp (I guess BTRFS is the one causing the problems?).
+Unfortunately not. I guess this could be H5Py or something in Pytest, but I am absolutely no Python expert and have no idea how to debug python. I will try asking one of my python colleagues, if they have an idea how to get some results there.
+BTRFS does not work, but also not EXT4. I can test also with XFS or something like this. But I guess if it is broken on EXT4, it is already broken on a very common setup.
+Also does not work with XFS. :(
+Now that #39 was merged, we have a valid workaround for not being on tmpfs. Should we close this or keep it open to remind ourselves, that there is strange file system influence?
+We can close this for now. However, I am very puzzled by the fact that this builds on tmpfs. Could this be some other configuration issue of the OS? I will try to build this on my side on a non-tmpfs filesystem when I have time.
+I now also had trouble on a Xeon Scalable. When I set OPENBLAS_CORETYPE=HASWELL in the derivation/test it runs.
+With OPENBLAS_CORETYPE=SKYLAKEX both crash.
+I'll set OPENBLAS_CORETYPE=ATHLON for now. However, one needs to keep in mind that any AVX512 should be disabled in production: either by setting OPENBLAS_CORETYPE=HASWELL  (or ZEN for AMD) or by overriding openblas with a static target.

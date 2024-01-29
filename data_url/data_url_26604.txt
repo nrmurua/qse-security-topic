@@ -1,0 +1,75 @@
+Dear all
+I test code in cp2k-8.2(GPU).   [case:#1530]
+When I use mpirun -n  1   /home/dell/Softrun/cp2k-8.2/exe/local_cuda/cp2k.psmp  -i  cp2k.inp -o cp2k-8.2-gpu1.out or mpirun -n  2   /home/dell/Softrun/cp2k-8.2/exe/local_cuda/cp2k.psmp  -i  cp2k.inp -o cp2k-8.2-gpu2.out, it can work quickly(< 2 min), the output files are attached.
+cp2k-8.2-gpu1.out.txt
+cp2k-8.2-gpu2.out.txt
+But When I use mpirun -n  32   /home/dell/Softrun/cp2k-8.2/exe/local_cuda/cp2k.psmp  -i  cp2k.inp -o cp2k-8.2-GPU32.out, it works slowly(about 16 hours), the output file is attached
+cp2k-8.2-GPU32.out.txt
+And when I use mpirun -n  4   /home/dell/Softrun/cp2k-8.2/exe/local_cuda/cp2k.psmp  -i  cp2k.inp -o cp2k-8.2-gpu4.out, there is a error(acc_devmem_setzero: failed ), the detail error information is attached.
+error.txt
+Could you please help me to check the error
+Thanks in advance and regards,
+Yanyan
+This looks like a DBCSR problem. @alazzaro, what do you think?
+I test code in cp2k-8.2(GPU). [case:#1530]
+When I use mpirun -n 1 /home/dell/Softrun/cp2k-8.2/exe/local_cuda/cp2k.psmp -i cp2k.inp -o cp2k-8.2-gpu1.out or mpirun -n 2 /home/dell/Softrun/cp2k-8.2/exe/local_cuda/cp2k.psmp -i cp2k.inp -o cp2k-8.2-gpu2.out, it can work quickly(< 2 min), the output files are attached.
+cp2k-8.2-gpu1.out.txt
+cp2k-8.2-gpu2.out.txt
+I have checked these two outputs. I see you have 4 GPUs/node, then you are using 2 threads:
+But When I use mpirun -n 32 /home/dell/Softrun/cp2k-8.2/exe/local_cuda/cp2k.psmp -i cp2k.inp -o cp2k-8.2-GPU32.out, it works slowly(about 16 hours), the output file is attached
+cp2k-8.2-GPU32.out.txt
+Here, there is something wrong with the number of threads:
+Therefore, you have 32 ranks X 44 threads, which is too much...
+Are you setting OMP_NUM_THREADS? Please, check it.
+And when I use mpirun -n 4 /home/dell/Softrun/cp2k-8.2/exe/local_cuda/cp2k.psmp -i cp2k.inp -o cp2k-8.2-gpu4.out, there is a error(acc_devmem_setzero: failed ), the detail error information is attached.
+error.txt
+Could you attach the CP2K output? I see in your error.txt a long list of
+I'm not sure this is a DBCSR problem....
+Could you please help me to check the error
+Thanks in advance and regards,
+Yanyan
+Hi alazzaro
+I have check the setting, I don't set OMP_NUM_THREADS. And if should I change some setting ? Could you give me some advices?@alazzaro
+The 4 GPUs' output file is attached, please help me to check it.
+cp2k-8.2-gpu4.out.txt
+Thank you very much!
+Yanyan
+Hi alazzaro
+I have check the setting, I don't set OMP_NUM_THREADS. And if should I change some setting ? Could you give me some advices?@alazzaro
+export OMP_NUM_THREADS=2
+then you can run CP2K. Check that the output reports 2 threads (line DBCSR| OMP: Current number of threads at the beginning of the log)
+Dear alazzaro
+Thank you very much.
+It works.  Now Current number of threads = 2
+But I have another question, The time that I use 32 threads is longer than the time I use 4 threads. I was told that the more the number of threads, the shorter the consumption time. Now I am confused.  Could you give me some advice that how to choose the threads' number?
+Yanyan
+It depends on the number of cores you have on your system and if you have hyperthread cores enabled.
+If you don't set OMP_NUM_THREADS, then CP2K will take the maximum available threads. From your output, I see you have 44 max threads. I can guess that these are total hardware threads, so in reality, you have 22 cores.
+Now, based on that, you get the best performance when there is a single thread per core.
+In your example, you are running 32 MPI ranks X 44 threads (i.e. each rank has 44 threads), which makes a total of 1408 threads. Since you have only 22 cores available, it means you are squeezing 64 threads per single core, which not optimal at all (remember the rule: a single thread per core). Overprescribing cores with multiple threads is possible (indeed CP2K works), but it introduces overhead and no gain. That's why you see a large slowdown. I hope this clarifies the situation.
+Now, for your question about MPI ranks/threads, assuming you have 22 cores and 4 GPUs, you have to understand that the number of ranks must be multiple of the number of GPUs. For your particular CP2K input, I can suggest using more ranks and fewer threads, but it is better to try the best configuration. For example, you can set:
+a. 4 MPI ranks and 4 threads (16 threads in total, below 22 cores)
+b. 8 MPI ranks and 2 threads
+c. 16 MPI ranks and 1 thread
+Unfortunately, 6 cores will remain idle.
+Dear alazzaro
+Thank you for your detailed explanation.
+And I think there is something wrong with my computer. Actually it have 2 physics CPU, every CPU have 22 cores, so the max threads number should be 88 before I change export OMP_NUM_THREADS=2
+The CPU information is attached.
+
+The line: "Threads per core: 2" says that you have hardware threads enabled. The real number of cores is 44.
+So, your file line is 44 threads max. Since you have 4 GPUs, you can try the following configurations:
+a. 4 MPI ranks, 11 threads (use all threads)
+b. 8 MPI ranks, 5 threads (use only 40 threads)
+c. 12 MPI ranks, 3 threads (use only 36 threads)
+Thanks @alazzaro! Sorry, I overlooked the 44 threads.
+Dear alazzaro
+Thank you very much.
+a. 4 MPI ranks, 11 threads (use all threads)
+So it means that I can change export OMP_NUM_THREADS=11 and use mpirun -np 4  to run, it will be the good setting.
+Am I right to do this ?
+Yanyan
+@zyy-qy Yes, correct. Try all configurations and see what is the fastest...
+Dear alazzaro
+OK! It's very kind of you. Thank you so much
+Yanyan

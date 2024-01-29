@@ -1,0 +1,16 @@
+CSXGate().inverse().to_matrix() fails
+results in
+It should return the correct matrix.
+I find it curious that while there is both a CSGate and a CSdgGate, CSXGate is lacking a class with its dagger counterpart.  Further, I find it mysterious that CSXGate().inverse().name evaluates to 'csxdg', even though that string does not appear in the repository when I grep for it.
+I think the most straightforward way to fix this issue would be to implement to_matrix for ControlledGate.  I cannot think of any reason that would prevent this from being possible, but I haven't looked into it either.
+Further, I find it mysterious that CSXGate().inverse().name evaluates to 'csxdg', even though that string does not appear in the repository when I grep for it.
+I've stumbled on this before as well - it turns out that ControlledGate defaults to naming itself "c" + base_gate.name.
+I think the most straightforward way to fix this issue would be to implement to_matrix for ControlledGate. I cannot think of any reason that would prevent this from being possible, but I haven't looked into it either.
+to_matrix is a standard method on Gate, but its logic is to check for an __array__ method, and raise the error you saw if it doesn't exist.  With the existing form of ControlledGate, probably the way to maintain the spirit of that is to override ControlledGate.to_matrix rather than defining an __array__ method which might need to throw an exception if the base gate has no defined matrix.
+(Fwiw, to_matrix in its current form is probably something we're going to need to revisit in the move to a data model that encourages more gates to be singleton instances with their parameters managed by the circuit.)
+probably the way to maintain the spirit of that is to override ControlledGate.to_matrix rather than defining an __array__ method which might need to throw an exception if the base gate has no defined matrix.
+But then to_matrix might need to throw an exception, wouldn't it?  I think your implied point here is that it would be appropriate to do this in to_matrix, but it's better to avoid throwing such an exception in a dunder method.  Is that correct?
+It was a kind of half-baked point at best, it's mostly that I have an aversion to introducing any more "this might throw an exception and you have no way of knowing if it will" behaviour to methods.  __array__ doesn't normally have that behaviour beyond failed dtype conversions (supposedly, it's for things that are always naturally arrays), and at the moment, "presence of __array__" is the only non-exception thing that the gates have to tell if to_matrix will explode.
+I think the most straightforward way to fix this issue would be to implement to_matrix for ControlledGate. I cannot think of any reason that would prevent this from being possible, but I haven't looked into it either.
+FYI, we actually have a function _compute_control_matrix in qiskit.circuit._utils that does this.
+This is also a place where annotated operations (PR #9846) could eventually help, once we change some of the gates into annotated versions of their base gate, and once we change the behavior of inverse to modify the modifiers and not the base gate. Anyhow, with 9846 the following is already possible:

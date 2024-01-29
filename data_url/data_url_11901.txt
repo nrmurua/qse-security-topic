@@ -1,0 +1,120 @@
+I try to solve a QUBO problem by QAOA, and implement it on Qiskit by this code
+#Implement the reduction of variables mentioned in the Adrew Lucas Paper
+mdl_red = Model(name="TSP-Variable Reduction")
+m = n
+y = {(j, l): mdl_red.binary_var(name=f"y_{j}_{l}") for j in range(m) for l in range(m) if j!=0 and l!=0}
+tsp_func_red = mdl_red.sum(
+1.0 * y[(j, l)] * y[(w, (l + 1) % m)]
+for j in range(m)
+for w in range(m)
+for l in range(m)
+if j != w and j!=0 and l!=0 and w!=0 and (l+1)%m != 0)
+mdl_red.minimize(tsp_func_red + y[(1, 1)] + y[(1, 5)] + y[(2, 1)] + y[(2, 5)] + y[(3, 1)] + y[(3, 5)] + y[(4, 1)] +
+y[(4, 5)] + y[(5, 1)] + y[(5, 5)])
+for j in range(1,m):
+mdl_red.add_constraint(mdl_red.sum(y[(j, l)] for l in range(1,m)) == 1)
+for l in range(1,m):
+mdl_red.add_constraint(mdl_red.sum(y[(j, l)] for j in range(1,m)) == 1)
+qp_red = from_docplex_mp(mdl_red)
+print(qp_red.prettyprint())
+#Construct Hamiltonian from TSP module
+#Output QUBO Hamiltonian
+from qiskit_optimization.converters import QuadraticProgramToQubo
+qp2qubo_red = QuadraticProgramToQubo()
+qubo_red = qp2qubo_red.convert(qp_red)
+qubitOp_red, offset = qubo_red.to_ising()
+print("Offset:", offset)
+print("Ising Hamiltonian:")
+print(str(qubitOp_red))
+from qiskit.utils import algorithm_globals
+from qiskit.algorithms.minimum_eigensolvers import QAOA, NumPyMinimumEigensolver
+from qiskit.algorithms.optimizers import COBYLA
+from qiskit.primitives import Sampler
+from qiskit_optimization.algorithms import (
+MinimumEigenOptimizer,
+RecursiveMinimumEigenOptimizer,
+SolutionSample,
+OptimizationResultStatus,
+)
+from qiskit_optimization import QuadraticProgram
+from qiskit.visualization import plot_histogram
+from typing import List, Tuple
+algorithm_globals.random_seed = 10598
+qaoa_mes = QAOA(sampler=Sampler(), optimizer=COBYLA(), initial_point=[0.0, 0.0])
+exact_mes = NumPyMinimumEigensolver()
+qaoa = MinimumEigenOptimizer(qaoa_mes)  # using QAOA
+exact_2 = MinimumEigenOptimizer(exact_mes)  # using the exact classical numpy minimum eigen solver
+exact_result_red = exact_2.solve(qubo_red)
+print(exact_result_red.prettyprint())
+The bolded font code has the result
+objective function value: 6.0
+variable values: y_1_1=0.0, y_1_2=0.0, y_1_3=0.0, y_1_4=0.0, y_1_5=1.0, y_2_1=0.0, y_2_2=0.0, y_2_3=1.0, y_2_4=0.0, y_2_5=0.0, y_3_1=1.0, y_3_2=0.0, y_3_3=0.0, y_3_4=0.0, y_3_5=0.0, y_4_1=0.0, y_4_2=0.0, y_4_3=0.0, y_4_4=1.0, y_4_5=0.0, y_5_1=0.0, y_5_2=1.0, y_5_3=0.0, y_5_4=0.0, y_5_5=0.0
+status: SUCCESS
+However when I implement the code
+qaoa_result_red = qaoa.solve(qubo_red)
+print(qaoa_result_red)
+It resulted in the error
+IndexError                                Traceback (most recent call last)
+Cell In[21], line 1
+----> 1 qaoa_result_red = qaoa.solve(qubo_red)
+2 print(qaoa_result_red.prettyprint())
+File ~/.conda/envs/Qiskit/lib/python3.9/site-packages/qiskit_optimization/algorithms/minimum_eigen_optimizer.py:227, in MinimumEigenOptimizer.solve(self, problem)
+224 # construct operator and offset
+225 operator, offset = problem_.to_ising()
+--> 227 return self.solve_internal(operator, offset, problem, problem)
+File ~/.conda/envs/Qiskit/lib/python3.9/site-packages/qiskit_optimization/algorithms/minimum_eigen_optimizer.py:271, in MinimumEigenOptimizer._solve_internal(self, operator, offset, converted_problem, original_problem)
+260     return MinimumEigenOptimizationResult(
+261         x=None,
+262         fval=None,
+(...)
+267         min_eigen_solver_result=eigen_result,
+268     )
+270 # translate result back to integers and eventually maximization
+--> 271 samples, best_raw = self._interpret_samples(original_problem, raw_samples, self._converters)
+272 return cast(
+273     MinimumEigenOptimizationResult,
+274     self._interpret(
+(...)
+282     ),
+283 )
+File ~/.conda/envs/Qiskit/lib/python3.9/site-packages/qiskit_optimization/algorithms/optimization_algorithm.py:522, in OptimizationAlgorithm._interpret_samples(cls, problem, raw_samples, converters)
+516     samples.append(SolutionSample(x, fval, probability, status))
+518 sorted_samples = sorted(
+519     samples,
+520     key=lambda v: (v.status.value, problem.objective.sense.value * v.fval),
+521 )
+--> 522 best_raw = raw_samples[index[tuple(sorted_samples[0].x)]]
+523 return sorted_samples, best_raw
+IndexError: list index out of range
+I tried to search the source code from
+https://qiskit.org/ecosystem/optimization/_modules/qiskit_optimization/algorithms/minimum_eigen_optimizer.html#MinimumEigenOptimizer.solve
+I found the code from the source, and the error comes from
+samples, best_raw = self._interpret_samples(original_problem, raw_samples, self._converters)
+but I can't find the source of function _interpret_samples()
+Where is that function? What is the problem
+Reference: https://qiskit.org/ecosystem/optimization/_modules/qiskit_optimization/algorithms/minimum_eigen_optimizer.html#MinimumEigenOptimizer.solve
+https://github.com/Qiskit/qiskit-optimization/blob/stable/0.5/docs/tutorials/03_minimum_eigen_optimizer.ipynb
+Reproduce it as my code mentioned above
+I have tried the same problem on a graph of 4 vertices, and it should have the result like
+objective function value: 6.0
+variable values: y_1_1=0.0, y_1_2=0.0, y_1_3=0.0, y_1_4=0.0, y_1_5=1.0, y_2_1=0.0, y_2_2=0.0, y_2_3=1.0, y_2_4=0.0, y_2_5=0.0, y_3_1=1.0, y_3_2=0.0, y_3_3=0.0, y_3_4=0.0, y_3_5=0.0, y_4_1=0.0, y_4_2=0.0, y_4_3=0.0, y_4_4=1.0, y_4_5=0.0, y_5_1=0.0, y_5_2=1.0, y_5_3=0.0, y_5_4=0.0, y_5_5=0.0
+status: SUCCESS
+Where can I find the source code of the function? And what is the real issue?
+I have tried it again on the example of 4 vertices with the same code,
+qaoa_result_red = qaoa.solve(qubo_red)
+print(qaoa_result_red)
+it worked on my Windows 10 computer as the picture
+
+However, when I try the same code on 6-vertex graph on a larger computer with 1.47TB memory, it ran for 15 hours (see picture below)
+
+and resulted in error message "list index out of range", like the following pictures
+
+
+
+How can I solve this problem? (By the way, it failed on my Windows 10 computer because it takes too much memory:)
+
+
+You should raise this as an issue on qiskit-optimization  where the eigenoptimizer and tutorial are maintained. This repo is just for the set of tutorials for Qiskit around circuits and algorithms, i.e the set you can see here in this repo and any issues related to the applications e.g. optimization, nature, machine-learning and their respective tutorials should be raised in their repo.
+You should raise this as an issue on qiskit-optimization  where the eigenoptimizer and tutorial are maintained. This repo is just for the set of tutorials for Qiskit around circuits and algorithms, i.e the set you can see here in this repo and any issues related to the applications e.g. optimization, nature, machine-learning and their respective tutorials should be raised in their repo.
+Thank you. I opened a new issue here: qiskit-community/qiskit-optimization#532
+Thanks. I'll close this one here - I used to be able to transfer the issues from here but the application repos were recently moved from Qiskit to qiskit-community organization and I can no longer do that.

@@ -1,0 +1,23 @@
+Description of the issue - include code snippets and screenshots here
+if relevant. You may use the following template below
+Expected behavior: build passes
+Actual behavior:
+Reproduces how often: always
+System information:
+export 'CFLAGS=-O2 -Wall -D_FORTIFY_SOURCE=2 -fstack-protector-strong -funwind-tables -fasynchronous-unwind-tables -fstack-clash-protection -Werror=return-type -flto=auto'
+Complete build log
+Also, on aarch64 I get this:
+Complete build log
+Thanks for the bug report @mcepl! From reading the logs, I can see that the errors are
+and
+I'm guessing these are from the stricter flags -fstack-protector-strong -fstack-clash-protection -Werror=return-type?
+I'm guessing these are from the stricter flags -fstack-protector-strong -fstack-clash-protection -Werror=return-type?
+Most likely. Those CFLAGS I mentioned are the standard for OpenSUSE (and I guess Fedora and other Linux distros have something very similar).
+This is caused by line 94 in setup.py:
+CFLAGS = os.environ.get('CFLAGS', cflags_default).split() + ['-I{}'.format(np.get_include())]
+This will override all the previously configured flags if the build environment sets the CFLAGS variable. So in a linux environment, the build failure occurs because the -fopenmp flag is not appended to the g++ command. I was able to build successfully in Debian 10 with the following environment:
+'CFLAGS=-O2 -Wall -D_FORTIFY_SOURCE=2 -fstack-protector-strong -funwind-tables -fasynchronous-unwind-tables -fstack-clash-protection -Werror=return-type -flto=auto -fopenmp'
+Thank you, that works as a workaround. I can now build thewalrus even with the standard SUSE CFLAGS.
+Also, on aarch64 I get this:
+I tried this patch which make the build to succeed:
+But then, it SegFaults on test_real_wrapper:

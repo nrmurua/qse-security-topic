@@ -1,0 +1,46 @@
+On Ubuntu 14.04.5 LTS 64 bit, trying to install ARTIQ 3.1 fails during the rust install with:
+I'm following the instructions on https://m-labs.hk/artiq/manual-release-3/developing.html#installing-artiq-from-source and it fails during the 'make install' command to install rust.
+Here is the full error I'm getting:
+Which errors do you get exactly?
+cargo:warning=cc: error: ../../libcompiler_builtins/compiler-rt/lib/builtins/absvdi2.c: No such file or directory
+I've searched for that file with find and I'm not seeing it, but maybe I'm missing something.
+I do have three 'libcompiler_bultins' directories but no 'absvdi2.c' file:
+You forgot to run git submodule update --init in the Rust sources.
+hmm, I'll try it again but I did update the rust submodules.
+I tried a second time but I still get the same error.  git submodule update --init seemed to go smoothly.  Maybe there is something configured incorrectly on my machine?
+This is everything I did.
+Oh! git submodule update --init --recursive.
+Ah!  Will try that, thanks.
+That fixed the 'absvdi2.c' error, thanks!  Now it's failing for not being able to find llvmconfig.  Is that supposed to be installed as apart of the LLVM and Clang build?  There were a few directory permission issues on this machine earlier so it may be that llvmconfig is just not visible for my user.  I'm going to look into that more tomorrow.
+Is that supposed to be installed as apart of the LLVM and Clang build?
+The llvm-config executable should be installed as a part of LLVM. Is it not present as /usr/local/llvm-or1k/bin/llvm-config?
+It was present.  llvm-config did get installed to /usr/local/llvm-or1k/bin, it was just that /usr/local/llvm-or1k/bin wasn't on the system path.  After adding /usr/local/llvm-or1k/bin to my path variable make install ran without errors and I get the "Rust ready to roll" message at the end.
+trying to install ARTIQ 3.1
+Any particular reason you're not using 3.2? Or the conda packages?
+After adding /usr/local/llvm-or1k/bin to my path variable make install ran without errors and I get the "Rust ready to roll" message at the end.
+That's very odd, it should not be necessary. Exactly which component is not finding llvm-config? It would be helpful if you posted the actual error message in its context instead of paraphrasing it.
+@sbourdeauducq
+Any particular reason you're not using 3.2? Or the conda packages?
+No particular reason for 3.1, that was just the last version I knew supported DMA.  I'll upgrade to version 3.2 instead.
+We need to build a modified version of the gateware with the output FIFO depth increased to 1024.  We did this for ARTIQ version 2 and it reduced the number of underflow errors we we're getting.  We tried running a few experiments using the gateware provided in the ARTIQ version 3 conda packages but that resulted in underflow errors that did not occur using the version 2.0 gateware with the FIFO output depth increased to 1024.  So we're expecting we'll need the same FIFO depth when using ARTIQ version 3.
+I just noticed the mention of the artiq-dev package in the instructions for version 3  I didn't realize those were available, would that be enough to build the gateware with an updated FIFO depth?
+@whitequark
+That's very odd, it should not be necessary. Exactly which component is not finding llvm-config? It would be helpful if you posted the actual error message in its context instead of paraphrasing it.
+It was something in the 'make install' script that installs rust.  I'll try running through the install process again tonight and post the specific component/error.  The steps for installing from source  instruct you to add /usr/local/llvm-or1k/bin to your path with:
+export PATH=/usr/local/llvm-or1k/bin:$PATH
+after installing rust.  Maybe that step just needs to be mentioned higher up in the instructions before the steps to build rust?
+@whitequark This is the error I was getting when trying to install rust.
+I just noticed the mention of the artiq-dev package in the instructions for version 3 I didn't realize those were available, would that be enough to build the gateware with an updated FIFO depth?
+Yes. And note that you do not need Rust if you are only making such a minor change to the gateware. You can skip the whole firmware compilation with --no-compile-software - but be careful, mismatches you introduce at the firmware/gateware interface can result in somewhat obscure bugs.
+We need to build a modified version of the gateware with the output FIFO depth increased to 1024. We did this for ARTIQ version 2 and it reduced the number of underflow errors we we're getting. We tried running a few experiments using the gateware provided in the ARTIQ version 3 conda packages but that resulted in underflow errors that did not occur using the version 2.0 gateware with the FIFO output depth increased to 1024.
+Which exactly is that FIFO you need expanding? Since you are the main users of those packages, we can also build them with the FIFO sizes you want.
+And the documentation also clearly states that that approach to installing from source is irrelevant to you. Just use the conda packages pulled in by artiq-dev.
+Okay, this is a known rustc bug rust-lang/rust#46995, I've updated our workaround for it in our rustc fork so you should no longer hit it.
+Which exactly is that FIFO you need expanding? Since you are the main users of those packages, we can also build them with the FIFO sizes you want.
+I have been very delayed on sending in an updated gateware description file for NIST QC 2, but we are going to expand the number of TTL channels in hardware and can make modifications to the FIFO depths at the same time. @philipkent is there something in particular you are looking for?  What are you doing so rapidly that you need such deep output FIFOs?
+@dhslichter we needed to expanded the FIFO depth to prevent underflow errors from occurring during the Raman cooling sequence.  I'm working on more thorough tests using ARTIQ 3.1 and DMA but the expanded FIFO depth still seemed to be necessary on 3.1 after a first test, even when we used recorded DMA sequences for Raman cooling.  The FIFO depth of 1024 was the first modification that we made while on ARTIQ version 2 and we haven't changed that depth since.  A depth less than 1024 would probably be fine for our purposes, but we would need to test to find a reasonable lower limit.
+@philipkent ack.  We have had similar issues with our sideband cooling and went to deeper output FIFOs as a result.  Let's discuss offline and run some tests to come up with a good resource allocation.
+@dhslichter We will be moving to ARTIQ 3 soon and we're planning on having to setup a development environment to compile gatewares with the expanded FIFO depths.  Would it make sense to update the FIFO depth's in the pre-compiled gatewares in the nist_qc2 conda package for ARTIQ 3 to be at least 1024 sense that seems to be what everyone is using?
+Yes, I think that sounds sensible.  There are separate input and output FIFOs, and I would suggest that we would make better use of the resources available if we make the input FIFOs relatively small (say 128 or 256) except on a few special channels, when we make them much deeper (16k or so).  Then we can hopefully fit 1024 on each output, which would be nice.  @r-srinivas @dtcallcock any strong feelings on optimal FIFO depths to shoot for?
+I think 1024 is what we have now and that seems to work for most of our
+experiments. This is what I have from our notes from almost 2 years ago with artiq 2.

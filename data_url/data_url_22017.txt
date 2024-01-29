@@ -1,0 +1,72 @@
+It was due to incorrect settings of my 100MHz source. The HMC830 locks fine and then both AD9154 DACs usually work, including JESD lane startup (but intermittenly I get a "bad SYNC" error).
+It would be interesting to look at the output of the HMC7043 to be sure the clocks are clean. (from the first tests i remember it was not the case, so this could maybe explain the intermittents JESD failures).
+The lock is not reliable.
+@enjoy-digital Do you see it on your board too?
+@gkasprow Can you do thorough tests of the HMC830 including running the ARTIQ code? Can you have a look at our code and see if you spot anything suspicious?
+https://github.com/m-labs/artiq/blob/master/artiq/firmware/libboard/hmc830_7043.rs
+@jordens iirc @a-shafir found some SPI core bugs. Could that be the source of the problem?
+Could be. Try the workaround in his tree with slow clock.
+m-labs/misoc#65
+@jbqubit What happens on your boards?
+@jordens Can you get the bug fixed into MiSoC?
+There is a visible on a scope trailing (extra) short pulse on SCK. With a simple shift register as in CPLD it makes all received bits shifted etc. Probably not all SPI IC are sensitive to it because some of them have "de-glitching" filter. CPLD certainly need a very clean clock. HMC830 possible too.
+The combinatoric logic is not part of MiSoC but in artic/gateware/spi.py
+The proper fix needs latches on all SPI signals that will make the spi transaction 1 sysclk longer. In this case will need to adjust the read phase as well or use higher dividers. It can be done more efficient way: generate the "internal CS" one clock in advance so the latch will not delay the SCK. For this the changes in MiSoC the must.
+m-labs/misoc#65 is fixed
+Did this fix the HMC830 problem?
+If not, @sbourdeauducq did you check the obvious things with a scope? e.g.
+Note to self, cf https://github.com/m-labs/sinara/issues/216#issuecomment-314706532
+Not sure it could be related, but the day i was testing hmc803/hmc7043 i also did this:
+enjoy-digital/litex@c02de16
+I remember having an issue with Vivado that was not generating the last bit correctly (observed with litescope), issue that was solved by the way i reorganized part of the code.
+A scope trace showing the SPI lines would allow us to eliminate this kind of thing very quickly.
+@gkasprow I don't have PDFs of the layout. What is the best place to probe the SPI lines for the HMC830?
+@sbourdeauducq Remind me, what reference frequency are you using for the HMC830? Is it still 100MHz?
+Yes.
+
+What is this for? AFAICT, we're running in HMC mode, so the address register is write only, right?
+
+Why divide the 100MHz reference? The PFD is fully specified to run up to 100MHz.
+What is this for? AFAICT, we're running in HMC mode, so the address register is write only, right?
+Ignore that comment, mis-read the datasheet.
+But, I'm still not sure this is correct. @enjoy-digital AFAICT, this sets the soft-reset to 1. The data sheet says that it must be set to 0 for correct operation, but I don't see where you do that. Am I missing something?
+@hartytp: i'm reusing an initialization sequence from the vendor that is adapted for our case. But yes we can try to set it to 0.
+@enjoy-digital Good to know. Where exactly did you get the initialisation sequence from? Copied from eval software?
+Weida is double checking the loop filter, charge pump settings etc.
+@hartytp: yes from the evaluation software (but don't have the software with me). Review of the settings is welcome!
+I see. Did that spit the SPI transactions out into a text file? Do you have a copy of the original (don't have access to a windows PC atm to do this myself).
+I delivered 100MHz to HMC, loaded
+and I get 2.9726GHz at the output
+The loop voltage is 0.16V
+then I load
+0 $3 38 spi_hmc830 .
+0 $4 3851ec spi_hmc830 .
+and I get 2.8000 Ghz and the voltage is 2.95V
+when I read 0x12H I get
+which means the PLL is locked.
+Yes, sometimes it works here, too. Have you tried with artiq?
+not yet
+@gkasprow how many bits are you transferring for each of those writes?
+I use 32 bits - this is bit-bang SPI but the code is executed really fast. I get a few MHz SPI clock
+@sbourdeauducq @hartytp What's next step on this? It's one of the last bits to nail down before moving on to next revision of Sayma.
+@jbqubit I'll look at it again after Easter.
+Next step is to run Greg's code on my board and see if it works.
+I ordered the HMC chip long time ago but still didn't get it to my hands.
+WIll probably get it next week and do a try.
+@hartytp As I understand, this is blocked by you not having a board currently? @enjoy-digital do you still need it?
+@sbourdeauducq: i already sent the board back to @hartytp 4 days ago, it should arrive soon.
+@sbourdeauducq atm there are a few things blocking this from my end:
+@hartytp I got the HMC chip on Friday. I will solder it tomorrow and let you know what is going on.
+@gkasprow Any update?
+So what should we do? Replace HMC830s on all boards? Why did they break in the first place?
+Why did they break in the first place?
+This is my big concern as well. If the issue was a dry joint or something then I could understand, but if they're just breaking for no apparent reason then we have a problem.
+I did tests with Tom board
+Anyway, that board was missing a 5V supply, wasn't it? So, in at least that one case there is a creditable explanation for why it broke. That doesn't seem to be the case with the other boards as far as I'm aware.
+Yes, please do.
+@sbourdeauducq Is not having the HMC830 causing you problems right now? Is this something you need fixed asap, or can you wait a bit? I've posted my AMC+RTM to Greg. One thing he will do with it is check that the HMC830 works with his code. Once that's done I'm happy to make sure it works with ARTIQ.
+OK.
+Just gave Sayma another dozen restarts with the clock through the HMC830 - no bug.
+Setup: AMC + RTM, 100MHz 10 dBm signal supplied to SMA input on RTM. Artiq built against da1a61b, misoc 6d5bacf1
+@marmeladapk did you use version which @hartytp prepared with settings identical to my FORTH code?
+@marmeladapk I'm seeing the same as you. One thing I don't understand is why 0x04 reads 0x0000...

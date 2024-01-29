@@ -1,0 +1,27 @@
+There are a few really long paths in mor1kx in Kasli.
+Happens with 2017.2 and 2017.4.
+Happens in both mor1kx cpus (comms and kernel).
+We used to run the Spartan 6 mor1kx at 83 MHz on pipistrello to deal with this. It now seems close enough that some tweaking might allow the CPUs to run at 125 MHz on Artix 7.
+I don't think it's related to artix 7 vs spartan 6 but just to the cpu frequency.
+On Kasli the cpu is running at 125MHz vs 83.3Mhz on pipistrello.
+Ah right. I forgot that. I still think that the 14 LUTs is too much and we should be able to make it to 125 MHz.
+Yes i was just pointing the reason. At 125Mhz, Kasli does not seems that far from meeting timings so yes it should not be too difficult to fix.
+Currently a frequent offender is the interrupt path (timer especially) to the dcache. Maybe we can add some pipelining at the beginning.
+This patch makes it pass timing on both opticlock and sysu variants:
+I wouldn't ditch interrupts as we need them to implement a sampling profiler, something which both @whitequark and me have been wanting to do for quite some time.
+Unfortunately, it is very difficult to meet timing.
+Where and how would you use interrupts exactly?
+Sure, meeting timing is obviously more important; read my statement as "I'd really rather we found a way to keep timer interrupts".
+To implement a sampling profiler, you would periodically save the current instruction pointer (optionally the complete stack trace) into a global buffer. Later, you'd send the full buffer back to the host PC, which allows you to generate a time profile. On a simple in-order CPU like this, the result should be frighteningly accurate even without something like PEBS. (The timer does introduce some non-determinism of course, so there needs to be enough slack in the RTIO timing.)
+This doesn't need the full power of a complex PIC, though, but just a fixed-interval timer. Glancing over the mor1kx source, it seems like the tick_timer is in fact handled entirely separately from the PIC anyway, so FEATURE_PIC="NONE" shouldn't be an issue for that. (Not sure which timer path @jordens was referring to, though.)
+MiSoC UART and Timer had interrupts. https://github.com/m-labs/misoc/blob/3388e6ba70545c77b399ced30ca9b9536963a44f/misoc/integration/soc_core.py#L109
+Ah, right, thanks. There is also the tick_timer directly in mor1kx, but I didn't have a closer look at it yet.
+We do not use the FFL1 instructions anywhere.
+We do actually have them enabled in the compiler, and I vaguely recall LLVM taking advantage of them for some RTIO-related computation, but these can be easily turned off as LLVM has a (reasonably slow) software fallback.
+We use the atomic instructions (l.lwa, l.swa) but I cannot see why the runtime requires them. @whitequark can we get rid of them?
+l.lwa and l.swa are not just atomic instructions, but they are LL/SC instructions. Aligned atomic loads are translated into l.lwz and aligned atomic stores into l.sw. l.lwa and l.swa are needed for atomic RMW instructions.
+Whether we can get rid of them depends on the meaning of "get rid of". I've looked into removing them from the Rust libcore before and that was complex enough that I chose to fix their support in LLVM instead (the LLVM handling of atomic RMWs used to be pretty broken). The problem is that libcore has a complete set of atomic operations (store, load, RMW, CAS, etc) that are translated at the time when we're building the Rust stdlib for OR1K, so it's either disabling atomic operations for pointer-sized integers (which breaks a number of crates e.g. log) or translating RMW and CAS operations somehow.
+Rust is switching to so-called MIR-only rlibs that delay translation to machine code until the point where the final executable is compiled, at some point in the future, which will fix this problem in the root. However, I don't know when that's happening, so we can't delay until then.
+What I propose then is to disable their support in the CPU but leave it in the compiler. Any runtime use of l.lwa or l.swa will then crash with exception 7, which is easy to recognize. I suppose we could even emulate them if the need arises.
+With LM32 (for both kernel and comms) and without any special care: opticlock, sysu and satellite meet timing easily. The DRTIO master fails timing (a bit inexplicably) in the RTIO core, by 24ps for the worst path.
+sinara-hw/sinara#499 (comment)

@@ -1,0 +1,36 @@
+Description
+When I pass sampler to QBSolv, it still uses classical solver instead of running code on QPU.
+To Reproduce
+Expected behavior
+I expect that my code will be executed on QPU when I pass a sampler, especially that I tested that this sampler executes code on QPU without QBSolv.
+It should at least print a warning since this behavior is not what I expected.
+Environment:
+Hi @mstechly,
+If you look at solver.cc, you see this bit of code:
+The outer loop of qbsolv runs a tabu search and only delegates subproblems to the subproblem solver when qubo_size is greater than 20 variables. Your current problem has 3 variables, so it's too small for the QPU to be called. Go big: try something like qubo_size = 200 and subqubo_size = 30 and then the QPU will be called.
+@JoelPasvolsky I did as you suggested:
+And got the following message, many, many times:
+It gives me some results but doesn't seem to call QPU.
+Also, how can I check if QPU was actually called? Now I'm comparing calculation times with tabu parameters and look if any packets to/from D-Wave go in/out my computer, but there's probably some more elegant way?
+Hi @mstechly,
+The problem graph needs to be embedded onto the QPU. For example, a quick way to do that is by replacing the line sampler = DWaveSampler(token=sapi_token, endpoint=endpoint) with the line sampler = EmbeddingComposite(DWaveSampler(token=sapi_token, endpoint=endpoint)).
+See more here: https://docs.ocean.dwavesys.com/projects/system/en/latest/reference/composites/embedding.html
+A better way is to use a repeated embedding for all calls, such as https://docs.ocean.dwavesys.com/projects/system/en/latest/reference/composites/fixed_embedding.html, for example, and soon dwavesystems/dwave-system#112.
+You also need to specify 'solver_limit' parameter instead of sub_size=30 in the call: response = QBSolv().sample_qubo(Q, solver=sampler, solver_limit=30)
+If you want to see what's happening during the execution, you can set the verbosity parameter to 4.
+Thank you @JoelPasvolsky !
+Things start making sense to me :)
+I will refactor my code to use fixed embedding, but for now I'm still not sure if QBsolv is using QPU.
+This is output after one iteration and it seems to me to work on classical tabu:
+Additionally, @mstechly, if you're generating problems (like with random in your example), you might find useful the list of available nodes (qubits) and edges (couplings):
+@mstechly, if you check on your Leap Dashboard, you'll see how much QPU time your execution consumed. If the value of the "REMAINING QPU TIME" did not change then it did not run on the QPU.
+@JoelPasvolsky Thanks, now I see it works.
+I would like to incorporate some of the conclusions to documentation - what do you think would be the best place for it?
+If I wanted to analyze how much time I spent on qpu etc. (as I get when I use simply EmbeddingComposite(sampler).sample_qubo(Q) instead of QBSolv) is there a simple way to do that?
+@mstechly, We have someone planning to do a significant documentation update soon. Would it be easier to write up your conclusions in a new issue (feature request for added documentation) until that's done?
+qbsolv does not provide the kind of low-level control of communications with a QPU as you can get with working directly with dwave-cloud-client. So I think just checking the Leap dashboard before and after a run to see the time difference.
+@JoelPasvolsky Sure!
+We found other way to overcome this limitation of qbsolv, I hope we will post the code next week.
+@arcondello, closed by Issue #135
+If anybody is interested, this gist shows the code that we use with @mstechly  for recording timing information for QBsolv.
+https://gist.github.com/dexter2206/916e407e4ce88475ea93e20d2516f78f

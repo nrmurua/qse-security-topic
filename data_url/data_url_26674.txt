@@ -1,0 +1,49 @@
+This is with cp2k 7.1 installed from conda forge on MacOS
+The reported line is
+
+Looks like it is still present in current master
+
+interesting error message since the left parenthesis in the format string is obviously there
+So far I am unable to reproduce this with CP2K v8.1+ built with either gcc or clang and gfortran-10.2 on macOS.
+Thanks a lot for checking - do you get the same error as me when you install cp2k using
+?
+It is possible that this is somehow caused by either the specific compiler combination or compiler flags on conda-forge.
+Build log including compiler flags
+archfile
+Relevant flags might be:
+Compiler versions
+Since the error message about the missing parenthesis is obviously bogus, we are most likely dealing with a compiler incompatibility that is not specific to CP2K. Hence, I'd suggest we close this issue.
+... since a lot of other applications conda provides seem to be working there is a good chance that the problem is still explicitly linked to CP2K.
+From #1273 (comment) it seems that clang and gfortran were mixed. I guess, other Conda packages are simply not doing that.
+yes, mixing clang and gfortran in a project where ISO_C_BINDING are used is usually not a good idea (the Fortran standard only guarantees compatibility for "companion compilers").
+On the other hand I've tested the exact same combination on our Mac (tcopt1) and could not reproduce the issue.
+So, this issue is most likely not caused by CP2K and we can not reproduce it. I think, those are two good reason for closing it.
+@ltalirz I've got an idea how we can start verifying the issue if you can get access to the faulty binary. The data (format string AND result from compiler_version()) passed to the print(...) function should be hardcoded in the binary. Here's the output on a minimal CP2K exe:
+If you check inside the there you'll see the (T2,A,A)compiler: GCC version 10.2.0.
+Could you run this command on the faulty binary and post the results?
+thanks for the suggestion!
+if you can get access to the faulty binary.
+Sure - just to be clear: anybody can get this binary on MacOS with conda install -c conda-forge cp2k.
+Could you run this command on the faulty binary and post the results?
+Here it is
+i.e. this is gfortran from GCC 9.3.0
+And clang version 11.0.0, see
+https://dev.azure.com/conda-forge/feedstock-builds/_build/results?buildId=255647&view=logs&j=58ac6aab-c4bc-5de2-2894-98e408cc8ec9&t=933f325c-924e-533d-4d95-e93b5843ce8b&l=4989
+The reason we're mixing these two is because they are the default c & fortran compilers on conda-forge.
+I guess, other Conda packages are simply not doing that.
+See e.g. Siesta
+https://github.com/conda-forge/siesta-feedstock/blob/95f007deefefb38cd93dbed8ccfa82c924556239/recipe/meta.yaml#L46-L47
+This doesn't make it right, of course.
+We could try switching to gcc for the c compiler as well.
+P.S. We do verify on CI that the regtests all pass. cp2k.ssmp --version simply does not seem to be tested anywhere; I will add it as an explicit test.
+Edit: Reproduced issue on CI.
+I'll see whether switching to gcc makes it go away
+Edit: Unfortunately, there is no gcc for the osx platform :-( I.e. we'll need to make it work with clang here
+Actually, --version is used in the beginning of every regtest run to query the binary for its flags. However, I guess we're not checking the exit code :-/
+I see... I opened #1299 on a similar issue of switching to a non-zero exit code for the regtests if any of the tests fail.
+There @dev-zero mentioned this might be fixed by #770  but perhaps we should anyhow go ahead and adapt the regtest script?
+This does not seem very hard to fix
+Do not wait for #770. I'm currently working on rewriting our do_regtest script in Python. Hopefully, I'll finish this in the next 1-2 months. Nevertheless, you can make those small changes to our existing script. There will certainly be a transition period before we can completely switch over to the new script.
+the bug has been reproduced again on centos 8.3 stream, with gcc 8.3.1, openmpi 4.0.5, python 3.6.8, and mkl 2020.4.
+is it about compatibility of hardware ? i tried to install cp2k on several OS, like centos, fedora, and redhat, and the same bug has been reproduced. "make test" is ok but when mpirun or just run the cp2k.popt, the same error reproduced. I am using xeon 8273  and asrock motherboard (www.asrockrack.com)
+IIRC, the most likely cause was mixing compilers. So, I don't think there is anything we can do from CP2K's side.

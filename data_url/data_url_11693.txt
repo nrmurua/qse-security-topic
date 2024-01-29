@@ -1,0 +1,27 @@
+For objective function in the var_form,
+However, I find the result is different from when I evaluate them individually.
+The values are different, but however the first value is the same.
+In VQE the core of objective function takes a point (parameter list of floats one value for each dimension in the problem) so that the energy can be evaluated at that point/state (parameters are set into var form) of the operator. Now some optimizers compute a gradient at the point they are currently at which is often done with a finite difference method such that many close points in the neighborhood are evaluated to compute a gradient to inform the optimizer as to which way to proceed towards a minimum. Now all these points to compute the gradient have the potential to be computed in parallel. This is what the max evals grouped parameter of VQE controls. And allows the optimizer to pass across more than one point (list of floats) so its now a list of lists. Running in parallel like this is intended for simulators, such as Aer, that can leverage multiprocessing to do the computation in parallel. It is not really intended to be used with a actual device since each circuit is executed sequentially there.
+As to things varying, you can set the random seed in aqua globals otherwise VQE can choose a random starting point for the optimization. You can also see the simulator such that its random aspects should be repeatable when you rerun things. You will see in the tests we have here that this is often done so we can reproduce the exact same outcome for unit testing.
+Thank @woodsp-ibm for the response.
+In order to be more precise, here is the minimal example:
+Then, generate some points:
+I evaluate the circuit sequentially
+The results are
+If i use the built-in sequential evaluation function
+The results are different
+But, the first item (i.e. -0.791015625) is always the same. Are the two lists supposed to be the same?
+Any updates?
+Hi, yes. If I use BasicAer, instead of Aer, then the numbers come out as expected and are identical. You should be able to see this yourself i.e.
+backend = BasicAer.get_backend('qasm_simulator')
+I need to double check things with the Aer team, as to what is happening there, and hope to do that soon.
+Yes, thank you @woodsp-ibm  for your responses!
+Using BasicAer gives identical results and it will be great if you could check with Aer team. That would be very helpful!
+I think the difference in outputs of when you batch vs don't batch is due to RNG for sampling measurement outcomes in the simulation (this boils down to be basically this issue from Aer: Qiskit/qiskit-aer#585)
+If you fix a seed and execute several circuits in a single Qobj Aer only guarantees that the entire output of all circuits is fixed by the seed. Internally only the first circuit uses the actual seed set, and the remaining circuits use the initial seed shifted by a predetermined amount for their RNG.
+When you execute circuits one at a time with a fixed seed, each circuit is using that value of the seed. This is also why the first result always agrees in your examples (the first circuit has the same seed in both cases).
+It is actually a bug in BasicAer that the same seed is used for all circuits in a qobj (which we were supposed to fix last time this came up but forgot to)!
+Does this make sense for you?
+If you use statevector_simulator, which gives the ideal outcome, then you will see that the numbers match. If you use Aer qasm simulator and increase the number of shots then you will see the numbers start to get closer (try 100,000 shots for instance).
+Since this should resolve the issue as to why this occurs if you have no further question on this then please feel free to close this issue. Thanks.
+This is very helpful. Thanks @woodsp-ibm @chriseclectic!

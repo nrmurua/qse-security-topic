@@ -1,0 +1,29 @@
+Building liboqs with gcc-11 on an Apple M1 Mac yields build failures related to Kyber and Saber NTT code.
+Reproduce by checking out 0.7.1, and then running cmake -GNinja -DCMAKE_C_COMPILER=gcc-11 ...  (Note that there are other build failures on HEAD when building with gcc-11 on macOS which are independent of this which I'll create a separate issue for.)
+Did you try brew install x86_64-elf-gcc and run that instead of "plain" gcc-11 (in the hope of using a different assembler)?
+Did you try brew install x86_64-elf-gcc and run that instead of "plain" gcc-11 (in the hope of using a different assembler)?
+I'd never trid that before.  I just installed it and tried cmake -GNinja -DCMAKE_C_COMPILER=x86_64-elf-gcc .. which fails with the following output:
+What has generated the option "-Wl,-search_paths_first " ? It seems to be missing a second "-" (whatever that option is -- it's nowhere in the liboqs code tree). What about trying to run cmake with -DCMAKE_VERBOSE_MAKEFILE=ON (instead of -GNinja) and then run make --trace? May also help in the case of #1166.
+Are there clear instructions yet on how to build this on an M1 Mac? I want to build it or at least use a pre-built binary and I have a MacBook M1 Pro.
+Or at least is there a way to build it (or run the linux .so binary) in a docker container or something like that?
+Are there clear instructions yet on how to build this on an M1 Mac? I want to build it or at least use a pre-built binary and I have a MacBook M1 Pro.
+If you use Apple's built-in clang, then it will build just fine on an M1 Mac.  But we don't have a solution yet for gcc builds on M1.
+Are there clear instructions yet on how to build this on an M1 Mac? I want to build it or at least use a pre-built binary and I have a MacBook M1 Pro.
+If you use Apple's built-in clang, then it will build just fine on an M1 Mac. But we don't have a solution yet for gcc builds on M1.
+Oh okay I will try that. After I build it I can run the binary natively? Like I can just import the dylib file into my project that uses liboqs-python and that will work?
+Oh okay I will try that. After I build it I can run the binary natively? Like I can just import the dylib file into my project that uses liboqs-python and that will work?
+I don't see any reason why shouldn't be able to use the binary.
+Oh okay I will try that. After I build it I can run the binary natively? Like I can just import the dylib file into my project that uses liboqs-python and that will work?
+I don't see any reason why shouldn't be able to use the binary.
+Yeah it works! Thanks!
+Sorry for being a killjoy but the issue is not fully resolved: Execute cmake -GNinja -DCMAKE_C_COMPILER=gcc-11 -DBUILD_SHARED_LIBS=ON -DOQS_USE_OPENSSL=OFF .. and see this
+Looking into this a bit, it looks like gcc-11 thinks that the m1 doesn't have crypto extension support (when it indeed does). This is likely because apple is failing to advertise them, or is advertising them in a non-standard way. (We have to look for them indirectly in our own scripts, even when using appleclang)
+In order to tell gcc-11 "no, trust me it's there, insert those instructions", I need to specify an arm version and enable the crypto extensions.
+One option to fix this is to specify the arm abi version and compiling for that version. The m1 series chips are version 8.5-A, however we would likely want to use something like 8.1 to support more of their hardware? The minimum would be 8.0-A, which supports A7 and newer chips. I'm not sure how using an older abi version would effect compilation and the gcc's instruction choices. Does anyone have any insight or thoughts into this?
+Does anyone have any insight or thoughts into this?
+Nope :-( Personally I wouldn't want to "second guess" Apple's choice of ARM abis, though. Thus I'd favour a very specific fix for an ABI version we know fits their current CPUs. If they move to another ARM version this might break again -- or they'll contribute to gcc for this madness to not happen again: liboqs can't be the only code base fighting with this (?) Looking at https://gcc.gnu.org/bugzilla/ I didn't immediately find a report -- maybe worth while submitting one?
+After running speed_common it looks like the results between armv8-a and armv8.5-a are basically the same. I am only specifying the architecture for the sha2 native instructions compile unit so as long as these are similar enough then we shouldn't see performance degradation elsewhere.
+Here is the output from speed_common for the two arm versions:
+Started at 2022-02-01 09:36:00
+Started at 2022-02-01 09:38:57
+Thanks for the test (and results), @Martyrshot. So code specifically built for M1 is 2.5-4% faster on all operations except SHA_shake. This indeed is not really a lot, but IMO a bit too consistent to not be mentioned somewhere; what about adding a notice (pointing to these results) for interested folks, e.g., in a (new) "Performance optimization" section in the how-to-configure-liboqs Wiki, stating we opted for a more "generic" ARM level as default build option?

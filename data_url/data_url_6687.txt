@@ -1,0 +1,22 @@
+ Issue by ajavadia
+Sunday Dec 20, 2015 at 15:27 GMT
+Originally opened as https://github.com/msr-quarc/Liquid/issues/6
+I am interested in identifying the logical-level gate parallelism factors in your built-in algorithms.
+I assume a good way to do this would be to call Fold(aggressive=1) on the generated circuit and then use GateCount(doParallel=1). However since the algorithms implementations are not released, I am only confined to the flags provided for each algorithm. Shor's, for example, has no such option. In Quantum Chemistry, I played with a bunch of options (A, C, N, O, etc) and looked at the "Counts" line in the output. I didn't see a difference between the "Seq," "Par," "Nest," and "RedundBest" counts in any scenario. Is this because those optimization flags don't fold the circuit, or there's just no parallelism between gates in the Quantum Chemistry circuit?
+In general, is it possible for you to release the built-in algorithm implementations (not the entire simulator) so that this can be done for other algorithms such as Shor's as well?
+ Comment by dbwz8
+Monday Dec 21, 2015 at 19:15 GMT
+Sorry for the confusion. You have everything correct but I think a little explanation (for everyone else) might be useful.
+There are three standard ways to manipulate circuits that you've built. The first is Fold() which lets you see (simple) parallelism by sliding gates to the left and marking all those that can be run in parallel. This is the most straight forward and gives you a good idea of what intrinsic parallelism exists in your circuit (without any re-writing).
+The two other techniques are under GrowGates() and are controlled by the first parameter to GrowPars. If you make it false, then you are telling the system to re-write the circuit as efficiently as possible for classical simulation... but don't try to create a single unitary. Normally, the unitary would be much too large to hold in memory and isn't worth trying to create. Instead, composite unitaries (of ~10 qubits but default) are created for efficient simulation. This is what __Shor() does.
+The other option is to make a single unitary. This only works in (general) in the case of quantum chemistry, because we can decimate the unitary by knowing which states are illegal in nature (e.g., electrons never flip spin so those cases can be deleted. Likewise, we know we can conserve angular momentum). In the case of water, this reduces the single unitary from 32768x32768 down to 441x441!
+Neither of the second two are useful to you, since you want gate counts on a quantum computer (not a classical one). If you refer to the Users Manual on page 83. The relevant options are:
+So, if you use the following command line:
+You'll get output that ends with:
+The final line tells you how many _Rot_ation gates, how many _Seq_uential gates, how many _Par_allel gates (just by folding... in this case, it won't do any good) and how many gates after _Nest_ing. The last one is removing redundancies as well as nesting.
+If you look at the lines just above these stats you'll see the actual redundant gates removed.
+You can also play around with the TermOrder and the TermType (documented in the Users Manual) to see how they affect these numbers.
+Details of all these variants may be found in: Improving Quantum Algorithms for Quantum Chemistry. You can also search the arXiv for papers by wecker_d for more papers on the subject that use LIQUi|>.
+Sorry, no additional code is being released at this time. The point of the release is to get people to write their own circuits (for academic and research use).
+Ok, I lied about one step. The version of LIQUi|> on GitHub had a bug in the "X" option... exiting before it gave out the statistics. I've fixed that with a new upload to the repository, but you can just leave out the "X" and just hit ^C to exit after the stats come out.
+[I hate when the Markdown editor crashes and I have to start all over... grrrrr]

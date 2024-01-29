@@ -1,0 +1,42 @@
+In debugging Qobj I think we need to have a pretty printer options for them. I have found that I use this function often (i am not suggesting this function just something similar to make an output that is more human readable)
+which for this circuit
+makes the following output
+The same may also be needed for backends.configuration, backend.properties.
+It would be nice if they had an html_repr for pretty jupyter as well.
+I agree. This is why I'm not sure we need backend.configuration or backend.properties with your backend_monitor and backend_overview function.
+@jaygambetta do you mean to add support to the Qobj class for use with the pprint module? If so that should just be adding a __repr__ to the class so pprint() will be able to parse the class and return the data you want (formatted by pprint). Or did you mean add a custom function to take in a qobj and print the overview data (as you outlined in the description?
+I dont mind what we do. I can see some people might not want to overload repr but i am happy if we do this and this would be my vote. The problem is viewing qobjs is painful when its a square of code with no spacing etc. I will let you, @ajavadia and @diego-plan9 decide.
+Hi, If you guys don't mind, I would like to work on this. Please let me know if you have any inputs. I will start by creating something that resembles the example provided by @jaygambetta.
+I think this would be great. @ajavadia, @diego-plan9 and @mtreinish please give some input.
+How human-readable you feel using the as_dict is (using pprint and its options directly), compared to the draft output in the issue description?
+If that is indeed not enough, I'd recommend going with either a separate function or __str__, rather than __repr__ - this has been touched in the past, but they serve different purposes, and I think we should stay close to their original meaning and recommendations:
+Called by the repr() built-in function to compute the “official” string representation of an object. If at all possible, this should look like a valid Python expression that could be used to recreate an object with the same value (given an appropriate environment). If this is not possible, a string of the form <...some useful description...> should be returned. (...)
+This is typically used for debugging, so it is important that the representation is information-rich and unambiguous.
+(or make an effort that preserves those constraints).
+@diego-plan9 I'm inclined towards making a separate function. print_info is the name that I'm using right now. I'm planning on making it as human readable as possible.
+I like the as_dict method too. But it may not make sense to everyone. So I think I'm going to make another function, probably named print_info_raw that can print the dictionary object using pprint.
+I think @diego-plan9 has a good point here.
+The as_dict method is scalable to every instance of QobjItem, where as a specialized method is not. Currently you can do:
+qobj.as_dict(),
+qobj.experiments[0].as_dict(),
+qobj.experiments[0].config.as_dict(),
+and so on for every subelement of qobj.
+and pprint(qobj.as_dict())  looks like this:
+what does the specialized pretty printer add to this in terms of readability?
+@jaygambetta please see if the above meets your needs, and if so close the issue.
+sure we can use this code to do it but then I would still overload the __repr__. This being said i think it is important to also give some information like the number of circuits of the qobj (which cant be done with JSON) so i would make a function for this (like the one i suggested). I don't see why it is simpler to remember to go to dict and then go to print over having a print option (directly). Also, this ties us to qobj being in JSON or having a as_dict whereas if we decide it is better as zip file (only joking on this representation) then the print is the human-readable representation of the qobj that we always support even if we change the internal data representation.
+@jaygambetta The __repr__ that you're asking for was added in #1865.
+Though @nonhermitian I have to say this __repr__ is really weird. I didn't get to review it before it was merged. With that PR, the qobj shows up like this:
+Qobj<2 qubits, 10 circuits, 1024 shots>
+First, this is an abuse of __repr__ just to get it to show in a Jupyter notebook. __repr__ is supposed to give an unambiguous representation of the object.
+Second, what does it mean for a Qobj to have 2 qubits? The qubits can be different per experiment. That n_qubits in the global config is a very specific thing and is supposed to show max_qubits for across all experiments. It is not a required field and some QOBJs may not have it.
+Third, it should be "experiments" not "circuits". That's qobj terminology to encapsulate pulse too.
+Fourth, we've just arbitrarily chosen to show some fields and not others. For example I would argue that the schema version that the qobj was generated for is quite important information.
+it is not unambiguous as you have no idea what is being hidden in the ..., and you cannot tell the shape of the array from this.  To the best of my knowledge, the NumPy developers have not been called out on this issue.
+Yes, that would be n_qubits but n_qubits seemed kind of silly to use, so it is qubits.  The number of qubits is something that an user might find useful to know.  For example, this number is different than the qubit count when compiled for a backend.  I was unaware that it is optional as it is always there.  These JSON schema things would be infinitely more useful if the optional pieces could be tagged as such, rather than having to scroll to the right location in a multi-nested mess to find out what is required.  Regardless, the number of qubits can be computed from the experiments themselves.
+Please take a look at the code in Simple Qobj repr #1865.
+Yes, we did, and that is kind of the whole point.  Instead of returning a whole Qobj as the __repr__, which was a mess, we return minimal info that is useful to the end user, some of which is actually not available easily from the raw Qobj itself, e.g. number of circuits / schedules.  Your point about schema version is spot on, and that should be added.
+not really we made __repr__ a summary. I still want a printer for the reasons above, if you dont want to call it a printer we can call it a function about.
+also while I dont really like the summary lets keep it circuits as this is the unit of them.
+Seems to be less of a coding problem than a question of the team stating a clear spec for the enhancement.
+removing with #4105

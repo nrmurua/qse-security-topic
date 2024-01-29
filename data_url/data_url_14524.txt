@@ -1,0 +1,26 @@
+The following circuit has depth 10:
+However by commuting one of the CNOTs to the left, the depth can be reduced to 9. I don't think there's a pass that currently does this.
+I think this should be easy to write using the DAGDependency since the depth of that DAG is the shortest possible (taking into account all commutation relations). See the template matching passes for examples of how to write a pass utilizing DAGDependency.
+It seems to me that this could be an optimization in the way we convert from DAGDependency to DAGCircuit/QuantumCircuit. The example circuits are represented by equivalent DAGDependencys (see below), but the dagdependency_to_{dagcircuit,circuit} converters both useDAGDependency.get_nodes() to linearize the DAGDependency before outputting as a DAGCircuit or QuantumCircuit, so the output circuits have unchanged depth.
+(This may actually be in some cases a bug, as I don't think https://qiskit.org/documentation/retworkx/apiref/retworkx.PyDAG.nodes.html#retworkx-pydag-nodes , which underlies DAGDependency.get_nodes(), guarantees anything about node order.)
+It seems like the best next steps here are to add a depth-efficient method to linearize a DAGDependency (a breadth-first search similar to DAGCircuit.layers() seems like a good place to start), then update the DAGDependency_to_* converters to use that instead (this will also improve the output of e.g. the TemplateMatching pass, and anytime else we use a DAGDependency).
+From there, we could add a simple TransformationPass ( maybe CommuteForMinimalDepth ) which round-trips between a DAGCircuit and DAGDependency, taking advantage of the commutation-depth-efficient output.
+(Further along, we could likely avoid the overhead of creating a DAGDependency and re-creating the DAGCircuit by performing this same commutation analysis over the input DAGCircuit and making local modifications there, but this might not be necessary in the long term, so updating the converters seems the best place to start.)
+
+
+(This may actually be in some cases a bug, as I don't think https://qiskit.org/documentation/retworkx/apiref/retworkx.PyDAG.nodes.html#retworkx-pydag-nodes , which underlies DAGDependency.get_nodes(), guarantees anything about node order.)
+There's not explicit order guarantee there, but the implementation does return a fixed order and that likely won't ever change (and I'd probably be concerned about backwards compatibility if we did need to change it for some reason). It will always be in order of node indices in the graph. This is nominally insertion order unless there are deletions. If nodes are deleted and then subsequently new nodes are added those original node indices are reused. So for example if you did:
+would return: ["A", "E", "C", "D"]
+But without any node removals it will just be insertion order.
+I was interested in learning and working on this issue. Would it be okay if I took it up?
+I was interested in learning and working on this issue. Would it be okay if I took it up?
+Sure thing! Feel free to reach out with any questions.
+Hey @kdk, so I had an approach which was similar to returning the nodes in a topological order during linearization of the DAGDependency. My approach goes something like this -
+
+It is kind of like a topological sort only, just that for any index i,j with i > j, dep[i] >= dep[j]. This solves the case in the issue. The problems that I am stuck upon are :
+@TheGupta2012 sorry for the long silence here. I think your approach is good. Is it working on the example in this issue?
+Within a set, eg. 0 : {0,4}, does insertion order matter?
+I don't think so. I think just pick one at random. Perhaps an optimization could be to prioritize reducing 2-qubit-gate depth rather than a depth that is a combination of 1- and 2-qubit depths.
+Second, if I am reconstructing a DAGand inserting a node set at dependency level d, then all it's dependencies must be have been resolved earlier ( as I insert in dependency order ). Running this pass for randomized circuits did not assert quantum_info.Operator(original_circ) == quantum_info.Operator(reconstructed_circ) as True. Is the assumption wrong ?
+Can you post a small example where this assertion fails?
+Hello! I'd love to work on this issue, may I be assigned it?

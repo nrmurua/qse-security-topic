@@ -1,0 +1,41 @@
+dbt_unittest.ssmp fails on Darwin arm64 (Apple M1, Monterey 12.4, Homebrew GCC 11.3.0_1) with
+Likewise dbt_tas_unittest.ssmp fails with
+dbm_miniapp.ssmp gives
+This sounds suspicious: malloc: Heap corruption detected, free list is damaged. Can you run Valgrind?
+It seems valgrind is only working with Linux currently and not yet with Darwin (see the discussion here).
+Here are backtrace and variable values for dbt_unittest.ssmp crashing with 2 OMP threads using the current CP2K trunk version:
+The same test run with 1 OMP thread hangs and has to be stopped with Ctrl-c
+The dbt_tas_unittest.ssmp shows the same behaviour.
+Thanks alot for gathering all these backtraces @mkrack!
+To summarize, we've got:
+I might be biased, but I kinda doubt that the DBM is littered with bugs. This code has been out for a couple of months and seems to work fine on x86. So, I'd suspect that something else is corrupting the memory and the DBM is just very sensitive to it.
+@oschuett thanks for the feedback. I agree that this issue is most likely a specific problem of Darwin/arm64, because the CP2K unit tests are running fine under Linux/x86_64 and Linux/arm64 using GCC 11.2 as well as 12.1.
+On the other hand (and under Linux), I found dbm_miniapp.x crashes with and without MPI in certain cases.
+For me it was more likely when customizing the number of OpenMP threads with OMP_NUM_THREADS.
+@hfp, is this with the Intel compiler? With GCC I have not seen any crashes myself.
+@oschuett No, it is with GCC 9.4. I will investigate later and share.
+@mkrack Out of curiosity, this is without LIBXSMM?  The latter is not yet ready for M1.
+@hfp Yes, it is without LIBXSMM. Either OpenBLAS or the framework ACCELERATE from Apple is used which has no impact on the errors described here.
+( As a side-note, we had errors like this on M1 for our executable buffers (JIT). In fact, it's more about BigSur which introduced an own flow for executable buffers that deviates from other OS' like the need to opt-in on a per-thread basis. )
+@mkrack you may need to double-check the LIBXC build options and perhaps avoid JIT. Though, LIBXC has some (optional) support for JIT'ted code (as far as I remember; might be x86-only but not sure).
+@oschuett No, it is with GCC 9.4. I will investigate later and share.
+Although stacksize was set unlimited on the system, I run into a crash with an increased problem size (like below).
+I also noticed an assertion fired for rectangular problem size like 4000x2000. At least for the miniapp, relying on larger arrays/allocations on the stack proofs unreliable.
+( As a side-note, I am interested in a reproducer showing GPU-performance which is competitive with CPU. )
+At least for the miniapp, relying on larger arrays/allocations on the stack proofs unreliable.
+Yes, you might have to move some of the arrays from the stack to the heap.
+I am interested in a reproducer showing GPU-performance which is competitive with CPU.
+The CUDA kernel is still very naive. I want to migrate it to Tensor Cores shortly.
+The CUDA kernel is still very naive. I want to migrate it to Tensor Cores shortly.
+Something else specifically with miniapp might be not representative (but I am not sure). I can see CP2K's Dashboard and some workloads showing DBM/DBT, but I wonder if those are any better/more representative than the miniapp? The miniapp seems to be an order of magnitude behind on GPU compared to running on contemporary CPU(s). If this is not distorted by miniapp's case, Tensor Cores would not be enough.
+Yes, the Miniapp uses 18x18 blocks, which is not representative for the actual applications. Unfortunately, DBM does not yet collect statistics. Generally, it's not uncommon that one of the block sizes is > 100 because for tensor contractions all but one dimensions are flattened.
+I collected the block size stats for RI-HFX_H2O-32.inp in a quick-and-dirty way. As expected, it's very diverse:
+I collected the block size stats for RI-HFX_H2O-32.inp in a quick-and-dirty way. As expected, it's very diverse:
+Click to expand!
+Thanks! Very interesting. This is obviously not the definition of any batch-gemm kind of operation. I am considering a functionality (black box) like your (bucket-)sort to for calling LIBXSMM-kernels but providing it right a way as part of LIBXSMM. At the moment we work on cleaning up the interface of LIBXSMM and potentially split-out some APIs (at least DNN).
+@mkrack since you raised this issues during yesterday's meeting, I took another look.
+Unfortunately, I still don't see a way to make progress. The symptoms are quite confusing and without appropriate tooling it seems impossible to conduct a systematic investigation.
+I also still think it's fairly likely that the problem is not in our code because on x86 all those unit tests pass with Valgrind.
+I guess, our best chance is to find someone who is more familiar with the M1.
+@oschuett Thank you for looking into this issue. It is most likely an Apple specific problem at low level related to malloc and/or the handling of OpenMP locks. I tried some work-arounds without success so far. Let's hope that this issue will be fixed by some future system or compiler updates.
+It seems this has been resolved as dbt_unittest passes in our APPLE M1 test.

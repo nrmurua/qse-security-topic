@@ -1,0 +1,53 @@
+Hey,
+This is related to the recent feature in qutip where you can tensor operators and kets.
+Let me illustrate with an example:
+So far so good, but when computing <x|O|x>, the dims are wrong:
+So here the dims should have been [[2],[2]].
+Hi Arne. Thanks for the issue report. I assume that you expected the result
+Is that right?
+I don't use this feature myself very much, so I haven't thought too deeply about what kind of behavior one would expect in these cases, but I'm guessing that when you multiply different shape it can happen that some dimensions can effectively be "trace out", resulting in a [1] in the dims list. This should of course be trimmed out so that it doesn't appear in the dims list. I've attempted to fix this problem in dba5f1e. Let us know if this helps of if there still are something wrong with how the dims are handled.
+Yeah, that's right. The idea is that you should be able to use Qobj()-algebra in a fashion similar to what you would write symbolically. So if O is an operator on a composite hilbert space H_A x H_B, and |a> is a vector in H_A, then <a|O|a> should be a valid operator on H_B.
+I'm not sure if your fix is right, because for the Qobj x=tensor(qeye(2),basis(2,0)), it actually makes sense that the dims are x.dims=[[2,2],[2,1]], I think.
+This seems right to me...
+This also seems right, because O|x> = (sigmax \otimes sigmaz) (I \otimes |x>) = sigmax \otimes sigmaz |x> is an operator times a ket, still.
+I think this is also right... (I \otimes <x|) (sigmax \otimes sigmaz) = sigmax \otimes <x|sigmaz, should have dimension of operator times bra.
+It's only when computing x.dag()*O*x, or even just x.dag()*x that it becomse wrong. I think this might have to do with how an innerproduct in Qutip results in a Qobj with dims [[1],[1]].. i.e.
+Perhaps the innerproduct should just return a complex number, instead of a Qobj?
+OK, I see. Yes, with dba5f1e sometimes dims entries 1 get trimmed out when they should be kept.. That needs to be fixed. I'm not sure if we want to make Qobj * Qobj return a complex if shape is [1, 1]... Perhaps it's a good idea, but my gut feel tells me that Qobj * Qobj should remain in the "Qobj space".. Need to think some more about this.
+In fa072bc, 1 entries in dims are only stripped out if there is a 1 in the same location in both dims[0] and dims[1]. I think this produces the behavior you described. Still need to think about if basis(2,0).dag()*basis(2,0) should be a Qobj or not.
+Ok, sounds like it should do the right thing. Thanks.
+Yeah, I guess what bra*ket should return is a design question... Personally I think I would lean towards a c-number, i.e., interpreting it as an innerproduct, but there might be other design issues related to changing this that could go quite deep, so I'll leave that to you :)
+I can definitely see the appeal in having bra_ket returning a c-number, but the obvious downside it that one loses the ability to call Qobjs methods and attributes on the result, and maybe not use it as input to some of qutips other functions. But these might be corner cases since the data of bra_ket is after all a c-number so it might not be necessary to represent it with a Qobj. Still I feel hesitant to change this behavior without carefully thinking through the consequences. There is also a function Qobj.overlap that can be used if  a c number result is what one wants.
+Maybe @nonhermitian has some opinion/insights on this issue?
+I would also lean toward a c-number, since mathematically this is what it should be.  But I agree with Robert that some care must be taken before immediately changing the behavior.  Off the top of my head though I can not think of a case where there would be a conflict.
+When it comes to bra*ket results, I would prefer to have a c-number, not an Qobj.
+Why?
+Because typical things like
+won't work.
+Also things like creating a Gramian matrix (as np.matrix or np.array) from a set of quantum states won't work (unless I extract them by [0,0])
+Moreover, Qobj.tr() returns a c-number not a Qobj, and here I would expect to have similar behavior for both tr and inner product.
+Also, things like number of particles or dimensionality have (IMHO) little sense for a 1x1 Qobj.
+I do understand why, from matrix multiplication perspective, scalar products may result in a 1x1 Qobj.
+But in mathematics a vector is not a nx1 matrix, and a scalar product is a function to c-numbers.
+Anyway, I do understand that it's not pure mathematics, and there is implementation and other factors.
+@jrjohansson Do you know any particular use-cases when it is preferable to distinguish between 1x1 Qobj and c-numbers?
+We will probably change this behavior in version 3.  Indeed, the benefits probably out weigh the possible downsides, if any.
+On 2013. 11. 12., at 20:51, Piotr Migdał notifications@github.com wrote:
+When it comes to bra*ket results, I would prefer to have a c-number, not an Qobj.
+Why?
+Because typical things like
+if abs(some_bra * some_ket) > 0.5:
+do_something()
+won't work.
+Also things like creating a Gramian matrix (as np.matrix or np.array) from a set of quantum states won't work (unless I extract them by [0,0])
+Moreover, Qobj.tr() returns a c-number not a Qobj, and here I would expect to have similar behavior for both tr and inner product.
+Also, things like number of particles or dimensionality have (IMHO) little sense for a 1x1 Qobj.
+I do understand why, from matrix multiplication perspective, scalar products may result in a 1x1 Qobj.
+But in mathematics a vector is not a nx1 matrix, and a scalar product is a function to c-numbers.
+Anyway, I do understand that it's not pure mathematics, and there is implementation and other factors.
+@jrjohansson Do you know any particular use-cases when it is preferable to distinguish between 1x1 Qobj and c-numbers?
+—
+Reply to this email directly or view it on GitHub.
+I still vote for keeping it as it is, because I think it makes sense to keep Qobj * Qobj in the space of Qobj. This is now numpy.ndarray, numpy.matrix and scipy,sparse.spmatrix works, and I think that one would expect Qobj to do the same.
+A simple example: imagine you get a Qobj x as an argument to a function, and you do some computation like x.dag() * op * x with some operator op. If x is a ket you will get a Python complex as a result with your suggested behavior. But if x is an operator instead you will get a Qobj. Or if x is a tensor of an operator and a ket (like in the top of this issue) you will get something in between, a reduced dimensionality operator. I think it makes a lot more sense to keep the results of all these cases as Qobj. Then if one for example want to do the trace of the result it should work in all cases, and no special handing of C-numbers would be required since Qobj([1]).tr() would give something reasonable, but (Python complex).tr() would obviously fail.
+The use-case you are interested in, abs(some_bra * some_ket), could easily be implemented in Qobj by implementing the abs special function. I think that would be a better way.

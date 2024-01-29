@@ -1,0 +1,16 @@
+In some cases, the transpiler translates CX gate which is in the supplied target basis ['id', 'rz', 'sx', 'x', 'cx'] using two iSWAP gates. Then, the iSWAPs are replaced again using 2 CX gates leading to one CX being translated into multiple single-qubit and 4 CX gates. This results in a high number of unnecessary CX gates in the transpiled circuit. For example, a SWAP includes 12 CX gates instead of only 3 due to this translation.
+I have attached an example QASM file (sample.txt) which is showing this behavior. I have also included a transpile.log for further investigation if needed. For example, at Line # 740 of the transpile.log, you can see how the CX gate is translated, and at Line # 1565 you can find the SWAP translation to 12 CX gates. An MWE to reproduce the problem is below:
+The gates that are already in the target basis should not be translated in the basis_translator.py.
+Although a more scientific solution would be identifying why a gate in the target basis is getting translated, I can suggest 3 stop-gap solutions that will check if the gate is already in the target basis and will simply ignore the gate.
+Add a check here (https://github.com/Qiskit/qiskit-terra/blob/0950594c8d3e6aed637a47255a8a429b64c69874/qiskit/transpiler/passes/basis/basis_translator.py#L255) as following. This will skip finding equivalence for gates that are already in the target basis.
+Remove translation of gates that are already in the target basis from the return here https://github.com/Qiskit/qiskit-terra/blob/0950594c8d3e6aed637a47255a8a429b64c69874/qiskit/transpiler/passes/basis/basis_translator.py#L247
+Add a check in the _compose_transforms method here https://github.com/Qiskit/qiskit-terra/blob/0950594c8d3e6aed637a47255a8a429b64c69874/qiskit/transpiler/passes/basis/basis_translator.py#L339
+Thanks for investigating this @ashsaki ! Agree this is a bug, and your proposed Solution #1 seems like the best fix. If a gate is already in the basis, there's no need to consider it as a possible translation step (this should speed up the search somewhat as well).
+@kdk @ashsaki Is anybody working on this?
+@kdk @ashsaki Is anybody working on this?
+I am not working on this. I can fork and create a pull request with the proposed solution - 1.
+Sounds good. I ran some simple benchmarks on my local system.
+Is there any update on this? I was hoping to get this bugfix backported and included in the pending 0.17.2 bugfix release (which will be released today or tomorrow, which would require a PR opened ASAP)
+@mtreinish @enavarro51 I have created the pull request. (This is my first PR with Qiskit. Please check if anything is missing).
+@ashsaki awesome, I just reviewed the PR and it lgtm. Thanks for pushing it up.
+@enavarro51 the PR doesn't include explicit test coverage for this issue, which given the time crunch for the 0.17.2 I think is ok (just so we can have the fix backported in time). If you wanted to push a follow up PR adding test cases based on the example here and in #6122  that would be great.

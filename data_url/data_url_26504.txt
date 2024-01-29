@@ -1,0 +1,41 @@
+At first I thought it could be because I was using intel compiler, but ssmp version by intel compiler can also pass the test. Later I suspect it might be from MPI components in intel MKL, such as FFTW and ScaLAPACK, but when I tried to fresh install gcc, open-source FFTW and ScaLAPACK with openBLAS from the toolchain script, the test fails too. I can confirm the failed tests are reproducible. The majority is about wrong results, some CDFT tests aborted complaining "too much data to redistribute" (why??).
+Using commit 0ec9408
+Here is the command to setup the toolchain:
+Heading of the test log which contains the arch file:
+Errors:
+Detailed data about those wrong results:
+The intel version has fewer optional libraries enabled thus the tests will be a bit different (fewer tests), but I can see intel numbers are close to the wrong numbers I get from the gcc version (observe the 0.0002):
+Any ideas what could be wrong?
+Are you using Intel MPI? I have seen a similar issue with the Intel oneAPI stack: #2103.
+I could only get the regtests to pass with a single rank:
+
+@oschuett The machine I am using does not have intelmpi installed. In both cases openmpi is used. Especially for the gcc version all critical libraries are fresh installed by the toolchain script, only standard libraries (such as pthread, m and glibc, which toolchain script does not supply) are provided by the system.
+@zc62 You describe the toolchain build, but how do you run the regression test?
+What is the output of ldd exe/local/cp2k.psmp?
+@mkrack
+I ran the test via a PBS job:
+(Some tests will get timed out if mpiranks=2, so chose a larger value.)
+Output of ldd (to ensure accuracy I submitted a job to the computation node, just like the test, to get the output of ldd):
+Some additional system info:
+@zc62 Try --mpiranks 2 instead of --mpiranks 8.
+@mkrack I chose 8 instead of 2 because if I use 2, some tests will get timed out. Okay I will try it again with latest HEAD and mpiranks=2. Will report later when the test finishes.
+@mkrack The test finally finished. Using --mpiranks 2 for some reason makes the test run very slowly, but wrong results indeed are all gone. Any clue why this is happening? Can any HPC settings affect the performance and results?
+Because I knew there will be a lot of time outs, I increased the time out limit, here is the script:
+I also have additional settings that are not in the script:
+The final result is
+One test exceeds the 7200s time out limit:
+As a reference, here is what ssmp produces:
+and here is that of psmp with --mpiranks 8
+This is not the only abnormal case. I have observed that many tests run by psmp take so much longer time than those run by ssmp, especially with small mpiranks.
+Most of the tests are quite small cases which do not scale beyond two MPI ranks, but there also tests benefitting certainly from more MPI ranks. You run the regression test on 16 CPU cores and if you use 8 instead of 2 MPI ranks with 2 OpenMP threads per MPI rank, then only one test input is run at a time. I guess just one worker is launched? You should check with top, if the cores of the node are all busy when 4 workers are concurrently launched instead. My guess is that you might not have a proper load balance and the 4 workers are using the same set of CPU cores.
+It can harm performance of tests if ranks are pinned in a particular fashion like hindering independent test-jobs/throughput. In general, process affinity shall be aware of thread affinity (OpenMP is used with more than one thread per rank).
+@mkrack
+It turns out if I set --maxtasks 4 (therefore there will be only 1 worker), the behavior of --mpiranks 2 is normal. Took 70 seconds for the originally timed out test.
+However, there are still wrong results if I set more mpiranks (all of them have the correct maxtasks set and correct number of cores requested from the job system such that there is only one worker):
+--mpiranks 4
+--mpiranks 8 (as shown in the original issue)
+--mpiranks 16
+Though I can make the test pass with 2 mpi ranks, the question now is, with these observations, can I reliably use the program with large number of mpi ranks?
+You have a CP2K binary validated for production runs, if all tests pass with 2 MPI ranks and 2 OpenMP threads. As said already, many tests represent tiny systems with loose settings and the reference results refer to runs with 2 MPI ranks. If you change any parameter of a test run including the number of MPI ranks, you might observe numerical deviations in the results listed then as wrong results.
+If you want to check the reliability of your CP2K binary wrt the number of MPI ranks, then use one of the benchmark cases like the water benchmark, e.g. run the H2O-128.inp input with different MPI ranks (and/or OpenMP threads) and compare the total energies.
+Thanks for the clarification.

@@ -1,0 +1,31 @@
+When e.g. scheduling for s7 cclight:
+{ x q2 | y q3 | x q4 }
+i.e. alternating different (independent) rotation gates on qubits with a shared qwg,
+the resource constrained scheduler schedules these as:
+1    x s2
+1    y s3
+1    x s4
+while the x's could have been combined, giving:
+1    x s8
+1    y s3
+with smis s8, {2, 4}
+The problem is in the interface after dependence graph construction (in Init) and the cycle assignment: the order vector which forces a linear traversal through the dependence graph.
+When the cycle assignment would not just linearly traverse but have all currently schedulable gates at its avail, and when it would above all prefer to add more gates from this set to the current cycle, it would prevent the problem above.
+Implementing this would be a quite drastic measure in terms of interface but not in terms of implementation effort except that all use of the order vector should be reviewed: instead of iterating over order, we could iterate over the gates in the circuit, since the gates in the circuit also are in a topological order (from the start) and the scheduling will adjust the gates in circuit order when done (i.e. sort the gates on their cycle attribute).
+The intention is that the public interfaces of scheduler.h are kept unchanged and that is certainly possible as I see it now.
+But the internal interface, i.e. the order vector, is affected, as I explained above.
+Currently the order vector is the interface between the dependence graph+ topological sort at one side
+and the proper scheduling (the code doing the cycle assignments) at the other side; this interface is too ’narrow’,
+i.e. the dependence graph itself (of which the implementation will probably stay unchanged) will have to be exposed
+to the cycle assignment code. The order interface will be replaced by a set of schedulable (’available’) gates/nodes from which
+the cycle assignment picks a next gate according to a strategy (e.g. ASAP/ALAP/rcASAP/rcALAP); this strategy gives
+priority to filling each cycle with as many instructions as possible taken from this set. This gives a new cycle assignment and a new order.
+With the order vector replaced by this, iterating over the circuit after cycle assignment (e.g. in latency compensation) is replaced by
+iterating over the new order (which could also be represented by a vector of gates directly).
+@jvansomeren yes, public interfaces does not need a change. I explored it today and IMHO this can be solved even simpler. this only needs updating the current cycle based on the dependence graph rather then incrementing (ASAP) / decrementing (ALAP) like what is being done at the moment. Topological sorted order is still required as it will make sure that all the ansestors are already scheduled.  But as you said lets dig it a bit deeper before implementation.
+The ’available’ set, the set of schedulable nodes, is defined as:
+What I also see as possibility is to parameterize the scheduler algorithms on forward/backward,
+the ASAP/ASAPrc being forward and the ALAP/ALAPrc being backward. Each time in the comment above where ASAP/ASAPrc is mentioned, this check is done and the corresponding mirror action is taken for backward (ALAP/ALAPrc) scheduling. Also see the forward/backward parameterization of the resource manager's methods. This avoids code duplication.
+And I expect the same issue to occur
+with several CZ's in a row, e.g. 3 of them, of which the first two and the latter two conflict in parallelism but the first and last can be in parallel. The schedule will now be that the CZs are scheduled sequentially in a row and the good schedule will be that the 1st and last are scheduled in parallel, sequentially followed by the 2nd one.
+With measurements, I don't expect to be a problem.

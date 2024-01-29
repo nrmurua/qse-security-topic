@@ -1,0 +1,30 @@
+I wrote a function as below:
+While running it for tensorflow_quantum.layers.PQC, I need to convert a batch of images into these circuit and save them in a list.
+After running it, using @tf.function decorator, I am getting an OperatorNotAllowedInGraphError.
+The error shown as below:
+The error also comes with a comment that "This might indicate you are trying to use an unsupported feature".
+Other information:
+That a general rule of tensorflow: it can't construct a graph from iterating over tensors (which is the unsupported feature). A trivial example is:
+The way around this is to make autograph compatible functions in place of the illegal operations. I.e. convert list comprehensions to tf native (or compatible) functions. In the example I provided this would be as easy as
+In your example, there may be a way to convert that to an autograph-able function (although in my experience, cirq and autograph don't always play nice), but what I recommend doing is simply extracting the gradient code to a new function and only using the tf.function decorator on that (since converting images to circuits is pretty trivial and probably isn't the bottleneck of the code). E.g.
+This leads into a new error as below:
+What leads to this new error?
+The generator is not called within the gradient tape (so it can't find gradients for it). I didn't realize the generator was called before the conversion, which means my initial proposal may not be feasible. You will probably have to write the conversion into autographable code. There are probably several ways to do this. I might do something like: parameterize the encoder circuit with symbols, then resolve the parameters with the images. Not sure if  you could do the exact code below, but this is the direction I would go in (this code runs for me, so it should be auto-graphable):
+Actually, your previous code snippet ran for me! But the error that got raised was because of the fact that generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables)) was not running successfully because gradient_of_generator was resulting in a None value.  gist can be shown here. Other issues related to it. here. It's more related to tensorflow issue. Can you please help me figure this out?
+It's like I said above, "The generator is not called within the gradient tape (so it can't find gradients for it)". You have to call generator(noise, training=True) inside gradient tape if you want gradients for it.
+For example:
+Won't work:
+Will work:
+But I have called the generator in the GradientTape()
+The code snippet is below:
+Because convert_to_circuit(x) is not a differentiable function. As a simple proof of concept (this code will fail because it can't find gradients): (also even if it was differentiable, it probably wouldn't be autographable (because it is list comprehension)).
+Okay. I think the error is in the function convert_to_circuit or tfq.convert_to_tensor (or both). So what can be done in this case? Should I convert the function into autograph-able using tf.autograph.to_graph()?
+Also, how to check whether the function is differentiable?
+Convert to tensor should be differentiable. I'm not sure if there is a general method to check if something is differentiable (I usually just run the op through gradient tape and test). To make convert to circuit differentiable, one way would be to use ControlledPQC and create the circuit before hand and use the generated weights as inputs to the ControlledPQC. There's probably other ways, but that's my go to for custom circuit inputs.
+I think tfq.layers.ControlledPQC must work, but I am having trouble with building the tf.keras.Sequential model for it, as I built with tfq.layers.PQC. Can you give me a sample code for the same (for building a Sequential model with ControlledPQC in it) ?
+As with most things in TFQ, it's probably easiest to use a custom layer (a valuable lesson I learned from @/MichaelBroughton). I made up a discriminator circuit and generator, but the workflow should look something like the code below. This is able to encode the output of the generator using a ControlledPQC (in which the weights of the encoder circuit are controlled by said output). This is structurally combined with the discriminator, whose weights are learned (and managed) by TFQ inside the custom layer. This code produces gradients for me, and is wrappable in a tf.function decorator for speed. Hopefully this is a step in direction of what you are looking for. The losses are copied from: https://www.tensorflow.org/tutorials/generative/dcgan and the other code is mostly Frankenstein-ed from: https://github.com/lockwo/quantum_computation/blob/master/TFQ/RL_QVC/atari_qddqn.py and https://github.com/lockwo/quantum_computation/blob/master/TFQ/RL_QVC/policies.py
+Thank you so much ! Finally it worked for me.
+Lastly, I want to ask something. Is there a reference/paper/research blog where it's mentioned about an upper bound on number of qubits that needs to be considered for calculation/measurement?
+I don't quite understand what you mean by "qubits needed for measurement", could you clarify or give an example? Stuff like VQE has a lot of information because they are constrained by their hamiltonians, but for stuff like a QGAN (or QML systems) you can often just measure 1 qubit.
+I meant like in the above example, we are considering 16 qubits which I don't think is practically possible for gate-based quantum computer to handle. So is there somewhat an upper bound as to what should be maximum number of qubits ? Hope I am clear.
+I see now. That's not a question with a simple answer, there are a ton of factors that go into running stuff on real hardware. 16 qubits is definitely possible, but it depends a lot on depth and number of 2 qubit gates. 16 qubit with depth 1 and no 2 qubit gates will be easy, 16 qubits with 200 qubit gates will not be. There is a decent amount of literature on the limits of hardware (e.g. https://arxiv.org/abs/2202.11045) that might be of interest to you.

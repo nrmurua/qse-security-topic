@@ -1,0 +1,19 @@
+I'm treating this as a bug, because while I was trying to make our code compatible with OpenMP 2 (unfortunate Windows constraints), I saw that we are abusing of uint64_t (and it's variants) types.
+Event though modern 64 bits processors can handle 64 bits without any penalty, there's an extra amount of memory we are wasting because of this, and because we need to be compatible with OpenMP 2, so we can't use unsigned type variables in the for loops being parallelized, I'd recommend thinking very carefully whether our data structures require to be 64 bit unsigned or not.
+For now, there are some dangerous conversions from uint64_t to unsigned (which is promoted to a uint32_t) that we have to fix.
+I saw this code in the new CH simulator, but we have to review all the codebase.
+Fortunately, the compiler warns about this situation, so it's easy to detect and fix.
+This seems to be a good candidate for an introductory issue, and get used to our workflow, so if there's any intrepid contributor who wants to takeover this issue, I'll mentor!
+There should be now warnings about suspicious implicit castings, with possible lost of data.
+Move unsigned index variables to signed and manually convert back from signed to a temporary unsinged that will be finally used as the index, but only in loops being parallelized with OpenMP:
+For example:
+Fix:
+The free function:
+... should transform a negative number to it's corresponding positive number, for example:
+... should print: 0.
+We already dealt with this in the statevector simulator by converting the unsigned 64-bit ints to signed 64-bit explicitly for the open mp loop iterators. Why not just do this to CH too its a simple change and easy to read code unlike the above fixes.
+Eg:
+The only danger is if you are trying to convert an unsigned int larger than 2^63 - 1 (as it will be converted to negative integer) which i don't think is ever the case in our simulators.
+Yep, but this is reducing the number of possible elements in our containters to the half. The only data structure that can be really affected is our Quantum states representation. Are we never going to have one with more than 2^32 states? Then int64_t it's enough and everything is easier, otherwise we are going to need a uint64_t type for our loop counters.
+You could in principle index a 62-qubit statevector with int64_t, while with uint64_t you could index a 63-qubit statevector. You only loose one bit to signed indexing, which corresponds to losing one qubits worth of statespace (and i think you loose one more qubit because of the -1 in (1 << N) - 1 which is why its not 63/64).
+That makes sense. I think we can afford this limitation.

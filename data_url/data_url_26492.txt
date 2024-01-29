@@ -1,0 +1,48 @@
+Hi!
+I am trying building CP2K with HIP (ROCm ver. 5.0):
+After building the toolchain
+./install_cp2k_toolchain.sh --with-mpich --with-elpa=no --with-cosma=no --enable-hip --gpu-ver=Mi50
+I do the make
+make -j 8 ARCH=local_hip VERSION=psmp
+but it fails with
+If I add -D__NO_OFFLOAD_DBM it fails too
+And only if I add -D__NO_OFFLOAD_GRID the building is successful.
+As far as I understand, the problem is connected with the general problem  that hipcc (clang) does not see omp.h
+Please let me know if it is possible to make a full HIP build without switching off those 2 GPU acceleration options?
+NB: Building for CUDA (--enable-cuda) does not show such a problem.
+Best regards,
+Vladimir
+Interesting, I don't have OpenMP in my OFFLOAD flag... Could you check the line
+(this is mine)
+in your local_hip.psmp?
+My OFFLOAD flag looks exactly the same
+However, e.g. in cp2k-2022.1/src/grid/gpu/grid_gpu_task_list.cu there is the following
+And hipcc cannot find omp.h...
+I believe this is a mistake because we're not actually using OpenMP in the grid GPU backend. I'll look into it.
+Well, I can compile in my case... What I see as a difference is that your compile line is
+while I don't have -fopenmp. So I wonder where that flag is coming...
+I believe this is a mistake because we're not actually using OpenMP in the grid GPU backend. I'll look into it.
+The original error is reported in the dbm code too, in particular from dbm_shard.h....
+The original error is reported in the dbm code too, in particular from dbm_shard.h....
+Oh, I missed that. Well, dbm_shard.h does need OpenMP because dbm_shard_t contains a member of type omp_lock_t.
+I can actually compile that code with the following line
+and it compiles. There is something wrong in ROCM installation...
+while I don't have -fopenmp. So I wonder where that flag is coming...
+removing  does not change anything in my case...
+and it compiles. There is something wrong in ROCM installation...
+Please let me know what ROCm version do you use? The latest one?
+I use the following
+I'm using 5.0.2.
+Let me see if I have 5.0.0 somewhere...
+OK, just tried with 5.0.0:
+it compiles. No sure where the problem can be... Maybe you can make a small code (helloworld like) with the include and see if it works?
+@alazzaro , thank you very much!
+I'll try to find what is wrong with my ROCm installation...
+Indeed, our ROCm installation was not complete. After additional dev packages have been installed, building with HIP goes without issues. Excuse me for the confusion and thank you for the help.
+P.S. The GPU performance, however, is far from being proportional to the theoretical peak performance if we compare with the CPU build of CP2K:
+H2O-512 benchmark:
+1 node x (E5-1650v3 with 6 MPI ranks + one Mi50): 144 sec for 1st iteration and 47 sec for the next iterations
+2 nodes x (E5-1650v3 with 6 MPI ranks + one Mi50): 79 sec and 26 sec
+1 node x (2 x EPYC 7662 with 128 MPI ranks): 18 sec and 6 sec
+I'm glad you got it to work!
+For GGA calculations currently only the grid routines (collocate and integrate) can take advantage of GPUs. See https://www.cp2k.org/gpu for more info.

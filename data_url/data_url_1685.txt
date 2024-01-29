@@ -1,0 +1,26 @@
+Is your feature request related to a use case or problem? Please describe.
+A very common pattern in building quantum circuits is to have a bunch of two qubit gates that you want to put into a circuit, and you do this by acting on qubits from two lists
+In a similar way to having on_each we could, for two qubit gates, have zip:
+I'm unsure if this could also be extended across multiple qubit gates (or even be another way to do on_each).
+What is the urgency from your perspective for this issue? Is it blocking important work?
+P2 - we should do it in the next couple of quarters
+What if instead we were to extend on_each to all gates and allow it to accept a sequence of tuples of cirq.Qid for gates that apply to multiple qubits? Then you could do
+This is not quite as concise, but more general since you can construct the sequence in other ways in addition to using parallel lists.
+One problem with this would be that the current implementation of on_each tries to be flexible by "flattening" nested iterables down to a single list of qubits (it seems likely that this was meant to support cirq.X.on_each(q0, q1) and cirq.X.on_each([q0, q1]), but the actual implementation supports any amount of nesting of sequences). It's possible this could be made to work by leaving the last level "unflattened" for multi-qubit gates. Probably would still not be able to support "variadic" gates like measure and wait since they could take one or more qubits.
+Funnily @dabacon had a comment about the tuple version of on_each here a year ago: #2164 (comment)
+I think generalizing on_each to cirq.Gate makes sense, and then we can deprecate Single/Two/ThreeQubitGate classes.
+Discussed on Cirq Cynque:
+Small suggested addendum to the above: copy Single/Two/ThreeQubitGate to cirq.testing when deprecating from gate_features, as unit tests become more cumbersome when you have to redefine these everywhere.
+Deprecating Two/ThreeQubit gate here: #4207. (these can be done independently of the on_each migration; only SingleQubitGate deprecation must happen strictly after on_each migration).
+I'll work on the on_each migration next.
+Added on_each to Gate in #4236.
+Note that deprecating SingleQubitGate will be more troublesome than the others, as things like _CALIBRATION_IRRELEVANT_GATES and NOISE_MODEL_LIKE depend on it.
+For n-qubit gates which of the following do we want to allow (2-qubit examples below that would all represent the same thing):
+A: varargs form gate.on_each([q1, q2], [q3, q4])
+B: explicit form gate.on_each([[q1, q2], [q3, q4]])
+C: flexible form gate.on_each([[[q1, q2], [q3, q4]]]), gate.on_each([[q1, q2], [[[q3, q4]]]]), etc.
+D: flat varargs form: gate.on_each(q1, q2, q3, q4)
+Is B is the primary one we were thinking? Do we want to support any of the others? Do we explicitly want not to support the rest of them?
+I played around with this a while ago but never made a PR, so I just put up my branch in #4262. The changes there support all the options that you listed (I worked on this before the cirq cynque discussion about more limited on_each support).
+Yeah my initial attempt tried to be too general too. I updated #4236 to support option B only. There's lots of tests that show what is supported and what isn't. In particular gate.on_each(zip(list1, list2)) is supported but gate.on_each(*zip(list1, list2)) isn't.
+This is complete: Gate.on_each(zip(qubits_0, qubits_1, ...)) provides the requested support and deprecated classes have been removed.

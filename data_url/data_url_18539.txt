@@ -1,0 +1,36 @@
+Hello, quilc wizards! I've caused an interesting crash on ARM64.
+In order to get quilc to compile on ARM64, I had to hack on cffi a little bit, so perhaps I've screwed something up there? Anyway, when trying to compile "random-ish but architecture-respecting" circuit à la quanvolutional neural networks for running on either of Rigetti's current QPU offerings, I run into "a violent error" (see below). I think it's raised in find-diagonalizer-in-e-basis via compress-instructions-in-context, but I bow to your knowledge and expertise.
+Thanks!
+Would you be able to share a minimal program that reproduces the issue?
+@notmgsk It's not exactly minimal, but here's the circuit that caused the above error in a quil_to_native_quil call. I'll see if I can shrink it down to something that still fails.
+Edit: though of course now that I've posted this, it seems to compile without issue 🤔
+Ok, I've got another failing example, this time on Aspen-11. Some traceback is snipped for brevity &/or IP concerns:
+Python traceback:
+quilc messages:
+Offending (again, long, sorry, I'll try to shorten this) program:
+It's not happening reliably, but the following (deleted as much as I could from the above that didn't touch qubits 32, 45, or 46) crashes most of the time with the same violent error:
+Here's the quilc complaint:
+Is this happening on ARM only?
+I find that this function is pretty sensitive to the underlying numerical libraries. I myself was experimenting with changing the eigenvalue function and was getting the same failures when doing so. Unfortunately I didn't dig deep enough to truly find out why.
+One thing we could try to do is replace this function wholesale with a more direct approach a la #841.
+So far it is only failing on ARM; the compilation succeeds on x86.
+I did see #841 on the issues list when I started this post and thought I'd been scooped! Regarding
+If we want to implement this in QUILC, we'll need to get qz into MAGICL.
+Would that be a long and laborious process?
+Would that be a long and laborious process?
+I think the labor would be measured in hours. It would consist of:
+For another piece of information, here's what happened when trying to run make test in a fresh copy of the QUILC repo on the aforementioned ARM64 machine:
+I'm well and truly flummoxed at this point. Per a suggestion out-of-band, I attempted running the diagonalization routine and comparing both the # attempts and the residuals (largest absolute values of the off-diagonal entries of the matrix $D$ that should be diagonal and of the difference between $ODO^T$ and $UU^T$) for (admittedly slightly modified copy-pasta versions of, so maybe I made a mistake there) the Python and Lisp implementations. The versions yield similar results on all three platforms (my laptop, an x86 box, and the ARM box in question): all tries worked after the first attempt, and all residuals were effectively zero.
+
+
+
+
+I'm sorry this has been such a headache. On the bright side, this is an excellent bug report.
+Here's a super duper lil program that reliably triggers the error:
+Doesn't seem to be related the target architecture (e.g. Aspen or fully connected), or to the target qubits. The only restriction seems to be that the control qubit be the same.
+@notmgsk my hero!  Running on the ARM box with quilc --version = 1.26.0 [2b211bb] & qvm --version = 1.17.2 [8e190b7], here's the error message from quilc -P -S when trying to run the above li'l friend:
+It also makes a number of complaints (16 to be exact) about Complex determinant found for a matrix expected to be (real) orthogonal.
+@genos @notmgsk A colleague has an ARM machine and offered to help debug this. So, hopefully within a week or so we'll have time to dig in and see what we can find.
+@genos @notmgsk Today @stylewarning and I messed around with this. We did not dig down to find the root cause, but we do have a workaround. LAPACK on ARM seems to only get mad over diagonal matrices, which is a trivial case for find-diagonalizer-in-e-basis, so we just check for diagonal matrices and avoid a LAPACK call if this is the case.
+#857
+Thanks so much, @Spin1Half! I'm kind of embarrassed that the fix was so simple but exceedingly grateful for it.

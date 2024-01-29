@@ -1,0 +1,15 @@
+See title. If you construct a circuit containing wait gates and pass through cirq.google.optimized_for_sycamore it removes the delays!
+Thanks for filing - this really looks like a bug.
+** community note **
+If someone wants to pick this up from the community, this gives the opportunity to learn about the sycamore optimizer, the idea of gate sets, decomposition and the wait gate.
+@balopat  So I did some digging and it looks like this bug is happening because the function _rewrite() in merge_single_qubit_gates.py takes the product of all unitaries for all operations to generate the matrix it then passes to the provided synthesizer. I.e.:
+Because protocols.unitary() for a wait operation returns the identity matrix, the wait operation effectively gets erased by this. It looks like what you could do here could be either one of two things:
+I would guess you'd want to do the first option, but it might make sense to add a parameter to MergeSingleQubitGates specifying which strategy to use.
+After thinking about this a little more. A solution on this might want to do something with Tags. It doesn't seem outside the realm of possibility that you may want to preserve particular individual operations, or sub-circuits  for future CircuitOperations, when optimizing that aren't just cirq.WaitGate operations. There maybe could be a NonOptimizableTag or something that optimizers check for to avoid optimizing such operations.
+@BillGatesNephew - thanks for jumping on this! I dug in too a bit - in fact there are 3 places where the WaitGate gets killed:
+Options for 1 and 3:
+@tanujkhattar did this survive the transition to Transformers?
+The recommended method now for optimizing circuits for the sycamore back-end is cirq.optimize_for_target_gateset(circuit, gateset=cg.SycamoreTargetGateset(), context=context)
+The new method supports tagging operations (like wait gates) with a no-compile tag and specifying the no-compile tags in the transformer context. Operations marked with context.tags_to_ignore will not be compiled (and hence removed) by the optimizer.
+I will go ahead and close this issue. Please reopen if you the recommended features are not enough.
+but shouldn't WaitGate be part of the sycamoretargetgateset? It's a gate we can do on sycamore

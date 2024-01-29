@@ -1,0 +1,21 @@
+Currently we are not supporting Tensorflow v1.8+. We'd like to support all versions of TFv1.3 or higher, but for TFv.8, the Strawberry Fields tests do not fully pass.
+I've been trying to narrow down the reason for the tests not passing, but the bug is obscure. The test test_full_loss_channel_on_coherent_states fails unexpectedly for the coherent state 0.375 * exp(i * pi / 3). This same test passes on fine for these arguments on previous versions of tensorflow (and also fine for other arguments), which makes the specific failure hard to track down.
+I've used the debugger to step into Strawberry Fields during execution of this test and determined that the key failure happens in the function strawberryfields.backends.tfbackend.ops.mixed when tf.einsum is called to take the outer product. See the image below for a distilled version:
+
+Weirdly, tf.einsum seems to be ignoring the complex conjugation of the second tensor, causing it to produce an output "density matrix" which has imaginary entries on the diagonal.
+However, if the same code as in the image is run in a fresh python interpreter, tf.einsum works as expected.
+I'm tempted to submit a bug report to Tensorflow, but I cannot reproduce the bug outside of Strawberry Fields. The closest reported issue I could find in Tensorflow is this one: tensorflow/tensorflow#19771. In that issue, the author reports that another TF operation (tf.tensordot) seems to be ignoring a complex conjugation. Not quite the same situation as us, but a similar observation.
+Since this appears to be a bug in TF itself, even if we submit a bug report and it gets fixed, the error will still remain in older TF versions. From our perspective, the best solution is to find an alternative way to take the outer product (e.g., using tf.tensordot or broadcasting) which will be properly supported by all TF versions.
+Adding a little bit more observations here:
+The bug does not show up if we run the tests with the mixed flag. Thus, it really is that one einsum operation that is called within ops.mixed for that one set of parameter values that doesn't seem to work 🤔
+Any updates on this? If it is just one test with some pathological set of parameters, can we skip this test selectively so that StrawberryFields (sbf) runs with the latest TensorFlow (TF)? Many people who want to try sbf might not just want to downgrade their TF. Of course, the smarter thing to do would be to create a virtualenv. But it would be nice to have this resolved if it is not something major.
+It might be more tricky than that, due to the number of breaking changes with each TensorFlow release. For example, there is even an obscure bug in TensorFlow 1.6 + Strawberry Fields (see #45) which doesn't show up in the test suite, but causes any optimization using the TensorFlow backend to crash.
+It is definitely a priority to ensure that SF works with the latest TF version.
+One thing to keep in mind is that TensorFlow 2.0 will either be released this year, or in some sort of beta. TensorFlow 2.0 is planned to be another significant break with TF 1.X, large enough that the TensorFlow devs are planning a migration tool to convert TF 1.X codebases to 2.0. With this change, it seems that they will start following semantic versioning practices properly with the 2.0 release, which means that it may be a lot easier to retain compatibility for versions 2.x.
+So, with limited resources, probably the best approach would be
+Thanks, @josh146 for the explanation. It seems that waiting for TF 2.0 would be better.
+Btw, TF is still not compatible with Python 3.7 (read the discussion here). So, someone having py3.7 will face this error when trying to install SBF:
+I had to spend some time Googling this and finally got SBF to work after making a py3.6 conda environment. Should this be highlighted somewhere? For someone who tries to install SBF with py3.7?
+I guess this is already addressed in #35
+Yes, good point. I've been keeping my eye on that issue, hoping that TF Python 3.7 compatibility would happen much faster, but since it stills looks like a work in progress, I will update the readme and installation page in the docs to mention this.
+🎆

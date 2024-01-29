@@ -1,0 +1,72 @@
+When I measure traces with spectrum analyzer, oscilloscope, vna and etc.
+The number of acquired points for one measurement can be pretty much huge.
+Consequently, the ".dB" file size can be as big as ~10GB.
+If the size of ".dB" file is that big, it is difficult to handle the data.
+It takes some time to plot it on plottr or on Jupyter using xarray (and I guess with any python plotting program),
+(It took a few hours to plot it. I think loading the data takes more time rather than plotting it.)
+It is also difficult to do analysis on that data.
+Is there any solution for this?
+In the past, we recorded the data in binary format. Do you have this kind of function inside Qcodes?
+Hello @erikawa-e ,
+Thank you for your question. On qcodes dataset, an export method is present. It will help you export the data in the required format. Please have a look at the documentation here https://qcodes.github.io/Qcodes/api/dataset/data_set.html?#qcodes.dataset.data_set.DataSet.export for more details. Do let us know if this help achieve your goal.
+Hi Akshita07,
+Thank you so much for your help.
+The link you gave me is how to export the data from .dB file to another format.
+However, my problem is that the .dB file which was acquired during the experiments is too huge to be handled.
+It gonna take hours to convert .dB file to another format. It will just add up another problem by doing so.
+Sorry if I misunderstood what you want to try to explain. If this is the case, please correct me.
+Is it possible to record the data in binary format?
+And to import the data from the binary format when analyzing it?
+Or probably I am trying to analyze the data in a wrong way?
+Does it make any sense that I should wait hours to import data (.dB file) on python?
+Hi @erikawa-e ,
+Currently with Qcodes, data is stored in a .db file for sure. But what I meant by my above comment is doing something like this:
+In this case, as soon as a dataset is generated it is exported to the netcdf format. Then you can use it for the analysis purposes.
+But, if you mean to completely bypass the generation of .db file then that is not possible currently with Qcodes. There is a draft PR here #3094 which will enable saving data to other formats directly.
+Hi Akshita07,
+Thank you!
+I see.
+It will have a look at that..
+Does it support binary format or some compressed file format?
+If it does not support any of them, do you mind letting me know where I should work on adding codes for "export_type=binary"?
+(Sorry if it is already inside some of the links you shared...)
+@erikawa-e
+I think there is a bit of misunderstanding here.
+Your problem is big database files that take a lot of time to be loaded. Can I ask how many datasets are inside that database? How are the datasets? I mean, how many different things you can plot in one dataset? How many points do you usually have for each plot?
+I have a database of 1.5 GB, and it takes 5 to 10 seconds to be loaded in plottr for the first time (next loads could take shorter time), and loading each dataset to plot also takes a few seconds.
+So I think we need a proper benchmark of how slow your database is.
+Can I ask what is your computer specs (cpu, ram, ssd or hdd)?
+To answer your questions:
+There is no function in qcodes to record data in a binary format. In qcodes, the database is only generated as a sqlite database. On top of that, we have a few functions to export individual datasets in other formats like netcdf or csv. So, there is no choice other than the sqlite database to contain datasets. And it could grow large if the same database is used for holding new datasets over time.
+The method @Akshita07 introduced only deal with individual datasets, so it doesn't replace the need for having the sqlite database as a container. Then, you don't probably need to save those in binary format because they should be small enough.
+I think you probably need to create more than one database to not let your database grow very large to difficult to plot, load, etc., and organize them in a proper way.
+@FarBo
+Thank you so much for your help.
+I have a database of 1.5 GB, and it takes 5 to 10 seconds to be loaded in plottr for the first time (next loads could take shorter time), and loading each dataset to plot also takes a few seconds.
+Really? For me in order to plot the database of ~2GB, with plottr it took 10 minutes. (Please see the attached file for more details. file_huge.pdf)
+So there might be something wrong with my computer... (I also attached the specs of the computer. I believe that it is not so bad but I do not have a video card..)
+Here I attached the code that I used on Jupyter.
+So actually, the limiting factor is "to_xarray_dataset".
+The size of huge_file.db is around 2GB. This 2GB is mainly from the measurement id1. The file sizes for the other measurements in huge_file.db are very small compared to id1. (The number of points in id1 is 31161558*2 as you can also see in the attached file.)
+I installed Qcodes and python on another computer (Mac). There I have the same problem...
+@erikawa-e
+No worries.
+So the bottleneck is the first dataset with that huge number of points. My database doesn't have a dataset with those many points.
+As you can see, loading that dataset data=load_by_id(1) does not take too much time. The xarray part takes time because it needs to load the data from disk and convert it to xarray. This is similar to plotting, which also takes time because of reading all those data to plot. Once the data is loaded from disk, then it should be fast to process like what you see here Xarraydata1.vna_vna_s21_magnitude.plot().
+Your PC specs is OK except your drive. HDDs are extremely slow compared to SDDs. When you have a dataset with those many points, then HDD shows its slowness even more.
+I would suggest to decrease the number of points in the dataset, if possible, to gain some performance.
+You can open the taskbar and monitor HDD usage while it is loading that dataset. I think HDD usage should be 100% in the load time. If so, the other suggestion is to have an SSD and use that for dealing for databases that have datasets with many points. I expcet you can see a substantial improvement in the load time.
+@FarBo
+Thanks.
+Actually, I have both SSD and HDD on the computer as you can see in the previously attached file. The C drive is SSD and the .db files are located there.
+So I am afraid that there is no way to shorten the xarray part...
+My initial plan of using binary does not help at all.
+sigh..
+But thanks a lot to @FarBo @Akshita07 in any way.
+I see, you have an SSD too.
+For future measurements, you could consider reducing number of points, if possible.
+also, you can still export such datasets in xarray right after the measurement:
+xr_dataset = dataset.to_xarray_dataset()
+I think this way, you may save some time.
+Unfortunately, we do not have a native qcodes export to binary format.
+Let us know if you have any other question, or else please consider closing the issue.

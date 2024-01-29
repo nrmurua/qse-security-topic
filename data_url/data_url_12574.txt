@@ -1,0 +1,51 @@
+Hi,
+We are running simple benchmark on multiple simulators and both Cirq and TFQ gave us almost exactly the same performance results, so we assumed TFQ is using Cirq's simulator.
+Question is: how to turn on qsim to run with TFQ, instead Cirq's simulator?
+We are using CPU only machine (no GPU's/TPU's) if that matters.
+Source code of QFT benchmark is here:
+And results looks something like this:
+
+TFQ is temporary removed from benchmark as it shows exactly the same performance. We wish to turn on TFQ's internal simulator (qsim?) ans see how it performs compared to others.
+Thanks!
+I forgot to show versions:
+qsim is enabled by default what you are running was using qsim, but there are a couple of things going on here:
+You are using layers which have a bunch of convenience code in place that do make things much slower. For example inside of you're timing benchmark you are converting a cirq.Circuit into a tf.Tensor everytime which isn't necessary. This goes against the common workflow in TF and TFQ of calling tf._convert_to_tensor or tfq.convert_to_tensor once then simulating and operating on the tensor many times. To improve this I would recommend you call convert_to_tensor on your input circuit before it gets timed.
+TFQ Wasn't really designed for single circuit simulation speed. It was designed for many circuit simulation speed. We didn't do a lot of single circuit testing so it's likely not super optimized in that regard.
+You are most likely operating in eager mode (slower than graph mode).
+Another possible thing that is hurting TFQ is that you are changing the qubit numbers quite drastically which will cause tf.function retracing to occur also slowing things down.
+In the past I remember looking into how fast our parsing code was and I remember it not being all that great.
+My hunch is that 2. 4. and 5. are hurting TFQ the most. Could you change the benchmark circuit to something with the same number of qubits, but far fewer total gates and see what happens ? That would tell us if it's 5. or not.
+As a final note, if you are more interested in raw qsim performance for single circuits instead of batch circuit performance, the original qsim here ( https://github.com/quantumlib/qsim ) employs a parallelization scheme that is best suited for single circuits.
+@MichaelBroughton thank you for prompt answer.
+Problem was that TFQ and Cirq show (almost) exactly the same performance with any number of qubits, so it look like results are coming from the same simulator. This is what we have when running (the same benchmark code) on Google Cloud n1-standard-8 :
+
+My guess is that slight difference comes from different handling/processing of results, not from simulation algorithm itself.
+So, I still believe that the two use the same simulation algorithm (or the same simulator).
+However, as this is my first contact with TFQ, must be I am doing something wrong.
+Would you be kind to show me how to properly run simulation "TFQ way"?
+Goal of our benchmark is to compare simulator algorithms, so we wish to simply run simulation with 1...N qubits on different simulators and measure time.
+Thanks!
+OK. I took the code you pasted and made some quick changes:
+I've opted to simulate the state since simulating the state and then sampling is testing more moving parts than necessary. I also switched to seconds since ms seems like overkill.
+TFQ was designed to be fast for BATCHES of circuits not a SINGLE circuit. So when we run our simulator in your example, here is roughly what is happening in TFQ:
+This is done for each circuit in a batch of circuits that gets fed into TFQ, if the batch is of size 1 we wouldn't expect much boost.
+in Cirq the state is represented by a numpy array and to simulate a circuit the following things are done:
+We see the speed is around 1:1 since TFQ has all these extra steps, fusing doesn't cut down the gate count and since numpy array operations break down into fast C code. This seems fine. In this simulation and yours qsim IS being used.
+
+Now lets modify your code to use multiple values in placeholders in a circuit and see how TFQ does:
+
+Here's a nice 7-10x speed boost on simulating your problem with multiple different parameter values requiring BATCH simulation (though it isn't exactly a qft anymore, but that doesn't affect simulation time here).
+Feel free to try these with your qft circuits and the supremacy style circuits. You will see a drastic improvement on the supremacy style circuits since we can fuse a few more gates. This is where TFQ shines. Batches of circuits.
+Based on your issue title, if what you are after is the best performing version of qsim for a SINGLE circuit you might want to pip install qsimcirq and then do this:
+
+Which will give a 7-10x boost for a single circuit.
+So in summary: TFQ is at it's fastest on BATCHES of circuits and regular qsim is at it's fastest for SINGLE circuits. If you want an apples to apples comparison of simulation for SINGLE circuits I would recommend you use qsimcirq if you want to compare batch simulation speed I would recommend you use TFQ. The behavior you are running into in your benchmarks makes sense because your benchmarks are for SINGLE circuits and qsimcirq is better than TFQ for single circuits.
+Does this clear things up ?
+@MichaelBroughton thank you very much for detailed clarification! <3
+Benchmark repository is now public and  located here: https://github.com/quantastica/quantum-simulator-benchmark
+So you can track results if you are interested.
+We will add qsimcirq and hopefully more simulators (and more circuits, not only QFT).
+I'm closing this issue now, thank you!
+P.S. looks like there is no translation from Cirq to qsim for frequently used gates like Measure (!?) and CPhase.
+We'll try to use qsim native input format instead converting from cirq, but that requires us to focus and spend time on this, so we'll skip adding both TFQ and qsim to benchmark for now.
+OK, added qsim to benchmark, conversation is moved here: quantumlib/qsim#88

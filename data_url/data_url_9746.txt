@@ -1,0 +1,18 @@
+Right now this can be done with
+but it would be nice to be able to just do
+and avoid the creation and copy of the intermediate file.
+Alternatively, extend .to_file() to accept optional fd where it would write instead of to a SpooledTemporaryFile.
+I like the explicitness, plus it avoids the weirdness of
+though of course we do use that pattern everywhere.
+One last thing, I might expect into_file to not seek back to the beginning, while to_file I would expect the current position to be the start.
+Nothing that documentation cannot solve but 🤷
+Relevant to this discussion, worth noting that unlike BQM.to_file(), json.dump does not seek back to the beginning. So
+prints 8. Whereas
+prints 0.
+On the one hand this inconsistency bothers me. On the other hand, we use it for nice syntax like https://github.com/dwavesystems/dwave-cloud-client/blob/b0d3182507d6309d3e531cf95f5b8e90ee6c06f3/dwave/cloud/coders.py#L397 which is nicer than needing to do
+before upload.
+This becomes especially relevant soon for when we add the dual of #958, CQM.to_lp_file() which I would likely expect to also seek back to the beginning.
+It's perfectly consistent, IMO.
+json.dump takes an object and a file, and writes the object to that file. No reason it should rewind. Actually, I see a lot of reasons not to rewind -- user wants to get object length just dumped, user wants to write after the object, f.e. next object or next binary file section...
+bqm.to_file is bqm's method that merely returns a "file view" into the bqm's binary representation (according to our serialization format) -- it does not actually write to disk/file, at least according to its API (the fact it might use disk for temporary storage is an implementation detail). I don't see a reason to start at the end. Actually, as your example shows, that would mean every time user wants to read the bqm, they need to rewind!
+In light of the issue at hand, I still think naming this method as_file (as initially proposed in #599) would minimize confusion with a dump method (that we might introduce to mean into_file).

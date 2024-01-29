@@ -1,0 +1,43 @@
+Please apologize the length of this bug report in advance, but I am trying to provide as much information as possible.
+To provide some context: I am trying to compile Aer from source on a compute server to allow multiple users to access the same master-branch installation from a centrally managed virtualenv. While doing so I ran into the problem of not being able to produce a correctly statically linked wheel.
+Specifically this means that I log in onto a login node, create a virtualenv there and expect all computations on the respective compute nodes to work normally.
+I am using the following Python script for testing:
+and the following bash script for testing the execution on the compute nodes:
+In order to explain the problem at hand I will step through a number of different scenarios and explain the results which I have achieved with each:
+Starting from a clean virtualenv and running the above pip installation command everything works fine.
+On the login node I obtain:
+And on the compute nodes:
+When trying to compile Aer manually from master everything works as expected on the login node (i.e. same as above) but on the compute node I obtain the following error:
+This was to be expected as the first line of the bash script (locate libopenblas.so.0) does not return anything which shows that OpenBLAS cannot be found on the compute nodes (while it is available normally on the login node).
+Having talked to the system administrator, we agreed that it would be best if, thus, we can compile Aer with static linking (as this appears to work with the stable installation using pip install which ships a Python wheel bundled with libopenblas).
+This attempt causes even the installation on the login node to break with the following error:
+I then found out about this patch: https://github.com/Qiskit/qiskit-aer/blob/master/cmake/FindBLAS.cmake.fix-static-linking
+But after applying that and trying the same -DSTATIC_LINKING=True compilation as above, I still obtain the same error.
+The following summarizes the steps necessary to reproduce this issue. However, your mileage may vary as I have tried to reproduce this on my Fedora laptop where I am unable to do so. Both of the last two steps do not result in the problem but I am not sure how to verify that this is because the static linking was successful or whether it falls back to dynamic linking.
+The Fedora laptop specs are:
+I would expect to be able to compile a statically linked Python wheel of Aer
+I am at a loss to be honest, which is why I came here 🙂
+We build statically linked wheels for release on pypi. We use the cibuildwheel tool to automate this in CI. But the basic workflow it uses is:
+The auditwheel repair command there vendors the shared libs into the binary. Although it may only work if the system has a version of system libs (like glibc) that is compatible with a manylinux python packaging spec (which is the other thing cibuildwheel does for us, it runs everything in the manylinux docker images).
+Thanks a lot for the information! I went ahead and tried it out and as slightly anticipated by your comment about auditwheel it complains about the versions of the system libs:
+From reading a little bit through auditwheels Readme it doesn't seem like there is anything I can do about this unless I have access to older versions of these libraries, correct?
+Under the hood we use manylinux2010 to build the linux wheels. Not sure if you can in your system, but maybe you can follow the workflow @mtreinish described, using the manylinux2010 docker image.
+On this compute server where I would like to compile Aer I do not have access to docker. And I would like to avoid having to compile this on a different system just to push the wheel onto the server every time I want to update it.
+I checked the PEPs for manylinux1, manylinux2010 and manylinux2014 for the maximally allowed system library versions. But it appears as though none of them will support what is available on the server. The output of auditwheel --verbose repair *.whl confirms this as it shows incompatibility of all three manylinux* variants.
+Is there no way of statically linking the libraries into this specific wheel? It doesn't need to support any platform but just the compute nodes which should be identical to the login node (but apparantly missing the libraries because otherwise the dynamic linking should work...)
+Can you compile with static_linking enabled (but forget about FindBLAS.cmake.fix-static-linking) and then check for dependency on shared libraries (ldd qiskit/providers/aer/backends/controller_wrappers*.so under _skbuild/**YOUR_OS**/cmake-install/)?
+Here is the ouptut of what you described:
+So I took a closer look at auditwheel as it appeared odd to me that it shouldn't be possible to restrict the platform to something else than manylinux*. Turns out I must have overlooked the --plat argument to the repair command earlier.
+Anyways, I believe that this should work. However, now I need to get patchelf to work on the server. I will update once that is done and hopefully be able to close this issue then 👍
+ok, let us know. In any case, not sure if the problem comes from openblas as it seems to be correctly linked statically. However, it seems there is a missing gfortran dependency. Maybe it works adding -static-libgfortran.
+Actually scratch the above. I did not notice that auditwheel stored the new wheel in a different path. Actually installing the wheel under wheelhouse/... still results in a problem however:
+When I compile with python setup.py bdist_wheel -- -DSTATIC_LINKING=True -DCMAKE_CXX_FLAGS="-static-libgfortran" -- -j16 I still obtain the same inconsistency as above but I can finally verify that some of the libraries are correctly included in the wheel:
+However, I don't understand why libopenblas does not show up there...
+And now for a final test with python setup.py bdist_wheel -- -- -j16 and subsequent auditwheel repair --plat linux_x86_64 dist/qiskit_aer*.whl I again obtain the inconsistency error but this time all libraries appear to show up correctly inside the wheel:
+Come to think of it, now that I see this, I probably understand that in the previous case those libraries were not included since the static linking directly incorporated these libraries into the wrapper .so...
+Okay I think I found the solution. The same happened to another user of auditwheel here: pypa/auditwheel#103
+As he outlines in the first comment this patch from patchelf (NixOS/patchelf#85) fixes this but the Ubuntu version is still fixed at 0.9 (prior to that PR).
+I will compile patchelf from source and try again. Should this finally work I will close this issue without further comment.
+Please excuse the excessive commenting/spamming in the past hour...
+I'm actually going to reopen this. I think this is a potentially common use case and we should have something in our CONTRIBUTING.md about building a statically linked wheel from master.
+@mtreinish I opened a PR with to update CONTRIBUTING.md and I only just noticed that you were not automatically requested as a reviewer (thus, the ping 😉)

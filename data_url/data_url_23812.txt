@@ -1,0 +1,34 @@
+When I ran a loop it runs, I had some troubles with live plotting so I decides to turn that off.
+when the loop finished I got the error:
+both the measurement thread and datamanager thread did not respond.
+I do not yet know if I can reproduce this, but that isn't the purpouse of this issue.
+looking at the datafile after this crash it is mostly empty (it contains even less than when the liveplotting stopped working)
+This means that the data that was measured was not saved to disk properly. When looking at the data file during the measurement, it constantly gets created and deleted.
+I don't think that is a good idea. I think that all data should always immediately be written to disk. If QCodes crashes for whatever reason, then all data that was measured is still available.
+I get very nervous from the fact that qcodes erases measurement data from disk during the measurement.
+In our measurements with qtlab, every measurement creates a datafile, and as the measurement progresses, the new data simply gets appended to the file. This is, I think, much more foolproof.
+This is a sersious issue to me. In the hdf5 format we use we also open a file and constantly resize our arrays and append extra values. That seems to me the only sensible way, especially as things like AWG's have a tendency to crash during long overnight sweeps.
+Strange - I did make every attempt to code it exactly as you describe - data should be written out every second, and just by appending the new data whenever possible. It sounds like my GNUPlotFormatter (which I haven't gotten around to testing yet 😿 ) is getting confused about when it's got appendable updates and when it needs to rewrite the whole file... which would also explain why the error rate was growing so much toward the end of your sweeps in #101.
+Should it ever rewrite the entire file? that seems like a dangerous thing to do.
+I found out that there seems to be some critical dataset size. If the size grows over that, qcodes will crash and the dataset is incomplete.
+If data arrives out of order it would trigger a rewrite, because it doesn't know how far back to go to insert the new data points. But given that the data really should be in order, if for some reason it occasionally gets out of order, perhaps the right thing to do (for a text-based format like this) is only write what you can with no gaps, and hold on to the post-gap data. Then there's a question of what to do with unknown-length data like adaptive sweeps or broken inner loops ( #75 )...
+@AdriaanRol more reasons to switch to HDF5 😄  I assume it's got full random access built in so we wouldn't need to worry about any of this? Have you started working on that yet?
+@alexcjohnson , I started with playing around with a dummy instrument a bit yesterday but haven't really gotten anywhere yet. I think I'll give this ago during the weekend.
+The datastoring that I currently use is tightly intertwined with the data taking loop, something which may not be desired/possible when using the qcodes Loop so I'll have to see if I need can stick to just a formatter or need to enter the internals of the loop.
+Your comment on the nature of this bug made me realize that the assumption that data comes in in order does not hold in the Loop (maybe we should enforce this?) I can use preallocation and then writing the data to where it belongs but I feel that that is not universally a good idea. In fact I went with resizing+appending in our case because 1. it works well with 1D-scans that are interupted because you have the feature you were looking for and 2. in the case of adaptive measurements you do not know beforehand how many datapoints you will get.
+On the other hand preallocation seems the easiest way to facilitate plotting of 2D scans.
+Expect to have a pull-request soon (~around the weekend) in which I can give some examples and want some input in the various design decisions that need to be made.
+I also want to include meta-data, I am curious to see what @MerlinSmiles made in #107 and how it compares to the snapshot saving I am doing in our Measurement Control
+just spent a while watching data files grow while debugging foreground and no-data-manager loops, and I think I know what's going on here - it's not that data is arriving out of order, but we write partial lines sometimes - like we write the setpoint without the measured values, then we go back and write the measured values later. That should be quick to fix. Later we can think about out-of-order acquisition, which doesn't seem common for experimental data but could certainly happen in parallel simulations.
+This might be related to (in format.py)
+In my case fn and existing_files have different format normalize slashes again?
+Those are the same... one is just the repr of the other. I've fixed this issue, just writing some tests now so I can help @AdriaanRol with formatters per #62
+Hm, ok, so it is a different issue:
+My files are continously rewritten, and I see a blinking file size in the explorer...
+@MerlinSmiles if you want this to stop happening while I'm writing tests you can grab the formatter-fix branch
+Ah, thanks
+@alexcjohnson
+Just tried this, and FYI I get:
+I'll revert this locally again and wait for it :)
+ah ok, sorry... you can try it now if you want. Still going to be writing tests for a while...
+@damazter I'm pretty sure this is fixed by #148 but feel free to reopen if you see these issues again.

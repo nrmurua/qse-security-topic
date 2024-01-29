@@ -1,0 +1,22 @@
+{'qiskit-terra': '0.17.1', 'qiskit-aer': '0.8.2', 'qiskit-ignis': '0.6.0', 'qiskit-ibmq-provider': '0.12.3', 'qiskit-aqua': '0.9.1', 'qiskit': '0.25.3', 'qiskit-nature': None, 'qiskit-finance': None, 'qiskit-optimization': None, 'qiskit-machine-learning': None}
+Python 3.9.4
+Windows 10 fully updated
+When coupling restrictions are present (e.g. on FakeAthens() backend), tranpile will compile cx(0,2) to
+
+which is not correct: The back swap is optimized out (Edit 2021-06-24) by reordering of qubits but the reordering is not documented in .qasm() output if no measurements are present, see comment below.
+This extends to more complex gates: When restricted to basis gates rz, sx, x, cx (the IBM standard) , transpile will generate a wrong circuit for the ccx / toffoli gate when coupling restrictions are also present (probably because of missing back swaps when transpiling cx(0,2)). Without coupling restrictions transpile will generate the expected result as shown e.g. in exercise 1 of IBM Quantum Challenge 2021.
+With coupling restrictions present the resulting circuit is not equivalent to ccx, it cannot even be mapped using any base permutation or any change of base at all. This can be shown by comparing the eigenvalues of the unitary matrices of ccx (which are [1,1,1,1,1,1,1, -1]) and of the resulting circuit, which are not equivalent by a phase factor.
+The problem is probably also present with other controlled gates which require non-direct-neighbour coupling. The issue seems to creep in when non-neighbouring cx gates are replaced by swaps and cx.
+I have provided a jupyter notebook to demonstrate the issue (see below / zip attachment). Choosing option 'C' will show the expected correct result transpiled without coupling restraints. Options 'F' and 'S' will demonstrate the issue, using either FakeAthens() as backend (which is restrained) or the aer_simulator using basis_gates and coupling_map restrictions as FakeAthens() has.
+Please note that I had to remove unused ancilla qubits from the transpile result but you will immediately verify by comparing the circuits before and after cleaning that no error is introduced there.
+Qiskit_TranspileCCX_CouplingRestraints.zip
+transpile should either add the missing back swap for cx(0,2) etc. and unroll ccx correctly using rz, sx, x, cx also in the presence of coupling restrictions, resulting in an unitary matrix that is equivalent to the textbook representation of the Toffoli unitary matrix, and/or document qubit renumbering in .qasm() output even if no measurements are present.
+none.
+Thanks for reporting this @Costor ! I believe this is a duplicate of #4608 (which has a draft pull request to address the issue #5280 .)
+yes #5280 looks very close (I can't judge on 4608).
+However I found that the issue is probably due another cause: In order to save gates transpile reorders / renumbers qubits. However this reordering information is not reflected in the qasm-code if there are no measurement statements in the original circuit - which is the case if the original circuit contains the .save_unitary() statement.
+So in that case the renumbering information is lost from the transpiled circuit which makes the resulting gates sequence / qasm code not reflect the original circuit, less the resulting unitary matrix.
+This real life example shows the effect:
+
+Transpile has optimized away the swap back and instead renumbered the qubits. Without that information the sequence of gates does not represent the original circuit.
+So I propose that the qasm() of the transpiled circuit should contain the reordering information even if no measurements are present.

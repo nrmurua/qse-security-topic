@@ -1,0 +1,70 @@
+Currently attempting to run the QSVM algorithm on a real machine, adapted from this tutorial. As in this thread, I can not get the algorithm to work on a real backend if I use the default sizes of the datasets. It throws KeyError: 0, as in the original thread. It works if I use 4 and 2 as the sizes of the training and test inputs, respectively. I tried setting skip_qobj_validation=False as recommended, but that did not help. Additionally, if I change the feature dimension to 3, the algorithm appears to run, but once it terminates I get a value error. I am using ibmqx2 as the backend. I attempted to use ibmq_16_melbourne, but the job seems to take much much longer to execute (took around 25 minutes to execute each job, of which there were around 2-3 sent by the algorithm). By the way, everything works as expected on qasm_simulator.
+Simply run the tutorial linked above, with the parameters I specified above.
+Job should be sent and executed, and the program should complete as expected on a real backend, regardless of input size and feature dimension.
+It appears to be a problem with how qiskit handles sending many circuits at once in a job (4/2 input sizes sends approx. 27 circuits per job, while the default 20/10 input sizes sends approx. 760). I'm not sure why I am getting a value error when using 3 dimensional feature space.
+since you have the job id, can you try to retrieve it from qiskit and then check its status?
+on the other hand, what is the error when you set the feature dimension to 3?
+Regarding the number of circuits, each device has a field max_experiments which tells the upper bound of the maximum number of circuits. if the number of circuits you would like to submit exceeds such number, internally we split your circuits into multiple jobs. (and you should see all the jobs id in the console) (e.g., the max_experiments on ibmqx2 is 75)
+No job id is created. The KeyError: 0 exception is sent before the job is created. Here is the log (feature dim 2, input size 20/10):
+KeyError                                  Traceback (most recent call last)
+ in 
+7 quantum_instance = QuantumInstance(backend, shots=1024, seed=seed, seed_transpiler=seed)
+8
+----> 9 result = qsvm.run(quantum_instance)
+10
+11 print("testing success ratio: {}".format(result['testing_accuracy']))
+~\Anaconda3\envs\qiskitenv\lib\site-packages\qiskit\aqua\algorithms\quantum_algorithm.py in run(self, quantum_instance, **kwargs)
+62                 quantum_instance.set_config(**kwargs)
+63             self._quantum_instance = quantum_instance
+---> 64         return self._run()
+65
+66     @AbstractMethod
+~\Anaconda3\envs\qiskitenv\lib\site-packages\qiskit\aqua\algorithms\many_sample\qsvm\qsvm.py in _run(self)
+306
+307     def _run(self):
+--> 308         return self.instance.run()
+309
+310     @Property
+~\Anaconda3\envs\qiskitenv\lib\site-packages\qiskit\aqua\algorithms\many_sample\qsvm_qsvm_binary.py in run(self)
+127     def run(self):
+128         """Put the train, test, predict together."""
+--> 129         self.train(self._qalgo.training_dataset[0], self._qalgo.training_dataset[1])
+130         if self._qalgo.test_dataset is not None:
+131             self.test(self._qalgo.test_dataset[0], self._qalgo.test_dataset[1])
+~\Anaconda3\envs\qiskitenv\lib\site-packages\qiskit\aqua\algorithms\many_sample\qsvm_qsvm_binary.py in train(self, data, labels)
+71         """
+72         scaling = 1.0 if self._qalgo.quantum_instance.is_statevector else None
+---> 73         kernel_matrix = self._qalgo.construct_kernel_matrix(data)
+74         labels = labels * 2 - 1  # map label from 0 --> -1 and 1 --> 1
+75         labels = labels.astype(np.float)
+~\Anaconda3\envs\qiskitenv\lib\site-packages\qiskit\aqua\algorithms\many_sample\qsvm\qsvm.py in construct_kernel_matrix(self, x1_vec, x2_vec, quantum_instance)
+243                                     num_processes=aqua_globals.num_processes)
+244
+--> 245             results = self.quantum_instance.execute(circuits)
+246
+247             if logger.isEnabledFor(logging.DEBUG):
+~\Anaconda3\envs\qiskitenv\lib\site-packages\qiskit\aqua\quantum_instance.py in execute(self, circuits, **kwargs)
+192         qobjs = compile_circuits(circuits, self._backend, self._backend_config, self._compile_config, self._run_config,
+193                                  show_circuit_summary=self._circuit_summary, circuit_cache=self._circuit_cache,
+--> 194                                  **kwargs)
+195
+196         if self._measurement_error_mitigation_cls is not None:
+~\Anaconda3\envs\qiskitenv\lib\site-packages\qiskit\aqua\utils\run_circuits.py in compile_circuits(circuits, backend, backend_config, compile_config, run_config, show_circuit_summary, circuit_cache, **kwargs)
+195                     transpiled_sub_circuits = compiler.transpile(sub_circuits, backend, **backend_config,
+196                                                                  **compile_config)
+--> 197                     qobj = circuit_cache.load_qobj_from_cache(transpiled_sub_circuits, i, run_config=run_config)
+198                 else:
+199                     qobj = circuit_cache.load_qobj_from_cache(sub_circuits, i, run_config=run_config)
+~\Anaconda3\envs\qiskitenv\lib\site-packages\qiskit\aqua\utils\circuit_cache.py in load_qobj_from_cache(self, circuits, chunk, run_config)
+178                 if not hasattr(compiled_gate, 'params') or len(compiled_gate.params) < 1: continue
+179                 if compiled_gate.name == 'snapshot': continue
+--> 180                 cache_index = self.mappings[chunk][circ_num][gate_num]
+181                 (uncompiled_gate, regs, _) = raw_gates[cache_index]
+182
+As to your second question, I just ran out of tokens, so I can not run it again right now to get the error. Although I believe the error was along the lines of "x1 and x2 must be of the same dimension".
+can you add the add one more option in setup quantum instance?
+you can change the shots number as you need.
+I will try to reproduce the issue when using 3-dimension data.
+I think that circuit_caching=False fixed the first issue, as I am no longer getting the KeyError: 0. However, I still can not execute the job because I have run out of credits. I will update tomorrow. Thank you very much.
+in the meanwhile, are you able to run 3-dimension data with the simulator? the error you mentioned is not related to the hardware. I can run it with qasm_simulator without encountering errors.
+3 feature dimension bug appears to have gone away. Thanks for your help, I'm going to close the thread.

@@ -1,0 +1,17 @@
+This is a plot that intermingles logical error rates from pymatching and from an internal MWPM decoder. They're pretty close up to d19 or so but then things get kinda wacky at d21 and you clearly see stairsteps as the points alternate between the two decoders:
+
+Each point in that plot represents min(1M shots, 1K errors). The brown point just to the left of threshold looks particularly troubling.
+The exact circuits being run can be generated using stim:
+I sampled the files and plotted the results using the dev version of simmer: https://github.com/quantumlib/Stim/tree/main/glue/sample . Note that it doesn't provide any arguments to the pymatching decode method, so e.g. it's using the default cutoff of 30 for neighbors.
+My suspicion is that d=21 is big enough that the cutoff has somehow become significant (e.g. can't reach the boundary from the middle of the patch).
+Here's just pymatching:
+
+and just the other decoder:
+
+Hi Craig, thanks for reporting this, I agree it looks very suspicious. I suspect this problem may arise only when a boundary is present, since we didn't see any issues up to L=46 when using periodic boundaries (subsystem toric code) and num_neighbours=20 in this paper.
+My initial thoughts are that this may be a problem with the local Dijkstra search that occurs at the boundary, since the boundary node is not geometrically local and has extremely high degree. Perhaps the boundary node is a bottleneck of sorts, with this problem arising when there are many defects on the boundary. E.g. Searches that pass through the boundary node might explore the same (or similar) defects at the boundary, forming a somewhat isolated cluster in the derived defect graph.
+Assuming this is the problem, one possible fix might be to set some minimum depth of the search for local Dijkstra (in addition to finding sufficiently many neighbouring defects as done currently), to prevent the search getting stuck at the boundary. I'll think more carefully about the problem and the best way to fix it. Hopefully it will be a quick fix.
+In the meantime, users encountering this issue could increase num_neighbours (e.g. to 100). Clearly this will make PyMatching slower (roughly linear in num_neighbours) and push the problem to larger lattice sizes, but should at least allow for a good approximation of exact MWPM thresholds for a larger range of lattice sizes. The problem can be completely removed by using the more computationally expensive exact matching, either by setting num_neighbours=None (which precomputes all shortest paths, requiring a lot of RAM) or by setting num_neighbours to the number of nodes in the matching graph (which instead computes shortest paths on the fly, searching the whole graph for each defect).
+Okay. I suppose this will get fixed as a byproduct of rewriting to work natively on the detector graph instead of the detection event graph.
+True, though it would good to fix this asap so I'll see if a tweak to the algorithm as described above will remove the problem as well
+Fixed on dev branch

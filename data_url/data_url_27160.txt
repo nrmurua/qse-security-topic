@@ -1,0 +1,23 @@
+The Chemps2 test case 2 never finishes and blocks the build forever. It usually takes some time (10 min or so) and i usually disable tests in Chemps2 before building anything (shame on me), so I didn't notice yet. But it actually does not finish at all (waiting for 28 h now ...). I guess Chemps2 broke at some point.
+This is odd. qchem.chemps2 builds in under 5 mins. here.
+I've just tried it on multi-user Nix on OpenSuse. Behaves slightly different but still fails. (Test 13 fails immediately, 2, 14, and 6 never finish).
+Do you think that this can be related to our hardware? We already had different behaviour in CP2K. Some BLAS routines, that use some specific CPU extensions on some processors or something like this?
+Out of curiosity; do your systems use AVX-512? I'm running this on a Xeon W2255 with this extensions;
+I am building on an AMD Epyc2 system at the moment. AVX512 has been a source of trouble in the past, specially with openblas. You could try to turn off AVX512 at runtime by exporting OPENBLAS_CORETYPE=Haswell. Does it build like that?
+Also for reproducibility: This builds with QChem git version 52b4434adf62e6c869f421a6a4a63d7e83fde637
+nix-build release.nix --arg config '{ allowEnv = false; }' --arg nixpkgs 'builtins.fetchTarball https://github.com/NixOS/nixpkgs/archive/1c16013bd6e94da748b41cc123c6b509a23eb440.tar.gz' -A qchem.python3.pyscf
+It yields the output /nix/store/nvvrs0sczfwhl45gmwwixzqj7m8x8rpx-python3.8-pyscf-1.7.3
+I can't find a commit 52b4434adf62e6c869f421a6a4a63d7e83fde637 (git checkout 52b4434adf62e6c869f421a6a4a63d7e83fde637 gives reference is no tree object) but building against c112eae880ff26f82dc8e4c36c7d3bb647bf7540 with nix-build release.nix --arg config '{ allowEnv = false; }' --arg nixpkgs 'builtins.fetchTarball https://github.com/NixOS/nixpkgs/archive/1c16013bd6e94da748b41cc123c6b509a23eb440.tar.gz' -A qchem.chemps2 does still not work. What actually helps is OPENBLAS_CORETYPE=Haswell in the preCheck phase in Chemps2. All tests pass then and they do not hang. I am a little bit concerned now about numeric stability of codes 😅
+I guess this is a little bit concerning. Should we take care of this somehow? Disable the AVX512 kernels in OpenBLAS completely maybe?
+Regarding PySCF i will continue in #29 .
+Yep, can confirm.Builds without any problems on my desktop at home, that does not have AVX512 ...
+The source of trouble here are the dynamic CPU detection that openblas as well MKL uses, which makes it impossible to get globally reproducible tests. For openblas you could override dynamicArch = false and set target="Haswell" in preOverlays (see here https://github.com/NixOS/nixpkgs/blob/afd7f222bf602de2f73479a9becba8761edff4be/pkgs/development/libraries/science/math/openblas/default.nix). This should make the results (and tests) reproducible.
+i.e.:
+This is a good suggestion. I could do this locally, but may this be worth to consider in the overlay or even upstream? I mean a BLAS that breaks on AVX512 hardware sounds troublesome for me?
+Fixing to locally for now is the short term solution. Ideally this would be fixed upstream. Maybe you could open up an upstream issue? This would not be first time:
+NixOS/nixpkgs#59708
+NixOS/nixpkgs#97306
+EDIT: the real advantage of projecting the overlay into the qchem subset is that we can override packages locally for optimization purposes etc. without causing a mass rebuild on all other derivations in nixpkgs.
+I am having the same problem now :/, the chemps2 tests never finish when I build on a Xeon Bronze (no AVX512).
+OK, trying to fix the problem in 923a47b. It is an ugly solution. I hope we can remove it at some point.
+I guess we can close this in favour of the more general problem #52 and NixOS/nixpkgs#124250 . In the end it does not seem to be a Chemps2 problem.

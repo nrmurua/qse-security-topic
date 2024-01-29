@@ -1,0 +1,26 @@
+Using optimization_level=3 within the transpile method yields a circuit with different outcomes that the one produced either from setting optimization_level=2 or evaluating the non transpiled circuit with Statevector.
+The wrong behaviour was observed while increasing the number of trotter steps in a Trotterization time evolution, and the circuits obtained from optimization_level=3 perform as expected as long as the original circuit remains relatively shallow (see plots below).
+Output:
+
+In the output plots the line for optimization_level=3 should coincide with the statevector and optimization_level=2 lines.
+No response
+Yes.  Optimization level 3 gives (for 15 steps):
+where as 2 gives something much longer, a small snippet of which is:
+It is independent of the routing method, so something else is breaking.
+Do we know yet if this is due to changes in optimization_level=3 after 0.18.3? I wasn't able to directly replicate the example on 0.18.3 because it use e.g. PauliEvolutionGate which is new with 0.19.
+Here is the raw circuit used above:
+circ.qpy.zip
+Collect2qBlocks/ConsolidateBlocks/UnitarySynthesis is greatly simplifying these circuits here.
+Going from 268 cx  to 31 unitary to 0 entangling gates....
+I think the problem here is the basic interaction of small-step Trotterization (which makes the interaction-per-step become small) with approximate unitary synthesis (which avoids emitting 2q gates when the interaction becomes small enough). The solution is to use fewer Trotter steps or to turn off approximate synthesis.
+It appears that this happens only with the default approximation_degree=None.  Setting 1 (min approx) or 0 (max approx) both yield the same circuit.
+#7348 takes the approach of disabling approximate synthesis entirely (since this is more or less a rollback to the behavior of 0.18.3) (I was incorrect, this behavior had already been released as part of 0.18.3).
+
+Thinking about this a bit more though, could it be the case that this is a sound optimization to make (in the interest of best approximating the given unitary with the available device gate fidelities), even though when simulating (on an ideal simulator) you'll end up quite far from the intended operation?
+Thinking about this a bit more though, could it be the case that this is a sound optimization to make (in the interest of best approximating the given unitary with the available device gate fidelities), even though when simulating (on an ideal simulator) you'll end up quite far from the intended operation?
+This is the intention, that you do the best you can given available gate fidelities. It may end up far from the intended, but better than not approximating. Of course the decision is heuristic and local, so may not always succeed - something like trotterization where the repeated trotter steps are intended to add coherently would be an example where the heuristic based on assuming a depolarizing channel of equivalent infidelity might choose poorly.
+In that case, I'd lean toward the transpiler behavior being not a bug. It may be a bug though that users can compile based on a set of backend_properties and simulate without them without seeing a warning. Does that make sense to you @anedumla @nonhermitian @levbishop ?
+As an user I am actually surprised that this was enabled by default.  To me at least, it seems to be implicitly breaking the idea that the transpiler faithfully performs the unitary in question (up to certain permutations, transformations etc.).  To me this feels akin to the fast-math compiler option that breaks IEEE 754 floating-point rules to gain performance, but occasionally really messes things up, eg see JuliaLang/julia#30073 (comment)
+I think approximations like this should be explicit, and turned on by the user with knowledge that bad things can some times happen.
+I agree with @nonhermitian. Personally, I would not expect that the circuit returned is an approximation and would prefer to explicitly activate an option to approximate the unitary given the hardware characteristics.
+Since #8595 has merged I think this has been implemented so I'm going to close this. If I'm missing something here though or misinterpreting what was needed for this issue please feel free to reopen this.

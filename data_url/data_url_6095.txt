@@ -1,0 +1,38 @@
+It takes excessive time to get the result of the C++ statevector simulator through qiskit-terra to the user code. For example, the Bernstein-Vazirani circuit needs:
+Similar results can be seen on a compute station with 500GB RAM.
+Build a short circuit with many qubits, run it on the statevector simulator.
+The aer-terra interface should not take as much (or more) time than a circuit simulation.
+I was able to pinpoint the high runtime to the (python) code returning the result. The suggested solution depends on what parts of the current state vector dataflow (C++ complex vector -> JSON -> JSON string -> JSON -> python list of complex numbers -> python list of 2-valued lists -> numpy array of complex numbers -> output string) should be kept.
+If it should stay in place, the JSON representation, parsing and print out of the state vector can be changed:
+I actually suggest to (partly) remove the JSON interface from local simulators and change the state vector dataflow into: C++ complex vector -> python list or numpy array of complex numbers -> output string. This can be done by creating a PyList or PyArrayObject inside the C++ simulator and returning it in controller_execute instead, or in addition to the JSON string. Python code can then directly access the python object created in the C++ simulator.
+I can imagine that other simulators will show a similar behavior in some situations, if the result string is sufficiently long.
+This is a known issue and is already being worked on by @ereastman for removing the python JSON conversion on local simulation, however we still require the JSON conversion for the online simulators.
+The suggestion about how to speed up the terra JSON parser is interesting though. Since the main changes there are in the Result class and schema in Terra, could you create a separate issue on the Terra github for that?
+For now if you want to use statevector simulator I recommend using BasicAer or better yet the Statevector class in terra.quantum_info which does everything in numpy arrays.
+@brandhsn Thanks for taking a look at this and good work correctly identifying the bottleneck - As chris said, I have a PR out right now (#399) which addresses some of the inefficiencies that you mentioned - avoiding the most expensive (de)serializations to/from JSON strings. From my benchmarks we get a solid 1.5-2x performance boost over master on the relevant input/output conversion steps - and there's still quite a bit of room for improvement.
+You'll see in that PR that the cython wrappers have been converted to using pybind - while your suggestion of using the raw cpython interfaces to create the python objects would've worked, pybind allows us to avoid a lot of the boilerplate code that comes with using the raw c interfaces (at only a slight performance hit - see here ).
+WRT 2/3) I walk through the relevant calls below:
+From master:aerbackend.py:_run_job(...):
+output = json.loads(self._controller(qobj_str).decode('UTF-8'))
+self._validate_controller_output(output)
+return self._format_results(job_id, output, end - start)
+In the first line, the simulator is being called. The simulator (on master) returns a string which is immediately fed into the python json parser, creating a dict (no complex values yet) and calling it output.
+_validate_controller_output(output) performs a very basic 'are-you-a-dict' check.
+_format_results(...) adds a few things to the output dict and then returns Result.from_dict(output).
+Result.from_dict is what uses the marshmallow schema to validate and construct the Result instance.
+You'll see in qiskit-terra/qiskit/result/models.py that the schema for the Result class contains a statevector member which it expects to be a list of complex values...
+statevector = List(Complex(), validate=Length(min=1))
+The (de)serialization methods for Complex(), defined in qiskit-terra/qiskit/validation/fields/custom.py , in turn expect a list of size 2 and returns a complex number. After calling Result.from_dict(output) I would expect no further conversion to/from complex values to be required.
+However, as you said, it appears there may be some unnecessary conversions to/from_dict within the terra/qiskit/result/result.py and postprocess.py. I recommend exploring this further - if you can trace the calls back from get_statevector and show that it is indeed performing unnecessary conversions then you did in fact uncover a bug (although, as Chris said, the bug is in terra so I'd also recommend moving this issue over there).
+One small correction: You said: 'If a numpy array of complex numbers is needed, build it directly using marshmallow when JSON string is parsed.' The json string is never parsed directly by marshmallow - the string is parsed by the JSONEncoder which returns a dict - and that dict is used by marshmallow - Result.from_dict() - to create the Result object.
+Thanks for the detailed answers! Using pybind seems like an elegant solution without a large overhead. However, the observation on my system and on a limited number of test cases with 23+ qubits was that qiskit-terra requires more time for (de)serialization than for parsing the JSON string. So, pybind is only a part of the solution. The largest runtime improvement can be gained by returning a python object (e.g. via pybind) that can be used by qiskit directly, without requiring any validation or (de)serialization (and there seems to be progress on this: Qiskit/qiskit#3601).
+Representing complex numbers as strings instead of a 2-valued list in JSON yielded some runtime improvements on my system. If you want to test it, you can specify an object_hook when decoding a JSON string: json.loads(json_string, object_hook=decode_complex_string) with
+Binding python results is the eventual goal with Pybind, and was the main reason for the results refactoring in PRs #365, #404, #405, #407.
+With respect to the string representation of complex numbers, I don't believe the C++ JSON library we use can easily deserialize this format.
+@chriseclectic I think this issue can be closed since it's really a terra issue - moving conversation to Qiskit/qiskit-terra#3601
+Forgot to refresh before commenting:
+nlohmann can deal with it - a few line changes right here -
+It could actually support both at the same time
+@ereastman By "not easily" I meant you would probably have to do some messy string searches or splits and conversions. But if there is a simpler way to do it you could add it to the code.
+Totally agree that it would get messy - just pointing out in case tests were to be done - I haven't seen proof that the current list format is causing any huge performance problems right now or that the string method would be any quicker
+We should definitely revisit this topic when the serialization format is updated though

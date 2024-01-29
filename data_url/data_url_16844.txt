@@ -1,0 +1,13 @@
+The problem doesn't seem to happen on github master, I couldn't recreate it. It is happening with code from Pypi:
+Getting division by zero error on progress bar routine:
+Created the simple test case I could think of, enable logging:
+It should not throw an exception on the progressbar routine.
+I had a quick fix on progressbar.py update method which may not be optimal but fixed the problem (testing for n != 0):
+So I am not sure what is going on here.  update should be called once you have completed a task, and thus self.iter should be non-zero.
+I ran into this with the latest release installed via pip install qiskit on macOS 10.15.2 (see version below). I could not replicate it using the above snippet, but I attached a program that does. In any case, the right thing to do here is protect against div-by-0 regardless, because nobody wants a progress bar exception to halt their quantum program, and if self.iter should indeed not be 0 at this point then that assertion needs to be made earlier.
+I patched my version like this just to get beyond it:
+filled_length = int(round(50 * n / (self.iter if self.iter > 0 else 1)))
+script_h2_cc-pvdz.py.txt
+I just did a little digging and the source of this issue is that aqua is calling parallel_map with an empty list of values to map. This isn't handled by parallel_map so it tries to launch 0 parallel tasks which confuses the progress_bar because it doesn't make any sense to have a bar without any tasks. While this is easy to fix by just adding a check in parallel_map for an empty list for values and returning an empty list, this does seem more like an aqua bug to me. Like, why is parallel map being called without any values?
+I agree it's likely a bug elsewhere in the stack, but my point in adding to this issue is the following: it's semi-reasonable for an algorithm to throw a divide-by-zero exception if it's not going to take care to at least assert() against it; it's not reasonable for a progress bar indicator to not protect against a divide-by-zero exception and end up aborting a long-running job. This code needs to protect against it, and optionally log a warning, but it cannot just let it happen and abort the program.
+Perhaps the job wouldn’t run so long if something was actually being processed in parallel?  idk. Luckily @mtreinish has a good fix.

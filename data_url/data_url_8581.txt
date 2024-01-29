@@ -1,0 +1,40 @@
+Hi all,
+There are quite a few applications when it is convenient to solve the Lindblad master equation for a superoperator, i.e.,
+
+where the last equation shows how the density matrix is found from the time-propagator (i.e., the superoperator solution to the Lindblad equation). The initial condition to the first equation is typically the identity superoperator.
+As an example, I've typically come across the need for this when dealing with non-Markovian problems. Certain non-Markovian problems can be dealt with using time-propagators of the above type where the Lindblad evolution is in an "enlarged" Hilbert space of some sort. In fact, to give some motivation for implementing this feature, I am currently working on a sub-package for qutip with a few solvers for non-Markovian problems, one of them being the so-called "Transfer Tensor Method" (TTM) [PRL 112, 110401 (2014)], which takes as input a list of precomputed dynamical maps in the form of superoperators. A typical usecase could be to generate these with a (costly) Lindblad equation in a large Hilbert space, and use the TTM to extrapolate to larger times. My code is not quite ready for a pull request yet (due to this issue amongst other things), but when it is I would also like to discuss the structure of such a package. I guess it is best to leave that to when I have a pull request ready though.
+For now I have a local modified version of the _mesolve_const function that allows a superoperator in place of rho0. The necessary modification is actually only to the function implementing the "right hand side" (RHS) of the differential equation, as this now needs to implement a matrix-matrix multiplication instead of a matrix-vector multiplication. For illustration purposes I will attach a code for a modified _mesolve_const below, that does the job, but the RHS is not implemented in cython.
+I think implementing this feature in qutip should be relatively straight forward, but possibly a bit tedious since it there are so many different dispatch functions from mesolve depending on the different types of time-dependence etc. One would also need cython implementations of the RHS functions for superoperator evolutions.
+Please let me know what you think about implementing this in qutip.
+Here is the code for a function that propagates the Lindblad equation with a superoperator as initial value (written as a standalone module for illustration purposes). As you will notice in the code, there is a subtle issue with needing to transpose the Lindbladian to get the correct result. I'm not sure why this is the case.. must be something with the superoperator representation. Perhaps @cgranade knows?
+Sounds like a great idea to me. Certainly within the scope of QuTiP. Please go ahead and make a pull request.
+It does sound interesting. I dont think the cython part would be too difficult to implement if the changes are as small as you  suggest.
+Paul
+On Oct 20, 2015, at 09:30, arnelg notifications@github.com wrote:
+Hi all,
+There are quite a few applications when it is convenient to solve the Lindblad master equation for a superoperator, i.e.,
+where the last equation shows how the density matrix is found from the time-propagator (i.e., the superoperator solution to the Lindblad equation). The initial condition to the first equation is typically the identity superoperator.
+As an example, I've typically come across the need for this when dealing with non-Markovian problems. Certain non-Markovian problems can be dealt with using time-propagators of the above type where the Lindblad evolution is in an "enlarged" Hilbert space of some sort. In fact, to give some motivation for implementing this feature, I am currently working on a sub-package for qutip with a few solvers for non-Markovian problems, one of them being the so-called "Transfer Tensor Method" (TTM) [PRL 112, 110401 (2014)], which takes as input a list of precomputed dynamical maps in the form of superoperators. A typical usecase could be to generate these with a (costly) Lindblad equation in a large Hilbert space, and use the TTM to extrapolate to larger times. My code is not quite ready for a pull request yet (due to this issue amongst other things), but when it is I would also like to discuss the structure of such a package. I guess it is best to leave that to when I have a pull request re ady though.
+For now I have a local modified version of the _mesolve_const function that allows a superoperator in place of rho0. The necessary modification is actually only to the function implementing the "right hand side" (RHS) of the differential equation, as this now needs to implement a matrix-matrix multiplication instead of a matrix-vector multiplication. For illustration purposes I will attach a code for a modified _mesolve_const below, that does the job, but the RHS is not implemented in cython.
+I think implementing this feature in qutip should be relatively straight forward, but possibly a bit tedious since it there are so many different dispatch functions from mesolve depending on the different types of time-dependence etc. One would also need cython implementations of the RHS functions for superoperator evolutions.
+Please let me know what you think about implementing this in qutip.
+Here is the code for a function that propagates the Lindblad equation with a superoperator as initial value (written as a standalone module for illustration purposes). As you will notice in the code, there is a subtle issue with needing to transpose the Lindbladian to get the correct result. I'm not sure why this is the case.. must be something with the superoperator representation. Perhaps @cgranade knows?
+import scipy
+from qutip.mesolve import _generic_ode_solve
+from qutip.superoperator import liouvillian, mat2vec
+from qutip.settings import debug
+if debug:
+import inspect
+def _mesolve_const_super(H, E0, tlist, c_op_list, e_ops, args, opt,
+progress_bar):
+"""
+Evolve the super-operator E0 using an ODE solver, for constant
+Liouvillian
+"""
+def _rhs(t,y,data):
+ym = y.reshape(data.shape)
+return (data*ym).flatten()
+—
+Reply to this email directly or view it on GitHub.
+Untracked with Trackbuster
+I'm (slowly) working on this, and right now I'm writing unit tests. Is there a unit test anywhere for the _mesolve_func_td function in the mesolve module?

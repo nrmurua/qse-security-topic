@@ -1,0 +1,32 @@
+Currently, there is an unnecessary distinction between cirq.Pauli.X (an instance of cirq.Pauli) and cirq.X (an instance of cirq.RotXGate). Some code wants the pauli x, some wants the x rotation. We need to unify these two things into one thing.
+I'm not exactly sure how this should be done.
+One way would be to introduce a PauliXGate that is the unification of both concepts, and falls back into one or the other as methods are applied (e.g. cirq.X would be a PauliGate but cirq.X**0.5 would again be a RotXGate).
+Another way is to destroy the Pauli class and replace it with a type such as Union[cirq.X, cirq.Y, cirq.Z], and all the class methods because just functions that can be applied to that type.
+I'm labelling this "good part time project" because I think it's reasonably "meaty" design-wise and amount-of-touched-code-wise. I expect it to require iteration to hit something that works well.
+I agree this is a problem, but worry that conflating gates with these other objects, which are really matrices / objects with algebraic relationships is dangerous.
+This ties in with our need to represent general matrices for expectation values (pauli string type idea).  I think it is OK if a gate is also one of these objects, but worry that we need to keep these interface designs separate.
+I'm not sure this a good part time project, I think this requires some careful thinking that will impact all of Cirq.
+"good part time project" is an approximation of "this is a strong bullet point you can add in perf-review as a 20% project". I think this meets that criteria.  Maybe a better name is needed for the tag?
+--
+worry that conflating gates with these other objects, which are really matrices / objects with algebraic relationships is dangerous
+I think, from the user's perspective, these things are fundamentally conflated. And that we should play into that, instead of trying to avoid it, if we can.
+For example, have you ever tried to work out when "x^2+1" refers to a function, when it refers to a number, and when it refers to a constraint? Using only syntactic rules? It's hard! This ambiguity is not so great for computers. But in the hands of a human, the ability to play multiple roles and trigger multiple different intuitions is what makes the notation so strong.
+Is Pauli X a Hamiltonian or a Unitary? Well, if you multiply it by 6 pi it's definitely a Hamiltonian but if you compute its square root then that's a unitary. If users who want Hamiltonians can simply say cirq.X * 5 instead of cirq.X.as_hamiltonian() * 5, that is a direct win in terms of ease-of-use. Yes, the value cirq.X may start to get a bit hairy as it needs a lot of code for sending things down the right path based on what the user does. But all that complication is in the implementation instead of in the usage.
+This is very interesting. Here are my first few thoughts after reading the above.
+There are two classes of concepts here: mathematical concepts (e.g. hermitian operator, unitary operator, Clifford gate) and physical concepts (such as the Hamiltonian and the Evolution operator).
+The mathematical concepts correspond to sets of operators defined by an algebraic condition (e.g. A=A^H). The physical concepts define roles that mathematical concepts may play if they fulfill certain conditions, e.g. a hermitian operator meets the requirements for an observable such as the Hamiltonian. Unfortunately, the sets of operators defined by the mathematical concepts have non-empty intersection (indeed, the Pauli matrices belong to it) which is why sometimes the physical role of an operator cannot be unambiguously inferred from its mathematical form.
+For example, ordinarily it's reasonable to assume a hermitian operator corresponds to an observable and possibly a Hamiltonian but since X is both hermitian and unitary it may in fact be the Evolution operator from a t0 to a t1. The issue is clearly that X is a hermitian operator and also X is a unitary.
+I think that it may be possible to express these relationships using a type system. We would define one set of types corresponding to the physical concepts or roles that operators may play and a second set of types for keeping track of algebraic properties such as unitarity.
+I think that would strike a reasonable balance between avoiding the risk of conflating objects with different properties and the desire for concise, readable expressions.
+Do you know of a reason this won't work? Any caveats I should watch out for? Other thoughts?
+That sounds reasonable to me.
+Some example use cases that I think should work:
+Creating and exponentiating pauli products to create PauliStringPhasor operations that can be put into a circuit:
+The future possibility of creating linear combinations of pauli products, which defines a QubitOperator (a term from openfermion):
+Identity isn't a Pauli gate...  I think we need to rework class Pauli?
+I think it's reasonable to think of the identity as a Pauli in some sense. Mathematica does this, for example. It's an element of the Pauli group and necessary for forming a basis of Hermitian matrices.
+I agree that it's a "sort of Pauli" and that it is sometimes thrown in for convenience.
+This has been implemented in #1249. Some of the comments above discuss additional features such as linear combinations and products that can be used e.g. to represent hamiltonians.
+Linear combinations are covered by #932. Pauli products are covered by #962. Representations of Hamiltonians in cirq is covered by #491.
+Clarification on the status of cirq.Pauli: it still exists, but as abstract class. It has no public subclasses and only three instances: cirq.X, cirq.Y and cirq.Z, see #1249.
+The class is used in type annotations and for its static methods that enable index-based access to the three instances, e.g. in the definition of SingleQubitCliffordGate class.

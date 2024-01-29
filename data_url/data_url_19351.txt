@@ -1,0 +1,28 @@
+We need a simple and extensible noise model interface where we can store predefined noise models and eventually customize even more the noise mechanism. One possibility is to create an abstract noise model class:
+and then document how to store and perform custom noise optimization. This class should handle/store with circuit.with_noise and noise_map, and provide more flexibility. The final API should look like:
+@andrea-pasquale could you please help identifying the initialization structure required for your setups?
+The final API looks good to me.
+A possible alternative would be to pass the noise as a parameter of the circuit execution in order to disentangle the circuit from the noise, similar to what qiskit does:
+For the Noise class I think that if we want to able to create "realistic" custom noise models we should include the following features:
+This is just a preliminary list that we could reduce or expand in the future.
+@scarrazza We could discuss this more deeply on Monday and in the next qibo meeting.
+I had a look at other quantum libraries about noisy circuits. The majority of them implements noisy circuits just by adding channel gates to the circuit, as we do today in Qibo. Qiskit is the only one that provides a NoiseModel class. The NoiseModel is basically a map that associates a specific quantum channel to a gate/ set of gates.
+In Qibo we don't have a similar feature since noise_map and circuit.with_noise enable to add a fixed PauliNoise (qubit dependent) to all the gates of the circuit.
+I've coded locally a possible NoiseModel API for qibo:
+With the mechanism of adding specific noises to the noise model, I think that we provide to the user enough flexibility in
+order to create a custom noise model, without having to add manually the channels to the circuit.
+Let me know what you think. If this first API sounds good I will open a PR.
+@andrea-pasquale thanks, looks good to me, let me ask the opinion of @igres26 and @stavros11.
+Thanks @andrea-pasquale, the proposal looks good and clean to me. Not important but there is a typo in the first line (QuantumError has three r's). I also have two questions/concerns:
+Both approaches would have similar complexity from the development perspective. From the user perspective I believe this one is simpler, but ultimately is a matter of preference. Having a general QuantumError may be useful either way if we follow the Qiskit approach where one can pass noise_ops directly in the QuantumError.
+so the NoiseModel.add would have an additional argument to specify the qubits, which could default to None which means all relevant qubits.
+Not directly relevant to this issue, just mentioning to keep in mind: Another point regarding the execution of noisy simulations is that right now qibo provides two ways of doing this:
+The current API of retrieving results may not be optimal, particularly in the first case, where it depends on whether measurements are used or not. Also, there are some additional noise methods which can be applied post-execution (state.apply_bitflips). It is better to go step by step, fix the noise model API first (current discussion) and then consider how to deliver the output.
+Thanks for all the suggestions @stavros11.
+I see your point. For the previous example using a QuantumError object is a bit redundant, in fact in my toy implementation is just a data structure to keep the noise name and the associated parameters. As you were saying in Qiskit a QuantumError object is needed since they provide more features. I guess it depends on whether we are interested in including some those applications in Qibo. I was looking at the possibility of composing noises which maybe useful in order to simulate real quantum setups.
+For the time being I think that your approach is simpler.
+2. I like the flexibility of associating a kind of noise with each gate. We could take it a step further and also associate specific qubits. Whether this is useful is a question to the users of noise models, but I believe it is. As far as I know, in superconducting setups each qubit may have different noise levels and in fact people may even optimize circuits to avoid the bad qubits.
+I agree. I was also planning to add specific qubits for each noise.
+Not directly relevant to this issue, just mentioning to keep in mind: Another point regarding the execution of noisy simulations is that right now qibo provides two ways of doing this:
+The current API of retrieving results may not be optimal, particularly in the first case, where it depends on whether measurements are used or not. Also, there are some additional noise methods which can be applied post-execution (state.apply_bitflips). It is better to go step by step, fix the noise model API first (current discussion) and then consider how to deliver the output.
+I will open a PR based on my first prototype and your initial suggestions. At the some point we also need to review some of these methods that we have in Qibo to include noise. Maybe once the noise API is complete we can drop some of them, or maybe include them directly in the noise API.

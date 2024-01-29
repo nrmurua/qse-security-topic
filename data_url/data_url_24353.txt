@@ -1,0 +1,32 @@
+No functionality to disconnect from HFSS or Q3D at the renderer level. Release is handled in the pinfo from pyEPR and only for Ansys renderers. This causes Ansys to not be able to close except through the task manager.
+Create a project in HFSS or Q3D using
+q3d = design.renderers.q3d or hfss = design.renderers.hfss
+Open a connection to Ansys using
+q3d.open_ansys_design() or hfss.open_ansys_design()
+Try to close Ansys manually once a connection is successfully established.
+There are no high level commands to terminate this connection at the level of the renderer.
+The HFSS project can be closed with hfss.pinfo.disconnect() which is built into pyEPR, but performing such on a Q3D project results in an error saying that there is no HFSS session added. This is due to an assert clause in the disconnect function of pyEPR requiring an HFSS setup to be connected to.
+The renderer for both HFSS and Q3D should have a function to close the connection to a project and release it for the user.
+The connection to the Ansys server could be moved up in the hierarchy to the Ansys renderer, or add a change to pyEPR to better handle the deliniation between HFSS and Q3D
+Additional observations.
+Running this: design.renderers.hfss.open_ansys() will connect to ansys, but running epr.ProjectInfo().disconnect() right after will not disconnect it (says there is no connection established). To get the disconnect to work I had to make metal first create something in the project.
+The desirable behavior is that we can run "connect", "disconnect" in sequence without need of interacting with the project (purely open and close the COM). This might require a pyEPR update.
+(side note: I gave the renderer the method def disconnect_ansys(self), which now just calls epr.ProjectInfo().disconnect(), so it suffer of the same problem above, so it willhave to be changed accordingly.
+Documenting status. I spent quite a bit of time playing with the COM. This issue does not appear to have an easy resolution at this time. Will continue looking. here what I found so far. The following piece of code, is supposed to start with 0 COMs and end with 0 COMs after peaking up. However, that is "aleatory". For about an hour that was true, then for the following hour it was not. The event after which it stopped working is when I tried once to add the p lines, but I could not establish causation.
+Any suggestion/help understanding this will be welcome @dwang429 @zlatko-minev @priti-ashvin-shah-ibm
+Yes, I think they approach you're taking with the minimal working case, and bypassing pyEPR directly is good. All we can look at is the open ansys function. In pyEPR there is a disconnect functions but I don't think I ever got it to reliably work. ￼
+Yes, I think they approach you're taking with the minimal working case, and bypassing pyEPR directly is good. All we can look at is the open ansys function. In pyEPR there is a disconnect functions but I don't think I ever got it to reliably work. ￼
+yeah, I spent 3 hours trying to work that out (open_ansys, disconnect and all the other related pyEPR method). They do work sometime and they do not some other time. But if the "aleatory" behavior comes from the pythoncom itself, then there would be nothing we could truly do about it (except force killing apps). Any insight on that would be great.
+Progress. Now we have a working hypothesis. The code I posted above actually works (closes all COMs) if run all in the same jupyter cell, or as a program py.
+Instead it breaks (leaves COMs open) if I split it into three cells like I was doing before posting it in this case. here the three-cell split:
+cell1:
+cell2:
+cell3:
+It also breaks if after executing cell 1 I write mtb. and then push tab (as to look for the attributes of the objects), then execute cell 3 directly (no cell 2).
+Hypothesis: when the content of the variable is shown with the second cell above, a copy of the variable is created somewhere by jupyter notebook, making it impossible to close the COM without access to that variable.
+Pushing the "tab" after the dot has the same effect, probably copies the variable to some look-up (say jedi) and never removes it.
+Do you have any idea as to how to reach (to delete) those variables? (that would provide the direct proof of this hypothesis that we miss, and possibly a way to fix things for good)
+I made a comment in issue #212 which supports the idea of no comm errors in vscode, but did get in notebook.
+There does not seem to be an easy way to do this. Current plan is to wait for the conversion to the official Ansys pyAEDT library and see if the problem goes away.
+@warrench , any thoughts/preferences?
+We are working on the pyaedt renderers.  This problem goes away for Ansys when we switch to pyaedt renderers.

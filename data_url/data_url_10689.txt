@@ -1,0 +1,35 @@
+Current Problem
+Getting the best performance out of the QPU with embedded problems means scaling the logical problem couplers separate from the chain strength. We should provide composites that allow you get this behavior out of the box, but currently there's no way to combine EmbeddingComposite and ScalingComposite to achieve this. If you scale the problem first, you miss the opportunity to account for J and h values being spread across multiple couplers/qubits. If you scale after embedding, then your chain strength will be unnecessarily scaled as well.
+Proposed Solution
+After discussion with @conta877 and @arcondello, we settled on the cleanest solution being to make ScalingComposite "chain aware", meaning that it looks for the chains parameter and leaves the chain couplers alone while scaling the rest of the problem. This allows the user to wrap the scaling with the embedding composite (EmbeddingComposite(ScalingComposite(...))), set the chain strength however they like, and have the embedding problem properly scaled for the QPU (or any bias-precision sensitive sampler).
+Alternatives Considered
+An alternative would be making a new embedding composite or adding a parameter to the existing one that does this all itself (without using ScalingComposite), but this more complicated from a user standpoint and probably means writing more code.
+this is a really well written issue
+so I was thinking about this, I'm guessing the expected behaviour from the scalingcomposite is to scale everything unless chains are specifically noted. maybe it should have a new argument like "leave chains alone" if its becoming chain aware?
+also realized that this is not needed if one is using the fixedembeddingcomposite since chains are already known ahead of time.
+and that raises the question of, should there be a "find_chain_couplers_from_embedding" function living somewhere in dwave.embedding.
+To the last point, there is a function chain_to_quadratic which does something similar.
+this is actually more complicated to implement the proposed way. see: dwavesystems/dimod#487
+can we have:
+Yeah, ChillFixedEmbeddingComposite inspired child_structure_dfs introduced in dwavesystems/dimod#488. We can update EmbeddingComposite and FixedEmbeddingComposite to use it. Probably also allowing the user to override the DFS behaviour.
+Option A
+Either make scaling composite 'embedding aware' or embedding composite 'scale aware'. In the former case the scaling composite would 'listen' for the chains parameters and not scale the chains. It would probably need to be opted into, e.g.
+In the latter case we could have the embedding composite provide the ignored_interactions parameter to child composites, e.g.
+between the two I think the latter is cleaner.
+Option B
+This is 'cleaner' from a composite pattern perspective, but we currently have 3 different types of embedding composites, and this would take it up to 6...
+Option C
+Allow ignored_interactions to be set in the constructor of ScaleComposite, this would allow it to work with FixedEmbeddingComposite but not EmbeddingComposite
+Option D
+Make a new operator that allows specific composites to be combined, e.g.
+the 'default' case would be to just compose them as normal, but for specific cases (like this one) we could overwrite the behaviour.
+A & D are really the same option with different syntax.
+Option C: since composites now look all the way down in child tree to find structured, I don't think fixedembeddingcomposite and its derivatives in which the composite takes the embedding in its construction requires attention.
+Option B: having said all that about option C, that reduces 6 to something smaller.
+Option D: is a design decision that I don't want to comment about
+Option A: I'm tempted to say lets do it this way, but at the same time we may end up finding a bunch of end cases like this and it turns into a CF
+I don't understand your point about C. Just because you can insert other composites between FixedEmbeddingComposite and  a structured sampler does not itself help with the scaling case.
+this is what i mean:
+I understand. Your way definitely works but C means you don't need to keep the embedding around after construction, which means you can pass your sampler around more cleanly (without needing to keep an anneal_params dict around).
+In either case I think A or B are the only real two options (D just seems like an overly magical form of A).
+I vote for EmbeddingComposites looking down to see if they have ignore_interactions as parameters for children, and sending a chain couplings down the path if user opts in.

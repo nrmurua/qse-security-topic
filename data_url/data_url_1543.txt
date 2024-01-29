@@ -1,0 +1,45 @@
+Is your feature request related to a use case or problem? Please describe.
+Suppose you want a three qubit controlled gate like (|00><00| + |11><11|) X + (|01><01| + |10><10| I which flips the third qubit if the first qubit is either 00 or 11.  This currently isn't possible to construct given the way cirq specified control_values.    This is because control_values is a sequence of length equal to the number of controls, and this sequence is either ints or sequences of ints. In the second case the sequence means "either of these".  Thus you might think this would construct the gate above, but it does not
+(this flips the third qubit for all inputs)
+Or maybe this
+(this flips the third qubit if the first control is zero and the second is one.
+Describe the solution you'd like
+Not sure we can fix this now, as this interface is used throughout :(
+Probably the better interface would have been sequence of ints, same interperation, sequence of sequence either zipped up to get possible control positive values, or sequence of sequence where inner sequence is sequence of ints describing a positive control value.  If you really want to include unions for any of these, places where there is an int could have either an indicator value or another sequence to unionize what this means.
+[optional] Describe alternatives/workarounds you've considered
+Create two ops in a row that do what you want.  Custom gate controlled gate.
+What is the urgency from your perspective for this issue? Is it blocking important work?
+P2 - we should do it in the next couple of quarters
+hi, is anyone working on this (in other words can I work on it?)
+@NoureldinYosri I've assigned it to you.
+Analysis:
+the reason for this behaviour is that the control qubits are assumed to be independent, the control_values list has length = number of control qubits and the combinations for which the gate is applied is the cartisian product of control_values, e.g. L109  for control_vals in itertools.product(*self.control_values):
+furthermore the  order of the values doesn't matter since the items of control_values are sorted during the contstruction of controlled_gate and controlled_operation , e.g. L76 and L56
+       # Convert to sorted tuples self.control_values = cast( Tuple[Tuple[int, ...], ...], tuple((val,) if isinstance(val, int) else tuple(sorted(val)) for val in control_values), )
+Solution:
+the needed behaviour is achieved if it's possible to represent the control combinations as a sum of products, e.g. ((1, 0), (0, 1)) would mean (q1 = 1 and q2 = 0) or (q1 == 0 and q2 == 1), however this list is currently interpreted as (0, 1)x(0, 1) -> all possible combinations
+on the other hand the ability of having controlling the gates using independent qubits (in terms of the truth table of the control combinations) should still be supported not just for backward compatibility but also because it would make it easier to represent some truth tables
+my suggestion is to create a class that maintains two things
+I already wrote a small demo for this idea but wanted to check with you before I continue implementing @vtomole
+Cirq cync: We have a potential solution with a prototype.  This will likely need careful consideration and review, but is doable with the solution from @NoureldinYosri
+This is a prototype of my solution @dstrain115 @vtomole
+this code is also backward compatible with the old way, calling ControlValues(control_values) will give the same combinations as the ones expected in the old way
+output is
+[1, 0]
+[0, 1]
+[0, 0, 1]
+[0, 1, 1]
+[1, 0, 0, 0, 1]
+[1, 0, 0, 1, 1]
+[0, 1, 0, 0, 1]
+[0, 1, 0, 1, 1]
+@dabacon could you please review the solution?
+The one kind of strange thing about your implementation (which is quite ingenious!) is that the two cases are distinguished by a) list of int or (list of int) and b) list of list of (list of ints).  This is a bit hard for most people to see the difference between, i.e. staring at the list of list of lists to see thats what it is isn't too easy.  What I would suggest is that we keep this "raw" form, but maybe also add some helpers for people to write this, i.e. instead of a) you could provide FreeVars(0, [0,1]) and for b) you could provide ConstrainedVars([0, 1], [0, 1]).  To be clear I think it could also accept the way you have things currently constructed, but just adding this as a convenience I think would make it more usable for most people.
+sounds good, I'll incorporate your suggestion into my code and create a PR
+@NoureldinYosri still working on this? It'll be required for deferred measurements #4818. Or, at least some way of defining the condition "at least one qubit is not zero".
+I think all I'd really need here is just another parameter control_values_explicit (or control_options, controls_as_list?), where you can pass in e.g. control_values_explicit=[(0, 0), (1, 1)] to construct the condition in the issue description. Is this possible? If this is possible, I think I'd prefer it. That way we can decouple the operation from the class that generates the exact list, freeing up the ability to create whatever kinds of generators we want (boolean expression, sympy, int-to-bits, etc), wherever and wherever we want them.
+Edit: Looks like such a thing should be possible, as everywhere the existing control_values is used for calculations, it's done via itertools.product, meaning it produces what I'm wanting to provide explicitly in control_values_explicit. So we should be able to populate self._control_values_explicit in the constructor, from whichever of the two parameters is provided. The only issue is that self.control_values is public, so we should probably wrap that in a property and ensure the _explicit is also updated in the setter. It's not really a breaking change since all existing code will continue to work, but we'll probably want to deprecate that property since it's no longer able to represent all possible states.
+@daxfohl my GH-4714  has been pending review for sometime
+in the PR I create a ControlValues class which supports the operations needed, the contructor for it can support both the _exact way for defining the allowed values as well as the old way, this way adding support for more ways to define control values would be as simple as creating a child class that reads the new form of input (e.g. list of ints) and set the internal variables correctly and maybe override some internal function(s).
+so lets get GH-4714 reviewed and submitted :)
+This is now completed. See #5788 for details on usage and tests.

@@ -1,0 +1,15 @@
+Qsikit errors out when trying to serial a circuit which contains a custom gate, when it used to work before on qiskit-terra==0.21.1
+Run
+This will throw an error
+The above snippet should run with no errors.
+No response
+So I took a closer look at this and it was probably #8571 that broke this. To fix handling of open controls we needed to call the inner private _definition attribute of ControlledGate  objects to ensure when we reconstructed the circuit on deserialization applying the open control was done in the same manner (basically controlled gates use an internal definition and then the definition property will adjust for the control state automatically). However in your CustomCXGate class you're overloading the definition property directly. So when we go to serialize the custom controlled gate the attribute we're looking for isn't defined and that's causing the error. The only way I can think to workaround this is to try the current way and if it raises catch that and try using definition. However, I'm not sure this will do the correct thing if you use an open control, but I'm also not sure if CustomCXGate will behave correctly if you use an open control either.
+All through the relevant inheritance chain here, definition as a setter just writes to _definition, so I think the usage as presented should be valid and continue to work (although not strictly be what we expect subclasses of Instruction to do).  I think the real problem is a bug in #8571 - now that we directly access _definition without looking at definition at all, we never trigger the code that calls _define if it wasn't already called.
+I think the solution is to ensure that _define has been called if appropriate (by accessing definition), but then continue to use _definition like #8571 does.
+Hey @mtreinish and @jakelishman,
+This fix works for the snippet I posted, but it doesn't work for a different control state.
+works, but
+Doesn't.
+@mtreinish @jakelishman Just curious: Do you guys have the bandwidth for this? If not, i can attempt to make a fix. I'm not too familiar with the qiskit source so hopefully it's pretty straightforward.
+@vtomole sorry this fell through the cracks when it got reopened. I probably won't have bandwidth to look at this in depth until January. So feel free to take a pass at fixing it in the meantime. I'll assign you this issue
+@mtreinish I won't have time to make a PR, but we fixed this on our end by calling .define() on the operation. I think this can be fixed by doing the same thing to this line https://github.com/Qiskit/qiskit-terra/blob/2f5944d60140ceb6e30d5b891e8ffec735247ce9/qiskit/qpy/binary_io/circuits.py#L639 (replacing operation.definition  with operation._define())

@@ -1,0 +1,37 @@
+I tried building current master (7c2fe69 from Dec 27th) on Debian unstable in order to evaluate how much work a 8.1 release would be. It compiles fine, but I get a crash on executions:
+Crashing in grid_sphere_cache_free sounds oddly specific for just running cp2k --help, so maybe I did something very odd? Note that I hacked in an external libdbcsr-2.1 (-ldbcsr), but the stack trace looks unrelated to that.
+This is the arch file:
+This is the output of bt full:
+Unfortunately, I can not reproduce this, but I don't think grid_sphere_cache_free is the culprit. I suspect that some other code is overwriting the grid_library_globals.
+Does it also occur without the external libdbcsr?
+Maybe you can use gdb to set a watchpoint for that memory location?
+Unfortunately, I can not reproduce this, but I don't think grid_sphere_cache_free is the culprit. I suspect that some other code is overwriting the grid_library_globals.
+Does it also occur without the external libdbcsr?
+Ok, I'll try to check that.
+Maybe you can use gdb to set a watchpoint for that memory location?
+Which one would that be exactly?
+Which one would that be exactly?
+You should be able to get it like this:
+ah, thanks.
+It's a null pointer dereference apparently:
+Which now sounds logical when I reread the Segmentation fault: address not mapped to object at address (nil)) from above...
+Does it also occur without the external libdbcsr?
+I tried that now, same thing :-/
+This is the link line:
+Independant of this issue (which I think is serious): @mbanck please drop the -fallow-argument-mismatch as that one should not be necessary anymore, and if it is needed we need to know.
+Also __GFORTRAN, _FFTSG, __BLACS are not supported (anymore) and __ELPA is now a simple define.
+I'm confused. Apparently it crashes in grid_sphere_cache.c:164 because cache is a null pointer. However, that address was just computed in grid_library.c:62.
+One thing that might be helpful is to once watch the library_initialized variable to check if it's in the proper state:
+It might be that this parallel region is not running with enough threads.
+Could you please once try this patch:
+Looking at your arch file again, it seems you are compiling the C code without -fopenmp.
+Looking at your arch file again, it seems you are compiling the C code without -fopenmp.
+That was it, thanks. I guess it worked until 7.1 to not explicitly define CFLAGS, but now it bombs due to the C rewrite of grid?
+If so, it'd be nice there could be more obvious abort at build time telling others that just copy over their custom arch files that they now need CFLAGS=-fopenmp
+but now it bombs due to the C rewrite of grid?
+Exactly!
+If so, it'd be nice there could be more obvious abort at build time
+I totally agree. I'll take care of that.
+Cool, thanks.
+FYI, I didn't run the whole regtests, but the ones that I ran had two threshold errors in grid:
+I've opened #1257 and also adjusted those two thresholds.

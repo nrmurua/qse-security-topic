@@ -1,0 +1,33 @@
+The function OQS_randombytes_openssl will call RAND_bytes() in an infinite loop if it fails:
+
+This is probably not the right behaviour. In some circumstances (for example if the DRBG has failed to seed) this call will never succeed no matter how many times you call it. This is the cause of the hang found here:
+openssl/openssl#14069
+Thanks very much for the investigation and bug report. This is really fascinating a) that it could elude us for so long and b) that it now happens reproducibly... I'll start digging....
+It's mainly because the changes in 3.0 make it that much easier to end up with a situation such that RAND_bytes() can return 0. Just don't load any providers with DRBGs in them and it will happen. In 1.1.1 that doesn't happen. However RAND_bytes() can still fail for other reasons even in 1.1.1 - but it happens much more rarely.
+After some quick code archaeology, I guess the weird (void-returning) design of the OQS randombytes function traces back to NIST APIs, right @dstebila ? Now, as I guess it's a bit late in the game to change this API (used like this by all PQC submissions) how shall we fix this? The only idea I'd have right now is to hard-stop & exit (maybe even with error message :) when RAND_bytes() fails.
+Unless other proposals I are made'll address this issue in such way then.
+Just don't load any providers with DRBGs in them and it will happen.
+I'm not sure I fully understand: Would we have to implement our own DRBG in oqsprovider for this not to happen (as per provider-rand) or load the default provider?
+Anyway, it indeed doesn't happen if the default provider is spec'd, too:
+Goodness: This apparently would trigger provider encoder code (if it were properly working...), so now I see a good way forward on open-quantum-safe/oqs-provider#2: Thanks again!
+I'm not sure I fully understand: Would we have to implement our own DRBG in oqsprovider for this not to happen (as per provider-rand) or load the default provider?
+There needs to be a DRBG available in one of the loaded providers in order for you to be able to get random bytes. I think by default it will try to fetch the DRBG called "DRBG-CTR" unless you override it. We offer two providers that have that DRBG in it: default and fips. Therefore you must have one of those loaded to have random data. As an alternative you could provide your own DRBG - but unless you've got a real need of it I suggest you don't.
+After some quick code archaeology, I guess the weird (void-returning) design of the OQS randombytes function traces back to NIST APIs, right @dstebila ? Now, as I guess it's a bit late in the game to change this API (used like this by all PQC submissions) how shall we fix this?
+Yes, that's the reason for the API design here.
+I haven't followed your full discussion above.  Certainly we want to use the OpenSSL DRBG rather than our own, unless absolutely necessary.  Also certainly we don't want to fail to a case where the function returns without having successfully obtained random bytes.
+Certainly we want to use the OpenSSL DRBG rather than our own, unless absolutely necessary.
+Fully agree. This means users of oqsprovider must know that they have to load default provider, too. Will add documentation.
+Also certainly we don't want to fail to a case where the function returns without having successfully obtained random bytes.
+If I understand this right, the only way to deal with this is with the above-proposed "hard exit" if RAND_bytes() fails. Will implement that then.
+Now, as I guess it's a bit late in the game to change this API (used like this by all PQC submissions) how shall we fix this? The only idea I'd have right now is to hard-stop & exit (maybe even with error message :) when RAND_bytes() fails.
+It's too late to change this in NIST's API, but we could change it in OQS, no? We would need to go touch all calls from our algs to handle (propagate) the error, or are you suggesting @baentsch to fail & exit in the rand function directly? It seems the proper behavior is application specific, so propagating the randomness error as a OQS return value would be better, IMO.
+so propagating the randomness error as a OQS return value would be better, IMO.
+That also was my immediate reaction/preference, but then I counted 453 (!) instances of randombytes being called in the different algorithm implementations, none checking return value (they couldn't as the function's been defined as returning 'void'). So that's why I indeed suggest to
+fail & exit in the rand function directly.
+I suppose it would be a rare event anyway given how many years it has taken to be discovered. As a compromise, we could retry MAX_RAND_RETRY times but then die (with a clear error message, of course).
+I suppose it would be a rare event anyway given how many years it has taken to be discovered.
+It would be rare in OpenSSL 1.1.1 but, as you discovered, with 3.0 a configuration error can lead to this which may not be that unlikely.
+Another option would be to call RAND_get0_public() as of the OSSL_provider_init() function and return failure if it doesn't succeed.  This would introduce an ordering dependency but would avoid the problem.
+Another option would be to call RAND_get0_public() as of the OSSL_provider_init() function and return failure if it doesn't succeed. This would introduce an ordering dependency but would avoid the problem.
+This would avoid the most common cause of this issue - but it wouldn't fix the underlying problem.
+You're correct, it wouldn't solve the problem completely.

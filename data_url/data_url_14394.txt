@@ -1,0 +1,20 @@
+The current implementation of sampling $N$ shot "counts" from QuantumState  is $O(N)$. But there is a method that is $O(1)$.
+EDIT: See #8618 for a more informed take on this issue.
+EDIT: I didn't realize when writing this that it has already been discussed in various places in Qiskit. And even implemented (else where, not in QuantumState) for example  #8137
+Specifically, one should sample directly from the distribution of the number of counts for each index rather than sampling from the distribution of indices and then building a count map. The current method is $O(N)$ in both time and space (although the latter is a constraint due to Python, not the algorithm itself.) The method proposed here is $O(1)$ in both time and space.
+Currently, to build a count map of N samples of measuring the state vector we:
+EDIT: See the next comment for a numpy builtin function that does this solution.
+A similar, but simpler problem is sampling the number of heads in $N$ coin tosses. You could simulate $N$ coin tosses and count the number of heads. But it is faster to instead sample once from the binomial distribution.
+For our sampling problem:
+I didn't code this in Python. But the Julia code below can be easily translated.
+Here is the code:
+TL;DR There is a single numpy function that does what we want. We should use it.
+A discrete distribution defined by density $(p_1, \ldots, p_n)$ is sometimes called a categorical distribution. According to wikipedia it is also called a generalized Bernouli distribution or multinoulli distribution, which I like because they are descriptive.
+Poking around online, including wikipedia and stackexchange, I don't see a method as efficient as what I have above for drawing many samples from this distribution. This is odd because it's not exactly rocket science.
+However, just as drawing many sample from a Bernoulli distribution is equivalent to drawing one from the associated binomial distribution (i.e. the coin flipping example mentioned above.), drawing many samples from a generalized Bernoulli distribution is equivalent to a single sample from a multinomial distribution. numpy has a function for this. I didn't look at the code, but it is easy to see that it is using an $O(1)$ algorithm, probably equivalent to the one presented above (and the Julia code). (It is about 4 times slower than the Julia code, which makes me think it might not be implemented purely in C.)
+Here is the same example I gave above:
+EDIT: It is exactly the same algorithm that I have above. It is pure C, but there is a bit of overhead somewhere (or maybe the rng implementation is limiting.)
+Note the check to see if any more samples are remaining to draw; I neglected to do that in the Julia version.
+For completeness: Julia of course has an equivalent function
+numpy uses Pcg64 by default and Julia uses Xoshiro256++. Casual comments online indicate that the latter is faster. It's not yet in numpy.
+A test with a probability vector of length 100 rather than 4, shows numpy only 20% slower than Julia. This scaling in numpy performance is very common. It usually indicates that the worse performance with smaller arrays is due to overhead in the python/numpy interface.

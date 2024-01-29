@@ -1,0 +1,30 @@
+Describe the bug
+With 2-qubit gates, the buffer passed to the Loop_DN function may not be aligned and causes assertion failure.
+To Reproduce
+Steps to reproduce the behavior:
+grover_4qubit.exe: /root/intel-qs/src/highperfkernels.cpp:299: void Loop_DN(unsigned long, unsigned long, unsigned long, Type *, Type *, unsigned long, unsigned long, const qhipster::TinyMatrix<Type, 2U, 2U, 32U> &, bool, Timer *) [with Type = std::complex]: Assertion (UL(state1) % 256) == 0' failed. grover_4qubit.exe: /root/intel-qs/src/highperfkernels.cpp:298: void Loop_DN(unsigned long, unsigned long, unsigned long, Type *, Type *, unsigned long, unsigned long, const qhipster::TinyMatrix<Type, 2U, 2U, 32U> &, bool, Timer *) [with Type = std::complex<double>]: Assertion (UL(state0) % 256) == 0' failed.
+Additional context
+Another example also has this behavior:
+mpirun -np 2 /opt/intel-qs/examples/bin/test_of_custom_gates.exe 4
+It seems single-qubit gates are fine and only two-qubit gates have this problem. In particular, the problem appeared in psig.ApplyCPhaseRotation() in the grover_4qubit example. I did some debugging and found the pointer was pointed to offset 0x80. I'm not sure if this is a real bug, or just the way I'm running it is wrong.
+When I run with 4 processes, the pointer points to offset 0x40. When I run with 8 processes, the problem disappears again.
+Hi @wh5a ,
+I was able to reproduce the error working in the "master" branch, but the problem seems to be fixed in branch "development".
+Since several improvements were introduced, I cannot pin down the specific fix without further analysis.
+We are planning to merge development into master soon, but it may take a few more weeks.
+if this is a possibility, consider working with development branch, it is pretty stable.
+Working in branch "development".
+I tried to reproduce the error message. Compiling with:
+$ CXX=mpiicpc cmake -DIqsMPI=ON -DIqsUtest=ON -DBuildExamples=ON ..
+$ make -j
+and running from "/examples" with
+$ mpiexec.hydra -n 2 ./bin/grover_4qubit.exe
+or
+$mpirun -n 2 ./bin/grover_4qubit.exe
+there is no assertion failure. No assertion failure also for 4 or 8 processes.
+Gian
+@giangiac I did try the development branch. I believe this branch doesn't build the grover_4qubit example which is why I used the master branch. Also, in my comment I mentioned test_of_custom_gates had this problem as well. Were you able to reproduce it?
+@giangiac I merged commit b625e1f and I'm happy to confirm that the bug has indeed been fixed. However, test_of_custom_gates is still failing.
+@giangiac Could you kindly explain what LOOP_DN, LOOP_SN, and LOOP_TN do?
+@cangumeli @fbaru-dev @jwhogabo Would you be able to take a look? Thank you!
+@wh5a the LOOP_SN, LOOP_DN and LOOP_TN are functions to performed "nested for loops" that manually decide which of the loops is parallelized via OpenMP. They are used for the implementation of 1- and 2-qubit gates. LOOP_SN is actually a single for loop, DN a double loop, TN a triple loop. They also provide functionalities to record the time spent in executing the three kind of loops.

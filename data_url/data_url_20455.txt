@@ -1,0 +1,18 @@
+We should be zeroing memory that is used to store secret data in our free functions.  It turns out that it is pretty difficult to do this in a way that is portable and guaranteed not to be optimized away.  We could do something a bit ugly as show below (from libsodium):
+OPENSSL just makes the pointer to the memset function volatile to avoid compiler optimization:
+Reference: https://github.com/openssl/openssl/blob/master/crypto/mem_clr.c
+Would that be sufficient?
+OpenSSL then has further optimizations as well, they have platform specific assembler that overrides the OPENSSL_cleanse function for optimizing further, eg: https://github.com/openssl/openssl/blob/master/crypto/x86_64cpuid.pl#L196
+That looks OK for now. After reading some discussions online it does not seem clear that the solution is future proof though.
+Windows has a function specifically for this (SecureZeroMemory) so we might as well use that when it is available.  We could add something like the below:
+I like that approach.
+I wrote some benchmarking testing different zeroing methods: master...mofojed:zero
+I have not run on a windows machine yet, so haven't compared with the SecureZeroMemory method. The other methods were all pretty much the same, with the exception of the sodium fallback method, which is much, much slower. We should avoid that one if possible :) Benchmark results below.
+I also wrote a test for correctness, to verify that memory is actually being zero'ed out. The tests pass (including verifying a case where memset gets optimized out and the secret is still there), though I'm not certain this kind of test would capture all possible optimizations.
+Thanks guys, great work on figuring out and testing a good solution.
+I suggest that we pick one of volatile/2/3/sodium and incorporate it into liboqs, along with Windows version and memset_s.  I don't think we need test_mem in liboqs; once we are happy withthe code, hopefully it will remain untouched.
+I was thinking that maybe we should do an src/common directory with a corresponding common.h, and put the OQS_MEM_cleanse in that.  I have ideas on a few other things to put in there as well, eventually, such as the UNUSED macro for flagging unused attributes, and some basic debugging macros.
+Would the following implementation work? If so I can create the common directory and add it.
+Looks good to me.  Mike, any comments?
+With the same pull request, could you go through the rest of the codebase and put in these cleanse calls everywhere memory that could contain a secret value is freed?
+Close issue: merged PR #54.

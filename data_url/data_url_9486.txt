@@ -1,0 +1,13 @@
+The following code will raise an exception:
+It raises ValueError: All samples of an amplitude waveform must be greater than or equal to zero.. It does so under Pulse.__init__, where it happens that the first and the last values of amplitude.samples are close to zero but negative: amplitude.samples[0]=1e-09 and amplitude.samples[-1]=-2e-09.
+Changing a single value in the interpolation amplitude fixes it:
+This time, the first and last values of amplitude.samples are close to zero and positive: amplitude.samples[0]=1e-09 and amplitude.samples[-1]=3e-09.
+Isn't this "random" behavior a bug? Shouldn't the interpolation always take care of having positive values? A simple fix could be to round negative small values to zero.
+Isn't this "random" behavior a bug? Shouldn't the interpolation always take care of having positive values? A simple fix could be to round negative small values to zero.
+There's probably something we can do about this, but it's not true that the interpolation should always take care of having positive values. A waveform can be used for detuning too, where negative values are perfectly valid.
+Still, I can see from your sequence that your amplitude endpoints are not being respected (you are specifying [1e-09, 25497040.632286467, 1e-09]) so the waveform should not be negative on the edges. This looks like a bug to me, indeed.
+There's probably something we can do about this, but it's not true that the interpolation should always take care of having positive values. A waveform can be used for detuning too, where negative values are perfectly valid.
+Yes, of course, I didn't mean to remove negative values altogether in all situations, but I intended in this specific situation where it shouldn't happen, hence the simple fix that I'm proposing. In this context, small negative values may simply be a matter of calculation rounding errors.
+These are indeed rounding errors stemming from the fact that your amplitude range is very high (unrealistically high, in fact). The values of the samples are in fact already being rounded, but the precision of the interpolator is always relative to the largest value handled. The value you are inputing here is so high that you are going over the limit.
+The problem with rounding off "small" negative values is defining what is "small". Currently, we round to the 9th decimal place, so anything  >=-0.5e9 is rounded to 0 (this is the current definition of small). We could reduce the precision to the 8th decimal place, but that won't prevent someone from trying an even higher amplitude range and running into the same issue.
+The only robust solution I can think of is to determine the number of decimals based on the size of the range of values. Do you see any drawbacks to this?

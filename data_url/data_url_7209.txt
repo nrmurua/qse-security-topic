@@ -1,0 +1,69 @@
+Hi,
+im trying to use the IonSim, but i can't run it, always I got error
+Error: Some Julia code in the VS Code extension crashed
+when went to error appear in the FunctionWrappers.jl
+if VERSION >= v"1.6.0-DEV.663"
+@inline function assume(v::Bool)
+Base.llvmcall(
+("""
+declare void @llvm.assume(i1)
+define void @fw_assume(i8)
+{
+%v = trunc i8 %0 to i1
+call void @llvm.assume(i1 %v)
+ret void
+}
+""", "fw_assume"), Cvoid, Tuple{Bool}, v)
+end
+else
+I tried running this example inside of vs code and didn't run into any problems. Can you provide some more details about how you're running things and the error message that you receive?
+Hi, Im trying to run example from IonSim samples, as below
+using QuantumOptics
+using IonSim
+using Pkg;
+using DSP: periodogram
+using LaTeXStrings
+import PyPlot
+const plt = PyPlot
+C = Ca40([("S1/2", -1/2), ("D5/2", -1/2)])
+set_sublevel_alias!(C, Dict("S" => ("S1/2", -1/2),
+"D" => ("D5/2", -1/2)))
+L = Laser()
+νᵣ = √14 * 1e6  # radial trap frequency
+νₐ = 1.5e6  # axial trap frequency
+chain = LinearChain(
+ions=[C], com_frequencies=(x=νᵣ, y=νᵣ, z=νₐ),
+vibrational_modes=(x=[1], z=[1])
+)
+T = Trap(configuration=chain, B=4e-4, Bhat=ẑ, δB=0, lasers=[L])
+L.k = (x̂ + ẑ)/√2
+L.ϵ = ẑ
+L.λ = transitionwavelength(C, ("S", "D"), T)
+Efield_from_rabi_frequency!(5e5, T, 1, 1, ("S", "D"));
+axial = T.configuration.vibrational_modes.z[1]
+radial = T.configuration.vibrational_modes.x[1]
+axial.N = 8; radial.N = 8
+ρᵢ_ion = dm(C["S"])
+ρᵢ_axial = thermalstate(axial, 0.5)
+ρᵢ_radial = thermalstate(radial, 0.5)
+ρᵢ = ρᵢ_ion ⊗ ρᵢ_radial ⊗ ρᵢ_axial;
+tspan = 0:10:400
+fout(t, ρ) = real(expect(ionprojector(T, "D"), ρ))
+J = (-dm(C["S"]) + dm(C["D"])) ⊗ one(radial) ⊗ one(axial)  # Collapse operator
+γ = 1e4 * 1e-6
+Δlist = range(νₐ, stop=2νᵣ + 1e5, length=300)
+exclist = []
+for Δ in Δlist
+L.Δ = Δ
+h = hamiltonian(T, rwa_cutoff=1.5e6, lamb_dicke_order=2)
+_, sol = timeevolution.master_dynamic(tspan, ρᵢ, (t, ρ) -> (h(t, ρ), [J], [J], [γ]), fout=fout)
+push!(exclist, real(sol[end]))
+end
+the error got was
+┌ Error: Some Julia code in the VS Code extension crashed
+└ @ VSCodeDebugger c:\Users\abdul.vscode\extensions\julialang.language-julia-1.6.24\scripts\error_handler.jl:15
+ERROR: this intrinsic must be compiled to be called
+Stacktrace:
+[1] maybe_evaluate_builtin(frame::VSCodeDebugger.JuliaInterpreter.Frame, call_expr::Expr, expand::Bool)
+@ VSCodeDebugger.JuliaInterpreter c:\Users\abdul.vscode\extensions\julialang.language-julia-1.6.24\scripts\packages\JuliaInterpreter\src\builtins.jl:296The terminal process "C:\Users\abdul\AppData\Local\Programs\Julia-1.6.6\bin\julia.exe '--color=yes', '--startup-file=no', '--history-file=no', '--project=C:\Users\abdul.julia\environments\v1.6', 'c:\Users\abdul.vscode\extensions\julialang.language-julia-1.6.24\scripts\debugger\run_debugger.jl', '\.\pipe\vsc-jl-dbg-f3cbfe29-f20e-400d-9c57-4cdcde5de583', '\.\pipe\vsc-jl-cr-a8f023c8-bd42-4aba-ad2c-e432f21c9e63'" terminated with exit code: 1.
+This seems to be a julia-vscode issue and, unfortunately, I don't have any experience using their debugger. I would recommend using a jupyter notebook to interact with IonSim (there's also a vs code extension for that).

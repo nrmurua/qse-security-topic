@@ -1,0 +1,27 @@
+DelegateParameter currently does not take the validator of the source parameter. Especially, when using with a complex number parameter the DelegateParameter will default to a Floating point validator rather than using the complex numbers of the source.
+Work around is easy in the initialization by using:
+Myparam = DelegateParameter('Myparam', source=source, vals=source.vals)
+However, I think this should be the default behavior of the DelegateParameter class rather than explicitly required by the user to pass in the vals argument.
+operating system
+Windows
+qcodes branch
+v0.20.1
+I can not fully reproduce the behavior you describe, @ThorvaldLarsen
+The following code snippet
+does print "fails as expected". The delparam has no validator;
+is True.
+But I do think it would make sense for the DelegateParameter to inherit the validator of its source and also to complain if it gets passed a conflicting validator (like if we passed vals=vals.Strings() to delparam above).
+Or is there a good counter-example where the DelegateParameter could have another validator than its source? I can only think of the same kind of validator, but with other ranges.
+But I do think it would make sense for the DelegateParameter to inherit the validator of its source and also to complain if it gets passed a conflicting validator
+this depends on how you think about DelegateParameter. A more relevant point is - regardless of the DelegateParameter's validator, the value still DOES GO thorugh the validator of the source parameter, so i'm not sure what the problem is. Say, source.vals=Complex(), and d=DelegateParameter(...) has None vals, and i do d('hello') then the validator of the source parameter will raise an exception saing "hello" is not Complex.
+is there a good counter-example where the DelegateParameter could have another validator than its source? I can only think of the same kind of validator, but with other ranges.
+indeed, the different range one is good example. technically speaking, DelegateParameter can have arbitrary get_parser and set_parser which could transform the value of the source parameter to anything else :) haven't seen this though, and can't come up with a good example, yet i don't see why we would want to prevent this.
+Note that the following warning is given in the docstring of the DelegateParameter
+Which limits what the delegate parameter can do
+@ThorvaldLarsen I am unsure what needs to be done here.
+@jenshnielsen @WilliamHPNielsen @astafan8 sorry, somehow missed the responses above.
+As William points out the code will fail for complex number validators. However, it seems confusing to me that it should then work for floating numbers. Code snippet below will set delparam to zero and delparam can be used directly in doNd functions.
+Nothing here is broken. I just find the behavior somewhat inconsistent when for floating numbers the delegateparamter works without specifying any validators while for a complex number parameter one needs to specify it manually. My suggestion was to let the delegate parameter take the validator of the source by default rather than having None as default. The value will always pass through the source validator but when doing a measurement the measure object will not check the source validator to get the data type of the parameter. This means a delegate parameter is always registered as a floating number (None validator defaults to floating numbers) for measurements unless one manually adds a validator.
+Yes it does indeed seem like we can do better for parameter type detection in the case where we measure a DelegateParameter without a validator. Note to self this happens since _infer_paramtype will return None and we then fall back to the numeric paramtype.
+In general it should be a safe assumption that the DelegateParameter validator is the same type as the regular parameter but we cannot assume that it has the same limits since since it has offset and scale set differently from the source parameter
+A simple fix could be to improve _infer_paramtype to check the source validator type iff `param.vals is None and isinstance(param, DelegateParameter) but perhaps we can do something cleaner.

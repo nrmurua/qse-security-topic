@@ -1,0 +1,49 @@
+The following program runs into the error QISKitError: 'No counts for circuit "None":
+Two additional questions: is there a way to specify simulator noise parameters for each qubit? Which config noise parameter does "Gate error" correspond to? I am trying to replicate the ibmqx4 noise using a simulator.
+Many thanks.
+I expect the simulation isn't running because your U_error matrix is not unitary (U.U^dagger[1,1] = 0.996008 !=1 ).  If you change your unitary to use a phase angle like this it should work (and you can also enter the unitary as a complex numpy array)
+For your other questions there is no way currently to specify noise parameters for each qubit. This is something to look forward to when we release the Qiskit-Aer simulator package later in the year.
+If you are trying to model the performance of a device for now you can use the average noise parameters for the qubits and specify it using the "X90", "CX", and "measure" gate errors as described here.
+The difference between the U single-qubit gate error model and the X90 single-qubit gate error model is that the former applies the same error parameters to all single qubit gates, while the later applies the error parameter only to X90 gates in the decomposition of single qubit gates into X90 pulses and Z-rotations (and this is how they are implemented on the actual devices).
+Thank you for your answer. That was indeed a silly mistake by me.
+Would you know how the Gate Error (specified here) is calculated in terms of the three config noise parameters (p_pauli, p_depol, U_error)? Or otherwise, is there somewhere we can find these three parameters for the ibmqx4?
+Many thanks!
+@gautierronan see here:
+https://github.com/Qiskit/qiskit-backend-information/tree/master/backends/tenerife/V1
+At the bottom of the page it says how the error rates are calculated:
+Reported gate errors are measured using simultaneous randomized benchmarking (RB)1. RB gives the average error per Clifford gate, which we convert to error per gate according to the set of primitive gates used on QX2.
+I'm closing this since the original issue seems to be resolved. Thanks @chriseclectic.
+Jay M. Gambetta, A. D. Córcoles, S. T. Merkel, B. R. Johnson, John A. Smolin, Jerry M. Chow, Colm A. Ryan, Chad Rigetti, S. Poletto, Thomas A. Ohki, Mark B. Ketchen, and M. Steffen, Characterization of Addressability by Simultaneous Randomized Benchmarking, Phys. Rev. Lett. 109, 240504. ↩
+The solution provided by @chriseclectic seemed to work at first. But I am actually running into a very strange phenomenon.
+When running the code provided in my first post, using the config provided by @chriseclectic, I will sometimes get the right result, and sometimes run into an error.
+So, for instance, if I run the exact same code 10 times in a row, it will work as expected about 5 times (return result.get_counts()), and run into the following error about 5 times : JSONDecodeError: Expecting value: line 1 column 1 (char 0).
+I am using a Jupyter notebook, on Windows 10, and QISKit 0.5.6.
+Here is the program I use, and the log of the error:
+Just to add to this issue. I am running into the same phenomenon with the following config file (only specifying 'p_depol'):
+So the issue does not come from the U_error matrix I believe.
+Ok reopening the issue.
+I actually cannot reproduce the error. I run on MacOS. Tried with Qiskit 0.5.6, 0.5.7, and master. They all run successfully, with both of the configs you provided.
+Might be a Windows issue. Can someone with Windows please try this code? Tagging @nonhermitian @atilag
+@gautierronan can you find the life qiskit/backends/local/qasm_simulator_cpp.py and in the run function add a print statement for the raw simulator output (around line 221) and tell us what you see when you get the error.
+Change:
+to something like
+If the code runs into the error, I am getting this:
+If the code doesn't run into an error, I am getting this:
+Sounds like somethings up with the windows BLAS library, @atilag @nonhermitian do you have any ideas?
+You can you try installing OpenBLAS and check if it fixes the problem.
+It seems like this is an issue with spawning openmp threads at the same time that blas wants to create threads. I would try specifying a single openmp thread only for the solver and see if it works.
+On Windows the solver is currentlybuilt against openblas, and there are some openblas solutions to this problem:
+https://github.com/xianyi/OpenBLAS/wiki/faq#allocmorebuffers
+Thank you for your answer. Could you elaborate on how to achieve this?
+@gautierronan try this in your command line interface:
+set OMP_NUM_THREADS=1
+I have tried running the command set OMP_NUM_THREADS=1 in my cmd before opening Jupyter, and it doesn't seem to make any difference.
+I have also tried setting this parameter directly in python with os.environ["OMP_NUM_THREADS"] = "1", both before and after importing QISKit, but it doesn't work either.
+@chriseclectic can correct me if I am wrong but adding "max_threads_shot": 1 to the config should do the trick.
+@gautierronan as @nonhermitian said, you need to set it in the config. Try adding "max_threads_shot": 1,  "max_threads_gate": 1 to the config and let us know how that goes.
+If this turns out to be the problem we should figure out how to limit the BLAS operations to use a single thread rather than limit OpenMP. The BLAS operations are only used small matrix multiplications for combining noise operations, while OpenMP is used for all the actual state update functions.
+Thank you for your answers. Unfortunately, this does not seem to solve the problem though.
+Here is the code and config I am currently using, which still works sometimes and runs into errors sometimes:
+It may be worth noting that if I specify 'shots'=1 instead of 'shots' = 1024, I do not seem to be running into errors anymore.
+Not sure if a fix is available for this, or if anyone is thinking about it? @chriseclectic if you feel this can be resolved through other methods, please jump in. otherwise i think we should close the issue.
+closing as all noise is moving to aer

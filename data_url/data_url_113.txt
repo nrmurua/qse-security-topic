@@ -1,0 +1,21 @@
+Take the phase_estimation.cpp example
+As is, if compiled targeting the RemoteRESTQPU, this works
+However, if I just add a couple more kernel lambdas, even if unused,
+This fails because no counts come back due to the execution going through Library Mode and the ExecutionManager. The Quake gets generated, but there must be some issue with overriding the original entry point function. Perhaps the signatures are wrong somehow.
+Looks like the issue here is some discrepancy in lambda function mangling number b/w regular clang action (EmitLLVMAction) and the bridge action.
+In particular, for the qpe invocation
+_ZN3qpeclIZ4mainE3$_08r1PiGateEEviOT_OT0_
+Demangled =  void qpe::operator()<main::$_0, r1PiGate>(int, main::$_0&&, r1PiGate&&)
+_ZN3qpeclIZ4mainE3$_28r1PiGateEEviOT_OT0_
+Demangled = void qpe::operator()<main::$_2, r1PiGate>(int, main::$_2&&, r1PiGate&&)
+The lambda  [](cudaq::qubit &q) __qpu__ { x(q); } is named main::$_0 in the LLVM action vs. main::$_2 in our bridge.
+I suspect there might be some optimization going on in the regular LLVM action: statePrep and oracle lambdas were skipped/ignored because they are unused; hence the x lambda got the first index 0.
+Looks like the issue here is some discrepancy in lambda function mangling number b/w regular clang action (EmitLLVMAction) and the bridge action.
+In particular, for the qpe invocation
+_ZN3qpeclIZ4mainE3$_08r1PiGateEEviOT_OT0_
+Demangled = void qpe::operator()<main::$_0, r1PiGate>(int, main::$_0&&, r1PiGate&&)
+_ZN3qpeclIZ4mainE3$_28r1PiGateEEviOT_OT0_
+Demangled = void qpe::operator()<main::$_2, r1PiGate>(int, main::$_2&&, r1PiGate&&)
+The lambda [](cudaq::qubit &q) __qpu__ { x(q); } is named main::$_0 in the LLVM action vs. main::$_2 in our bridge.
+I suspect there might be some optimization going on in the regular LLVM action: statePrep and oracle lambdas were skipped/ignored because they are unused; hence the x lambda got the first index 0.
+Right. Unfortunately, the regular clang flow appears to be optimizing away the unused lambdas, which is resulting in the lambda's unique ids being renumbered. The MLIR bridge isn't doing this and the dead lambdas are still present, so the unique ids are different. sigh

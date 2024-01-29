@@ -1,0 +1,34 @@
+I think we could make starting the QVM and quilc more convenient by allowing Python to spin up the subprocesses itself in just 1 command within Python. It could also check if they're already running by issuing ping requests to each, and seeing if they're alive. If they are, it can no-op.
+I suppose the core command would be something like
+This would take some design work so it's not confusing, as there won't be terminal windows to show you things are chugging along anymore.
+Thoughts? (CC: @notmgsk @ecp-rigetti @mpharrigan @lcapelluto)
+There's the local_qvm context manager, although it is not heavily advertised
+Ah, I forgot about this completely. Maybe this issue then changes to reviewing the design of that and potentially making it more useful.
+Could we instead wrap the QVM and quilc in python modules and avoid needing separate server processes running?
+@blakejohnson Two different points regarding that:
+Feasibility
+Currently quilc and QVM, which are implemented in Lisp, use an efficient implementation called SBCL which produces high-speed, native machine code. It currently does not support delivering an application as a shared library.
+Because Common Lisp is standardized, there are other implementations we can use, such as Embeddable Common Lisp (ECL, free) or LispWorks (commercial). The former compiles Lisp to C code, and interoperates with C cleanly (as a static library, shared library, executable, or object file). However, to get the performance in the QVM that we do, we heavily rely on the memory layout that SBCL has of objects at runtime, and ECL doesn't have this layout. I filed a ticket with the ECL to add this feature.
+In principle, with some effort, we could rely less on the object layout for quilc since it's not doing much with the object layouts themselves except to pass off to some Fortran routines, but that would take some time.
+For all of this, I would love to chip away at the code to move it in this direction and allow these options.
+Effects
+It sounds tempting to put the QVM and quilc in the same process as a running Python program, but I think it comes at a few great costs.
+The process would share the same address space. This means multiple pyQuil programs running would duplicate this space. The QVM and quilc are not cheap programs to run; they do a lot of computation and are happy to eat memory up as long as its available. Tying this to your Python program may decrease your program's stability.
+Linking Python to multithreaded programs like the QVM and quilc is a little bit dangerous, especially if those programs are using objects from Python space. (Why wouldn't you, if you have a raw C interface?) Python is globally locked and there is no room for parallelization. Every Python object would need a mutex and extra care would need to be taken to decrement refcounts appropriately.
+Cordoning it off as a separate process (a) allows objects to be shared very safely since they must be copied and "ownership" is transferred, and (b) allows multiple concurrent users (in the abstract sense) of the programs. You can spin up $NUM_CORES Python programs and run them in parallel on the server-mode QVM or quilc, and you will realize the parallelization benefits.
+If the QVM or quilc crashes, they can be safely and immediately restarted without an interruption to your running Python process.
+In my opinion, using the C library model in Python is nice if your API boundary is relatively small and safe.
+With all of that said, I'm no stranger to the fact that sometimes you don't need all of this heavy machinery (multithreading, huge memories, concurrent access, high-speed simulation, ...), and you just want to do something simple, especially for single-digit numbers of qubits. Part of this is a big reason that the PyQVM is being developed.
+Thanks for the detailed reply, @tarballs-are-good. I suppose that I am largely interested in that last use case, of programs on 1-4 qubits. But, just to respond to one idea above, my objection isn't so much to the separate processes. What I'd like to avoid is:
+I suppose that last item is a feature rather than a bug, but I get the same kind of type safety by importing function signatures and type definitions from a C header file with cffi.cdef(...).
+In other words, I'd already be happier with spawning the processes as you suggest in the OP, but then I'd also want to pass data to those processes with stdin/stdout. And, we'd still need those processes to persist while the parent python process is open to avoid the overhead of forking each time we want to call out to quilc or the qvm.
+One other thought: you completely avoid the issues you mention around memory safety by passing data by value.
+I suppose that I am largely interested in that last use case, of programs on 1-4 qubits.
+Of course, separate processes and all that is far too heavyweight for simple 1q pure state calculations. As you know, the communication overhead absolutely dominates a few arithmetic instructions.
+One other thought: you completely avoid the issues you mention around memory safety by passing data by value.
+This is nice when it's possible. In C, it's not possible to even pass an array by value, even a statically sized one. You could do the classic "wrap in a struct" trick, and that will give you a static array, but now you have these extra structs.
+Structs wouldn't be able to be self-referential, and you'll risk blowing the stack if you have too much data, since that's where pass-by-value data goes in the C calling convention. Everything has to be flat, and such things are very difficult to wrangle, allocate, etc.
+Unless the API is extraordinarily simple with extremely primitive data (e.g., a fixed number of parameters, a pair of floats, etc.), pass-by-value is infeasible.
+needing to launch 2 programs on my machine before my code will work [...] having those 2 processes persist after I am done
+These sound like reasonable ergonomic niceties that I think whatever solution proposed to this issue should address. A lot of what you described, especially in the last paragraph, sounds like the processes should be dæmonized.
+See #976 for an update on the context manager side of this discussion.

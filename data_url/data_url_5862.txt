@@ -1,0 +1,30 @@
+Simulation time increases linearly after every epoch when training the "Hybrid quantum-classical Neural Networks with PyTorch and Qiskit" example given in Qiskit Textbook using any of the Aer simulators. The simulation time per epoch stays almost the same if BasicAer simulator is used.
+Simulation time Vs Epoch number plot for various simulators is given below.
+
+This behavior is not observed in Qiskit-aer version 0.7.6 and Qiskit version 0.24.1. Also, Aer simulator is much faster than BasicAer.
+
+Running the "Hybrid quantum-classical Neural Networks with PyTorch and Qiskit" example given in Qiskit textbook (It was written for Qiskit 0.23.1 version hence few changes are required to run it using Qiskit 0.25.1 and Qiskit-Aer 0.8.1) or the below-given code snippet.
+Aer simulator should have a constant simulation time in every epoch and Aer simulator should be faster than BasicAer.
+@maniraman-periyasamy Can you check if this issue is present on master? It might have been related to the memory issue fixed by #1200
+@chriseclectic The pattern is repeated even in the master (qiskit-aer 0.9.0, qiskit-terra 0.17.1). BasicAer gives a constant and faster simulation time. Whereas, AerSimulaor's simulation time is linearly increasing every epoch.
+
+Thanks for checking @maniraman-periyasamy, @hhorii you look into what might be causing this?
+I guess that this is not an issue in Aer.  Could you try
+instead of
+?
+@hhorii I ran the simulator as you suggested. There are two changes to be noted.
+The issue with Aer still persists. Though, using the circuit instead of transpile brought down the increase in time taken from  ~12 * epoch to ~ 3 * epoch, and the simulation time of Aer is faster than BasicAer in the first epoch.
+
+BasicAer couldn't be run without transpile. When I try to, the following error is thrown. "qiskit.providers.basicaer.exceptions.BasicAerError: 'qasm_simulator encountered unrecognized operation "h" ". So I had to run the basicAer using transpile (Not sure if there is any other way!).
+
+I think part of this is just the overhead of the assembly and C++ wrapping code of the simulator taking an order of magnitude more time than the actual simulation for such as small circuit (3 qubits).
+Unfortunately there isn't too much we can do about that in general atm, but your specific example maybe you can rewrite it so that you are executing the whole batch of circuits and theta params in a single backend.run call rather than 1 circuit/theta per call.
+For example breaking your circuit function up into a simple benchmark:
+In BasicAer since its all python there is not much difference between executing batch 1 at a time or all together
+With Aer that has to go through Pybind for qobj and results there is a large overhead per execution call (~75ms here) so there is a huge difference between executing the full batch in a single call vs iterating over each item in batch:
+That said this still doesn't explain why the time is basically increasing each epoch as if its accumulating rather than being constant (and just larger from overhead).
+After further profiling I think I found the culprit (fix in #1232). There was an internal bug in the backend class with how basis gates are computed that was resulting a side effects causing larger and larger set comparisons to happen each execution. This seems to be the main reason for the linear increase in time.
+After fixing this I get this when running your script (with a tweak to avoid transpiling every run call by putting self._transpiled_circuit = transpile(self._circuit, backend) in the init`)
+This seems to fix the increase bug, and then the constant offset is now just the C++ pybinding overhead.
+
+Re-running my above benchmark with this fix the overhead for Aer has been greatly reduced as well:

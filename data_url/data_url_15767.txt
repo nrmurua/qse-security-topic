@@ -1,0 +1,17 @@
+When using random_circuit from qiskit/circuit/random/utils.py to generate random circuits, scaling width appears to be worse than scaling depth. This was profiled using cProfile for running,
+where we use
+Ranking the top functions by total time spent within the function, and not sub-functions, for the first case shows linear scaling,
+
+For the second case, however, we get superlinear scaling.
+
+Looking at the function call dependency it seems that a greater proportion of time is spent in rng.shuffle and the list comprehensions.
+deep circuit:
+
+wide circuit
+
+qiskit version: 0.19.0.dev0+7ea4d6e
+Yeah, looking at the code this definitely makes sense:
+https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/circuit/random/utils.py#L121-L129
+In the worst case the selection of random qubits for each layer it basically scales n^2 since in the worst case it does a random shuffle then instead of a popping from the front it looks at the first element and iterates over the full list of qubits and checks for it's presence in the operands. There are a bunch of simple fixes for this, but the easiest might be to do something like:
+I put this suggestion so we still rely on numpy's rng for operand selection. The more natural fix in my head was to just use remaining qubits as a set and do:
+which would perform even better, But then instead of the randomization being dependent on the user specified seed it would depend on python's hash randomization seed not necessarily deterministic with a fixed seed parameter.

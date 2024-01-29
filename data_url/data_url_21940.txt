@@ -1,0 +1,20 @@
+I occasionally (a few times a day) see a stream of 'write underflow' errors from the Kasli satellite (using a branch of Artiq a274af7).
+I seem to get them most frequently with an (underflowing) DMA sequence like the below experiment, but I have seen them without using DMA. The probability of seeing this error seems to be changed by restarting the master+satellite - i.e. sometimes I don't see this error for a long time, then after restarting everything I see it straight away.
+Satellite log:
+How are you clocking the master and satellite?
+The master is running from an external 150 MHz. The slave is starting off on the external 150 MHz and switching to the recovered clock when the DRTIO link is up.
+Data corruption from the Si5324 non-deterministic skew? Let's revisit this issue after the latter is fixed.
+Reproduced.
+Ran the repro several hundred times after the fix without any error.
+What kind of fiber lengths are you going to use DRTIO with? If they vary a lot we should do a RTT measurement and compute the underflow limit value in the firmware.
+(The value we had before was for GTX+62.5MHz clock with a short fiber, which is why we are seeing this problem now with the 150MHz clock)
+Most of our fibres will be 10m or 15m, but there might be the occasional in-rack or ~30 m link in the future.
+My preference would be for an RTT measurement. As @klickverbot says, links will typically be 2m - 15m, but up to (at least) 30m on occasion.
+Thinking more about this, it's not that simple:
+I propose moving all of this into #40, i.e. the latency adjustments of #40 should also change the write underflow margins of their respective DRTIO links.
+With fc3d97f I still see infrequent write underflows. With the following experiment, I see a write underflow every 5 minutes or so.
+@cjbe Are the two local TTLs necessary to reproduce the bug? Can their pulses be replaced with delays? Is there any modification of this experiment that can make the write underflows more frequent?
+Removing the local TTLs and making the remote output events more frequent increases the rate of errors to ~ 1/s on my setup, which consists of 2x Kasli v1.0 connected by a 10m fiber:
+I can reproduce this bug; interestingly the underflows have positive slack:
+Been running for a few minutes without any error - before that commit there was an error every few seconds.
+This works for me - I see no errors over 12 hours.

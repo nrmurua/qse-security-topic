@@ -1,0 +1,24 @@
+When trying to load a Qpy file that was made from a circuit with an initialize instruction, it produces the following error:
+Run the following:
+Qpy should be able to load the circuit from the file generated.
+No response
+The problem seems to be stemming from how the initialize (more precisely, the Statepreparation) instruction is saved and then retreived. When initialized with an int as an argument, in the end the gate produces a list with one element with the desired value:
+
+And this is how the instruction is saved (containing a list with only one element - the parameter sent). When this is retreived and the StatePreparation instruction called, it assumes that this is a list that should contain the "vector of complex amplitudes to initialize to". However, since the parameters saved is a list with one element (and that being 0) it gives the error that this is not a valid list.
+When running the provided example, when the circuit is loaded, _from_label and _from_int are false (since it reads a list with one element).
+
+This is also the reason that for initialize instruction, when using the constructor with the list, the bug does not occur.
+And when using initialize with 1, the error is given because of the "length of the list", rather than the amplitude verification. The code:
+gives the error: qiskit.exceptions.QiskitError: 'Desired statevector length not a positive power of 2. since it passed the if from line 103 and not the following check (in _get_num_qubits) since it finds a list of length 1
+
+So a quick workaround is using initialize with a list or label rather then int. I'll investigate further to see what good solutions are available
+* note on previous comment: using labels also produces the bug, since appending an initialize instruction with a label (for example '010') in the end produces an instruction with a list as params ([CircuitInstruction(operation=Instruction(name='initialize', num_qubits=3, num_clbits=0, params=['0', '1', '0']), qubits=...)]) so when it gets put again in the circuit, the same error occurs, being interpreted as a list with amplitudes, rather then the labels.
+Since the way the Instruction is build (the params is always a list), I suppose that one easy solution is to take this difference in parameter initialization when the circuit is loaded back from the file. That is, in the _read_instruction function when treating this case:
+
+a quick fix would be treating which case of instatiation is based on params here:
+One could also modify when the instruction is saved in the qpy file or how params are stored in the StatePreparation instruction, as to make the writing/reading more independent of initialization.
+However, I recognize I am not very familiar with the code just yet, so a more experienced opinion would be appreciated.
+@SoranaAurelia: what you're saying in the second comment is sensible.  StatePreparation is really quite weird in how it handles parameters, and I think the only way it'll work in its current structure is to have QPY infer that a length-one parameter list should be reduced to an integer on reconstruction.  It's unpleasant and non-standard, but short of rewriting a lot of StatePreparation code (which would have a knock-on effect of breaking Aer's simulation of the instruction), it's the best we've got.
+Would you like to work on the issue?
+Yes I would :) So just to be sure, going with the "quick fix" is the way to go here, right?
+Yeah, exactly.

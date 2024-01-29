@@ -1,0 +1,24 @@
+What is the use of gate_features.TwoQubitGate (and ThreeQubitGate, for that matter)? It doesn't define any method other than _num_qubits_.
+The reason I think its existence could potentially be bad comes up when people want to count the number of two-qubit gates in their circuit. They might think to do
+but for this to work properly, every two-qubit gate in their circuit must be of a type explicitly declared to be a TwoQubitGate. I myself am wary of doing this and find myself always using the more sure-fire
+instead.
+It's a convenience class that avoids the user having to write a num_qubits method. It used to be more important, when gates weren't required to specify a qubit count and you had to write your own validation of the count.
+I agree that it could cause the mistake you're pointing out. Same for the 1 and 3 qubit variants.
+I am in favor of deprecating them.
+Are gate_features like TwoQubitGate placed in the right place in the class definitions? For instance, XPowGate is declared as:
+class XPowGate(eigen_gate.EigenGate, gate_features.SingleQubitGate):
+But SingleQubitGate seems to be Mixin class, and EigenGate is the base class, so the order should be the other way around (Base class last)?
+Can't the convenience can be provided by a decorator (à la value_equality) while addressing Kevin's concern?
+Will tools recognize that the decorator is adding the abstract methods? We could end up creating a lot of false positives in pycharm.
+I am in favor of deleting two qubit and three qubit gate, since it's so easy to just add a num qubits method now.
+For single qubit gate, there's the issue of "on_each".
+All the arguments here also apply to InterchangeableQubitsGate.
+InterchangeableQubitsGate actually has a purpose. It affects the equality check in GateOperation.
+That being said, we could certainly replace that class with an optional method that Gate classes can override.
+It has a purpose in the same sense as the others: it defines a method (qubit_index_to_equivalence_group_key). The cost of missing some "interchangeable gates" by checking by type rather than by "equivalence group" is admittedly much smaller than undercounting two-qubit gates, but it seems like the same sort of issue.
+on_each could be generalized for SingeQubitGate, for a two qubit gate it would just apply to pairs in the list.  For k-qubit gate it would just iterate in steps of size k.
+Started this in #4207. Looking at the results of that though, I feel these convenience classes are nice, so having second thoughts.
+I think perhaps we could have best of both worlds if we follow @gecrooks and design these as mixins instead of base classes. Perhaps a rename to ThreeQubitGateMixin or ThreeQubitGateFeature (which would make it less likely users would find_ops_with_gate_type), remove the Gate subclass, and make sure inheritors use the correct mixin inheritance ordering.
+Same for InterchangeableQubitsGate. Thoughts?
+After going through this a bit I find they're primarily convenient for testing, otherwise every test using them has to redefine it. However in production code they don't add much value.
+I'll copy these to cirq.testing and make sure all tests use them, then deprecate the originals. This serves both purposes better than the mixins approach I mentioned above.

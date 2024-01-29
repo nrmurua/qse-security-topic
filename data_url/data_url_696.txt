@@ -1,0 +1,55 @@
+Hi !
+When writing examples or tests, I like to use randomly generated objects while setting the seed, so they are repeatable. So I guess I should do:
+which is not great. I think the Singleton class could use a method like:
+random.hpp could be refactored a bit with this method.
+I can do a PR if you want, and if you help me find a better name for the method 😛
+Thanks! Btw, one thing that you can currently do is to save() the state of the RNG, then load() it later (see RandomDevices::load()/save() member functions). Let me think a bit about it, I remember bumping into some issues with having a generic thread_local/non_thread_local member function... I'll keep this open.
+How does this look? I decided to use get_instance() as a wrapper around get_[no]_thread_local_instance() based on #ifdefs.
+That's exactly it. I left a commentary about a typo NO_THREAD_LOCAL -> NO_THREAD_LOCAL_
+@antoine-bussy
+My only question is this: suppose we pull a thread local instance from a static function, like T& get_instance(){ thread_local static T{}; return T; }. Then, if I do somewhere static T& ref_to_instance = get_instance(), do I need to qualify the lhs with thread_local, i.e., thread_local static T& ref_to_instance() = get_instance()?
+I'd say no, as the T instance is thread_local (the one defined as static in get_instance()), and if I do thread_local static T& ref_to_instance() = get_instance(), then the lhs thread_local refers to the type of reference, not to what the reference is pointing to.
+Do you happen to know the rules here? If I need to qualify, then I'd need an extra annoying #ifdef THREAD_LOCAL_ when getting a reference.
+btw, fixed the typo, thanks!
+The first time I read your question, I didn't understand it, so I wrote fundamental stuff about static and thread_local. I will let it there as it explains what would happen in your problem.
+I'm not 100%, but I think static and thread_local work the same way as they are both Storage class specifiers.
+When you want to do a C++11 singleton, you do, with a free function :
+You can see that the return type is not impacted with static.  And you use it as you did in random.hpp:
+No need for any static here. If you do, I guess the reference i will be static and might not be what you want. And I believe all I said about static also applies to thread_local.
+Btw, it seems that thread_local implies static
+Now, what is confusing with static is that it has other meanings in different contexts. If you implement your get_instance as a member function :
+The first static is completely different from the second. The first static means that get_instance is a static member function of Singleton. Which makes sense since it does not depend on any instance of Singleton.
+Also, see this example: https://godbolt.org/z/h6jzhs1cf
+thread_local does not impact the type of j, which seems to confirm what I said.
+Back to your problem :
+In my opinion, such a code is wrong. The static is attached to the reference, not the pointed object as you said. So i is global, but get_singleton() returns a thread_local object. To my understanding, i will point to an object that is common across all threads, which is the singleton of the first thread to set i.
+It would be more correct to do :
+But then, why making i thread_local ? What is the benefit ? Why not just write :
+A bit of testing confirmed what I thought:
+outputs:
+Thanks! That's very useful!
+so basically
+int& i = get_thread_local_singleton_instance()
+gets a thread_local instance across multiple threads. And I think you're correct, thread_local implies static storage duration, https://stackoverflow.com/questions/22794382/are-c11-thread-local-variables-automatically-static (makes sense, since it's valid for the entire thread).
+Now what puzzles me a bit is what exactly happens with i. Let's call it's type REFint. So we have something like REFint i = ...();. Now, this looks like the reference should be the same across all threads, so then how come that it points differently depending on which thread is executed? This is a bit of a "language lawyer" question we see on StackOverflow :). Maybe I'll post a question there, quite a few experts around that speak proper "standardeze" :)
+I think it's easier to conceive what's happening with pointers instead of references. T& is almost equivalent to T* const.
+Rewriting the example with pointers:
+With the static (resp. thread_local) version, *i will be the same across the whole program (resp. whole thread). In other words, the address stored in i (or the value of i) will be the same across the whole program (resp. whole thread). However, where this address is stored, that is &i, whose type is T* const*, will be different at each execution of the line, even in the same thread. i (but not *i) will likely be stored on the stack (if not optimized away).
+About thread_local implying static, this only means that static thread_local is equivalent to thread_local, not that thread_local means static. One can say that thread_local means static within a thread.
+Finally, how I model what is happening with static (resp. thread_local) is that in
+the line with static (resp. thread_local) is executed (in a thread-safe manner since C++11) only the first time get_singleton() is called in the whole program (resp. in the whole thread). On subsequent calls, it would be equivalent to:
+Does that answer your question ?
+Thanks! That clarified 99% of it :) The only thing I was unsure is here:
+So, in this case, the type of i is int* const (like a reference, as you mentioned). Now, observe that it's not declared with thread_local. Which means that the value of i, that is, the address it stores, should be the same across all program (and across all threads as well). How can that be the case, since get_thread_local_singleton() will return presumably a different address depending on which thread it was executed from?
+Just to be sure: i is defined inside a function, and is not a global variable ? i.e:
+In this case, why would the value of i be the same across all program? I don't understand what it is you're not understanding 😅 You'll have to try and explain it to me.
+@antoine-bussy No, i is defined in a header file, which is then included in the main program, like how I define the stuff in qpp.h. Turns out you can have definitions in headers. So, it's something like this
+
+btw, thanks for taking the time to go over all those quirks :)
+Then yes, you would need to add thread_local or not depending on the macro.
+I found a very interesting discussion about that: https://stackoverflow.com/questions/24253584/when-is-a-thread-local-global-variable-initialized
+The standard allows that each thread in the whole program will instantiate its RandomDevices even if it's not used, thus affecting performance. It seems that gcc and clang won't, but MSVC will (at least in 2014).
+I prefer to use the following syntax:
+which would only add () to the current use.
+If you want to stick with global variables, you should use get_no_thread_local_instance for all of them, except rdevs where you should use static/thread_local switching.
+@antoine-bussy That's very helpful, thanks. I've updated the qpp.h accordingly. Closing the issue. I still left singletons around (as opposed to free functions that return statics), since it's easier for the user to write stuff like st.z0 (as opposed to st().z0).

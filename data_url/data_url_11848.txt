@@ -1,0 +1,50 @@
+I pass the value of the default kernel that i found on the aqua files that is the QSVM_Kernel_Estimator, but when i execute the run() method, i get the following error:
+TypeError                                 Traceback (most recent call last)
+ in 
+----> 1 result = svm.run()
+~/anaconda3/envs/quantum/lib/python3.6/site-packages/qiskit_aqua/algorithms/many_sample/qsvm/qsvm_kernel.py in run(self)
+143
+144     def run(self):
+--> 145         return self.instance.run()
+146
+147     @Property
+~/anaconda3/envs/quantum/lib/python3.6/site-packages/qiskit_aqua/algorithms/many_sample/qsvm/qsvm_kernel_multiclass.py in run(self)
+53         put the train, test, predict together
+54         """
+---> 55         self.train(self.training_dataset[0], self.training_dataset[1])
+56         if self.test_dataset is not None:
+57             self.test(self.test_dataset[0], self.test_dataset[1])
+~/anaconda3/envs/quantum/lib/python3.6/site-packages/qiskit_aqua/algorithms/many_sample/qsvm/qsvm_kernel_multiclass.py in train(self, data, labels)
+36
+37     def train(self, data, labels):
+---> 38         self.multiclass_classifier.train(data, labels)
+39
+40     def test(self, data, labels):
+~/anaconda3/envs/quantum/lib/python3.6/site-packages/qiskit_aqua/algorithms/components/multiclass_extensions/allpairs.py in train(self, x, y)
+65             for j in range(i + 1, n_classes):
+66                 if self.params is None:
+---> 67                     estimator = self.estimator_cls()
+68                 else:
+69                     estimator = self.estimator_cls(*self.params)
+TypeError: init() missing 2 required positional arguments: 'feature_map' and 'qalgo'
+I just want to know how to call the following method... Which parameters should be passed?
+svm = get_algorithm_instance("QSVM.Kernel")
+svm.random_seed = 10598
+svm.setup_quantum_backend(backend='ibmq_20_tokyo')
+feature_map = get_feature_map_instance('SecondOrderExpansion')
+feature_map.init_args(num_qubits=20, depth=2, entanglement={0: [1]})
+all_pairs_extension = get_multiclass_extension_instance('AllPairs')
+all_pairs_extension.init_args(estimator_cls=QSVM_Kernel_Estimator) # THE PROBLEM IS HERE. WHAT ARE THE PARAMETERS AND VALUES THAT SHOULD BE PASSED?
+svm.init_args(training_input, test_input, datapoints[0], feature_map, multiclass_extension=all_pairs_extension)
+@rmd2 hi, we have a running example in test/test_qsvm_variational.py.
+try to set some breakpoints in /qiskit_aqua/algorithms/many_sample/qsvm/qsvm_kernel.py and run the above test. Then the logic would become clear.
+To answer your question, you need to pass _QSVM_Kernel_Estimator, which is imported as follows.
+from qiskit_aqua.algorithms.many_sample.qsvm._qsvm_kernel_estimator import _QSVM_Kernel_Estimator
+You can think the estimator as a version of the binary classifier that returns not only the classification but also the confidence of each classification. The quantified information of the confidence is later used by the multiclass algorithm such as error_correcting_code.
+Ok, @liupibm . Thanks for your response.
+It works, but now I have another problem related to the amount of memory needed to run this svm implementation on a database with 1000 instances... But it´s not related to this issue.
+You can close it and thanks again.
+hi @rmd2 thanks,
+we are addressing the memory issue in #208
+Suppose you have 1000 instances, the kernel matrix has 10001000/2 entries.
+For each entry, (x1, x2), we take the data points x1 and x2, and construct a circuit to compute their kernel. If you want to solve this problem before we issue the patch, you can try to avoid computing 10001000/2 entries at once since it would use all your memory. Try multiple batches and each batch computes 100 entries for example.

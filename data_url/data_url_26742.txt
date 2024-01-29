@@ -1,0 +1,59 @@
+I've noticed that the test
+QS/regtest-gw-cubic/G0W0_H2O_PBE0_30_pts.inp
+is failing from time to time on the CUDA Pascal dashboard (check the latest commits). The message is:
+It seems that the problem started somewhere after with commit 2b878fb
+The failure of this regtest seems to be really specific to this system or configuration. I think Cholesky decomposition is using pdgemm so could it be an issue with COSMA?
+Judging from the dashboard this issue was introduced somewhere between
+c9a73d8 and b04255b
+Was there any update in the libraries between those commits?
+This commit range also includes a DBCSR update. I noticed that DBCSR behaves differently since rc-13: in this regtest we are filtering DBCSR matrices with eps_filter of 0.0 which previously did not remove blocks with exact zeroes but now it does. I see this from a diff on the RPA output:
+This is probably not the reason for this issue, but I wonder whether that change in DBCSR is intended.
+This commit range also includes a DBCSR update. I noticed that DBCSR behaves differently since rc-13: in this regtest we are filtering DBCSR matrices with eps_filter of 0.0 which previously did not remove blocks with exact zeroes but now it does. I see this from a diff on the RPA output:
+This is probably not the reason for this issue, but I wonder whether that change in DBCSR is intended.
+Not sure I understand, is this a problem? In principle, it should not happen since the norm of zeros blocks will be zero and we are checking for <= eps, see https://github.com/cp2k/dbcsr/blob/a00094c449ed37c028267c70f883a9dae1d7cf02/src/mm/dbcsr_mm_multrec.F#L743
+We did some changes in the norms of the blocks, but my changes are after rc14 and I don't see any other change between rc12 and rc14...
+This commit range also includes a DBCSR update. I noticed that DBCSR behaves differently since rc-13: in this regtest we are filtering DBCSR matrices with eps_filter of 0.0 which previously did not remove blocks with exact zeroes but now it does.
+I found that this behavior is intended and was introduced by me in commit cp2k/dbcsr@0ffa950
+Again I don't think this is causing any issues.
+My first guess is still COSMA, can we test without COSMA just to see whether the same failure also happens with scalapack?
+The easiest way to test this would be to open a draft PR which removes COSMA.
+The easiest way to test this would be to open a draft PR which removes COSMA.
+The problem is that it happens in about 50% of the cases (for instance, now it is green)...
+As a quick and dirty solution we could remove all TEST_DIRS except for QS/regtest-gw-cubic and within that dir create several copies of G0W0_H2O_PBE0_30_pts.inp.
+OK, the test is now failing on Daint (same message) and there we don't use COSMA...
+And rerunning it fixed the problem... It smells like a race-conditions?
+Should we run it with a GCC thread-checker? (needs to rebuild GCC)
+@alazzaro, can you do a bisection to narrow down the commit that introduced it?
+Since we're not seeing it in any of the other psmp runs, it's probably CUDA related.
+yes, I agree, it is GPU related. And yes, we can try to use daint to check the error, but I cannot do it now... Now, can we make a pre-build container with GCC for thread-checking?
+The toolchain has some reminiscence of ThreadSanitizer. However, I've never used it and expect it requires some effort to get it working. Nevertheless, it would be great to have ThreadSanitizer available.
+yesterday I did a test and the problem of the false-positive is still there (reported by Joost ages ago, https://gcc.gnu.org/bugzilla/show_bug.cgi?id=55561 ). We need to compile GCC with --disable-linux-futex and check if it fixed the problem... I'm not sure if there can be other problems... It is on my to-do list for DBCSR...
+I felt guilty enough (due to the commit range) and setup a test on P100 even using GCC 7.5. I cannot reproduce the problem on my system. Is there anything specific we know that must be present to trigger the problem?
+@hfp, thanks for investigating! You can reproduce what the CI is doing like this:
+Once time permits I shall look into cp2k/cp2k-ci#54
+I was able to reproduce the problem without relying on specific bits or Docker.
+Multiple OpenMP threads seem to be a prerequisite (two threads per rank are able to reproduced the problem). More threads does not seem to increase the likelihood of the issue (maybe it decreases beyond 12 threads) . Also, multiple MPI-ranks seem to be a prerequisite (but two ranks are sufficient). I was not able to reproduce the problem with using a single rank.
+I will now remove/exchange some of the library components and see if it can be narrowed.
+@hfp, have you been able to narrow this down?
+The problem seems to have appeared somewhere between c9a73d8 and b04255b.
+Since this involves Cuda, the most likely candidate is the large DBCSR update in 4826a90.
+It is reproducible just by using the GPU version and does not depend on specific library/runtime versions, or any of the optional libraries. It looks like a data race (SMP). I have not investigated any more. Certainly a good idea to focus on DBCSR.
+I believe the culprit is cp2k/dbcsr@3fdbfc6, which enabled cuBLAS.
+The problem is that libcusmm is called with stackbuf%stream and then uses that stream to launch cuBLAS kernels. Unlike our own kernels, which use atomicAdd, the cuBLAS kernels require exclusive access to the C matrix. Hence, the cuBLAS kernels should instead use c_area%memory_type%acc_stream.
+The densification is not the default for the GPU implementation, so I would not expect big blocks in general.
+CUBLAS is used only when big blocks are implied (any dimension of the blocks > 80).
+However, you are right, that specific test has a mix of big and small blocks.
+So I did two wrong assumptions here:
+Your point is definitely correct, I will fix it (BTW, now we Shoshana changed that code, need to understand how to change it).
+Ideally we could just rollback to the latest working version of DBCSR, which in this case would be v2.1.0-rc12 . Unfortunately, CP2K does not compile anymore with that version  and we are effectively locked into v2.1.0-rc16 now.
+So, I think from now on we should make sure that we can return to an older version of DBCSR for at least 6 month.
+The change to the API is due to the Tensor interface, which is probably the last big change expected for the coming years.
+which is probably the last big change expected for the coming years.
+Right, I also don't expect this to be much of a constraint.
+The ability to rollback  will allow us to continue upgrading DBCSR at a high rate, because we have a contingency plan.
+This is good for both projects.
+@oschuett any clue what's the problem with the CUDA Pascal? https://storage.googleapis.com/cp2k-ci/dashboard_cuda-pascal_report.txt
+Yeah, unfortunately the GPU sometimes fails to initialize for some unknown reason. I restarted the run.
+OK, it is green, but let's give some other trials before closing the issue...
+The dashboard test has now passed three times in a row. So, I think it's safe to say we nailed it :-)
+Thanks @alazzaro for the quick DBCSR upgrade!

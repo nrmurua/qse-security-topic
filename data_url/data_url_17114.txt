@@ -1,0 +1,13 @@
+Parameter binding does not succeed as reported by user @Adrian Auer in Qiskit Slack.
+Result is error:
+Parameter would bind and circuits would execute.
+In qiskit/compiler/assembly.py:_expand_parameters lines 293-294 both of the following tests are failing:
+It appears to be because unique_parameters is a list of Parameter each of which is being compared to the elements of a list of dictionaries.
+The comparison should be re-examined so that types match up.
+This bug is similar to #2429 . Right now, Parameters depend on python identity for equality, but when they are serialized and sent to another process (here by parallel_map inside transpile inside execute), and return, they are instantiated with a new identity and so no longer treated as equal.
+The comparison in lines 293-294 of assembly.py attempts to check that there is only one set of parameters (unique_parameters), which is fully used by every circuit and fully bound by every set of bindings.
+Just prior to the comparison, unique_parameters should hold the single instance of theta used to build the circuits, e.g. {Parameter(theta)}, but:
+As a possible workaround, each circuit could be transpiled one-by-one, and then assembled as a group and executed. Alternately, phi could be made a parameter to the u3 gate, and then bound along with theta.
+Works for me, thanks, @mtreinish
+This still looks like an issue.  I am seeing it on a circuit I'm debugging.  I tried running the code above in this thread to see if it worked... and got similar errors to what was seen before:
+Hi @jgermain48 , thanks for reporting this! This was tricky to track down, but I believe you're seeing an issue in aer, described here: Qiskit/qiskit-aer#1249 (comment) .

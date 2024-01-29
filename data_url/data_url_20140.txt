@@ -1,0 +1,44 @@
+This issue is to discuss, formulate and agree, initially the need for and eventually the CI strategy going forward (and then implement it).
+As already discussed, there are different types of (CI) tests:
+Based on this a strawman proposal:
+Rationale: We should be able to make progress resolving issues (at their respective level of complexity: Simple ones should be CI'd&closed fast; downstream problems detected within reasonable time (but automatically); "deep" algorithm problems should be unearthed and resolved in a separate time frame).
+Alternative proposals welcome. Proposals for classifying the tests as well as how to implement them, too.
+@dstebila @xvzcf @jschanck @christianpaquin (any one else not party to the conversation up to now as well, of course) please click "+1" if you agree we should tackle this problem and if you have more time, additional feedback/suggestions would be great.
+I've been discussing with @thomwiggers about options.  He uses Github Actions for PQClean and says that he hasn't run into any compute time limits yet, just concurrency limits (well, and a limit on the number of API calls, but he's got a crazy number (1000+) of jobs).  Github Actions would have the benefit of being able to do self-hosted runners in the future if needed (though there are some security risks on doing self-hosted runners with public repositories that would need to be resolved first).
+Github actions are a very good idea, ultimately.
+In the (very) short term there's a much lighter weight solution that might work for us. Let's look at some recent job times:
+The arm builds are the biggest problem.
+CircleCI has a manual approval process, which we can insert anywhere we like in our build pipeline. So I suggest:
+Whoever reviews a PR can approve the arm builds once everything else is passing. This should get our CI iterations down to <10 minutes.
+That sounds like a great plan, John.  I didn't know about the approval jobs feature.  Can you tell who will be able to approve? I.e., do you think it will detect team members from the Github repo configuration and use those?
+Another challenge just observed: We presently trigger all downstream projects' builds on merge, taking all open-quantum-safe CI compute resources for quite some time as those builds apparently don't run in parallel. Should we re-consider this automation, too? Particularly oqs-demos and profiling take a lot of (compute) time (courtesy docker builds of many versions) -- but already oqs-openssl has very extensive tests we may want to whittle down, too, maybe only run on explicit manual approval as per @jschanck's suggestion above.
+oqs-demos and profiling arguably don't have to be built automatically and could "make do" with a "detached" or nightly build only. Until we have a better idea I'd suggest  removing them from openssl's downstream trigger (initially reverting open-quantum-safe/openssl#272 -- which might be the culprit of this "CI squeeze").
+@xvzcf if I recall correct you know of a way to simply remove some access rights and those triggers would not do anything? Otherwise, please consider open-quantum-safe/openssl#280
+Can you tell who will be able to approve? I.e., do you think it will detect team members from the Github repo configuration and use those?
+I tacked my proposal onto #903, it looks like any team member can approve, but someone should check.
+Also: can we whittle down the linux_x64 jobs? What are we testing for on alpine, centos, and debian that isn't covered by ubuntu?
+alpine has a different libc, namely musl, which might make it semi-useful. centos and debian will probably only differ in package versions and compiler versions.
+At one point I was considering trying to set up an as-minimal-as-possible config to test across different libcs and different architectures in the manner of Wireguard, but didn't have the time to follow-through.
+Perhaps it's worth revisiting that?
+@xvzcf if I recall correct you know of a way to simply remove some access rights and those triggers would not do anything? Otherwise, please consider open-quantum-safe/openssl#280
+I think just removing the triggers in the first place is better. We could also just run these triggers as nightly jobs.
+EDIT: Upon further thought I think the best would be if the triggers just scheduled nightly jobs. Not sure off the top of my head how to make this happen.
+the best would be if the triggers just scheduled nightly jobs
+https://circleci.com/docs/2.0/workflows/#nightly-example
+We had that at some point in time --even guarded to not run if nothing had been checked in during the past 24h. Who recalls why we stopped using that?
+We had that at some point in time --even guarded to not run if nothing had been checked in during the past 24h. Who recalls why we stopped using that?
+The nightly jobs in the downstream projects were set up so as to look for new commits in liboqs, but as a consequence, would fail one day and pass after that. There was also the feedback delay: a commit merged into liboqs wouldn't get fully tested until that night.
+What I meant was scheduling a nightly job if and only if a new_commit API trigger was made.
+alpine has a different libc, namely musl, which might make it semi-useful. centos and debian will probably only differ in package versions and compiler versions.
++1. In addition alpine is the basis for our docker distributions, so I'd vote for keeping that. With debian I never saw different test results compared to ubuntu, so I'd vote for dropping it. Centos had deviations once or twice. Whether that's enough to keep it within CI? Why not drop it, too?
+Given that RedHat terminated CentOS development in December 2020, I'm not inclined to continue with CentOS support unless we hear a clear demand for it.
+What I meant was scheduling a nightly job if and only if a new_commit API trigger was made.
+As I have no idea how to do that I went hunting for information. Two ideas now:
+Other ideas?
+Given that RedHat terminated CentOS development in December 2020, I'm not inclined to continue with CentOS support unless we hear a clear demand for it.
+Good point that made me also streamline open-quantum-safe/ci-containers: Can you and/or @xvzcf please take a look? Optimizing workflow a bit, I didn't do a PR but placed this in a new branch main: If OK, please set that as the new default branch along the lines of #795 so we can dump master: Thanks in advance.
+Changes in ci-containers look good to me. I changed the default branch to main.
+A couple of suggestions:
+Fine with me.
+I'd like to have at least one test path that exercises test_mem for the purposes of making sure that the test_mem code itself continues to work, but am fine with removing the bulk of its usage if it slows things down substantially.
+Fulll CI runs in 24mins now. Much better than when we created the issue. Thanks for all contributions. Case closed.

@@ -1,0 +1,97 @@
+ProcessTomographyFitter.fit() gives an array with NaNs, because the counts dictionary is not marginalized.
+Do something like:
+on a device that does not return pre-marginalized counts (maybe this is only on OpenPulse interfaces).
+Should give a choi matrix that can be plotted as a state city.
+Something like, in qiskit/ignis/verification/tomography/fitters/base_fitter.py:TomographyFitter._fitter_data, add
+cts = qiskit.ignis.verification.tomography.data.marginal_counts(cts, meas_qubits=meas_qubits) on the first line of the for loop. This would require propogating the measured qubits to this function somehow though...
+because the counts dictionary is not marginalized.
+Could you explain what you mean here with an example?
+@chriseclectic wasn't there a marginal counts in terra? I can't seem to find it
+@chriseclectic wasn't there a marginal counts in terra? I can't seem to find it
+I think that the plan is to move the code of marginal_counts from tomography to terra (qiskit.tools), see:
+https://github.com/Qiskit/qiskit-ignis/blob/master/qiskit/ignis/verification/tomography/__init__.py
+@dcmckayibm sorry about the delay, I'll make a code snippet to reproduce, but will be a few days. Thanks!
+Here is a code snippet to reproduce. It's the smallest one I could come up with:
+and stacktrace for the last line:
+The error is confusing, but the root cause is that OpenPulse jobs return measurement outcomes over all device qubits, not just the one that we are explicitly measuring. So for example, job.result().get_counts(i) returns a dictionary where the keys are 20-long-bitstrings, which in turn messes up qiskit-ignis/qiskit/ignis/verification/tomography/fitters/base_fitter.py:_fitter_data
+Perhaps the most correct fix is to change this behavior on OpenPulse backends--i.e. only return measurement outcomes over the qubits that are explicitly measured.
+I can fix this problem locally in tomography by explicitly marginalizing if the size of the returned result is not the same as the number of clbits, but this is really a hack and not a good one - this problem should be fixed in the OpenPulse backends, or (better, in my opinion) in the Result object.
+Seeing something that looks like this report with ValueError: array must not contain infs or NaNs.  I've been comparing to IBM's tutorials and find some that work that look identical in syntax for the statement that fails (rho_fit_qc = tomo_fitter_qc.fit(method='lstsq'))...but it isn't working with my circuit/gate combination.
+Version: Pycharm 2020.3.5, python 3.8, qiskit 0.28.0, qiskit-ignis 0.6.0
+Here are the errors:
+/Users/juliegermain/opt/anaconda3/envs/QuantumResearch/bin/python "/Users/juliegermain/Library/Application Support/JetBrains/PyCharmCE2020.3/scratches/EntSwap_withDensityMatrix.py"
+/Users/juliegermain/opt/anaconda3/envs/QuantumResearch/lib/python3.8/site-packages/qiskit/ignis/verification/tomography/basis/circuits.py:468: DeprecationWarning: The QuantumCircuit.iadd() method is being deprecated. Use the compose() (potentially with the inplace=True argument) and tensor() methods which are more flexible w.r.t circuit register compatibility.
+prep += circuit
+/Users/juliegermain/opt/anaconda3/envs/QuantumResearch/lib/python3.8/site-packages/qiskit/circuit/quantumcircuit.py:942: DeprecationWarning: The QuantumCircuit.extend() method is being deprecated. Use the compose() (potentially with the inplace=True argument) and tensor() methods which are more flexible w.r.t circuit register compatibility.
+return self.extend(rhs)
+/Users/juliegermain/opt/anaconda3/envs/QuantumResearch/lib/python3.8/site-packages/qiskit/ignis/verification/tomography/basis/circuits.py:478: DeprecationWarning: The QuantumCircuit.add() method is being deprecated.Use the compose() method which is more flexible w.r.t circuit register compatibility.
+circ = prep + meas
+/Users/juliegermain/opt/anaconda3/envs/QuantumResearch/lib/python3.8/site-packages/qiskit/circuit/quantumcircuit.py:933: DeprecationWarning: The QuantumCircuit.combine() method is being deprecated. Use the compose() method which is more flexible w.r.t circuit register compatibility.
+return self.combine(rhs)
+/Users/juliegermain/opt/anaconda3/envs/QuantumResearch/lib/python3.8/site-packages/qiskit/ignis/verification/tomography/fitters/base_fitter.py:348: RuntimeWarning: invalid value encountered in true_divide
+probs = np.array(cts) / shots
+Time taken: 3.728592872619629
+Traceback (most recent call last):
+File "/Users/juliegermain/Library/Application Support/JetBrains/PyCharmCE2020.3/scratches/EntSwap_withDensityMatrix.py", line 93, in 
+rho_fit_qc = tomo_fitter_qc.fit(method='lstsq') # needed to calculate fidelity
+File "/Users/juliegermain/opt/anaconda3/envs/QuantumResearch/lib/python3.8/site-packages/qiskit/ignis/verification/tomography/fitters/state_fitter.py", line 122, in fit
+return super().fit(method, standard_weights, beta,
+File "/Users/juliegermain/opt/anaconda3/envs/QuantumResearch/lib/python3.8/site-packages/qiskit/ignis/verification/tomography/fitters/base_fitter.py", line 220, in fit
+return lstsq_fit(data, basis_matrix,
+File "/Users/juliegermain/opt/anaconda3/envs/QuantumResearch/lib/python3.8/site-packages/qiskit/ignis/verification/tomography/fitters/lstsq_fit.py", line 100, in lstsq_fit
+rho_fit, _, _, _ = lstsq(meas_matrix, exp_values)
+File "/Users/juliegermain/opt/anaconda3/envs/QuantumResearch/lib/python3.8/site-packages/scipy/linalg/basic.py", line 1142, in lstsq
+b1 = _asarray_validated(b, check_finite=check_finite)
+File "/Users/juliegermain/opt/anaconda3/envs/QuantumResearch/lib/python3.8/site-packages/scipy/_lib/_util.py", line 262, in _asarray_validated
+a = toarray(a)
+File "/Users/juliegermain/opt/anaconda3/envs/QuantumResearch/lib/python3.8/site-packages/numpy/lib/function_base.py", line 488, in asarray_chkfinite
+raise ValueError(
+ValueError: array must not contain infs or NaNs
+Here is the code:
+from qiskit import *
+from qiskit.visualization import plot_histogram
+from qiskit.providers.ibmq import least_busy
+from qiskit.tools.monitor import job_monitor
+import qiskit.quantum_info as qi
+from qiskit.ignis.verification.tomography import state_tomography_circuits, StateTomographyFitter
+import matplotlib.pyplot as plt
+import time
+#=======================================
+qA = QuantumRegister(1,'alice')
+qC1= QuantumRegister(1,'charlie1')
+qC2= QuantumRegister(1,'charlie2')
+qB = QuantumRegister(1,'bob')
+cr = ClassicalRegister(2)
+qc = QuantumCircuit(qA,qC1,qC2,qB,cr)
+for i in range(0,4):
+qc.reset(i)
+qc.h(qC1)
+qc.h(qC2)
+qc.cx(qC1,qA)
+qc.cx(qC2,qB)
+qc.barrier()
+qc.h(qA)
+qc.h(qC2)
+qc.cx(qC2,qA)
+qc.h(qA)
+qc.h(qC2)
+qc.barrier()
+qc.h(qB)
+qc.h(qC1)
+qc.cx(qC1,qB)
+qc.h(qB)
+qc.h(qC1)
+qc.barrier()
+#============================================
+ideal_state_qc = qi.Statevector.from_instruction(qc)
+#===========================================
+t = time.time()
+qst_qc = state_tomography_circuits(qc,(qA,qC1,qC2,qB))
+job = qiskit.execute(qst_qc, Aer.get_backend('qasm_simulator'), shots=5000)
+tomo_fitter_qc = StateTomographyFitter(job.result(), qst_qc)
+print('Time taken:', time.time() - t)
+t = time.time()
+rho_fit_qc = tomo_fitter_qc.fit(method='lstsq') # needed to calculate fidelity
+print('Time taken fit:', time.time() - t)
+F_qc = qi.state_fidelity(rho_fit_qc, ideal_state_qc)
+print('State Fidelity: F = {:.5f}'.format(F_qc))

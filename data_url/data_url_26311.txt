@@ -1,0 +1,54 @@
+I was looking at the cmake build process and I have a few comments about some common cmake standards that should be adopted, especially since cmake_minimum_required() is set to 3.22:
+Also, feel free to copy the test-suite from spglib to enable github actions across multiple compiler families
+Hope these tips are helpful
+@mtaillefumier @RMeli
+Thanks for these useful suggestions.
+We are using the default cmake modules when they actually provide something useful and complete which is not the case for few of them (proper namespacing etc....). I think in particular about the BLAS and lapack, scalapack modules which are seriously outdated (they are a translation of the autotools one).
+New versions of CP2K dependencies start to use cmake as a build system but some do not properly configure the libray_config.cmake which complicates things a bit. The latest version of SPGLIB has one and we will use it when cp2k is updating its dependencies. LibXC still has a dual build system (to my knowledge) so we never know which one is used and we have to rely on manual search. Many of these custom modules will disappear eventually as we update dependencies to their latest versions.
+We will update the cmake build system with all suggestions when possible.
+Avoid bundling FindPackage unless it is a wrapper that checks for find_package(CONFIG) and the cmake bundled FindPackage modules. The bundled modules will always have precedence and it is best to first check with the ones maintained on cmake which can have better support."
+I am not sure to understand the point here. You do not want us to call findpackage inside a hand made module ?
+One example of this if the FindBlas.cmake that call FindPackage(blas_implementation) for all supported implementations. We wrote it that way because adding a new implementation of the standard boils down to creating a NEW_STANDARD.cmake and modify a list in the FindBLAS.cmake. It also allow more fine grained namespacing etc....
+I think in particular about the BLAS and lapack, scalapack modules which are seriously outdated (they are a translation of the autotools one).
+I think upstream FindBLAS.cmake is quite capable. It of course uses a different set of inputs. But it is better to use the system version because upstream project might change BLA_VENDOR, but that will not be reflected to CP2K  as expected. Can you elaborate on what functionality is missing in cmake usptream?
+library_config.cmake
+Just to confirm you are referring about PackageConfig.cmake file that is used by find_package() right?
+I am not sure to understand the point here. You do not want us to call findpackage inside a hand made module ?
+Here is an example of a wrapper that I've designed for Octopus. The workflow goes as follow:
+One example of this if the FindBlas.cmake that call FindPackage(blas_implementation) for all supported implementations. We wrote it that way because adding a new implementation of the standard boils down to creating a NEW_STANDARD.cmake and modify a list in the FindBLAS.cmake. It also allow more fine grained namespacing etc....
+This one is tricky, because in a nested cmake environment, you would want to have the same settings for all projects. E.g.:
+I think in particular about the BLAS and lapack, scalapack modules which are seriously outdated (they are a translation of the autotools one).
+I think upstream FindBLAS.cmake is quite capable. It of course uses a different set of inputs. But it is better to use the system version because upstream project might change BLA_VENDOR, but that will not be reflected to CP2K as expected. Can you elaborate on what functionality is missing in cmake usptream?
+Include directories are missing for instance. BLAS implementations often have C or C++ interfaces (BLIS for instance is C++ mainly and has a blas wrapper for the interface BLAS interface). More importantly we have to deal with variables definitions to get what we want. While I see many benefits (and drawbacks), it would be easier to just have real options (the option()) as default. In any case I can make this match between the cp2k FindBLAS file and the cmake one.
+Modularization helps a lot in maintaining these files and other system cmake modules probably do this already. the BLAS module could gain in clarity if it was also written that way.
+library_config.cmake
+Just to confirm you are referring about PackageConfig.cmake file that is used by find_package() right?
+Yes, I am referring to these files. libvori for instance does not have any but it is an exception.
+I am not sure to understand the point here. You do not want us to call findpackage inside a hand made module ?
+Here is an example of a wrapper that I've designed for Octopus. The workflow goes as follow:
+I was also thinking about doing something like this but I refrained doing so far. I might simply take the octopus one (and indicate the origin of the code). It will certainly simplify things a bit.
+One example of this if the FindBlas.cmake that call FindPackage(blas_implementation) for all supported implementations. We wrote it that way because adding a new implementation of the standard boils down to creating a NEW_STANDARD.cmake and modify a list in the FindBLAS.cmake. It also allow more fine grained namespacing etc....
+This one is tricky, because in a nested cmake environment, you would want to have the same settings for all projects. E.g.:
+I agree but there are quite few things that can go wrong even with a coherent environment. In CRAY environments for instance the compiler wrapper will link everything with the cray library even when we ask for intel unless we call 'module unload libcray'. There is also the case where some dependencies expect the serial version of blas while other use the threaded one, etc.... There is really no simple way to solve this.
+Having the two modules compatible is certainly something useful. The CP2K module will issue a warning when BLA_VENDOR is provided by the environment because it becomes difficult for developers to help users when things go wrong. I do prefer an explicit 'cmake -DBLA_VENDOR=mkl' than the implicit version.
+I was contemplating the preset functionality provided by cmake to set up the compilers options for some time but stopped in the middle. I might come back to it later.
+FetchContent : This functionality is practical when we use git submodules which CP2K does not really use. DBCSR is the exception (for historical reasons) and it is off by default as we want to force the user to build dbcsr like any other dependency.
+Excluding the first and last point all the other suggestions can be included relatively easily in the current build system.
+I might simply take the octopus one (and indicate the origin of the code). It will certainly simplify things a bit.
+Please feel free. But I would prefer a reference to https://github.com/LecrisUT/CmakeExtraUtils. I will move that implementation there and make it more accessible.
+This functionality is practical when we use git submodules
+With the introduction of FIND_PACKAGE_ARGS, FetchContent should be the preferred mechanism over find_package. It helps with chaining projects, e.g. if you add REQUIRED it will only use find_package, but the whole mechanism can be overwritten with FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER, i.e. it will only use FetchContent. However, the reverse is not the case, i.e. if one package in the chain has FIND_PACKAGE_ARGS, it will overwrite all find_package with less chain control over the version used. That's why I believe explicit FetchContent is better. Plus it points to the dependency and version better :D.
+One drawback would be that it is not straightforward how to design a fallback system, but maybe we can discuss some simple wrappers on CmakeExtraUtils.
+Excluding the first and last point all the other suggestions can be included relatively easily in the current build system.
+Yeah, the main thing about the first point was compatibility with upstream definition, which you outlined a plan to implement.
+PS: consider formatting the module block comments (also function ones) as markdown or rst. That way it will be possible to combine with https://github.com/scikit-build/moderncmakedomain/ to generate documentation about it. I haven't got around to implement the markdown variant yet though.
+I read a bit more about fetchcontent. It is exactly what I would like to avoid at all cost. The CP2K build system should not be responsible for building its dependencies (cmake is not a package manager although it has some of these functionalities). The project has external tools for this purpose (spack and the toolchain) which have proven to be working. Package managers probably build these dependencies independently as well.
+FindPackage is perfectly fine most of the time. Some dependencies use submodule and the FetchContext will prove to be useful in that case.
+I was a bit lazy with the comment formatting. I need to correct this.
+I might simply take the octopus one (and indicate the origin of the code). It will certainly simplify things a bit.
+Please feel free. But I would prefer a reference to https://github.com/LecrisUT/CmakeExtraUtils. I will move that implementation there and make it more accessible.
+Ok, noted.
+I read a bit more about fetchcontent. It is exactly what I would like to avoid at all cost. The CP2K build system should not be responsible for building its dependencies (cmake is not a package manager although it has some of these functionalities). The project has external tools for this purpose (spack and the toolchain) which have proven to be working. Package managers probably build these dependencies independently as well.
+FindPackage is perfectly fine most of the time. Some dependencies use submodule and the FetchContext will prove to be useful in that case.
+Not if you are using FIND_PACKAGE_ARGS + REQUIRED. In this case by default it will act exactly like find_package. So if you are using a proper package manager like spack or the OS, it will work with those. What this option allows however is to have a quick deployment for the user and developer: if they set FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER (or rather an equivalent preset), they can get all (tested and supported) dependencies in one command. It also makes updating compatibility much easier, e.g. you can have the main branch of a dependency in a local git repo + FETCHCONTENT_SOURCE_DIR_<uppercaseName>, then you can freely move back-and-forth in commit history there and have the changes reflected in the main project.
+Of course I would recommend the user to use the proper spack or OS packaging over the manual build. But in that case, the choice of find_package/FetchContent is invisible to them, and instead it mostly affects the developer and the packager.

@@ -1,0 +1,24 @@
+The current default insert strategy is to push the gates to the earliest possible moment.  This makes sense to compress the circuit as much as possible, but this creates a ragged frontier at the end of the circuit.  For instance, you may want to do all measurements at the end of the circuit simultaneously, rather than create them in different moments, since cirq has pushed them forward.
+It may be worth having a way to insert gates with a LATEST strategy rather than EARLIEST.  However, the problem is that you don't know the correct way to do this until the circuit is complete.  So, the best way to do this to create a circuit where everything is pushed as late as possible while still keeping the circuit compressed is to create an Optimization pass that does the same thing as insert strategy EARLIEST except in reverse and stacks things up against the last operations.
+It seems better to achieve this by having an insert method that respects moments in the op_tree.
+@bryano All the insert methods from_ops, insert, and append already support this:
+Ah, I didn't realize that was implemented. Why not just do that then if you want all measurements in the final moment?
+For reference, I was thinking of #1246; apparently not all insert methods support this yet.
+My bad.
+@bryano, the idea here is not only to place all terminal measurements in the same moment, but more generally to transform a circuit by pushing all gates toward the end of the circuit to do them as late as possible (relative to the final moment, which is typically just measurements). This is a very natural transformation to want from a hardware perspective, since any idle time after a gate is just a source of decoherence.
+I agree.  Here are two ways to do this currently:
+What do you think of this API in addition to a circuit optimizer?
+I'd be willing to take this. So it looks like we need a new InsertStrategy.LATEST and handle that in circuit.insert/append, and then a circuit optimizer Compact that takes an InsertStrategy and recreates the circuit with the provided InsertStrategy? Is the expectation that the optimizer will optimize the circuit in place, or return the optimized circuit?
+Is there a bug in the existing implementation of EARLIEST?
+produces
+I would have expected Y to be inserted immediately after the X.
+Probably need help understanding all the strategies before taking this one in earnest. I'd have also expected INLINE here to leave the top line unaffected:
+output:
+I'm not sure something like InsertStrategy.LATEST is the right way to approach this. I think a circuit transformation or optimization pass that runs after a circuit is constructed by whatever other means makes more sense. The main issue is that when doing a "latest" strategy you really want to insert gates in reverse order and all of the insertion and circuit construction functions process gates in order instead.
+Makes sense. I did a local prototype of InsertStrategy.LATEST, and couldn't figure out a good way to make it intuitive. As you'd mentioned, if you add your gates in the normal order, the resulting layout is the same as InsertStrategy.EARLIEST because it's adding each gate to the LATEST at that time, which also happens to be the EARLIEST. So like you said, what's needed is a post-construction optimization.
+So, in this optimization step, do we want to move the measurements so they all align at the end? e.g.
+becomes
+Or do we only care about the operations that happen before the measurement, in which case
+stays unchanged but
+becomes
+My understanding from the conversation is we want the first interpretation. But if we go that way, doesn't that actually give qubit[1] more time to decohere?

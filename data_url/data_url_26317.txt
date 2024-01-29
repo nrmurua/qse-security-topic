@@ -1,0 +1,18 @@
+Hi guys, I compiled the required files using install_cp2k_toolchain.sh in tools/toolchain, but I have problems compiling cp2k, which is related to dbcsr, how should I fix this?
+I have run "git clone --recursive https://github.com/cp2k/dbcsr.git"
+
+
+No need to download or git-clone DBCSR separately. DBCSR comes with CP2K as a submodule using
+Unfortunately, I cannot read any kind of Chinese (?). Could you confirm whether it states that these character mean that you used a different compiler for compilation, otherwise, tell me what the characters mean. Did you stick to the instructions provided by the toolchain? If yes, can you run make realclean and then recompile?
+I suspect this is the same issue I see after upgrading our build script from 7.1 to 2023.1. The turning point is the list of VERSION in the build:
+I got very similar error messages when trying with -j 16 with VERSION like that but also containing the aliases popt and sopt:
+Not sure about those rename errors, if some filesystem limitation comes into play, but since decoupling the list of builds fixes it for me, I suspect some Makefile concurrency issues. I successfully build like this:
+I used to build with -j 8. The likelihood of rule ordering issues surfacing with -j 128 should be rather high.
+I suggest to perform a fresh checkout/clone and to start the installation from scratch, e.g by
+which might work out-of-the-box on a standard GNU Linux x86_64 system.
+@mkrack Did you read my comment? A build with VERSION=psmp works fine, but VERSION="sdbg ssmp sopt pdbg psmp popt" crashes with random dependency errors.
+@drhpc Sorry, I missed that. I also recommend to build only one VERSION target at a time and to ignore the aliases popt and sopt which will launch psmp and ssmp builds, respectively.
+@mkrack Wondering about the aliases … do they have any benefit apart from keeping old scripts working? I.e. is there some checking for binary name that enforces OMP_NUM_THREADS=1 in popt itself or would OMP_NUM_THREADS=16 popt actually use multiple threads? I'm no user of CP2K, just help people install it, so please excuse my ignorance about what it really does …
+A psmp build generates always a cp2k.psmp binary and a link cp2k.popt to it, likewise for ssmp. The code checks the extension of the binary at runtime and limits for [ps]opt binaries internally the number of threads to 1 (see here). The cp2k.popt binaries can be launched therefore without the risk of creating hundreds of threads accidentally, because the user is not aware of the default "greedy" behaviour which has to be controlled with OMP_NUM_THREADS. For most cases, CP2K shows usually the best performance without multiple threads for a given number of cores.
+If it is known that the parallel build of multiple VERSIONS is broken, maybe the message from the toolkit installer shoul be changed from
+to something that works.

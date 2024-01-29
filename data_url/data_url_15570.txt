@@ -1,0 +1,34 @@
+As discussed in #7006 currently we allow measure instruction to simultaneously write-access to the same classical registers.
+For example, the second measure instruction to q_1 is scheduled in parallel with q_0 (this is okey unless they don't share the classical register, since we can apply stimulus pulses on different qubits). However, once we schedule this circuit
+this yields
+because measurement trigger on Acquire channel overlaps. This can be scheduled by inserting the barrier.
+
+Regardless of how IBM implements control-flow, we should implement scheduler so that we have identical behavior with Qiskit Pulse since Qiskit is in principle backend-agnostic.
+In addition, this logic induces weird outcome.
+The ALAP (or ASAP) scheduled circuit will become
+Likely measurement on q_2 (let's say M2 node) start after t0=320 dt, which is computed based on execution time of X[0] (X0 node) and X[1] (X1 node), i.e. M2 depends on X1, and X1 depend on the measurement on q_0 (M0), and M0 is executed after X0. However, scheduler allows M0 and M2 to start at the same t0. However, actually this will never happen because M2 depends on X1 and X1 should be executed AFTER M0. So correct output should be:
+Also scheduler outputs delays after end of circuit, which are basically redundant.
+see description above
+see description above
+No response
+I understand this is an issue of spec confliction between pulse and circuit schedule model about classical IO. That is measure instruction should lock classical register (creg) for the entire instruction time or little time (currently no time) in the end of instruction.
+I agree this would be a good timing to think again:
+(I'll vote the last option)
+I'd like to hear the opinions of other people. @kdk @ajavadia @jakelishman etc
+Regarding the second example with c_if, there seems to be a misunderstanding. M2 does NOT depend on X1 "with respect to qubits" (of course, M2 must write the result after X1 reads clbit 0). So nothing wired under the below model stated in #7006.
+Probably it's easier to understand the problem with timeline view
+
+As you can see the M2 node is scheduled before the X1, this means X1 is conditioned on the unstable register state. I think this is a bug and the easiest way to remove such edge cases is not allowing the simultaneous write-access to the register. Of course we can fix this with adding more complicated logic but it would be hard for other maintainers to follow.
+Umm, I see your point. Current ALAP scheduling spec assumes an implicit barrier at the end (so X1 and M2 stop at the same time) but some may expect no barrier at the end (M2 should start 160 dt earlier). Anyway, I admit current spec might be unnecessarily complicated and that there is room for consideration of simplification.
+The current spec (#7006):
+Naoki is suggesting to change it:
+This is a problem of modeling of classical IO in Qiskit. I thought the former reflects the real more, but I might have to check the spec of pulse scheduler (measure locks memslots for entire instruction time, I’m not sure how much this (memslots=cregs) model reflects the real backend, though). I know the latter is a simple model and easier to implement, so I don’t opposed to change to it if it’s the majority opinion. I just don’t want to go back and forth on the spec, so let's discuss carefully this time.
+I just refreshed my memory :) The schedule can take AcquireChannel, MemorySlot, RegisterSlot with kernel and discriminator parameters, and basically time overlap of these channels are not allowed. Acquire can take either memory or register slot (or both), and register slot corresponds to creg in this case. The memory slot is kind of buffer memory of raw IQ signal, and the discriminated data will be transferred to the register slot. Current implementation of pulse schedule is not accurate enough to express I/O latency and processing time from memory to register, so likely it is hard to precisely model the actual scheduling constraints based on pulse.
+Now I lean toward defining constraint set like below:
+C1. Conditional bit is always protected from write-access during its operation time (we should consider I/O latency for read-access to register but we don't discuss this here)
+C2. Conditional bit can be simultaneously read-accessed from multiple qubits (perhaps depends on the fan-out of the system)
+C3. Measurement instruction cannot simultaneously write-access the same register
+These options can be set to the scheduler pass constructor as a tuple of booleans, for example.
+Regarding the above example, I think this is not correct behavior anyways because the M2 node is topologically latter node but scheduled ahead of the X1 node.
+If I recall the discussion from #7006 correctly, I believe this was an expected behavior. The explanation was that even though M2 has a clbit-dependency on X1, that dependency locks c[0] only at the very beginning of X1 (to determine if X1 should be executed or not) and at the very end of M2 (to record the measurement outcome). However, without any latency of communication or calculation in the schedule, both of these are scheduled as duration-0 actions, so even though topological order is preserved (the points at which they lock c[0] are technically adjacent, and in the correct order), that the X1 and M2 operations should overlap and the ordering of their dependency on c[0] is not clear.
+@nkanazawa1989 Those constraints seem reasonable to me as a way to begin to add device-specific configuration to the scheduling stage. Additionally, #7567 should provide a way to begin to introduce durations and latencies of classical instructions.

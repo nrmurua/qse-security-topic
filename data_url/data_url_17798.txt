@@ -1,0 +1,61 @@
+As far as I understand, classical conditional statements are done using c_if to check whether a classical register holds the binary string for a given integer. It would be useful to be able to do this for individual bits.
+This can be done by declaring each bit as an individual classical register. But if there is not a better way in the current version of Terra, there probably should be.
+Note that this has previously been discussed in issue 356 of the qiskit-tutorial and on the Quantum Computing Stack Exchange.
+This was an OpenQASM design decision (see Fig. 7 of the OpenQASM paper). I think the idea was that complex conditional would be easier to write like this, rather than doing OR/AND on individual bits.
+But yes, then if you want a condition on a single bit you have to declare that as a single register. Another problem is that it creates false dependencies on all bits of the classical register, even if only one bit is used (for example in building the dependency graph).
+I think ideally we should keep both ways doable. Something like:
+I'm not fully sure is doable to have single-bit conditionals without major changes. Is something that the current Qobj could handle?
+The current Qobj spec handles this case directly (in fact, there's some code in https://github.com/Qiskit/qiskit-terra/blob/ef828be2c7e99e50993805c2c57b428cb3d540ed/qiskit/assembler/assemble_circuits.py#L73 to convert from QASM-style register-based conditionals to Qobj-style bit-based conditionals).
+May I ask if it's possible yet to use c_if on the IBMQ?
+May I ask if it's possible yet to use c_if on the IBMQ?
+Only in the simulator. At the moment, no real device have c_if support yet.
+Since it seems that there is consensus on supporting this feature. I'm removing the discussion tag.
+I saw a use case for this today, at an event cohosted by IBMQ for students at an IBMQ network hub. I watched an IBMQ advocate go through a demo of teleportation today, and this is what he had to do:
+Compare to the same code if we could use bits:
+This required him to explain to the class why the first had 4 operations, and why it was identical to the algorithm they had just learned.
+Note:
+I'm not sure why he had to index into creg, maybe an error on his part, I'm not sure; but since it executed, the type of creg[0] must be a ClassicalRegister. I imagine the snippet I typed is flawed, too. I'm not recommending a style for implementation, I'm only demonstrating a use case.
+Hi @1ucian0 , @ajavadia . I need some clarification. For reference look at:
+https://github.com/Qiskit/qiskit-terra/blob/c74f87f47cb91192e77bfb3d123740157f5cc55c/qiskit/circuit/instruction.py#L265
+I think if a cbit is given as input to c_if, for the given instruction we could set self.condition as the tuple containing the register corresponding to the cbit and the adjusted control value. What do you think? Or would this lead to some more than required computations in backend?
+Any news on the ability to do condition on a single bit of a multi-bit classical register?
+as in ...
+Having to make a separate classical one-qubit reg for every simple condition is quite a limitation.
+It prevents easy auto-generation of code (need to make the preamble where regs are defined depend on
+the contents of the circuit ... yechh!)
+And you have to have multiple classical registers instead of just a simple array.
+Is there any simple way to implement this, a check on a single bit of CR?
+I think I'm seeing an issue associated with this.
+I can't call the indexed classical register (ie r[0]) as shown as an option in your examples above...I have to make separate registers for each (ie r0).
+When I try to use indexes to get to the classical register, I get errors like this....
+Traceback (most recent call last):
+File "/Users/juliegermain/Library/Application Support/JetBrains/PyCharmCE2020.3/scratches/QuantumResearch/scratch_1.py", line 14, in 
+qc.x(q[0]).c_if(r[0], 1)
+File "/Users/juliegermain/opt/anaconda3/envs/QuantumResearch/lib/python3.8/site-packages/qiskit/circuit/instructionset.py", line 59, in c_if
+gate.c_if(classical, val)
+File "/Users/juliegermain/opt/anaconda3/envs/QuantumResearch/lib/python3.8/site-packages/qiskit/circuit/instruction.py", line 346, in c_if
+raise CircuitError("c_if must be used with a classical register")
+qiskit.circuit.exceptions.CircuitError: 'c_if must be used with a classical register'
+########### Here is a small example of what works:
+from qiskit import *
+q0 = QuantumRegister(1)
+q1 = QuantumRegister(1)
+q2 = QuantumRegister(1)
+r0 = ClassicalRegister(1)
+r1 = ClassicalRegister(1)
+r2 = ClassicalRegister(1)
+qc = QuantumCircuit(q0,q1,q2,r0,r1,r2)
+qr = [q0,q1,q2]
+for i in qr:
+qc.reset(i)
+qc.measure(q0,r0)
+qc.x(q0).c_if(r0, 1)
+############# versus this that gets the error:
+from qiskit import *
+q = QuantumRegister(3)
+r = ClassicalRegister(3)
+qc = QuantumCircuit(q,r)
+for i in range (0,3):
+qc.reset(i)
+qc.measure(q[0],r[0])
+qc.x(q[0]).c_if(r[0], 1)

@@ -1,0 +1,22 @@
+I have a use case where I am simulating my circuit piece by piece so using the ability to pass an initial state to qsim is very handy.
+However I have noticed this makes a copy of the initial_state here:
+Is there a way to avoid the expensive copy?
+If there is a little patch that can be applied (I assume couple of lines in void init_state() should do it) I would be happy to apply it locally and re-build qsim.
+Thanks!
+Hello Hayk! As I recall, that copy step exists to pass ownership of the state from Python to C++. Copyless transfer of ownership in the opposite direction is possible with pybind (and we in fact do so in this method), but it's less clear if Python-to-C++ passing can be done without copying. There's some discussion of it in this pybind issue, but it remains unresolved.
+I'm no longer actively working on qsim, but @pavoljuhas or @sergeisakov might be available to look into this. Otherwise, if you're interested in pursuing this yourself you could look into the pybind issue above - I'd be more than happy to review a PR if you discover a way to avoid this copy 🙂
+In principle, we don't have to transfer ownership if there is a guarantee that the state doesn't get garbage collected by Python during simulation. Though there might be another problem. State memory must be aligned on a 32-byte or 64-byte boundary when using AVX or AVX512.
+I tried this little fix, it works fine sometimes but more often than not it gives a segmentation fault:
+Seems like the main issue is the python garbage collector.
+This is needed for a one-off job I have so I would be happy with a hacky solution as well if you can think of one (disabling gc temporarily, etc.)
+Seems like the main issue is the python garbage collector.
+The input_vector array will not get garbage collected if it it is referenced by some variable in a Python caller of init_state.
+I have all the variables in global scope, and the reference is kept - but still getting the segmentation fault.
+Here the last line sometimes succeeds and sometimes segfaults.
+There are two issues here. First, [](void *data) { detail::free(data); } shouldn't be used in line 788 (pybind_main.cpp) in order to avoid double free. Second, the state vector allocated in Python must be aligned. Typically this is not the case.
+hmmm - the free at pybind_main.cpp:788 releases the state back to python. Where is the second (double) free?
+The free at pybind_main.cpp:788 deallocates the memory allocated on the C++ side. If the memory is allocated by Python then this free tries to perform additional deallocation.
+In that case there should be an issue on the second deallocation, e.g. when python gc kicks in after global scope variables are cleaned up. However I see seg fault before that - if I print results1.final_state_vector in my python code above - it will work half the time and segfault the other half.
+There is also a memory alignment issue. You see seg fault before printing when the state vector is not properly aligned.
+that issue should be deterministic though right? However I see the same code working ~20% of the time and seg faulting 80% of the time.
+I think it shouldn't be deterministic. You can try to add printf("%lu\n", (uint64_t) ptr % 32) or printf("%lu\n", (uint64_t) ptr % 64) (depending on what you have: AVX or AVX512) to your little fix. If it prints 0 then the memory alignment is okay and there shouldn't be a seg fault before memory deallocation.

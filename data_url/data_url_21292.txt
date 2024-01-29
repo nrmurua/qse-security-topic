@@ -1,0 +1,31 @@
+Trying to return lists or numpy arrays created on the coredevice as return value of kernel functions gives error.
+This throws an error:
+However, this works fine:
+Linux machine
+ARTIQ v5.0.dev+452.gf8846a33
+I guess this might be related to #224, except here it is a list that should be returned. Similar thing happens when lst is created via np.array or np.full.
+I am not sure whether this is a bug, a limitation or a feature, but since the documentation is lacking with regards to this, I thought I should open a issue here.
+It's a limitation due to the way the memory is managed for kernels on the core device (using the stack only).
+In theory, we could support this for the top-level kernel function by adding a special case for the return value, but I'm not sure it's worth it – attribute writeback and/or a "save result" RPC call usually avoids the issue.
+I think just about everyone who tries ARTIQ out for the first time runs into this one.  I agree that it's probably not worth trying to change ARTIQ, but it would definitely be helpful to have explicit documentation of this behavior, and some code snippets indicating how one can achieve the desired functionality.
+I have not come across a use case that could not be solved in other ways so far, but just wanted to flag this up to see whether there are plans to change this (not sure it is worth it). It is certainly unexpected, in particular since the documentation says that lists of supported types can be used in kernel functions (but does not mention that this does not apply to return values).
+Writing it back as an attribute works for most cases I guess. However, if I am implementing a scan where the array is repeatedly filled with data from the core device, set as the attribute and then processed further in a lengthy rpc function with the "async" flag, there might be issues using this method where the array is modified by the kernel before the analysis for that point via the rpc function has been carried out.
+For this case, I have instead been passing an array into the kernel function that fills it with the desired data and then passed the filled/modified array explicitly to the analysing asynchronous rpc call.
+So I agree, code snippets with the recommended ways to achieve certain functionality would be very useful.
+However, if I am implementing a scan where the array is repeatedly filled with data from the core device, set as the attribute and then processed further in a lengthy rpc function with the "async" flag, there might be issues using this method where the array is modified by the kernel before the analysis for that point via the rpc function has been carried out.
+You would just pass the array to the async function, at which point it would be copied.
+Ack on the usefulness of a "common ARTIQ Python idioms" list.
+I have not come across a use case that could not be solved in other ways so far, but just wanted to flag this up to see whether there are plans to change this (not sure it is worth it).
+It would be very hard to change this and keep ARTIQ Python's realtime guarantees.
+It would be very hard to change this and keep ARTIQ Python's realtime guarantees.
+Which guarantees are you thinking about here? Execution timing is already unpredictable due to caches/RAM latency.
+@dnadlinger Cache and RAM latency is bounded, but there's no simple allocator that is useful for Python and has bounded latency.
+You could use a simple cell-based allocator, like hbaker's, which offers bounded latency for allocation and garbage collection, but it doesn't let you use arrays. Any other allocator and garbage collector that has even soft-realtime guarantees is going to be incredibly complex, and probably unrealistic to integrate in ARTIQ.
+Of course you could use an allocator that bins allocations by size to avoid fragmentation and uses a full-blown ownership system to deterministically free allocations and avoid the need for a GC, but at that point why not just use Rust?
+Execution timing is already unpredictable due to caches/RAM latency.
+The solution to this problem is a large SRAM, but that's not cheap.
+I am having this problem.   I want to return a list from a @kernel function that will be used by another @kernel function.   How do I perform an attribute writeback or a save result RPC?
+I am having this problem. I want to return a list from a @kernel function that will be used by another @kernel function. How do I perform an attribute writeback or a save result RPC?
+My suggestion was in particular for returning from the top-level kernel. There, you can just do something like:
+Attribute writeback refers to the case where you modify an attribute of the host object, like
+If you want to return from a kernel function to another kernel function, that's basically not possible right now, as there is nowhere for the memory allocation to go. You might be able to make the caller function allocate the array and pass it to the callee as an argument; the latter can then just fill in the data. I suggest asking on the forums for more details.

@@ -1,0 +1,26 @@
+The method QuantumCircuit.reverse_bits fails when using a circuit with registerless bits. Relates to discussion in #7303.
+produces
+Also for a simple circuit, the circuit drawers do not reverse the bit labels after a successful QuantumCircuit.reverse_bits.
+produces
+
+QuantumCircuit.reverse_bits shouldn't fail and the method and reverse_bits=True in the drawers should produce the same result.
+No response
+@jakelishman Can you assign this to me? Thanks.
+@kdk, @jakelishman Consider these circuits, all run with main. In the first case, when reverse_bits() is run, the bits are left in the same order and the qarg is changed.
+This results in 2 identical circuits, which can't be distinguished from one another by the drawers.
+In this second case, the registers (with their one bits each) are reversed and the qarg stays the same. This results in 2 different circuits, which are displayed differently.
+Now suppose we have
+What do we do here? Reverse the bits or the qarg?
+It seems to me, reverse_bits should always reverse the bits, whether within a register or not, and the qargs and cargs should remain the same.
+@enavarro51 apologies: I assigned this off my phone without checking the issue properly - looks like there's already a pending PR that needs review.  I'll unassign for now, and I need to start working through the post-release backlog when I'm back at work.
+Sorry that I created a PR for this issue without asking for an assignment. At first, I thought it was an easy problem, so I submitted the PR directly when no one was assigned. But the test failure made me realize that there could be different explanations regarding the semantics, and I changed the PR state to draft. After I fixed my code, I found that the issue has been assigned to @enavarro51.  It is not the fault of @jakelishman. Maybe my code can be used as a reference and save all of us some time.
+I support the current semantics of reverse_bits, i.e., reverse registers, keep bits order whin registers, and implemented my code following this. At first, I had the same idea as @enavarro51, i.e., all the bits should be reversed. Then, I recalled the repetitive explanation on the endianness regarding controlled gates, such as CXGate. It says that Qiskit follows a little-endian convention, which is different from many textbooks. Maybe reverse_bits can be used for helping to convert between these two conventions. For example, circuit.cx(0, 1) is
+which is the Qiskit convention. circuit.reverse_bits() returns
+which is the textbook convention. If the bits are reversed within registers, the control bit would both be 0, before and after applying revrese_bits. In summary, the two semantics result in the same circuit, but keeping the bit order within registers has an additional advantage (i.e., endianness conversion).
+As to registerless bits, I think they should be regarded as unnamed 1-bit registers. So, they should be reversed.
+I am not sure about the semantics of draw(reverse_bits=True). Maybe we can tolerant that it has a different semantics as QuantumCircuit.reverse_bits?
+Oh, @yjt98765 I apologize as well. I'd missed the PR.
+Also, thanks for your comments. For me, it just seems a bit odd when doing reverse_bits to display the bits within a register in ascending order top to bottom, and the registerless bits or registers displayed in descending order top to bottom.
+Sorry, I've been busy for the last while, and I read your PR before I actually read this comment!
+There's a bit more complexity here than just considering single bits as 1-bit registers; multiple registers can contain the same bits now, so there can be a lot of overlap, and the ordering described in the docstring doesn't necessarily make sense for that now.  Also, in converting from little-endian to big-endian, I think we should also take into account the fact that in modern Terra, you can pass a global index into QuantumCircuit, whereas I suspect when that docstring was originally written, you had to index into registers.  This means that to fully respect the endian-ness reversal, I think we need to handle both; we need to fully reverse QuantumCircuit.qubits, and then create a replacement for each register, which points to the correct set of bits such that it has its endianness reversed.  I left some comments in #7423 about roughly how that might be done, but I hadn't read these comments first, so it's possible I've missed a little bit of complexity there.
+Don't worry about working on the issue without asking for assignment - it's not required, and it was just an oversight on our parts here that we didn't spot you'd already made a PR!  You'd already made the PR before Edwin asked, and I just missed the notification.

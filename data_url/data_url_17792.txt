@@ -1,0 +1,32 @@
+When reading in a (large) qasm file of about 40 megabytes in size to a DAGCircuit, the memory requirements grow to many gigabytes. I just tested that it grew up to 4 GB, but I think it will continue unrolling until an approximated 8-10GB is used.
+Run the following script with the attached qasm file in the same directory.
+highmem.qasm.zip
+I would expect a memory use on the same order of magnitude of the qasm file.
+Profile the memory of datastructures and find the culprit.
+For future reference...
+Simply reproduce with:
+and qasm file:
+Here's a diff heap dump of each of those lines being parsed in yacc.py::parseopt_notrack().
+I haven't gotten to the point of figuring out if that's an inefficiency in the parser (~2K per line!) or a memory issue with Python/PLY (a leak or fragmentation in the heap).
+Here's the memory analyzer snippet:
+Is there suggested approach to solve this problem yet? Maybe find the bug in parser generator or rewrite the parser?
+By the way, it may be nicer to create a standalone project in the context of OpenQasm that handles parsing and generating OpenQasm files. To reduce coupling and provide a clean interface for people who would like to interoperate with OpenQasm.
+Eddie, I tried my simple 2-line test (from #1168 (comment)) on the latest Terra, both 0.7.0 and 0.8.0. They both performed the same, but I think something may have been improved from pre-0.7.0. There's still constant linear growth during parse() but perhaps not as steep. Here's the psrecord  output from running your original 2.25M line file (runtime was 405sec consuming 5.5GB, not ideal but usable for now).
+
+And, Eddie, as for "By the way, it may be nicer...", I think you should enter a separate ("good first") Issue to request an Enhancement so that you idea is not lost here.
+The performance may be slightly improved, but requiring 5.5GB of memory for a 2.25MB file (a 2000x blowup) is still far from ideal.
+I renamed the issue to reflect that is a problem of the parser. Feel free to roll that back if you disagree.
+I did a little investigation.  I took "highmem.qasm" and used "head -NN" to produce prefixes of the file of length 2^N, for N in [10...21].  Comparing the memory used for (e.g.) 2^20, 2^21 lines, and other pairs, I found that the per-line cost is about 2.6k bytes.  And this doesn't change much over this data-series.
+So there's not some "bug", I fear.  Just really, really wasteful code.  Maybe it's fixable, maybe it isn't.  I'll keep digging, but figured I'd report it.
+TL;DR the wastefulness here is due to Python, and there's not much that can be done to fix it.
+OK, I'm pretty sure that this isn't a bug in the Qasm Python code, nor in PLY (Python parser/lexer generator).  Here's a small test:
+[N.B.  I disabled the declared-variable check ("verify_reg") in the parser, for this test]
+See that line "deepcopy(c0c0)"?  It started as "deepcopy(cnot)", then "deepcopy(c0)".
+This program takes an integer parameter, and appends that many deep-copies of the selected node onto a list.  Running this with (524288, 1048576), on "cnot", I find that each "cnot" line consumes about 1.8k of memory.  Doing it on "c0c0" (the "q" in the QASM program) goes to "0.278k".  So then I replaced with
+And this has the same memory-cost as the "c0c0" case above.  Which tells us that even though we're not doing any lexing/parsing, the per-node cost is unchanged (278 bytes per "id" node).
+There's not that much "beneath" the "Id" class.  I doubt that there's anything to be done about this. Python wasn't meant for complex programs, after all.
+We CAN do something to improve on this.  For instance, we could "hash-cons" all identifiers and constants, which would result in some memory-savings.  We could hash-cons all expressions.  If the AST is never (NEVER) modified by downstream code, this would be safe.  I performed a simple experiment to test this.  In the first example above (with the "deepcopy(cnot)") we had "Cnot([c0, c1])" (so, construct a new "Cnot" node each iteration, but reuse its child nodes), the cost of each Cnot comes down to 253 bytes (from 1.8k.  This shouldn't be surprising.  But this also won't give any sort of dramatic savings.  Just a small constant-factor.
+As part of my experiments to try to refute the hypothesis that there is not much to be gained I wrote my own parser at https://github.com/eddieschoute/openqasm-parser. Parsing the highmem file in OP to an AST takes only about 600MB of memory.
+To begin with, my parser was already more efficient in memory use, starting at about 4GB. First I converted lists to tuples because lists overprovision memory to support fast appends and we want the AST to be immutable anyway. Another trick I used was to use pointers to the CBit & Qubit objects instead of representing them as strings with ints (see openqasm/transformer.py). That saved me a lot of memory, perhaps 1GB–1.5GB.
+I'm sure there's another trick or two that can be made using careful memory profiling. One that I had in mind was generating a function declaration table during parsing and simply inserting pointers to function declarations instead of a full function call. Those take up about 3/4 of the remaining memory usage if I recall correctly. Doing this is possible in a bottom-up traversal because OpenQasm has no forward references.
+At a higher level I do realize we are just optimizing an intermediate format. Perhaps we should instead think of how we can quickly pass the AST information to the relevant consumers in Qiskit (and elsewhere), e.g. by lazily parsing the tree and freeing memory after yielding AST nodes.

@@ -1,0 +1,125 @@
+I'm simulating two tunable transmon coupled by a resonator, in the definition of the tunable transmon is more easy for me use the qubit frequency (f01) instead of the  Josephson Energy. This is an example of the definition:
+tmon2 = scq.TunableTransmon(
+EJmax=Josephson(Ec2,qubit2),
+EC=Ec2,
+d=0,
+flux=q2_flux,
+ng=0.0,
+ncut=30,
+truncated_dim=3,
+id_str="tmon2"
+)
+where Josephson(Ec2,qubit2) is a function that define Ej in term of frequency_01 of the transmon.
+Now my issue is the following:  it seems that simulation define a sort of shift on the qubit frequency, like a Lamb shift, is that true? How i can disable it? cause my frequency is the "already shifted " frequency.
+I see in the API documentation that is called in the following:
+def _dispersive_coefficients(
+self,
+) -> Tuple[NamedSlotsNdarray, NamedSlotsNdarray, NamedSlotsNdarray]:
+energy_0 = self[:].energy_by_dressed_index(0).toarray()
+Thanks for any help.
+Hi @stalky92, thanks for your question. Just to make sure I understand your question, is your goal obtaining a Hamiltonian for a transmon-resonator-transmon system of the following form, and set parameters for tunable transmons by using Josephson(Ec, f01), where f01 is the Lamb-shifted qubit frequency?
+
+Hi, @ZhaoTianPu thanks for the reply!
+It is exactly what I'm doing, and the hamiltonian that you wrote have the interaction that I'm simulating in the following:
+def Josephson(Ec,nu01):
+return (nu01+Ec)**2/(8*Ec)
+tmon1 = scq.TunableTransmon(
+EJmax=Josephson(Ec1,qubit1),
+EC=Ec1,
+d=0,
+flux=q1_flux,
+ng=0.0,
+ncut=30,
+truncated_dim=3,
+id_str="tmon1"
+)
+tmon2 = scq.TunableTransmon(
+EJmax=Josephson(Ec2,qubit2),
+EC=Ec2,
+d=0,
+flux=q2_flux,
+ng=0.0,
+ncut=30,
+truncated_dim=3,
+id_str="tmon2"
+)
+resonator = scq.Oscillator(
+E_osc=25,
+truncated_dim=4
+)
+hilbertspace = scq.HilbertSpace([tmon1, tmon2, resonator])
+g1 = 0.2  # coupling resonator-CPB1 (without charge matrix elements)
+g2 = 0.2  # coupling resonator-CPB2 (without charge matrix elements)
+hilbertspace.add_interaction(
+g_strength = g1,
+op1 = tmon1.n_operator,
+op2 = resonator.creation_operator,
+add_hc = True,
+id_str="tmon1-resonator"  # optional keyword argument
+)
+hilbertspace.add_interaction(
+g_strength = g2,
+op1 = tmon2.n_operator,
+op2 = resonator.creation_operator,
+add_hc = True,
+id_str="tmon2-resonator"  # optional keyword argument
+)
+pname1 = 'flux'
+flux_vals = np.linspace(-1, 1, 100)
+pname2 = 'ng'
+ng_vals = np.linspace(-0.5, 0.5, 3)
+paramvals_by_name = {pname1: flux_vals, pname2: ng_vals}
+def update_hilbertspace(param_sweep, flux, ng):  # function that defines how Hilbert space components are updated
+param_sweep.hilbertspace["tmon1"].flux = flux
+param_sweep.hilbertspace["tmon2"].ng = ng
+subsys_update_info = {pname1: [tmon1],
+pname2: [tmon1]}
+sweep = ParameterSweep(
+hilbertspace=hilbertspace,
+paramvals_by_name=paramvals_by_name,
+update_hilbertspace=update_hilbertspace,
+evals_count=20,
+subsys_update_info=subsys_update_info,
+num_cpus=4
+)
+So there is not so much differences from the documentation examples.
+NOW my issue is the following: when i do the simulation the upper frequency values of the qubit1 and qubit2 are shifter about 20 MHz on a LOWER values from the one that i put (measure):
+qubit_frequency01_simulated (flux=0)=qubit_frequency01_used(flux=0)-shift,
+shift = around 10-30 MHz depends from: g values and from the detuning of qubit_frequency01_used from resonator_energy
+Also this values change with the coupling values that i put in the simulation: the g1r  affect the frequency of qubit1, and g2r  affect the frequency of qubit2.
+So i see that in the documentation is assumed the following hamiltonian in the dispersive regime:
+
+it seems to me that is assumed a shift on the qubit frequency in the dispersive regime, that is not problem in general, but in my case the frequency that im using in the definition of the transmons are the measured one, so are values already affect from a shift caused by the coupling. If there is actually a Lamb shift simulated, is possible to disable it? please point out to me anything that is not clear.
+And thanks again for your time!
+P.S. Actually doing some roufh calculation the Lamb shift i expect around 1 or 2 MHz , so seems to me that the simualated values are one order higher.
+Thank you so much for the elaborated example! May I ask how did you obtain "qubit_frequency01_simulated (flux=0)"? Did you obtain this from calculating the energy differences of dressed states (full-system eigenstates) which are closest to product states (<qubit1 excitation #>, <qubit2 excitation #>, <resonator excitation #>) = (1,0,0) and (0,0,0)?
+I would also like to learn how you obtained the rough calculations for the Lamb shift. Could you please provide your parameters and qubit frequencies?
+Hi, so for qubit_frequency01_simulated i mean the values that I obtain performing the Parameter Sweep, like the following:
+sweep["ng": 0.0].transitions(subsystems=[tmon1],final=(1,0,0))[1][0]
+hope i get your question.
+About the shift i performed the following:
+g1r_value=0.2
+qubit1=6.5 ## max value for tunable tmon1 at 0 flux
+Ec1=0.308 ## this value is not necessary for this calculation
+E_osc=25
+Lamb=(g1r_value^2)/(E_osc-qubit1)
+ac_stark=2*(g1r_value^2)/(E_osc-qubit1)
+Lamb, ac_stark
+i also give you a plot of the sweep performed for the final state (1,0,0): ## just to note hilbertspace = scq.HilbertSpace([tmon1, tmon2, resonator])
+
+Appear to me that even the Lamb + Ac Stark shift is not compensating the simulated shift values.
+Hope that this elements help you to understand my problem.
+Maybe to make more simpler this argoument, i will refrase my question:
+The value you obtained this way is indeed the energy difference between two eigenstates of the entire system that are closest to (0,0,0) and (1,0,0) product states of subsystems, and yes, this energy is not expected to be the same as the bare qubit frequency (and one may define Lamb shift as the difference between the difference between these two).
+The 0.02 GHz energy difference that you have observed, however, is possibly due to the EJ value you obtained with your Josephson() function. With EC = 0.308 and your formula, I obtained EJ approximately 18.81, however substituting this EJ value in scq.Transmon (or equivalently, tunable transmon), I obtained a 01 energy difference of approximately 6.483 (noticing that this differs from 6.50 by approximately 0.017, which I think where the 0.02 GHz difference comes from); I then performed an optimization/root-finding to obtain an EJ that satisfy 01 energy = 6.50 and fix Ec = 0.308, and I obtained EJ approximately 18.90.
+Regarding specifying Lamb-shifted energy differences for dispersive regime analysis in parameter sweeps, regrettably, I don’t think our code currently supports such functionality. However, I think the following approach may help you achieve what you want: you can set up an optimization, where you may keep EJ as your variable argument, and set the squared difference between the (0,0,0) -> (1,0,0) transition (the “ qubit_frequency01_simulated (flux=0)” you earlier calculated) and your measured qubit frequency (6.50 in this case) as the objective function. Such optimization will provide you the EJ value such that your Lamb shift-dressed qubit transition frequency is 6.50.
+P.S. for the Lamb/a.c. Stark shift, I think g^2/Delta (Delta is the detuning) applies to the Jaynes-Cummings model, where the interaction is g(a^dagger sigma^- + h.c.); since the matrix elements of Q are usually not  1 but sigma^- does, you may wish to take this factor into account for your estimation. Though for the parameters you provided for this example, the matrix elements do not differ a lot from 1.
+Hi @ZhaoTianPu, good observation! I run the test that you suggest and is right.
+So now seems that:
+P.S
+What you mean for: " the entries of Q" ?
+Hi @stalky92, I agree with (1). For (2), you may find the following line in the documentation (https://scqubits.readthedocs.io/en/latest/guide/ipynb/paramsweep2.html#Dispersive-limit:-Stark-shifts-and-Kerr):
+"lamb": NamedSlotsNdarray with axes "subsys", , 
+which may help you understand what are the axes of these arrays, namely sweep["lamb"]["subsys":0]["flux":0,"ng":0] gives you the Lamb shift for your tmon1 for all levels. You may also find the examples in the documentation helpful.
+Re: P.S. apologies for the confusion in wording, I meant matrix elements of Q.
+I am closing this issue, but please feel free to reopen it if you have any further question.

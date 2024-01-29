@@ -1,0 +1,24 @@
+hi all,
+I am trying to compute the expectation value of some Fermi Hubbard hamiltonian where the terms are of this kind
+If I do it with custom backend, I obtain the error message
+Does it behave as expected? Should we consider implement it for custom backend?
+Does it behave as expected?
+I think yes, because custom operators contain kernels for up to two qubit gates. The trotterization procedure that is coded in qibo just splits the Hamiltonian terms but does not reduce the target qubits of each term, so for example the [Y0 Z1 Y2] will be mapped to a three qubit Unitary gate which cannot be applied using the qibotf backend. It should work with numpy and tensorflow though but ofcourse will be slower.
+Should we consider implement it for custom backend?
+Regarding implementing this, there are probably two ways:
+@AdrianPerezSalinas could you please measure the execution time for your code using the latest master (0.1.6-dev) with set_backend("numpy") and set_backend("tensorflow")?
+Hi all, I have got the benchmarks
+I do not know why but I could not go beyond 16 qubits, I think it was a memory issue
+Errors:
+Numpy
+[Qibo|INFO|2021-05-27 12:55:23]: Aborting merge of one and two-qubit terms during TrotterHamiltonian creation because the two-qubit terms are not sufficiently many.
+Tensorflow
+[Qibo|INFO|2021-05-27 12:55:51]: Aborting merge of one and two-qubit terms during TrotterHamiltonian creation because the two-qubit terms are not sufficiently many. 
+qibotf
+@AdrianPerezSalinas thanks for this numbers.
+I can also upload the .py file for these numbers
+benchmark_qibo.txt
+Thanks for the benchmarks.
+After some more careful thinking I would like to correct my above post: What I wrote is valid when the Hamiltonian is used for time evolution. In this case we need to apply exp(-i dt H) to the state which after Trotterization will give terms of the form exp(-i dt Y0 Z1 Z2 Z3 Y4) which are indeed four qubit gates and require special kernels.
+However, when it comes to expectation values which are the topic of this issue, a four qubit kernel is NOT required. We only need to compute terms like <Psi | Y0 Z1 Z2 Z3 Y4 | Psi > which can be calculated using only one qubit gates. I will have a second look on how the TrotterHamiltonian.expectation method is implemented because I think we can simplify it and make it work with qibotf without the need of additional kernels.
+I will also try to check where this comes from because it doesn't sound like a memory issue. There shouldn't be any memory issues with 16 qubits because the TrotterHamiltonian.expectation does not construct any large object other than the state (and perhaps some copies of it) so it should be possible to go up to 24-25 qubits with a decent laptop. It is not like the density matrix which "doubles" the qubits.

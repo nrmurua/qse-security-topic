@@ -1,0 +1,33 @@
+I occasionally see runtime panics like the below on Kasli. These only seem to occur after the device has been up for a while (23 hours in this case). At the same time I see some sort of slow-down of the core device - normally the experiment below takes 0.8s to run, just before it crashed it was taking ~5s to run, the majority of which occurred after the "Mismatch between gateware and software" warning. I did not manage to get a packet dump before it crashed - I will try next time.
+This does not seem to be specific to the experiment I am running - I have seen this happen with several different experiments of different character.
+Can you run this through addr2line?
+i.e. or1k-linux-addr2line -ipfC -e runtime.elf 0x40028260 0x40049db0 ...
+Do you have aqctl_corelog running?
+This may be a bug in the logging server, does the problem still occur when you are not running aqctl_corelog (nor pulling logs through another means)?
+Yes, aqctl_corelog is running.
+I will stop it running now and see if I still see this bug, however it will take a while to get statistics - this problem has only occured 2 times in the last 7 days.
+this is cjbe@8182f97
+This may be a bug in the logging server
+At the same time I see some sort of slow-down of the core device - normally the experiment below takes 0.8s to run, just before it crashed it was taking ~5s to run, the majority of which occurred after the "Mismatch between gateware and software" warning.
+You're correct and there is an easily addressable bug in the logger server; it's a race condition and exposed by the slowdown. However, the slowdown issue is significantly more important, and likely harder to address. The only cause for such slowdown in a long running core device I can find is heap fragmentation, and we don't currently have the tools to either diagnose or fix it.
+I'll add a diagnostic option to print heap contents, but so far I don't have any good ideas for actually fixing fragmentation with reasonable effort.
+Reproduced the slowdown easily on master. This is bad.
+@jordens Ack. What are the exact steps for reproduction you're taking?
+@whitequark were you unable to reproduce it with the code from @cjbe or did you not try yet?
+I my case it's an experiment that does async rpcs at ~20 Hz run under artiq_master with the dashboard doing the usual moninj traffic. Kasli/opticlock.
+@jordens I did not try yet. How long does it need to run?
+@whitequark Please give it a try. I have seen the slowdown after a couple of hours. If it is heap fragmentation you should be able to accelerate the degradation. Let me know if you are unable to triage or reproduce it.
+The panics won't happen anymore. Investigating the slowdown.
+@jordens I am unable to reproduce this on master. Here is the experiment I am using, running it from the dashboard:
+I consistently get around 24000 rpc/s. Also, after an initial settle down period, there is no change in heap layout at all (zero line diff) with ~100k RPCs in between, unless you catch it during some transient allocation. You can ask the core device for the current heap layout using artiq_coredebug allocator, and it will print it to the UART (not the log).
+What is the exact code you were using?
+Are you trying this with artiq_run or artiq_master?
+artiq_master, like you said.
+And with the dashboard running as well?
+@jordens
+Here is the experiment I am using, running it from the dashboard
+Yes.
+@whitequark Ack. I'll see whether I can isolate it.
+@jordens I've fixed #986. In case you manage to reproduce this, you can gather and view a profile with:
+@cjbe I am not able to reproduce this issue. Can you please try again on master? And in case it does happen, can you capture a profile as described in #979 (comment)?
+@whitequark I have not managed to reproduce this since the fix for #986 - if I do see this again, I will capture a profile.

@@ -1,0 +1,18 @@
+Assertions aren't the best option for terminating processes, since they don't provide much in the way of logs. We should investigate alternatives (e.g. C++ exceptions) and migrate away from assert() calls.
+This also affects our tests, where EXPECT_DEATH doesn't play nice with multithreading.
+Closely related to #33. While the cleaned-up assert() calls are a vast improvement over segfaults, they still lack context: a call to Tensor::reorder() could come from circuit-file parsing or tensor multiplication.
+@s-mandra, do you have a preference regarding error reporting methods? My experience is mostly limited to Google's status-return style, which doesn't seem to be used much in open-source code.
+@s-mandra, do you have a preference regarding error reporting methods? My experience is mostly limited to Google's status-return style, which doesn't seem to be used much in open-source code.
+Not really. I typically use asserts myself and now I'm migrating to catch-throw. That would give much more context, but it would require a non-trivial redesign of the code. The best would be to implement Contracts, but they're implementation has been deferred to a later standard (not anymore in C++20, such a pity!).
+I'm implementing the following, which is quite nice. I've created a header errors.h such that once something like this is called:
+you have an output like:
+that is, it does not only output the error, but also the file and line. Once done, I'll ask @alankao64 to migrate to this.
+I believe that assert failures also do output the file and line. For example, if I called a circuit file with the incorrect number of qubits at the top of the file, this is the output I get:
+Assertion failed: circuit_data_num_qubits == num_active_qubits_from_grid (read_circuit.cpp: circuit_data_to_grid_of_tensors: 410) 
+Which shows the file, the function, and line number. I think the improvement we are looking for is more context behind where code is failing, as debugging an assert caused by a function that is called in multiple places is a lot harder when all we see is the function where the failure happened, not where the function was called.
+I think the improvement we are looking for is more context behind where code is failing...
+Exceptions (throw/try/catch) provide this, but some extra work will be required:
+For now, it's just enough to have main wrapped in between try and catch to get thrown errors.
+It's a very simple modification. It's just enough to change
+and it works :)
+Resolved by PR #204

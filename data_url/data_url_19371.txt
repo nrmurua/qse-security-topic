@@ -1,0 +1,23 @@
+I have a very interesting bug to report. If I run the following circuit with NQUBITS>=26 and TARGET>=25:
+I obtain the following error:
+Additional details:
+The main issue appears here:
+
+The problem involves all kind of measurements, with a very strange behavior:
+If K < 0, probabilities sum to 1, while of K >= 0 probabilities sum to 2 ** (-K).
+Notice that no error is raised in this case due to #460 normalizing the probs.
+We did it to fix a tolerance issue, but it hides this problem, maybe we should revisit it.
+Is anyone able to reproduce this error? Note that you need to plot probabilities directly or revert #460, otherwise no error is raised for standard measurements (but it still appears with collapse gates).
+I prepared a code snippet to isolate the problem. It doesn't even need qibo, only numpy.
+It looks like that summing over the first 25 or more axis in one step gives unexpected results.
+I don't think it's the expected behavior, what do you think?
+Let me know if you are able to reproduce these behaviors.
+It looks like that summing over the first 25 or more axis in one step gives unexpected results. I don't think it's the expected behavior, what do you think? Let me know if you are able to reproduce these behaviors.
+Thank you very much for identifying this and the very detailed investigation. The numpy script is a bit crazy but I can reproduce it. It seems like a precision issue to me. For example, try the following:
+This is just calculating the sum of a random float32 vector in three different ways. For me results vary depending on how x is generated but generally the middle value is wrong, while the other two always agree. For this particular example the discrepancy is actually very large and the funny thing is that the middle value coverges to the correct result as t is increased (here we need about t = 10 for acceptable accuracy). Also with this configuration the issue appears even for n < 26 if t is small enough.
+@mlazzarin could you please open an issue in numpy with this short example?
+Done, see numpy/numpy#20458 .
+It looks like it's a precision issue indeed. The fact that the different sum order gives different results is actually documented in Numpy's doc.
+For floating point numbers the numerical precision of sum (and np.add.reduce) is in general limited by directly adding each number individually to the result causing rounding errors in every step. However, often numpy will use a numerically better approach (partial pairwise summation) leading to improved precision in many use-cases. This improved precision is always provided when no axis is given. When axis is given, it will depend on which axis is summed. Technically, to provide the best speed possible, the improved precision is only used when the summation is along the fast axis in memory. Note that the exact precision may vary depending on other parameters. In contrast to NumPy, Python’s math.fsum function uses a slower but more precise approach to summation. Especially when summing a large number of lower precision floating point numbers, such as float32, numerical errors can become significant. In such cases it can be advisable to use dtype=”float64” to use a higher precision for the output.
+When I have some spare time, I'll try to figure out how to cope with this problem in Qibo.
+Ok, then one possibility is to avoid the axis and write explicitly the sum of each array column.

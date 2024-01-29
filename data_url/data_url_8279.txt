@@ -1,0 +1,39 @@
+Hi,
+I want to discuss 2 points about how we manage time dependent Hamiltonian, relating to the discussion started on qucontrol/krotov#56
+First, presently function coefficients are defined as:
+With args is a dictionary containing extra variables to pass to the function.
+For backward compatibility
+is also accepted if the option rhs_with_state is set to True.
+But there have been demand to accept more signatures: f(t) and f(t, **args). PR #1123, when ready, should allow both signature using options.
+The best signature I believe is f(t, **args) since it allows to use more natural function call using kwargs (f(t, w=0, a=1)). However, it is the slowest in the #1123 implementation (up to 10x): some items are added to args for internal use and they need to be filtered at each call. It could be brought to 2.5x with some work, but no better. f(t) is about 2x slower than f(t, args). But it's less agile: if the Hamiltonian use f(t, w1=0), we cannot add a c_ops using f(t, w2=0), both function must accept w1 and w2. args could just hide unused items.
+Which ever we choose as the main one will be 2~3x faster than the other. We can have automatic detection of the signature if we want to be fancy.
+Which signature do you think is better?
+Second, these function can depend on the state with the option rhs_with_state. Thus the coefficients are f(t, state, args) with state a 1D numpy array.
+When making QobjEvo, I added special args' keys that indicate that the value should be updated with the state: setting args = {"val=Qobj":psi0, "val":psi0} would tell args["val"] to be updated with the state at each use in the solver. The state can be obtained as Qobj, np.array or the args could be updated to be the expectation value of another Qobj.
+There are some bug for it in master presently but it will work with PR #1127.
+Using these special keys for this work well but they need to be removed for the new signature candidate (f(t, **args)). Also you cannot remove / fix to a constant them once declared. Since they are not used/working yet, now is the time to change to something better. I could see 2 other options:
+I would appreciate feedback and ideas on the issue.
+Cc @goerz
+Hi @Ericgig
+Thanks for investigating this so thoroughly.
+I guess it makes sense that unpacking a dict at each call is inefficient, so I think we should drop this idea. As you have suggested previously, users can always use module variables if they wish to avoid passing vars in args. So I think we should aim to keep it simple. I think adding f(t) as a signature option will be sufficient for what @goerz wanted and would be sufficient for using a Numba jit.
+So, my suggestion for the next major release (v5) would be that we have only two call sigs:
+For now we will have to have the three (although I don't think the rhs_with_state is not widely used, if at all).
+I think it makes sense to use introspection to decide which has been specified by the user, as the sig is clearly distinguishable by the number of args. So effectively we can ignore the rhs_with_state option, but I think we should give a deprecation warning that the f(t, state, args) signature will be removed in the next version.
+So, I think this means we can keep the new method of passing the state in the args dict. I would suggest we make it a bit more simple though. I notice that the processing of the option is a bit involved. So I suggest that any element of the args dict where the key is of the form name:special_value_kind be considered some kind of special value. If special_value_kind is not recognised then it should throw a ValueError.
+For now we will have the special_value_kind of:
+The state_vec will clearly be much more efficient, as this is what the ODE solver maintains. However, for completeness I think we should have the state option.
+The initial value, as in args = {'psi:state':psi0}, seems fairly arbitrary, as I guess we can just just set the t=0 value anyway. I think you also implemented expect as a special_value_kind. I guess maybe the value of the element is the e_op, or maybe you use the e_ops param?
+So, when there are special_value_kind args given, these are replaced with an arg {name:value} with the value being the value of the special_value_kind at time t. We should use internal flags (attribs) to control the special_value_kind processing, This will be more efficient than checking the args dict at every time step for special_value_kind keys, e.g.
+So, unless I have missed something regarding the importance of **args, then I think this plan covers what we need and makes everything a bit simpler, which is always good.
+Sorry for the slow response...
+It seems to me like @Ericgig summed it up pretty concisely. Although I'm not sure I understand how #1123 fits in: what is the plan for Qobjevofunc, and how would it fit in to specifying time-dependent Hamiltonians?
+The only thing that's ever really bothered me was the mandatory args as part of the signature, even if it's not used. That's lead to the need for workarounds like the allow_args parameter in
+https://github.com/qucontrol/qdynpylib/blob/f7b54af3e586683cdfd9b3dd666c5cf540d843e1/src/qdyn/pulse.py#L555
+If there's a future f(t) option, I should be happy. In the abstract, f(t, **args) and f(t, state_vec, **args) would be the most elegant, but if there's a severe performance hit, that could be a problem. I'm surprised, though: I would have thought that f(t, **args) and f(t, args) should be almost the same thing in the Python internals, since you can modify args inside of f and pass it to lowerlevel function as **args again. Even from the user's perspective any current code with signature f(t, args) could have its signature replaced with f(t, **args) without requiring any change to the function body. But I'm clearly missing something. Can you point me to lines in the code where this becomes a bottleneck?
+I'm also quite in favor of introspection to accept a wide variety of signatures: you can even introspect argument names, so the possibilities are endless. The introspection is probably slow, but if it only has to be done in a very high level function, that might be alright.
+The performance hit come from filtering the args. This is pretty much what I am doing:
+With some work, I should be able to remove the need for args_now and get much faster. But there is still an extra layer.
+Introspection only need to be done once at setup, not at each call so it should have a great effect.
+@Ericgig Are you happy that we completely addressed this issue in v5 already?
+Yes, this is solved with v5.

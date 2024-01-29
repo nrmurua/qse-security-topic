@@ -1,0 +1,54 @@
+For many applications, e.g. VQE, the final observable to perform ZNE on is a linear combination of expectation values. Our primary design focus has been on a single expectation value. Being able to handle multiple expectation values will be, I would say, an essential feature even for beta testers.
+We should discuss how to handle mitigating multiple expectation values with Mitiq. Here's one idea:
+For VQE and many similar variational-type algorithms, there are two key components that go into the circuits which get run: (i) the ansatz and (ii) the observables to measure. From a unitary folding perspective, it is very easy to just input the ansatz circuit and fold that, then pass this folded circuit to the run method which handles the multiple observables to measure. It might make sense to make (or use an existing) class for weighted Pauli operators or something similar. This would then be passed into the run method, and Mitiq would form all the circuits to run, run them, and recombine the expectation values to do the extrapolation.
+There are some questions that arise in this discussion which I don't immediately know the answer to. E.g., is it better to extrapolate each expectation value separately then combine them, or combine them then do the extrapolation. (Is extrapolation linear? What is better in terms of design? Runtime?)
+Please use this thread to discuss, propose additional ideas, etc. (@willzeng this was the last item I wanted to discuss in today's engineering meeting.)
+Good point @rmlarose This is a super common use case that we should have in mind.
+Would the following be a pseudocode example of how this workflow could be done with and without mitiq now?
+and with mitiq
+Mostly measuring in the computational basis and then inserting pre-rotations is the workflow I've been familiar with for doing different observables.
+Are there other workflows that different packages use that we should compare against?
+For the last question, this is the most common method as far as I know.
+The first pseudocode block is how I think this should be (has to be) done. I think its so common though that nearly everyone would be writing this code, and therefore its probably good to include it in the library. (Now or later, we can discuss... probably later.)
+The wrapper function for mitigation could have the following signature.
+The body of this function would run something similar to the pseudocode in the first block above. (The devil is of course in the details, though.)
+Thinking through the pipeline, changes will have to be made (of course) to functions which run programs (executors). An example is qiskit_utils.run_program which uses the line
+to compute the expectation value.
+I suggest that we generalize this function (and similar functions) to have the following signature:
+The next obvious question is how to represent an observable. There are some existing objects which we could in principle use:
+However, I think it's best to write our own here. My reasoning is these aren't hard to write and by doing so we will keep the dependencies small. This will be a central object to all of mitiq even beyond ZNE since we always want to mitigate expectation values. It makes sense to have our own object.
+I'd be happy to write this. I already have preliminary code with some additional features such as grouping observables into sets of simultaneously measurable operators.
+Totally agreed that this is a common use case that we should cleanly support. Likely might even be good to have in the getting started alongside a VQE example at some point.
+That said, do you think that this is something that, while useful, is necessarily a part of mitiq?
+"Measuring circuit expectations against different observables" seems to me like a capability at that level of "Measuring circuit expectations". "Measuring circuit expectations" is something that we currently farm out to external libraries. This has the advantages of keeping our maintenance surface low and allowing users lots of flexibility.
+Would that logic not also apply here?
+(as a side note, if we do need to use this workflow inside of mitiq for our own error-mitigation, I think cirq has an implementation that we could use without needing to add more code or dependencies https://cirq.readthedocs.io/en/latest/generated/cirq.PauliSumCollector.html) If we find that this isn't sufficient, perhaps a PR into cirq is another way to go.
+My general idea is also to let the user do as much as possible, and give only the mitigation task to mitiq.
+However, evaluating single expectation values one by one could become quite inefficient, compared to evaluating a batch of compatible expectation values at each circuit execution.
+If this is the only problem, a simple solution would be to allow the executor to return a list of expectation values instead of a single one. In this way we could perform error mitigation in a parallel fashion, leaving to the user the problem of dealing with multiple observables.
+@rmlarose Do you think that this workaround could work efficiently?
+I think the best way to handle this is to add an observable argument to execute_with_zne. For the H2 example, the workflow would then be
+The body of execute_with_zne should then:
+Of course it should loop over steps (2) and (3) until all the terms in the Hamiltonian have been computed. If no observable is provided, it will be assumed the circuit already has measurements and the post-processing will be handled by the user, so it doesn't break the current workflow.
+My reasoning is that right now the code in the three functions below would have to be written every time someone does a VQE-type algorithm with mitiq.
+
+The post-processing to compute expectation values is the same regardless of the observable(s), so this can (and should in my opinion) be handled automatically.
+This would involve writing 1-2 new classes for observables, something like
+I would prefer to write these from scratch rather than use something that already exists -- they are easy to write and this way we could customize them as needed.
+@rmlarose I've thought some more about the example that you give there and it seems like there are two options:
+[0] We start defining observables and Hamiltonian objects in mitiq. This goes in the direction of adding variational quantum circuit features to mitiq that we then need to support across different back and front ends.
+[1] We leave this in user space. The three functions that you indicate do need to be written by users, but presumably they'll already have that code in their front end of choice. They then only need to find where to plug mitiq in. In the example you give I think this is a one line change on line 36 to wrap the noisy_simulation.
+Given that we should be wary about expanding the foot print of the library beyond error-mitigation and that [0] involves much more surface area interfacing with front ends (converting observables to our mitiq format etc), it seems that [1] is the better choice.
+Part of this comes down to the belief that users will come to mitiq with a quantum program already written that they want to mitigate. Not that they will be using mitiq as their main quantum programming development library.
+I'll set up some time this coming week for us to chat about this more. Want to make sure we aren't missing anything.
+Part of this comes down to the belief that users will come to mitiq with a quantum program already written that they want to mitigate. Not that they will be using mitiq as their main quantum programming development library.
+This is a great point and, if true, I agree. (It will probably be true.) It could be seen as a burden to have to re-define observables in mitiq if people are coming in with a program ready.
+With this in mind, since I still think the use of observables could simplify the mitiq workflow:
+Proposal: What about allowing for observables defined in supported frontends?
+(If the users program contains this and we don't support it, this would also be a burden for them to have to re-write their code without observables.)
+In addition to QPROGRAM, we could have a type, say QOBSERVABLE, which allows for Cirq Pauli strings, Qiskit Pauli strings, etc. The signature for execute_with_zne then could be:
+This is somewhere between Will's [0] and [1] above, call it [0.5].
+Another idea but if people are against supporting observables we can close this and move on.
+I don't often use Pauli strings in Cirq, Qiskit, etc., but some people surely do. One workshop survey response might be suggesting something like this, though I'm not completely sure what their response means:
+What did you have the most difficulty with in using mitiq?
+Figuring out where exactly to integrate it into my existing code base. Especially for variational algorithms where there are many evaluations of a single circuit.

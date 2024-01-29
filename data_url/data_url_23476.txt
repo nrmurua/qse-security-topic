@@ -1,0 +1,94 @@
+when adding station to the measurement then using the 'with meas.run( ) as datasaver' the station does not seem to work.
+further the station object does not want to return a snapshot either after running the meas.run(), even though it returned it fine earlier in the code.
+Here is all the code:
+####################################################################################################
+the error returned is:
+################################################################################################
+when not adding station to the measurment everything works fine but, if I try to do station.snapshot() after the meas.run() i get the following error:
+################################################################################################
+Note that when adding the dummy instrument to the station instead everything works fine so it may be an issue with the driver of the instrument (adding either to the snapshot without the other produces the same issue), here is the driver for the multimeter:
+@user123369 thanks for reporting and adding all your code for reference, that is helpful! however, it's still not easy for me to see what can go wrong. Just for the record, what python version and qcodes version and pyvisa version are you using (you can see it if you run pip list in your python environment)?
+let's try to debug the issue. Could you:
+@astafan8 Hi, thanks for the quick repsonse.
+1)I have restarted the kernel and ran print_readble_snapshot() several times it works just fine
+2) the return of the flukeMeter.snapshot() before instantiating the station is:
+@user123369 What happens is that initially when you call snapshot the snapshot will be empty as can be seen by the default values in your snapshot above. Adding it to the station will trigger a refresh of the snapshot.
+I would bet that you can reproduce the issue by doing
+in a new python process without any station and any measurement.
+This causes the snapshot method to call get on all parameters in the instrument which is the same that you do when the instrument is added to the station
+Hi @jenshnielsen
+I have started a new ipynb file and ran the follwoing code:
+the return seems fine (no issues, the return is:
+thanks! the snapshot looks fine except
+'value': 1.0031e+21
+that's a very high value for a DC current. is that correct? (this may or may not be related to the issue though)
+flukeMeter.close()
+i see that in the original code above the instrument is being closed at the end of the measurement - calling snapshot() on a closed instrument should not work, so perhaps try to NOT close the instrument after the measurement?
+ok, the snapshot looks ok, flukeMeter.snapshot(update=True) works, so now let's try again to add it to the station and run the measurement (please, restart the kernel again so that we start from a clean slate)?
+as an additional info: there's no need to pass the station instance to Measurement explicitly, see the docs on the default station https://qcodes.github.io/Qcodes/examples/Station.html#Default-Station .
+Note that the value of 1.00071e21 also shows up as the vendor of the instrument so it seems like there is a potential issue with the instrumets implementation of *IDN too
+@user123369 as a sidenote, i'd also recommend to simplify the driver to not use visa_handle directly, and use ask/write that qcodes' VisaInstrument implements already, and also add a "meas_config" parameter to keep track of V-DC/A-DC stuff, like this:
+Hi @jenshnielsen and @astafan8
+2)the same thing goes for the *IDN; since the instrument is old there is no *IDN query so it just returns a default value (i guess i will need to override this but, still i think since its returning something the code should work.
+3)you are right now that i dont close the instrument in the original code the snapshot of the multimeter is returned after the mea.run() (when station is not added to the experient.
+4)as for the code here is the new code i am running in a new kernel:
+after getting to this point with no errors i get the same error
+i guess i will need to override this
+well, since so far nothing help, perhaps you should try to override it? for the sake of testing, you can do this:
+@astafan8 nope still the same error.
+... then i'm out of ideas/clues for the moment :(
+it seems that one of the values in the snapshot is not really what it looks like, because it seems to recurse forever at the isinstance call on it, and it seems to be about Real/Complex/float types.
+what are python, qcodes, pyvisa versions in the python environement that you're using?
+@astafan8
+pyvisa 1.11.3
+qcodes 0.34.1
+python 3.10.4
+Could you try to see if just doing a snapshot of the station triggers the issue.
+or
+@jenshnielsen hi will try this on Monday or tomorrow if I get in the lab.
+@jenshnielsen hi yep that works, here is the code:
+here is the output:
+flukeMeter.close()
+Please check the snapshot of the station not the instrument e.g.
+@jenshnielsen hi sorry for the late reply
+here is the new code:
+it seems to work fine here is the response
+Note i overwrote the idn method so i dont get the long number as a response to*IDN? although still for the current, sorry if its a silly question but is there some way to omit certain parameters when calling for the station snapshot?
+ok, and after overwriting the idn, did you also try to add the instrument to the station and take a snapshot via station, and also then run the measurement?
+sorry if its a silly question but is there some way to omit certain parameters when calling for the station snapshot?
+not silliy at all! there are multiple ways of doing that, see the snapshot_* arguments to the Parameter here https://qcodes.github.io/Qcodes/api/parameters/index.html#qcodes.parameters.Parameter.
+@astafan8 yep still the same problem.
+hi @astafan8  so I am now running the code using the legacy loop methods here is the the code:
+and the output
+seems to work fine in the sense i also get a snashot.json file in the working directory.  i think ill just stick to this legacy loop method, do you think there will be any problem with this?
+seems to work fine. i think ill just stick to this legacy loop method, do you think there will be any problem with this?
+well, it's a legacy feature that is not being improved or supported; but it seems to work for you in this particular case, nothing can beat that :)
+it likely works because you didn't add the instrument to the station :) could you try adding the instrument to the station and run the legacy loop?
+anyways, i'd recommend to still use meas.run() measurement context manager, not the legacy loop, but just don't add the problematic instrument to the station (but add all other isntruments).
+@astafan8 yep nevermind, same problem after adding the instruments to the station (its both of them btw).
+Are we absolutely sure that the fluke is the issue?
+E.g. does
+work
+@jenshnielsen yep the above works, here is the output for just the keithley (note ive set all the snapshot_get = False for the parameter to see if it changes anything in the keithley driver (it doesnt):
+rather than printing the snapshot could you try encoding it to json
+@jenshnielsen same problem 'maximum recursion depth exceeded in comparison'.
+Could you test if
+or
+also has the issue
+@jenshnielsen same error for both code snippets
+Could you try json encoding the snapshot of each of the parameters
+Something like
+@jenshnielsen here is the code:
+and the output:
+Sorry I think there is a typo in my code. Should have been (with the NumpyJSONEncoder)
+@jenshnielsen
+ok this time the response is the usual:
+Ok that tells us the problem is with the snapshot of voltageDC it self and not some interaction between parameters
+I can reproduce this now
+Triggers the issue.
+The reason is the bytestring in the raw_value. The reason why you are seeing a bytestring here (note the b in from of the string)
+is that you use visa_handle.read_raw. As @astafan8 suggested above using instrument.ask is a lot better or at the very least instrument.visa_handle.read and or instrument.visa_handle.query read_raw should really only be used when you handle the decoding or the raw value in your get_raw your self for strange dataformats that cannot be automatically decoded.
+That being said qcodes should handle bytestrings in snapshots better.
+Tracking improvments to the JSONEncoder in #4620
+@user123369 Would it be ok to close this now. QCoDeS now has a fix to not error on bytestrings and there is a clear path to fix your driver to not return bytestrings
+@jenshnielsen sure, thanks for al the help!

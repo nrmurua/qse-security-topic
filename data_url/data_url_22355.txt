@@ -1,0 +1,28 @@
+When a Scannable widget has a unit string you cannot type any digits after the decimal point in to the scan limits.
+Example:
+Create a widget: self.setattr_argument("test", Scannable(default=LinearScan(0,3,10), unit="us"))
+Delete the text in one of the limits, and type '1.23'. All digits after the decimal point are rejected.
+The Qt documentation doesn't say, but QAbstractSpinBox.validate is supposed to strip prefix/suffix before validating. QDoubleSpinBox.validate (and others) call this internal function for doing that:
+https://github.com/openwebos/qt/blob/master/src/gui/widgets/qabstractspinbox.cpp#L1414
+And Qt will sometimes call it with the prefix/suffix and sometimes without. I suppose this is why the internal function above checks that it is actually stripping the prefix/suffix text.
+And it will call you with a position inside the suffix!
+@jordens FloatValidator is also buggy, you can end up with two e in the text if you insert the second one before the last character. I propose replacing it with QRegExpValidator which will also make it easier to deal with Qt's pesky prefix/suffix corner cases.
+Ack. There is also unexpected/wrong behavior on shift/ctrl-wheel depending on the value.
+Supporting the exponent notation in the spinbox also introduces currently unsolved problems with ndecimals.
+Actually, do we need ScientificSpinbox at all? Since the experiment specifies a scale, the usefulness of exponents is not very clear.
+Let's not force users to always determine a scale. There are lots of cases where that doesn't make any sense. And the scan widget also can not make any use of the scale because it conflicts conceptually.
+it conflicts conceptually.
+How? If the unit of a scan is e.g. MHz, it sounds fine to me.
+You can't replace exponential notation by a fixed scale. For the scanwidget -- among other things -- you would not be able to guarantee that you can paint the number in in the space given.
+I know, and the real question is whether users actually need to input values that vary by several orders of magnitude in the same field. But the scale/unit parameters still make sense for the scanwidget, don't they?
+Absolutely. Unit and scale make a lot of sense. And coupling them is good. FWIW they could even be linked hard.
+Users do enter values differing by many orders of magnitude: a scan from 0 MHz to 1 MHz.
+There is a lot of funny overlap between units and exponential notation: 0e4 µs, 1e-4 MHz, and 1e9 ns are a priori not very useful but they would be required because e.g. another related value dictates those units.
+a scan from 0 MHz to 1 MHz
+Well OK, but then you do not need to control one value at e.g. the Hz level but not the other one, do you?
+No. In practice you see values that have anywhere from 1 to something like 9 significant digits.
+But the idea of being forced to come up with a lot of metadata for a variable just to be able to set it to specific values is painful. There should be a minimal amount of interference by default.
+This sounds like a low-impact feature (minor, and users need to think of using exponent notation in the spinbox) and relatively high-cost (involves quite a bit of design and Qt wrestling to get everything right). I propose that we solve the problem at hand by using QDoubleSpinBox in 1.1, and fix/improve ScientificSpinBox in 2.0.
+Well OK, but then you do not need to control one value at e.g. the Hz level but not the other one, do you?
+One example would be trap voltages -- depending on where in a segmented linear trap an ion is, you might apply ~100 mV (and you care about ~100 uV resolution) or ~10V to the same electrode, again caring about the resolution in the same way (for example making multiple wells along an axis a la the Kenton trap).
+QDoubleSpinBox for now sounds ok to me.

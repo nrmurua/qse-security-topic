@@ -1,0 +1,56 @@
+The benchmarking suite has no way to specify which qubits are used in the execution of a given circuit, i.e. one cannot define an initial_layout here:
+
+This is nice to have because, for example, in Fig. 11 of https://arxiv.org/abs/2110.03137 you look at dynamic Berstein-Vazirani on the Lagos system, but the 0-1 edge of the coupling map is actually not the best (it is also not the worst).  On that machine the 3-5 edge is the best in terms of fidelity:
+Yes, it would be a really good idea to have a way to map qubits to the best layout in order to achieve optimal results.  The question we faced was how to do this without forcing the code to contain references to specific hardware mapping tables. Note that the table might be null for devices that support all-to-all connectivity and uniform qubit characterization.
+Ideally, from a user perspective, this would be automated. Specifically, the user should be able to write a circuit without concern for layout, then have the compiler determine the best layout to use for a circuit of a particular topology. This is not available currently of course.
+One option would be to introduce a qubit mapping parameter that would be None by default.  Each benchmark could accept this parameter optionally in its run() method so that an optimal mapping could be provided for each circuit when executed on hardware devices that are being benchmarked.
+This is a feature that the group had considered. However, it seemed wise to first learn whether there are plans within the Qiskit team to provide such a mechanism in an automated way.
+Well technically you are already mapping things, just probably not the best way.  Ideally you would have done
+in your calls to execute.  This would select a different layout and mapping routine, plus additional optimizations, e.g. KAK.  So in some sense Qiskit gives you quite a bit of flexibility in the optimization and routing here.  But I guess your advocating that Qiskit should do the best by default, which I think is a fair thing to say.  That being said, when there is a benchmarking paper with two of the authors from the hardware vendors themselves, it does seem a bit lopsided to not try to do the best possible when others can call down the hall and tell them to optimize the system.
+Yes, I totally agree. I sent an email to you proposing a way we might address this issue.
+It is true that someone with knowledge of the available options could achieve better results on specific hardware. However, these techniques are not widely known and therefore unavailable to the average "user".  Perhaps there is a way to highlight these options for users, and indicate with a WARNING message that the circuit being executed may not be optimal.
+For example, if I look at:
+https://qiskit.org/documentation/stubs/qiskit.compiler.transpile.html
+the options you listed are described.
+However, it is not easy for a user to find guidance as to which of the many options to choose and on what hardware each applies. A user would have to do a lot of experimenting or searching for suggestions in forums in order to know what to do. Most simply do not have time to do this (not to mention repeated executions on scarce hardware resources).
+Perhaps there could be a document created that specifically ties the proper options for each IBM hardware device in the context of the circuit classes used in the benchmark suite? Or an IBM-specific notebook addendum that provides this for the benefit of users. Seems like this would greatly benefit IBM hardware users.
+If we use the option mentioned about when executing the benchmarks on casablanca, we do see slightly improved performance for the circuits with width > 4.
+Here are the results shown in the paper without these options set:
+
+and here is the result with the options set:
+
+Two questions ...
+should this be the default for executing on ANY of the IBM hardware services?
+If so, then the options could be set by default in the execute.py module.
+If not, then we'd have to expose a mechanism to configure options along with the backend selection.
+Would we achieve better results if we provided specific mappings for each benchmark circuit, rather than use the 'sabre' approach?  Are there options that would provide even better results?
+As an example, when executing on ibm_lagos, the following error message is emitted:
+UserWarning: layout_method is not a recognized runtime option and may be ignored by the backend.
+Hmm, the layout method not being valid is odd.  Will take a look.
+I would say yes.  In particular see here: https://nonhermitian.org/posts/2021/2021-10-31-best_swap_mapper_qiskit.html
+I think the manual setting would be a bit cheating.  It should be all software based, but a best faith effort to pick the best SW options.
+Running on guadalupe also show better results using these options:
+Without the options:
+
+With the options set:
+
+The code has been now modified to set these options by default for all IBM hardware backends.
+I will keep this issue open for now, so users can follow the trail of this change and because two issues still remain here:
+Even though the options seem to take effect and do provide better fidelity results, the error message still appears. Perhaps this is a Qiskit version issue:
+UserWarning: routing_method is not a recognized runtime option and may be ignored by the backend.
+We should provide a mechanism to override the default options in case users would like to experiment with other options.  That change has not been made yet.
+I have raised an issue here: Qiskit/qiskit#7200
+However, execute is out of favor and execution of circuit should be done via two steps:
+This does not raise the warning.
+The above change has been made to avoid the errors on execution.
+In addition, the IBM-specific code has been removed from the execute.py module, by passing an 'exec_options' object when calling set_execution_target.
+This object contains 3 fields: optimization_level, layout_method routing_method, which if provided will be passed to the tranpile method.
+The exec_options parameter is surfaced in all the benchmarks and may be set by the user in the first cell of the Jupyter Notebook.  It is defaulted to the recommended IBM options in the body of code the user uncomments to select an IBM device.
+This makes the underlying execute.py method hardware-agnostic.
+Note: The notebook template has been edited with this option.  User's will need to re-create their notebook from the template.
+Blake Johnson of IBM has described another mechanism for additional optimization in:
+https://gist.github.com/blakejohnson/9d0d7aa8c50350f869ed3eeca185f8f0
+This Issue will remain open until a method for users to supply the custom pass manager for additional performance gains.
+@nonhermitian @blakejohnson The 'develop' branch now contains a method to enable the pass manager as described above. The Jupyter notebook template adds one new cell to define a pass manager and add it to the exec_options object, as a callback executed in the execute.py module. Needs review before merging to staging.
+This issue closed ... the exec_options variable was added to the execute_method so that user can select optimization_level, layout_method, and routing_method for execution.
+The 'transfomer' field can also be set to enable the execution of a circuit transformer() function that is called after the above options are passed to transpiler, but before the run(0 method is invoked.

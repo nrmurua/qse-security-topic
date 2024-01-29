@@ -1,0 +1,11 @@
+There is the awkward problem for software, that directly relies on calling the MPI executables (such as BAGEL, NWChem, CP2K, ...). Linking the mpi executables to the bin directory of the derivation potentially leads to multiple executables with the same name and therefore conflicts, while not providing them with the derivation requires the user to add the correct MPI version to the nix-shell (or whatever), which is especially difficult if an override to the MPI derivation has been used.
+One option is to wrap the programs, so that the wrapper calls MPI on the actual executable, as you did with NWChem.
+This is very easy to use and always works but has the disadvantage that it is not possible to pass additional parametres to MPI (such as --mca to select the network, or -N to select the distribution of processes between nodes, which I often require for multi-node jobs).
+An alternative that would only work with mkShell could be to use passthru in the derivation to provide a shell-hook, like this:
+and then, in a nix-shell use it somehow like this:
+with nix-shell --run "$nwchem_MPIEXEC -n 4 -N 4 --mca btl openib,self nwchem input > output"?
+The disadvantage here is, that I don't see how one could use this without the shellHook of a mkShell.
+Yes, that only works with mkShell. A setup-hook would be more universal here but is also not a pretty solution. It means more code. Every MPI program needs to define it in a uniform way. An easier solution would be to just create a symlink pointing to mpiexec/mpirun: mpirun.nwchem -> /nix/store/mpi/bin/mpirun - workable but also not very clean.
+The wrapper scripts I used for NWchem were a quick'n dirty solution that will disappear in the future.
+We should look for a solution that is good enough to be implemented in upstream nixpkgs to solve the issue uniformly. As a first step I suggest we start by adding passthru.mpi to all derivations that build MPI applications.
+I think this can be closed now. With passthru.mpi, propgatedBuildInputs, and propagatedUserEnvPkgs` (see #59) we have pretty much all cases covered.

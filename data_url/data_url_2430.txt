@@ -1,0 +1,78 @@
+In some cases the kak decomposition appears to have an instability in the sign of the ZZ coefficient. Consider the following example:
+returns
+And thus we see that despite the fact the unitaries are very similar, the kak decomposition gives a seemingly random sign on the ZZ interaction coefficient. Is this a bug?
+When I run this repro script I get the following results:
+With no sign instability.
+This happens both in my development environment and in a freshly created virtual env. I also tried it in both python 2 and python 3.
+What version of cirq are you using? What OS?
+Mac, Mojave, Python 3.7, Cirq 0.5. The discrepancy between our builds is disturbing...
+I just ran this on cirq==0.5.0 and python==3.7.3  on ubuntu==18.04 with no issues; so it's probably macOS problem.
+@babbush This also passes in macOS 10.13, Xcode 9.4.1 : https://travis-ci.com/quantumlib/Cirq/jobs/201188271.  This might be a very strange corner case, but it's worth getting to the bottom of it!
+@babbush I recommend putting your laptop next to your workstation, getting this code on both of them in pycharm, and debugging through the test. Step over methods until you find the point of divergence. Then step into the method where it diverges, and step over submethods to find the more exact point of divergence. Just keep narrowing it down.
+Just to make sure @vtomole when you say "it passes" do you mean that you get the same numbers as Craig? My code should still run, it just gives a negative sign on the .2999 number. Anyways, today I ran this on my linux workstation and see the same thing. I highly suspect the problem is with scipy or numpy's diagonalization routines so the version or cirq or the os might not be the problem. For both mac and linux I am using anaconda python version 3.7. This is one of the most common python installations for scientific programming and I am certain that many of our users use it. Can one of you try running this with anaconda 3.7 and see if you get that negative sign? Realistically, I don't foresee myself having the time to track this bug down but its quite a problem for us...
+@babbush
+When you say "it passes" do you mean that you get the same numbers as Craig?
+Yes. I haven't been able to reproduce the negative sign on .2999 on macOS, Windows, or Linux. Let me try Anaconda python==3.7 on Linux.
+No luck on the latest version of Anaconda:
+Same thing: https://ibb.co/ZT2Spy5
+This is so weird. I'm not the only one though. @ncrubin is also experiencing the same bug on both mac and linux. He has some theory about how it might be caused by some confluence of anaconda installed a certain way on intel processors. I'll let him elaborate.
+I am observing the same behavior as @babbush .  Running MacOS Mojave, Anaconda python3.7, Cirq 0.6.0.dev, numpy 1.16.3.  Also observe the same negative sign issue on debian with the same anaconda python, cirq, and numpy specs.
+Also observe the same negative sign issue on debian with the same anaconda python, cirq, and numpy specs.
+How did you run the Debian? Was it in a Virtual Machine on your MacBook?
+@vtomole : I used a separate machine running Debian.
+I've just reproduced this on Windows.
+I tried on my macbook but it also doesn't reproduce the issue.
+@ncrubin @vtomole are you able to narrow down the issue more specifically by stepping through with a debugger and seeing where a good machine and bad machine deviate?
+Currently @vtomole is the only one with a "good machine" and a "bad machine"
+@Strilanc  I'm currently stepping through the bad and good machine at the moment.
+awesome @vtomole ! I'll definitely owe you some good Google schwag if you can pin this one down and implement a fix. Its currently blocking me on something important!
+@Strilanc @ncrubin @Strilanc Got it.
+
+This loop never runs on the implementations that give you the negative sign. This is because on the implementations that give you the negative sign,  v[2] = 0.7853981633974483. For the one that doesn't  it's v[2] = 0.7853981633974484.
+0.7853981633974484 > np.pi / 4 is True while 0.7853981633974483 > np.pi /4  is False.
+This could come from anything (hardware e.t.c). Should we just round this up a decimal place or two; or rethink the implementation of this procedure?
+I should also add that this is coming from
+
+If you round pi / 4  down, it's 0.7853981633974483. No wonder this was hard to track.
+Oh, it's just because we're on the border for the angular wrap around? Blergh. So it's not actually different, it just looks different.
+Given how confusing this was, I think we should adjust the canonical range to be (-pi/4+epsilon, pi/4+epsilon]. The KakDecomposition class also needs to support approximate equality.
+Okay, I've managed to find a variant of this issue that I can reproduce:
+Prints
+Even though op1 is approximately equal to op2, the coefficients get negated.
+Apparently these two KAK decompositions represent the same unitary (up to global phase):
+I'm not sure what to make of it, since they disagree so wildly on the Z. It may have to do specifically with the fact that the X and Y coefficients are equal to 1. I seem to remember there being something about one of the border lines of the space being redundant; maybe that's what this is.
+Yes, the issue is that the canonicalization is not handling a special case where X=Y=pi/4. When this occurs, commuting an X operation across the XYZ part causes the Z part to negate without affecting the other two.
+This:
+
+is equal to this:
+
+Up to global phase.
+Ok, I think I see what's going on. I would still consider this behavior by itself to be buggy. It's not very helpful to have a canonicalized form which spits out different representations on different machines for the same operation...
+Yes, it's a bug that it doesn't canonicalize this case.
+The bug does not appear to end there. This is also something very strange going where the single qubit kak coefficients don't correspond to what they are supposed to be. I'm sorry for the rather long example, but below you will find pretty much the smallest example I could make that demonstrates the real problem I'm facing. I would be thrilled with even a very hacky solution to the problem I'm facing here. The code below runs but when you uncomment what should be an inconsequential line, it fails.
+That snippet doesn't reproduce for me.
+Is there a reason you expect it to be a different issue from this canonicalization issue?
+As I understand the canonicalization issue, we're always getting a valid KAK decomposition, but sometimes there are multiple valid KAK decompositions, and in that case the code is failing to consistently choose the same one.
+However, my code above suggests something beyond this is happening. I believe my code above should always work provided the KAK decomposition is valid.
+When you say it doesn't reproduce do you mean that uncommenting the line doesn't break things? Just set theta to random values until you see it break. Most likely you can unbreak it from that point by adding some epsilon to the theta that broke it.
+You should phrase your repros in the form of a failing assertion, instead of a line that needs to be uncommented. I'm not sure what is supposed to be going wrong...?
+The code is supposed to pass whether or not that one line is commented. But on my computers, the code only passes if that line remains commented. Sorry I made my example poorly.
+Oh I'm sorry, you did phrase it as a test. It just doesn't fail on my machine.
+well presumably that's because you aren't running it on a build that reproduces the same kak instability that @ncrubin and myself experience. I would imagine that @ncrubin would experience the same problem for the snippet and that @vtomole can reproduce it on his windows build.
+On my machine I do not have the sign instability but the circuit comparison test does break when the line is uncommented. If I change the offending line by adding another zero to theta -= 0.00001 it passes.
+If we change the line that instantiates actual_circuit to actual_circuit = cirq.Circuit.from_ops(cirq.decompose(RandomGate(theta).on(a,b))) we can get a circuit diagram from the error message. This results in the below diagrams for the failing case on my machine. What does the diagram look like on a machine where un-commenting the line doesn't cause the test to fail?
+
+@vtomole can you let us know the answer to @c-poole 's question?
+I just ran this on my windows build
+Result
+When i commented
+theta -= 0.0001 # Uncomment this line to break things
+I got
+Oh right, of course that's what it does. In any event, do people see why I am claiming this most recent example shows a related, but I believe, distinct, failure from the canonicalization issue? The canonicalization issue is basically occurring because, due to finite precision, there are two fairly different looking kak decompositions that are "valid" to within numerical precision (at least that is @Strilanc 's hypothesis, which seems reasonable). However, this other failure I'm pointing out shows that something about the kak decomposition is actually invalid in some cases near this instability in the sense that a sequence of gates corresponding to the kak decomposition does not reproduce the original unitary to within numerical precision.
+And yet, this most recent problem I'm pointing out only occurs when finite precision pushes you to one side of the numerical instability, and not the other. So either something in my example code, or something in the kak decomposition code, is somehow expecting a certain convention about what to do near this instability, but I cannot figure out what it is!
+I agree with @babbush's conclusion that there are two separate problems that have been discovered. I've tried varying the amount theta is shifted to see if there is a clear pattern with the flipped sign on the ZZ component of the kak decomposition and when the code fails. All four conditions (flipped ZZ, code passes, flipped ZZ code fails, etc.) have occurred.
+I think I have a fix. I adjusted the kak_canonicalize_vector method so that this minus sign issue doesn't occur and when I did that the larger test case @babbush came up with always seems to pass. I'll put in a PR for the fix as soon as I can.
+To elaborate on what appeared to be happening and what my current fix does: @Strilanc correctly identified the issue as being a special case when X=pi/4 (Having Y=pi/4 doesn't appear to be necessary). When this is true, you can shift X by -pi/2 and then negate both X and Z and end up with a net operation of just negating Z. The reason @babbush ran into an issue with the equivalent circuits test is that numerical precision was sometimes the difference between correctly and incorrectly applying the local operations associated with shifting X by -pi/2 and then negating X and Z. We can resolve this issue by choosing a convention that when X=pi/4, Z>=0, which is what my PR now implements after feedback from Craig.
+Does #1680 fix this or is there still more work to be done here?
+I asked @babbush and he said it's no longer blocking him, therefore it's good to close.
+and...... clo-

@@ -1,0 +1,48 @@
+Hi all,
+I've noticed an issue with the voltage scaling when feeding the signal gen output into the digitizer input. I have OUT1 connected to IN1. In my code, I set the ASG to output a 1V sine wave, but I get a sine wave that has a peak amplitude of 0.9146728515625 volts according to the digitizer:
+produces output
+and this plot:
+
+I also see the same in the GUI scope software:
+
+Any thoughts?
+I'm using STEMLab 0.99-48 and you can find my full code here:
+https://gitlab.tudelft.nl/python-for-applied-physics/rp-squid-python-code/blob/master/Debug%20scaling%20issues.ipynb
+Cheers,
+Gary
+Hi Gary,
+I am not so surprised. I tend to think this is an analog problem rather than a software one. First of all, the input impedance is 1 kOhm (or is it 10 kOhm ?),  if the output impedance is 50 Ohm, which is what I believe, a 10 percentish error on the signal amplitude would make sense right ? I don't know how good the internal voltage sources are calibrated either*FOOTNOTE.
+If you want to be sure, you can do the same experiment with the native web-browser interface provided by redpitaya. If the result is different, that would be embarassing...
+*FOOTNOTE: by the way we have some tricks to decrease a lot the analog noise by changing the output range from -1V;1V to 0V-2V, this basically removes the noise of a constant voltage generator that is currently the main noise source in the redpitaya board, don't ask me how Leo (Neuhaus) figured this out...).
+Indeed, that is what I did :)
+And  the result is very, very curious:
+I open the native scope software. It turns off all the gens so I just see noise. I do nothing, and close native scope software.
+I go back to my code and rerun the aquisition (without rerunning the init code) then it gives something much closer to 1V:
+Hmm....
+(Maybe also useful to add: if I configure the Internal gen to give a 1V amplitude in the native scope software and the calculate the PTP on channel 1 using the native scope softare, I get a value of 2.056V)
+The "hysteresis" though suggests the native scope software is doing something with the settings of the FPGA?
+(BTW, I also reproduced this same result using the 0.92 version firmware)
+OK, that's interesting, I would really need a redpitaya to be able to investigate this myself though...
+That makes me wonder if there is not some kind of programmable analog signal conditioning on the board. Maybe Leo knows more ?
+There is some info on input calibration in the rp docs:
+https://redpitaya.readthedocs.io/en/latest/developerGuide/125-14/fastIO.html
+It should be a non volatile eeprom though?
+Or maybe the pyrpl instantiation is overwriting them? As I do see that I  get 0.91V peak voltage if i rerun the init code (99 percent sure, will check later tonight
+Yep, confirmed: rerunning p = Pyrpl(...) returns the scaling to 0.91 V
+And then opening the native scope app, closing it, and re-running the code, the scaling goes to 0.98V
+Curiously: If I pause the native scope, and then run my code, then unpause the native scope, then it actually picks up the (different frequency) that I set in the code for ASG1
+And then: in the native scope app, the PTP amplitude is read as 2.06V, a bit larger than the 1.96V PTP I get from the acquisition via PyRPL in the post-native-scope-opening state.
+Close, but 2.06 is not 1.96...
+The plot thickens. I guess poking into the source of the RP native scope is also an option
+Also tried the opposite: reloading the Pyrpl() object while the native scope is running, but this crashes the native scope
+What happens when you initialize either Pyrpl or the native scope is that the respective application writes its own bitstream version to the FPGA. That also causes a reset of the parameters to what the respective application requests. However, if you switch from the native scope back to Pyrpl without initializing pyrpl again, you operate Pyrpl with a "wrong" FPGA bitstream, and do not reset the asg/scope settings unless you run a command that does.
+Since Pyrpl is somehow a fork from the native FPGA code, its scope application is partially compatible with the native redpitaya one. That means, you are apparently able to acquire scope traces with the "wrong" native redpitaya FPGA bitsream. There is no guarantee whatsoever that the data is correct in this case, in particular the time axis might be off since there are some significant differences between the FPGA versions.
+About the difference in ASG scale: Pyrpl does not use the EEPROM calibration coefficients, and simply maps +- 1 V to the DAC/ADC codes 2^13/-2^13. This was done mainly to allow to use the full scale of the outputs (i.e. what should Pyrpl do if a user requests 1V but we know from calibration that we cannot generate it? One could of course raise an error or warning..). However, if you check the specs of the redpitaya you will see that there is a significant gain and offset error for inputs and outputs that can probably explain the fact that you do not measure the expected amplitude. The solution here would be to use a calibrated scope and determine calibration factors by yourself, and apply them to the values requested from the asg. It is also conceivable to load the coefficients from the EEPROM, if you believe they are correct (see #347, there are even code examples). I think in your particular case, the calibration coefficients cause the scope to essentially apply a 1.1-fold correction factor to the ADC readings (on the FPGA I believe, otherwise this would not make sense - older versions did not do this, and I have not checked but would bet that if you check the FPGA code of the official redpitaya scope you'd find that it applies the EEPROM coefficients).
+I am personally against adding a feature to Pyrpl that applies correction factors on the FPGA, as this would consume FPGA resources that are better used for more useful features. One could however apply them through Python wherever possible, which would also make it easier to work with the +-20V scale if one changes the ADC jumpers (see #386). This seems to me a 2-3 day task. I'd be happy to accept a PR on this, but do not deem the priority of this high enough to do it myself (since - as you noticed, we really need to merge all the pending feature branches first, release a new version, and to do that, have to fix the CI/CD pipeline).
+A hint on the EEPROM calibration: at least until a few years ago, the official redpitaya calibration procedure had a mode that worked without applying an external reference voltage, i.e. solely by measuring outputs with inputs. Not that this will cause the scope+asg to work in harmony together, but in no way guarantees that an external voltage is read correctly nor that the asg actually outputs the requested voltage.
+Thanks, I agree: it's better users know their hardware and it's limitations! ("meten is weten" they say in dutch). Explicit software side calibration at python end is much better. For now in any case I am happy to put this cal inside my own software (maybe even trying to get some info out of the EEPROM, but also just doing an explicit cal using an external reference). I would not put a priority on it for a feature, although it would be a good thing to throw in the docs somewhere.
+Not that this will cause the scope+asg to work in harmony together, but in no way guarantees that an external voltage is read correctly nor that the asg actually outputs the requested voltage.
+Indeed, I've been spinning in circles (with no scope or source reference other than the RP itself in my attic) guessing if the cal error is the ADCs or DACs... Best is to get a proper source reference and calibrate myself!
+(I also noticed a huge offset when I had the jumpers in HV (20V) range mode, but now this makes sense, the SCPI software must be applying the correction itself. Knowing is half the battle!)
+I think that this issue is more or less "resolved":
+Upshot is that you should calibrate your inputs yourself (and we're not sure how the RP software itself does it, but that's OK for now)

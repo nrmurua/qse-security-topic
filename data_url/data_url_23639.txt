@@ -1,0 +1,42 @@
+The following code reproduces this error:
+The issue appears to be in the "insert_many_values" function of the sqlite_base module. The smallest value where this issue appears is 1000. This agrees with the sqlite documentation here: http://www.sqlite.org/limits.html  (see Maximum Number Of Host Parameters In A Single SQL Statement)
+A proposed solution is to add results to the database in chunks of sizes 999 or smaller.
+Curiously, I can't reproduce it with your numbers. I ran
+and I only get the error at one million. What's going on? My HEAD is at 47ef6bb
+I don't hope that 'real' versus 'number' plays a role here...
+Let me try things again after catching up with the latest commit.
+the issue is still there for me, even after catching up with the latest commit of feature/dataset:
+b007c46
+SQLITE_MAX_VARIABLE_NUMBER defaults to 999. Maybe its a different number of you? What is the error message you get with 1e6?
+Your code fails strat away for me, at N=1000
+b007c46 is 7 days old and by no means the latest commit in feature/dataset..?
+I have no clue how to check the limits that sqlite on my machine has been compiled with. But it would be very helpful for us to know how to check for that. I'll keep googling it.
+I got the same error message as you: "OperationalError: too many SQL variables".
+I have added a test test_add_parameter_values to test_dataset_basic.py that tests the 999 limit, but it fails on travis (https://travis-ci.org/QCoDeS/Qcodes/builds/328100664?utm_source=github_status&utm_medium=notification) with N=501 and a different error message, "sqlite3.OperationalError: too many terms in compound SELECT". It passes locally on my machine.
+-There is something fishy going on!
+Oh maybe I got that number (b007c46) wrong, but I just pulled the feature/dataset branch from the main QCoDeS repo and merged it with my branch so I should have the latest code.
+I also updated my qcodes i environment by deleting the environment first (conda remove env -n qcodes) and recreating it (conda env create). Maybe I can try to explicitly update sqlite3 and see if that helps anything.
+I think this contains an interesting solution: https://stackoverflow.com/questions/35616602/peewee-operationalerror-too-many-sql-variables-on-upsert-of-only-150-rows-8-c
+Nice link! It seems that we should indeed fetch all these limits from whatever machine we run on and use that information to avoid crashes.
+@jenshnielsen just helped me to view my compile options:
+start sqlite3 with no database from the command line
+and then
+echoes back: MAX_VARIABLE_NUMBER=500000 on my machine.
+Hmmm, I think you guys are on Linux/Mac right. I cannot find an executable sqlite3 on my system (I'm on windows 10)
+It's probably better to execute the statement from python. Something like the following should work
+I am not sure that the ordering is stable so 29 may not be the correct number on your machine
+Excellent. I volunteer to add the fetching of all this info to figure out chunk sizes and other potentially critical variables.
+Awesome! Thanks Jens. Let me report the output of that shortly
+Yes I am getting None on my machine. Let me try to figure out the correct number for my machine.
+I tried different number in a loop with the following result:
+
+I think the option MAX_VARIABLE_NUMBER as not set at compile time, so it is using the default value of 999 :-(
+@WilliamHPNielsen Will you then create a PR for fixing this? Or should I work on the issue?
+@sohail Neither :)
+I'll fix this, but we just push everything related to the dataset into the existing PR #664. So no new PR (it's a bit messy, admittedly, but it's only for a few weeks until the new dataset lands 😛 ), and you don't have to work on this.
+Ok cool, I will be looking forward to your fix :-)
+Okay, I think it is properly fixed now (with "now" being 251a2fb), but as you can see in the commit history, other ugly problems popped up. But we do now have passing tests that explicitly go over the MAX_VARIABLE_NUMBER limit.
+Is that the right link? I don't understand how increasing the deadline solves this problem
+It is the right commit, but you'd have to look at the commit history to make sense of what is going on. 251a2fb is the first commit that passes the tests, but the real solution came earlier with the introduction of the SQLiteSettings object.
+We are riding dirty with one big PR for many different issues, therefore you need to dig a bit to see what's going on.
+Imma mark this as closed, since we honestly think that we've solved the issue.

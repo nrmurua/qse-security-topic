@@ -1,0 +1,142 @@
+MacOS Catalina 10.15.7, Xcode-12.2.
+Config:
+Run tests:
+RUN_TESTS_PARALLEL has no effect.  Try running python3 -m pytest --verbose --numprocesses=1 directly.
+RUN_TESTS_PARALLEL has no effect
+That's a pity - I wish it could be addressed.
+Try running python3 -m pytest --verbose --numprocesses=1 directly
+Running as we speak. It's at 64% now (for the last 5 minutes or so) - will report if/when it finishes.
+Also, I've a concern. Line ninja run_tests -v -j 2 from my shell script executed in the build/ subdirectory, seems to get translated into
+I observe two problems:
+Is there a reason you expected those particular options (RUN_TESTS_PARALLEL, -j) to have any effect?  I don't think our README says anything about those being viable options.  I see from the ninja documentation that -j is a standard ninja option, but from a glance through the ninja documentation I can't see a way to get the -j value out as an environment variable to pass as an argument to things that ninja calls.
+I don't really need RUN_TESTS_PARALLEL. Nor do I need to control the number of parallel test runs via env vars. In fact, I seem to recall that I added that environment var upon advice received here to address a build problem a while ago.
+I would like for the tests to utilize the available cores to complete the run faster. I do need the tests to complete.
+And I would expect the standard documented parameters of ninja to produce their documented effect. Any reason why they shouldn't...?
+I suspect something's wrong with the master (aka "main"), as for the last couple of months ninja run_tests used to succeed quickly on this machine, in ballpark of 12 minutes or less. Now it's hanging.
+Since liboqs build is CMake-based, is there any other way to build and test it, beside using ninja? Using make, for example?
+Fresh clean clone of this repo.
+Tried -GXcode, build fails on the compilation stage, no meaningful error message.
+Tried omitting -G... and use make. Build succeeds, tests hung as before, at approximately 99% point.
+Tried python3 -m pytest --verbose --numprocesses=1 - results in the thing hanging at 64% on the tests/test_code_conventions.py::test_free , like shown before.
+And the fun thing is - I don't need SPHINCS+ or Rainbow, and would be happy to exclude them from the build and testing.
+Does it look like it's hanging in test_code_conventions.py::test_free  ?
+And the fun thing is - I don't need SPHINCS+ or Rainbow, and would be happy to exclude them from the build and testing.
+Why then don't you do that? Do things change if you build (and test) with -DOQS_ENABLE_SIG_SPHINCS=OFF -DOQS_ENABLE_SIG_RAINBOW=OFF?
+Do things change if you build (and test) with -DOQS_ENABLE_SIG_SPHINCS=OFF -DOQS_ENABLE_SIG_RAINBOW=OFF?
+To my unpleasant surprise, they don't:
+I.e., ninja --verbose -j 1 run_tests ignores the -j 1 and hangs, presumably on test_code_conventions.py::test_free.
+make-based run progressed further than when those two sig algos were enabled, but still appears to be hanging - I cannot figure how to determine where. And it doesn't provide enough logging output to tell...
+Just tried this -- worked fine for me (admittedly under Ubuntu). Can you please try running then again (after now having pruned the build to exclude Rainbow and Sphinx) what @dstebila already suggested (in the main liboqs folder): python3 -m pytest --verbose --numprocesses=1? It should be much quicker now and you should only see "[gw0]" entries in your log (I have the feeling you may have memory/allocation problems on your machine triggered by the parallelism that this way to execute should avoid).
+I think it's unambiguous, as the point at which the run hangs is consistent on MacOS when they run with --numprocesses=1.
+Here's the CPU info for the failing machine:
+Also note that this used to succeed on all of my machines, including the one above.
+These are CPUs that liboqs passed the tests (without excluding those two sig algorithms):
+Older MacBook Pro:
+CentOS VM:
+I tried running with the same cmake options and with --numprocesses=1 on my Mac and I can't reproduce.  It completes fine for me, in just 15 seconds.
+You said you think it might be hanging in test_code_conventions.py::test_free.  If you delete test_code_conventions.py, does the remaining test suite pass?
+@mouse07410 Do you have the option of running another OS (say Ubuntu) in a VM on this new MacBook Pro and try the same there? Maybe it's indeed the CPU features triggering this... I don't have a machine with AVX512 at my disposal :-( and it looks like @dstebila doesn't have this feature set either...
+The new one is iMac Pro, not MacBook Pro. But I can try/run VMs on it.
+To ensure my theory is correct, I need to block or disable this test: tests/test_code_conventions.py::test_free. How do I do that?
+Very consistent:
+To ensure my theory is correct, I need to block or disable this test: tests/test_code_conventions.py::test_free. How do I do that?
+Just delete the whole test_code_conventions.py file, or remove the test_free subroutine from within it.  The test runner will automatically adapt.
+. . . remove the test_free subroutine . . .
+And what do you know:
+This is what I hacked:
+I don't get this: It's a grep (file contents) test.... @mouse07410: Can you run the single commands in this test manually? Do they (also) hang, i.e. find src -name "*.c" | grep -v picnic/external | xargs grep "[^_]free("?
+It's a grep (file contents) test.
+The problem is likely to be with how Python deals with synchronizing subprocesses. The command you asked me to run pipes the output directly via shell. test_code_conventions.py involves Python in this.
+Can you run the single commands in this test manually?
+Sure, no sweat:
+However, observe this:
+results in
+If you delete test_code_conventions.py, does the remaining test suite pass?
+@dstebila It's better than that - even if I just disable the test_free() subroutine within that file (leaving the rest alone), the remaining test suite passes, and with quite a decent speed.
+Here's the solution:
+@mouse07410 This change should not be necessary: The helpers.py module is part of the OQS tests folder and does pretty much what your patch above shows and is used in every other test. The fix must be different...
+In your trace above, this:
+AttributeError: module 'helpers' has no attribute 'run_subprocess'
+lets me wonder whether you have a python module called ´helpers.pysomewhere else in your module search path? Could you change the name of the filetests/helpers.pytotests/oqs_helpers.pyand also change theimportstatement intests/test_code_convention.pytoimport oqs_helpers(instead of onlyimport helpers) and re-run python3 -m pytest --verbose --numprocesses=1`?
+Could you change the name of the file tests/helpers.py to tests/oqs_helpers.py and also change the import statement in tests/test_code_convention.py .  .  .
+Certainly. But since the code was written with the assumption that helpers was a safe term (like nobody else would ever name their stuff that, right?), it did not quite work (changing import in all those files did not help):
+Since making (reasonably) sure module helpers is not installed anywhere else, did not help:
+and renaming helpers.py in the tests/ directory to oqs_helpers.py did not help for other reasons (I didn't consider myself knowledgeable enough in Python to hack the resulting oqs_helpers.py to alleviate the newly-introduced problems), I have ot insist on my proposed solution. It may not be the most beautiful code, but it has one significant advantage over the current source - it works.
+Again,
+with the desired/expected result:
+My personal opinion/theory: the current tests/helpers.py overcomplicates what it's doing with subprocess. When there's only one subprocess active, like in all the other tests/*.py  files, it appears fine. In test_free() you're chaining together multiple subprocesses, and it blows. My fix avoids doing that, so it doesn't hit the "sore spot" that Python-3 might have, so it works.
+Also, not sure if it matters, but the machine where the problem occurs has 22 cores. Other machines have between 2 and 8.
+Well, there's two more differences between your proposal and the current helpers.py code (that I'd also suggest renaming to something like oqs_helpers.py): STDERR is redirected to STDOUT. May that be the explanation? Could you retry without that line in helpers.py? The other difference is the missing split("\n"). Does your code also work with that added? Either way, wouldn't you want to submit a PR for these changes so we get this fixed for good?
+STDERR is redirected to STDOUT. May that be the explanation?
+I don't understand the consequences of that enough to comment.
+Could you retry without that line in helpers.py?
+Why not... ;-)
+The other difference is the missing split("\n"). Does your code also work with that added?
+Nope! Removing that line was necessary because my solution differs somewhat from yours. When I do read(), it automatically splits and converts to str. split() only works on byte (welcome to Python-3 ;) ).
+Either way, wouldn't you want to submit a PR for these changes so we get this fixed for good?
+Well, I didn't plan to fork this repo (and the patch seemed small enough) - but if you insist...
+Well, I didn't plan to fork this repo (and the patch seemed small enough) - but if you insist...
+Agree, it's probably quicker if I do it -- also to run CI on other platforms... Will surely credit you.
+Did anything change when removing the STDERR redirect? Also, did you give a split() option a try to see whether that makes the difference on your platform? I'm still curious what it really is....
+Did anything change when removing the STDERR redirect?
+Unfortunately, no.
+Here's where the original code seems to get stuck:
+As I said, something somehow gets screwed up with multi-threading/subprocesses.
+Also, did you give a split() option a try to see whether that makes the difference on your platform?
+split() fails with my code because it requires input of byte type, and what I'm doing produces str.
+Since the original code produces byte, it probably does need split(). Also, I inserted debugging prints in the test_free(), and they show that the execution never reaches past the 2nd run_subprocess().
+I'm still curious what it really is....
+Aren't we all... ;-)
+@mouse07410: On the quest to find the root cause I stumbled across this warning in the subprocess documentation:
+On a heavily multicore machine, couldn't this be the problem? If so, your patch also isn't a totally reliable solution...
+When trying to understand why it doesn't fail for you, I ran it manually on my machine, and it never seems to catch any output: The final lines is always an empty byte array (no strings... on python3), thus completely disabling the test... Now reading the subprocess.Popen API documentation this seems logical as that apparently actually doesn't ensure the process is finished....
+So, can you please confirm your code does indeed catch errors (remove the word "IGNORE" from the comments in src/common/common.c for example) and/or output lines after your last patched line?
+On a heavily multicore machine, couldn't this be the problem?
+Since I have no clue, how can I possibly say "no"? :-)
+If so, your patch also isn't a totally reliable solution...
+Unpleasant. Let's dig deeper.
+The final lines is always an empty byte array (no strings... on python3), thus completely disabling the test... Now reading the subprocess.Popen API documentation this seems logical as that apparently actually doesn't ensure the process is finished....
+Hmm... I don't get any hanging Python instances after the test completes, but that's not a conclusive proof...
+So, can you please confirm your code does indeed catch errors (remove the word "IGNORE" from the comments in src/common/common.c for example) and/or output lines after your last patched line?
+Re. outputting lines - my concern is that pytest might be swallowing all the output, so neither my attempt to print files, nor your suggestion to print lines seems reliable enough. I'm afraid I'd have to play with src/common/common.c.
+How do I run just one test? I'd prefer to avoid running the whole shebang to see whether this one is affected...
+How do I run just one test? I'd prefer to avoid running the whole shebang to see whether this one is affected...
+Didn't you put your key lines into a simple, standalone Python script? Just run that outputting the resulting lines: If I'm right, you'll get an empty byte array (which would make all further "processing" rather futile :-)
+Well, I concede failure. lines appears empty. (???)
+Digging deeper.
+Thanks for re-confirming. I'd suggest (re-)working the code using subprocess.communicate() (and maybe timeout) as per the subprocess documentation. Alternatively, try changing the corresponding subprocess code in helpers.py along equivalent lines to prove you can avoid the probable deadlocks on your machine. Looking forward to your proposal. If, however, you just want to get on with life, just leave the test away :-)
+Looking forward to your proposal...
+Experimenting...
+If, however, you just want to get on with life, just leave the test away :-)
+This sounds really tempting now, after a few head-bashing against the Python wall... :-) :-0
+Here's my test-script:
+Here's it's output:
+It appears that the last grep subprocess somehow fails. Any idea how to track this down?
+Yes: xargs is missing from the last command executed.
+Thank you!
+Corrected file:
+Output on modified src/common/common.c (changed one IGNORE to GNORE):
+Output on corrected src/common/*.c:
+Cool. Does this now also solve (y)our problem when running in the whole test harness and your many cores firing?
+Does this now also solve (y)our problem when running in the whole test harness and your many cores firing?
+Yep!!
+@mouse07410 Thanks for that reconfirmation and your diligence! @xvzcf Where would you want (us) to take this in? test_code_conventions.py or helpers.py code? The timeout will be a problem for the latter given we have some "slow runners"...
+The timeout will be a problem for the latter given we have some "slow runners"...
+@baentsch and @xvzcf the timeout does not have to be as short as I set it. The main point is to prevent it from hanging indefinitely. Would you say 10 minutes, or 30 minutes would be fine there? Then just convert it to seconds, and put that value...
+Did you actually see the timeout triggered in the tests on your machine?
+Did you actually see the timeout triggered in the tests on your machine?
+Thankfully, no. I put them there just to make sure it finishes on its own.
+Theoretically, one can remove that argument altogether. But, given my experience, I'd prefer to set them to something large enough to work on the expected platforms, but saving the run from a hangup like what I've seen.
+OK -- then the (python doc recommended) use of communicate nails the issue on your platform. Thanks again for working though this!
+it would be truly great if you could find a way to merge this kind of change to helpers.py, and propagate that fix to PQClean (which shows the same problem on Ubuntu-20.04.1 for me).
+@mouse07410 Thanks for that reconfirmation and your diligence! @xvzcf Where would you want (us) to take this in? test_code_conventions.py or helpers.py code? The timeout will be a problem for the latter given we have some "slow runners"...
+We can put this in test_code_conventions.py for now, and leave a TODO somewhere for eventually incorporating the Popen + communicate logic into helpers.run_subprocess.
+We can put this in test_code_conventions.py for now, and leave a TODO somewhere. . .
+This would address the immediate problem.
+But, as I said above, fixing the stuff in helpers.py would allow "porting" (or "back-porting" ;) the fix to PQClean that exhibits a similar problem on Ubuntu.
+Note: once you fix test_code_conventions.py (hopefully soon ;), you do not need to touch it again (i.e., to revert the fix) when you come around to fixing helpers.py - it will keep working.
+@mouse07410 would #864 work for you?
+@xvzcf let me test and report.
+@mouse07410 would #864 work for you?
+It appeared to work, and pretty fast too:
+Fixed by #864.

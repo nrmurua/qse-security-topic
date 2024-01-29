@@ -1,0 +1,24 @@
+The definition of C3SXGate() is currently equivalent to SXdgGate.control(3), but its name and its base gate definition indicate it should be equivalent to SXgate.control(3).
+C3SXGate should be consistent with SXGate().control(3).
+Swap the negatives of the angles in C3SXGate.definition.  There's a fair amount more to do as well to ensure consistency - checking the equivalence library, QASM definitions, etc.
+I have taken a look at it and it seems flipping the angles makes it work. I have tested the equivalence among these two comparing a circuit in which a C3SX gate was added with the SXGate with control, it passes the equivalence decomposition. What else is required for consistency?
+The test suite doesn't pass if all you do is flip the angles in the C3SXGate class, because the C4XGate class depends on it for its definition, and there's also a redefinition in the QASM 2 library file qelib1.inc (and a c4x in there too).  Everything needs to stay consistent if one gate changes.  There don't appear to be any defined equivalences in the equivalence library, so that part's not a problem.
+However, I'm not even sure if the change is correct - I don't know if there's context as to why the C3SXGate disagrees with SXGate.control(3); there might be a reason for the redefinition.  After all, this form of C3SXGate applied twice still does produce a C3XGate, so in a vacuum, it's not entirely wrong.
+Perhaps @Cryoris knows more - the gate was added in #5668.
+Well, maybe the problem isn't in the C3SXGate class, because it is defined using the decomposition that is theoretically correct. Since the C4XGate also works fine using it as a base, maybe the problem isn't in the C3SXGate class, but rather there may be something funky going on in the control method of the SXGate class, with problems popping up with more than 2 units of control. Since the C4XGate and the XGate with 4 control bits is equivalent, maybe the phase transition could be changed in the SXGate to accomodate that.
+Any thoughts on this ?
+The control method is fine - it just defers to the standard Gate.control decomposition, and you can just see in the tensor-product structure of the output matrix that it's correct in this simple case.  If you construct the controlled gate matrix with np.kron, it's clear:
+The problem is that C3SXGate is giving exactly the same matrix as SXdgGate with 3 controls, not SXGate.  This is a naming convention issue, to some degree - both SXGate and SXdgGate could have been called SX, because applying either twice gets you an X, just like how either 1 or -1 is the square root of 1.  The issue is the inconsistency between the two.
+Why do you say the current decomposition is theoretically correct?  It's producing the wrong result here, at least by the name of the class.
+Well because it is defined according to the method described in  Barenco et al., 1995. in
+But looking closer, the decomposition is supposed to start and end with a positive phase in the paper as opposed to starting and ending with the negative phase (pi/8) I guess but you can have a look
+I think @wahaj is right, the decomposition in Qiskit has the wrong sign. The decomposition uses
+
+where V should be H P(pi/8) H, since then V^4 equals the square root of X. Instead in the code it uses P(-pi/8).
+If we fix that, we can also directly remove the deprecated angle keyword argument 🙂
+I actually found this as part of trying to remove the angle keyword!  Still, though - if we remove the angle keyword, we won't have an efficient representation for C3SXGate().inverse() any more (though we can always just put in a C3SdgXGate in theory).
+I think we're actually on the same page here - flipping the angles is the same as the replacement for V that you're talking about, and that's what I meant by the decomposition being incorrect.
+I think the decomposition of C4XGate may be wrong in a related manner - it produces the correct result, but since it depends on C3SXGate with an incorrect phase convention, its decomposition is likely wrong as well, but just in a way that happens to cancel out.  For example, if I do Operator(C4XGate().definition) on the current main, it produces the correct result.  However, if I swap the phases of C3SXGate over, like discussed, then Operator(C4XGate().definition) gives me the identity matrix.  We then also need to swap the phases in the CU1Gate instances of C4XGate to make it work.
+I've PR'd a fix in #7230.
+Good question for the inverse but maybe the default inverse is actually good enough since that should just invert every gate which should do nothing but inverting the angle.
+We'll need to redefine its inverse method to dodge ControlledGate's inverse which will mess everything up, but otherwise, yeah, it should work.  I suppose it'll invert the order of the gates as well, but that's no big deal.

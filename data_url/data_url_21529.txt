@@ -1,0 +1,21 @@
+Type of list of length zero cannot be fully inferred in the kernel.
+See #1626 for an related issue. The linked issue has this type inference error for a numpy.array of length zero, but this issue is for a list of length zero.
+Running the following code reproduces the error.
+Experiment runs with no error.
+It raises the following error during compiling.
+For lists, this is expected behaviour. How would the compiler figure out what the element type should be?
+The situation is different for NumPy arrays, where the element type is stored as part of the host Python object, even if the ndarray is of length zero.
+That being said, I've also run into this issue; it can be quite annoying to work around. I believe the way to go here is to support type annotations for instance attributes, so you could manually specify the type of scan_build.
+@dnadlinger thanks for the response. I understand this problem cannot be solved without type annotations for attributes now.
+One of the workarounds might be having one placeholder element in the list, such as in the code below:
+Not a elegant solution but it should work.
+Sorry for coming back to this, but why does an empty list that will always remain empty need an element type??
+Could it not be interpreted as an object whose __len__ method always returns 0? Then at least the most common use case for i in range(len(x)) would pass.
+I think the problem with a zero-length list is not with the __len__ method. The problem is that in the for i in range(len(x)) loop, usually an user needs to use x[i] to access each of the element, and the compiler does not work since it cannot determine the type of the list elements.
+However, would it be possible to add the following logic in the compiler: If x is an empty list and is in kernel invariants, and it is used in a for loop such as for i in range(len(x)), the for loop can be skipped in the compiler? For our lab, in the device initialization and reset steps. we need to check in the host if the list is empty and then go back to the kernel if the list is not empty, which takes more than ~1 s of time per experiment. If we can implement the logic to skip the for loop if the list is empty, it would be simplify our experiments and save time.
+@sbourdeauducq I just want to bring the conversation to your attention. I understand this issue will likely be solved with NAC3 in the future, but I guess NAC3 is not going to a stable release for a long time. If we can implement a workaround here, I think it would be helpful for many users.
+Just wondering if it is possible to have a non-empty list that we cannot infer the type. If not, maybe we can just skip generating the for loop if the element type is unknown (without having to add an empty list type to the system...)
+@pca006132 I guess a list consisting of elements of different types is a nonempty list that we cannot infer the type? In this case an exception likely should be raised (which is the current behavior) rather than quietly skipping the for loop.
+@pca006132 I guess a list consisting of elements of different types is a nonempty list that we cannot infer the type? In this case an exception likely should be raised (which is the current behavior) rather than quietly skipping the for loop.
+Sorry, maybe I should make it precise: By cannot infer the type, I mean we cannot infer a concrete type for the list element (i.e. the result is a type variable). The case you mentioned should be a unification error (trying to unify values of incompatible types) instead of cannot infer a concrete type.
+Ah I see. Thanks for the clarification. It seems to me that what you suggested is a promising way to solve this problem.

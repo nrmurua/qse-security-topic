@@ -1,0 +1,104 @@
+What am I trying?
+I am trying to use circuits from Qiskit, converting them to pyZX circuits, applying pyZX optimizations/simplifications and then converting the resultant circuit to Qiskit circuit. I see that the unitary matrix from original circuit and resultant circuit changes. I would like to check if there is a bug in pyZX or if there is a different way of applying optimizations or if there is any issue with my implementation.
+My implementation
+An example circuit created using Qiskit:
+`
+qc=QuantumCircuit(4)
+qc.ccx(2,1,0)
+qc.ccz(0,1,2)
+qc.h(1)
+qc.ccx(1,2,3)
+qc.t(1)
+qc.ccz(0,1,2)
+qc.h(1)
+qc.t(0)
+qc.ccz(2,1,0)
+qc.s(1)
+qc.ccx(2,1,0)
+qc.crz(0.2np.pi,0,1)
+qc.rz(0.8np.pi,1)
+qc.cry(0.4np.pi,2,1)
+qc.crx(0.02np.pi,2,0)
+`
+Getting unitary matrix from above, applying pyZX optimizations followed by conversion to qiskit circuit and then, getting unitary matrix again for the resultant circuit:
+`
+simulator = Aer.get_backend('aer_simulator')
+qc1 = transpile(qc, simulator,optimization_level=0,basis_gates=['u3','cx'])
+qc1.save_unitary()
+result = simulator.run(qc1).result()
+mat1 = np.asarray(result.get_unitary(qc1))
+g=zx.qasm(qc1.qasm())
+g1 = g.to_graph()
+zx.simplify.full_reduce(g1)
+g1 = zx.extract_circuit(g1).to_basic_gates()
+n=g1.qubits
+qc2=QuantumCircuit(n)
+for g in g1.gates:
+print(g)
+if g.name == 'SWAP':
+qc2.swap(g.control,g.target)
+if g.name == 'HAD':
+qc2.h(g.target)
+if g.name == 'ZPhase':
+qc2.rz(g.phasenp.pi,g.target)
+if g.name == 'CZ':
+qc2.cz(g.control, g.target)
+if g.name == 'CNOT':
+qc2.cx(g.control, g.target)
+if g.name == 'S':
+qc2.rz(g.phasenp.pi, g.target)
+if g.name == 'T':
+qc2.rz(g.phasenp.pi, g.target)
+if g.name == 'XPhase':
+qc2.rx(g.phasenp.pi, g.target)
+if g.name == 'CCZ':
+qc2.ccz(g.ctrl1,g.ctrl2,g.target)
+if g.name=='CHAD':
+qc2.ch(g.control,g.target)
+if g.name == 'CRZ':
+qc2.crz(g.control,g.target,g.phase)
+if g.name=='Tof':
+qc2.ccx(g.ctrl1,g.ctrl2,g.target)
+qc2.save_unitary()
+result = simulator.run(qc2).result()
+mat2 = np.asarray(result.get_unitary(qc2))
+`
+Results (mat1 and mat2):
+The first few entries of mat1 look like:
+array([[ 0.6  -0.703j, -0.   +0.j   , -0.291-0.249j,  0.   -0.j   ,
+0.   +0.j   , -0.   +0.j   ,  0.   +0.j   ,  0.   -0.j   ,
+-0.   +0.j   , -0.   -0.j   ,  0.   +0.j   ,  0.   -0.j   ,
+0.   +0.j   , -0.   -0.j   ,  0.   -0.j   , -0.   -0.j   ],
+[-0.   +0.j   ,  0.854-0.354j,  0.   -0.j   , -0.146-0.354j,
+-0.   +0.j   ,  0.   +0.j   , -0.   -0.j   , -0.   +0.j   ,
+-0.   -0.j   ,  0.   +0.j   , -0.   +0.j   , -0.   +0.j   ,
+-0.   +0.j   ,  0.   -0.j   , -0.   -0.j   ,  0.   -0.j   ],
+[-0.03 +0.382j, -0.   -0.j   , -0.921-0.072j,  0.   -0.j   ,
+-0.   -0.j   ,  0.   +0.j   ,  0.   -0.j   , -0.   -0.j   ,
+-0.   +0.j   , -0.   +0.j   , -0.   -0.j   , -0.   +0.j   ,
+-0.   +0.j   , -0.   +0.j   , -0.   +0.j   ,  0.   -0.j   ],
+The first few entries of mat2 look like:
+array([[-0.921+0.072j,  0.   -0.j   ,  0.03 +0.382j, -0.   +0.j   ,
+-0.   +0.j   , -0.   +0.j   , -0.   -0.j   , -0.   -0.j   ,
+-0.   -0.j   ,  0.   +0.j   , -0.   -0.j   ,  0.   -0.j   ,
+-0.   -0.j   ,  0.   -0.j   , -0.   -0.j   ,  0.   +0.j   ],
+[-0.   -0.j   , -0.854-0.354j, -0.   -0.j   , -0.146+0.354j,
+-0.   -0.j   ,  0.   -0.j   , -0.   -0.j   , -0.   -0.j   ,
+0.   -0.j   ,  0.   -0.j   , -0.   -0.j   ,  0.   -0.j   ,
+-0.   -0.j   ,  0.   -0.j   ,  0.   +0.j   ,  0.   -0.j   ],
+[ 0.291-0.249j,  0.   +0.j   ,  0.6  +0.703j, -0.   -0.j   ,
+0.   +0.j   , -0.   -0.j   ,  0.   +0.j   , -0.   +0.j   ,
+-0.   +0.j   ,  0.   -0.j   , -0.   +0.j   , -0.   +0.j   ,
+0.   -0.j   , -0.   -0.j   ,  0.   +0.j   ,  0.   -0.j   ],
+which means mat1 and mat2 look different.
+Expected output
+mat1 and mat2 should be same, up to a global phase. If certain optimizations/simplifications from pyZX are not applicable for certain gates, it should give an error saying an alternative simplification that would give same unitary matrices.
+So I see you are compiling to u3 gates. I know that the definition of these things is a bit odd, so it might be that the bug is already in the translation to the pyzx format. Could you try to see if the matrix is already different just by going qiskit -> pyzx -> qiskit, without any pyzx optimisation in the middle?
+In any case this looks like a bug and should be fixed.
+Hi @jvdwetering , so the reason I was compiling the circuit to u3 and cnot gates was that the zx.qasm method I am using to get the pyzx circuit does not work for all the gates supported on openqasm and qiskit. I tried to create the same circuit through pyZX itself, but that does not have all the gates supported in Qiskit. For eg: it does not support cry, crx and other toffoli-like gates like rccx. I can definitely decompose these into other gates and use the decomposed versions of these while creating the circuit. Do you suggest that?
+The other reason to compile to u3 and cnots is that without that the qiskit simulator as well pyzx give an error while computing the unitary mtrix.
+Hi, @gprs1809,
+There's a bug in your conversion from the graph g1 to the circuit c2. Note that the ZPhase gate and qiskit's rz gates are defined differently, and that the equivalent of ZPhase is what's called the u1 or p gate in qiskit. They differ by a phase, and in a multi-qubit circuit this phase is significant. If you replace your calls to rz by p (and crz by cu1, and so on), you'll see that the two resulting matrices are the same for your ciruit.
+I believe this issue can be closed, unless you find an example for which the corrected conversion doesn't result in identical matrices.
+FYI: I've filed Qiskit/qiskit#10790. Maybe they'll shed more light as to what's going on with the matrix representations of rz and crz.
+PR #156 added a regression test specifically for the OP circuit, so I think this issue can be closed.

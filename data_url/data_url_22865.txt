@@ -1,0 +1,27 @@
+Hi all,
+I must admit that although I've been using the RP for 4 years now, I've never figured out how to get the acquisition routines working properly (and have been using instead the hidden low-level _start_acquisition and _get_curve...). But I'd like to try to figure this out, since the others are giving me some strange results.
+What puzzles me is that result() for me never worked. But I've now figured it out: result() only works if it is not executed in the same cell as curve_async()!
+This works fine:
+But if I just merge the cells, it fails:
+with error Result not set.
+Does anyone have any insight into this?
+Thanks!
+Gary
+(i also confirmed that the same is true directly in the python interpreter, aka it's not a "notebook" problem...)
+Hi Gary,
+Several remarks: you should use scope.single_async if you want to launch the curve acquisition in an asynchronous manner. And scope.single if you want the execution to be blocked until the result arrives.
+You should use purple async_utils.sleep instead of time.sleep (which never gives hand to the event loop) if you want to manage the waiting yourself, but I believe there's a function wait() to wait for the future to be ready in async_utils.
+Let me know if that helps
+Thanks for the tip!
+I tried this:
+but as you see I got the same result.
+I also have never gotten scope.single() to work: it just hangs forever. I am also not able to interrupt it: if I run scope.single(), my whole notebook crashes for ever and I have to restart the kernel....
+I am not sure what's going wrong. I am on branch python3-only (which was just merged into master, so I expect that master should be identical), and I have the following:
+
+OK, I think I found a solution (well, a workaround) as well as a possible hint as to the origin of the problem.
+I cloned the git repo, switched to the python3-only branch and did a pip install .. In doing so, pip downgraded several packages in my environment:
+Now, both scope.single() and fut.result() work as expected:
+So solution: checkout the git repo, switch to python3-only branch, pip install . to downgrade libraries.
+What is causing the problem? It's clearly something with the threading. My biggest suspect is the massive downgrade of ipykernel, from 6.25.1 to 5.5.6 (the ipython people are always messing around with the threading crap in the kernel...)
+Another possibility is either PyQt5 (5.15.19 to 5.14.0) or qtpy (2.3.1 to 1.9.0).
+In any case, multithreading (my biggest python headache) appears to be at the heart of the problem. But good to know what the (short term) solution is.

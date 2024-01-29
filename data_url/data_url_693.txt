@@ -1,0 +1,63 @@
+Here is a test script:
+I load it to run in the QEngine by using the example program qpp_qasm (which is appended with a few lines to run get_measured()), but the get_measured() returns an empty vector.
+For that matter, the QEngine.to_JSON() does not contain any information of the existence of the measure statement either.
+Did I miss something? I remember I could get the info about the measure statement in a QASM file from the engine a year ago. I guess things have changed. What should I do now to get that info?
+@DevelopDaily the measurements in OpenQASM are non-destructive. So, if you look at the circuit, cout << q_circuit, you'll get [QCircuit nq: 1, nc: 1, d: 2] 0: |] MEASURE_Z_ND, target = [0], c_reg = 0, name = "mZ" That _ND means non-destructive, so after the measurement you have the same amount of qubits as before. That's due to OpenQASM design, and we decided to stick with it. If you manually build the circuit in qpp, then measurements are by default destructive (can chose to do non-destructive, see QCircuit::measureZ() list of arguments), and you'll see them when doing "get_measured()".
+Would it be helpful to see a list of the non-destructively measured qudits as well? The problem with that is that if you do e.g. measure q[0] -> c[0]; x q[0]; then technically you apply another gate to the qubit 0 (in whatever state it is) after you measure it non-destructively. So do you still want to say that q[0] was measured? It makes sense if all the measurements are at the end of the circuit, but if they're in the middle than things can get confusing.
+Thanks for the clarifications, @vsoftco.
+I am not sure of the best approach to resolve the issue. I'd like to present my use case and hope to get some advice from you. The qpp may already have the feature I need.
+I run a Shor circuit (N=15, a=7) in QASM with 11 qubits and 8 classical bits. At the end, only the values in those 8 classical bits measured out of the inverse QFT are interesting. The qpp used to produce the values stored in the QEngine.to_JSON(). Now, the new qpp produces something like this:
+The JSON structure does not tell me which 8 bits are my measurements.
+In QISKIT, the same Shor circuit produces something as follows. Does the qpp have something similar to the QISKIT job.results().get_counts() ?
+
+One way of doing this is
+Run with qpp_qasm file.qasm 100 (to run 100 times)
+You'll also see the stats in the JSON file (so no real need to run the code above)
+I'll still think about an alternative solution to the non-destructive measurements
+Here is a test script:
+The output of the code (repetitions of the engine = 100) you suggested:
+1 0 0 1 0 0 0 0: 100
+That does not seem to tell me which four bits are the classical bits. I would have to use other tools to track the measure statements outside the engine in order to interpret the measurement results, wouldn't I?
+I see, you get the stats (and the measured ones only if they're measured destructively). We'll think of a solution...
+@DevelopDaily I pushed a quick fix, see 2f7c7c8 Basically, you can now choose destructive measurements in OpenQASM2 as a cmake option, via the cmake .. -DUSE_OPENQASM2_DESTRUCTIVE_MEASUREMENTS=ON flag. It's OFF by default, so you need to run cmake again and recompile qpp_qasm, like e.g. cmake .. -DWITH_EXAMPLES=ON -DUSE_OPENQASM2_DESTRUCTIVE_MEASUREMENTS=ON  && make qpp_qasm
+I wonder if we should keep the flag ON by default, as most people expect measurements to be destructive... (which again is not how OpenQASM2 considers them).
+Up to this point, the original problem I reported should be considered fixed.
+The subsequent discussions are about the new problem(s) that may have been introduced by the fix.
+Sorry for the confusions.
+Not very happy also with this solution, since many openqasm files allow for re-using qubits after measurement, like https://github.com/softwareQinc/qpp/blob/main/qasmtools/qasm/generic/ipea_3_pi_8.qasm So this won't execute on qpp if -DUSE_OPENQASM2_DESTRUCTIVE_MEASUREMENTS=ON... I think at the end I'll simply add a new engine function to retrieve the non-destructively measured qudits, or add an option to the read_from_file/stream()->QCircuit to allow destructive measurements.
+I am afraid I still don't know how to harvest the measurement results from the engine.
+Here is a test script:
+q_engine.get_measured() returns: [0,1,2]
+q_engine.get_non_measured() returns: [3,4,5,6]
+q_engine.get_stats() returns: 0 1 0 1 0 1 0: 100
+Using the info from the engine, I cannot conclude the interested measurement results should be c[5]c[3]c[1] => 111
+I see, you also want to know where (in those classical dits) the measurement results are being sent. Let's keep this open, and we'll fix (one way or another) soon
+@DevelopDaily One question: doesn't the get_stats() gives you that information? The engine starts (by default) with all |0>s. So the binary representation of 0 1 0 1 0 1 0 is what you want, no? Doesn't Qiskit do the same thing with get_counts()? How can you retrieve the 5 3 and 1 from Qiskit in this example you just showed?
+Also, try QCircuit::get_clean_dits(). It'll show you which dits were "touched" by a measurement or involved in a classical control cCTRL (but the latter doesn't appear in OpenQASM2). I think this should solve your particular problem.
+I have corrected mistakes in some of my previous posts.
+Now, I think there are two related problems. The first one has been introduced by the fix.
+If the "reset" statement is used in the QASM after measurement, the qpp will crash now, as you noted in your previous post about the https://github.com/softwareQinc/qpp/blob/main/qasmtools/qasm/generic/ipea_3_pi_8.qasm .
+Here is the second one. Not sure if it was introduced by the fix. Perhaps not. The q_engine.to_JSON() got me started. It is my main interest.
+q_engine.to_JSON() returns:
+{"nq": 7, "nc": 7, "d": 2, "name": "", "measured/discarded (destructive)": [0, 1, 2], "non-measured/non-discarded": [3, 4, 5, 6], "last probs": [0, 1, 0, 1, 0, 1, 0], "last dits": [0, 1, 0, 1, 0, 1, 0], "stats": {"reps": 100, "outcomes": 1, "[0 1 0 1 0 1 0]" : 100}}
+"nq": 7 ? But, I have got only 4 qubits in my latest example. I opened another issue for the problem: #120.
+My hunch is that #120 may be the root cause of my trouble with the measurement results I presented here.
+I would be able to answer your questions better after the #120 is resolved.
+adding @meamy
+@DevelopDaily I've implemented 2 utility member functions, qpp::QCircuit::get_dirty_dits() and qpp::QCircuit::get_dirty_qudits(). Those are complementary to the already implemented qpp::QCircuit::get_clean_[qu]dits(), but are very useful in the situation you just mentioned. So this should solve this issue. I'll keep #120 open, since that needs to be fixed. Code snippet below:
+Run with
+Fixed also #120 , so let us know how it works now
+Awesome. Thanks! Everything works as expected now.
+It turns out I wouldn't have opened this issue if the issue #120 had not existed. That being said, this issue has led to some interesting discussions. Thanks for giving me a free brain workout:-) Sorry my first analysis misled you and myself.
+In hindsight, everything is crystal clear. When an 8 classical bit Shor circuit produces an 11 element "last probs" list (caused by the #120), that should have been a big red flag.
+Now, if I were you, I would revert 2f7c7c8 you mentioned above, because the OpenQASM feature (reset) the "fix" crashes is essential to some important algorithms such as one-bit trick of the inverse QFT. I use it in the Shor circuit, for example.
+Since #120 is fixed, my answers to your questions are unimportant now. But, I answer them anyway:
+@DevelopDaily One question: doesn't the get_stats() gives you that information? The engine starts (by default) with all |0>s. So the binary representation of 0 1 0 1 0 1 0 is what you want, no? Doesn't Qiskit do the same thing with get_counts()? How can you retrieve the 5 3 and 1 from Qiskit in this example you just showed?
+get_stats() does give me that information.
+The (new/fixed) binary representation is what I want.
+Qiskit get_counts() does the similar, if not identical, thing.
+I cannot and do not need to retrieve those values from Qiskit. My original thought is wrong.
+All the answers have been taken care of by the #120.
+@DevelopDaily We reverted 2f7c7c8 , that is, there's no more destructive measurement choice in OpenQASM2, since (as we had it from beginning), the standard doesn't specify it. If those address all your issues, feel free to close this one.
+Perfect. Thanks.
+@DevelopDaily We've implemented some more utility functions that solve this issue more elegantly, please see https://github.com/softwareQinc/qpp/blob/main/CHANGES

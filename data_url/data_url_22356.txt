@@ -1,0 +1,56 @@
+Using release 1.0 I see sporadic "connection reset by peer" or "socket.timeout: timed out" errors on the master to core device connection. The frequency of these errors depends on the experiment, but is typically between 1 in 5 and 1 in 1000.
+Using the trivial experiment below I get a "connection reset by peer" error after 200-500 runs.
+Two typical packet dumps of this behaviour are here and here. There is nothing in the core device log.
+This does not seem to be the same issue as #398 there are no jumbo frames.
+Reuploading files as dump2.pcap expires in 7 days.
+dumps.zip
+So that's interesting. I'm not sure if I know enough about TCP internals to exactly pinpoint the problem, but the overall pattern is clear (and identical in both pcap files).
+Here's the normal operation:
+
+ARTIQ comm sends the signature (14 bytes) to the core device right away and it's also ACKed right away.
+Here's the bug:
+
+The first four packets are identical. The fifth is where the differences start. The host PC doesn't get the ACK, gets impatient and in 200ms after it has sent the signature it retransmits it. Instead of an ACK, the core device replies with a keep-alive packet (as I understand the "keep-alive" mark is something Wireshark pulls out of thin air and not a flag, and it determines that by seeing that there is no sequence number advance). This happens again in 400ms and 800ms, with no advance in sequence number, after which the core device decides it has had enough of this bullshit and drops the connection.
+This looks rather like the TCP state machine in lwip got confused and/or corrupted. I don't really know how to proceed from here; suppose I find a way to reliably reproduce this but we have no JTAG for the OR1K core and I don't really see myself successfully debugging this by randomly inserting printf's inside the lwip codebase.
+I guess this could be a bug in lwip keepalive. Try disabling it.
+@cjbe Do you have any examples that trigger this bug more often? It currently took me 27700 runs to reproduce it once.
+@whitequark This example was the fastest was to trigger the bug that I found. It reliably took less than 5 minutes to trigger. When I have the hardware powered up on Monday I will confirm exactly which bitstream I had on it.
+@whitequark I am using the nist_clock bitstream.
+I just tried to trigger this bug from a few different machines - there seems to be a lot of variability in the triggering rate:
+dumps.zip
+Fixed in 5c54a6a.
+Using release 1.1 nist_clock binaries I still see this problem with the same frequency. Attached is a packet dump that shows a similar signature to the previous packet dumps.
+dump_extract.zip
+@cjbe I am completely unable to reproduce this bug in 1.1 after several hours of looping the testcase.
+@cjbe Are you able to send us network equipment that causes the problem?
+I tried this on our set up using 1.1 on Windows, for about 2000 runs and didn't get an error. I did eventually run into an error but I think that's due to some permission issues on our end.
+For reference the FPGA and the computer are connected to the network using this switch,
+https://www.netgear.com/support/product/GS110TP.aspx?cid=wmt_netgear_organic
+@cjbe This is a shot in the dark and just to exclude keepalive in the current lwip version: if you are still seeing this and have a bit of time, could you try building, flashing, and testing a runtime for your artiq version, with keepalive disabled (along the lines of 0db6ef0)?
+@jordens disabling keepalive does not seem to change the frequency of the problem
+@whitequark , @sbourdeauducq :
+I am using a different master computer since my tests on 27th June - this seems to have reduced the rate of the problems dramatically. (I don't know why this should be - this is quite worrying to me).
+I tested a few combinations of networking hardware:
+If you could get your hands on the actual traffic on the coredevice port of the switch (and not just on the host side), that could be helpful. Your D-Link switch does not give you a port mirroring feature, but your upstream switch should (modulo administrative issues), or you could get a slightly more powerful switch. If you mirror the kc705 port traffic, then get another machine (or another network interface on the original host) and dump the traffic.
+Alternatively and depending on how comfortable you are with brctl and friends, you could use your linux machine as the switch and bridge two interfaces.
+Does it still happen with the PC->switch->KC705 configuration? (like 2, but with the department network not connected to the switch)
+@cjbe ping
+I suspect this might benefit from migrating to a different TCP/IP stack too.
+@whitequark this one looks similar to me. @jbqubit can reproduce it. There is a cheap Netgear switch involved. Joe, is that on a Linux VM as well?
+coredevice_joe_phaser_062aca2.pcap.zip
+I'm running on bare metal. 14.04.1-Ubuntu. Ethernet interface on PC is Intel I219-LM with driver e1000e operating at 1 Gbit. Router is Netgear GS608.
+Can this be narrowed down to the switch or the network card?
+I'm doing tests of the phaser branch.
+https://github.com/m-labs/artiq/blob/phaser/README_PHASER.rst
+Per @jordens suggestion I tried the following. With direct ethernet connection between KC705 and PC (no switch) I ran dac_setup.py 20 times and saw no errors. Upon returning to the switch (Netgear GS608) I see errors about 1 in 4 times running dac_setup.py.
+To reproduce... I returned to direct connection and ran dac_setup.py another 10 times. No errors. Reconnected to switch... errors appear again.
+@jbqubit Does reducing the MTU on the linux side of things change the behavior? (ip l s dev eth0 mtu 1500 vs 9000 and then rerun your test case)
+Reducing the MTU size doesn't appear to improve the problem.
+I replaced Netgear GS608 with Netgear ProSafe GS110TP. The problem is gone.
+Troublesome Netgear GS608 switch received, thanks @jbqubit
+@jordens if you have an easy way to reproduce this bug, can you please check whether it's still present with smoltcp?
+I can only try to reproduce #647 which may or may not be the same.
+@jordens That's useful too.
+@whitequark I'll be in Hong Kong soon, do you want me to connect the KC705(s) through the problematic switch?
+@sbourdeauducq sure, let's test this.
+Switch installed. Unit tests still pass and 700 runs of @cjbe's experiment went through without problem.

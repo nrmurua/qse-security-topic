@@ -1,0 +1,82 @@
+The Qiskit Backend Specifications document provides a description of a standardized data format for OpenQASM (which Terra currently supports) and a new protocol for performing pulse level experiments on backends through OpenPULSE. Certain IBMQ backends have begun to support the ability to perform OpenPulse experiments, however, experiment pulse Qobjs must currently be built by hand. In the same way that Terra provides a convenient API for building circuits, Terra should also provide a simple, but powerful interface to construct pulse QObjs.
+This document contains a working proposal for a Pulse API, with the aim of engaging the Qiskit community in the development process of this powerful new Terra feature.
+The accepted solution should be:
+The Backend specification provides a succinct description of the endpoint changes required to run Pulse experiments. There are three major components:
+Furthermore, pulses may specify avg or single which determines whether the average shot data should be returned or if the individual shot data should be given.
+Channels are a discrete time ordered lists of commands. Channel commands have an initial time (t0) and duration (which may be implicit). Non zero duration commands may not overlap on a channel.
+Every qubit has an associated drive channel.
+Every qubit has an associated measurement drive channel.
+Additional control channels may be given as U channels. The action of these channels will be described by the Hamiltonian returned by the backend.
+Acquire commands do not have run time output, but they do have an initial time and duration. Future hardware may support multiple acquires. A channel should exist for each entry in the meas_map.
+Simulator backends may support snapshots. These may be scheduled on a snapshot channel.
+Pulse Qobjs have a new set of supported commands. Commands may be conditionally executed depending on the state of a register (for hardware that supports it)
+Sample pulse commands reference a pulse in the pulse library with their name parameter. The pulse has an initial time t0 and its duration is implicitly defined by the length of the pulse it references.
+The frame change pulse specifies an advance of all future pulses on the pulse channel. The frame change has a time t0 and its duration is implicitly 0.
+The persistent value pulse holds its input value from the initial time t0 until the next pulse on the channel, which implicitly defines its duration.
+The acquire command specifies an acquisition of measurement data. It does not include the measurement stimulus, which may independently managed with pulses applied to the m channels. The output data from the acquire command depends on the meas_level set in the Qobj configuration.
+Acquire statements also take kernels and discriminators data structures that specify the kernel integration of the acquired data to be applied  (if meas_level= 1 or 2) and the discriminator function to apply to the kernel integrated data (if meas_level=2) respectively.
+Acquire may store their results into a memory_slot for meas_level 0,1 and 2.
+Acquire may store their discriminated result into a register it and operations may later be done conditionally on the register state. (for simulators/hardware that supports)
+Sample pulses reference a pulse in the pulse_library.
+Each Pulse Qobj will have many experiments, and each experiment will consist of a set of channels that contain time ordered commands. These pulse commands will be constructed to target a specific backend.
+Backends provide command definitions which provide a direct mapping between QASM gates and sequences of PULSE commands.
+The proposed solution below is a bottom up API for constructing a Python object oriented representation of a QObj with an easy to use builder interface.
+This document will use sample code to describe the pulse API. We will build from commands up to the scheduler and establish the API hierarchy. A separate proposal will detail the internal representation of the Scheduler (ie., DAG).
+The specific example will be the case of performing a spin locking experiment. The given pulse sequence involves a single qubit. The pulse sequence consists of
+First obtain our backend
+We then must initialize the available channels from our backend
+note we are very much open to a better name than ChannelBank. The channel bank is a wrapper collection over collections of different types of channels.
+A channel collection is analogous in interface usage to a Quantum/ClassicalRegister (in fact this was initially name ChannelRegister and we are still open to this in order to maintain consistency with the circuit api).
+Note that by default there is an acquire channel for each qubit. Non-trivial meas_maps will be enforced at compile time. It will be up to the backend to determine its behavior for qubits tied in the same meas_map entry.
+We now initialize our Schedule.
+The Schedule is a timed scheduled collection of commands across channels and is the pulse equivalent of the QuantumCircuit. Schedules are immutable (useful for tracking schedule reuse among other things). Internally a Schedule will be described by a control flow graph (CFG) and directed acyclic graph (DAG), these implementations will be covered in a later document and the underlying machinery should be shared between QuantumCircuit and Schedule (require collaboration with Transpiler team).
+A schedule maintains information about the Commands it contains such as
+The PulseCommand is the base object within the pulse API. To build our pulse schedule for the phase identification experiment we will use a combination of commands supplied by the backend and commands that we create ourselves.
+We could first create a sample pulse by directly creating a complex list of samples
+Alternatively we can create a function that generates the sample pulse (outputting a numpy array) and make it a DiscreteFunctionalPulse
+The above DiscreteFunction decorator creates a DiscreteFunction and is not yet a command. We must call square with a duration and val to create a DiscreteFunctionCommand
+We will also create a library of standard pulses so alternatively we could use the builtin version
+We can verify the equality of the pulses
+Which will check that the pulses are of the same type and if so their samples are equal.
+Finally we will also support continuous functions in conjunction with a decimation strategy (v0.9).
+Both SamplePulse, DiscretePulse, AnalyticPulse will support dunder methods to manipulate and create new pulse objects such as __mul__, __exp__ etc. Optionally we could expose them as one dimensional numpy arrays and treat them as such.
+to be completed
+Scipy filtering backbone
+The command definitions from the backend will be converted into a CommandDefinition and will be available in backend.defaults. A given command for a set of qubits will be accesed by
+The schedules returned are parameterized (except for cx). This will be expanded on later with types and parameters. This will also touch on hardware support analytic pulses. Parameters may be shared across pulses and schedules. durations cannot be parameterized as this would allow scheduling constraints to be violated. A parameterized schedule may be evaluated to generate an absolute schedule.
+The CommandDefinition will have available all gates available in qiskit.extensions that may be constructed from the supplied entries in cmd_def and will be dynamically created and then cached. We can therefore obtain our desired initialization pulse with
+We also require an acquire command for our qubit
+We could optionally supply a Kernel or Discriminator to the Acquire command which will be used depending on the meas_level of the compiled schedule.
+A schedule has a handle on
+Now that we have all of our pulses we may build our experiment schedule. The schedule supports two ways to add commands.
+On insertion appending of a schedule all commands will be added to the new schedule and command overlaps will be enforced.
+Note we do not currently allow broadcasting as a given command is almost always unique to a specific channel.
+To create more complicated pulses we may compose Schedules by inserting/appending a Schedule to another Schedule just as we would with a command to a channel.
+The local oscillator of a drive/measure channel may be set with
+If not set, will default to qubit(meas)_freq_est of qubit corresponding to channel.
+Now that we have our experiment we must compile to obtain a PulseQobj
+The pulse library will be built on schedule time from all classes that inherit SamplePulse. We can optionally provide a list of schedules
+We may optionally provide a PassManager which will contain ReSchedulePasses (among other pulses for other compilation steps). A ReschedulePass takes Schedules to Schedules. For instance these may be decoupling passes. The PassManager is input to pulse.reschedule. The actual implementation of this functionality will be covered in more detail at a later point in time.
+The schedule pass will be added as an optional path in the compile method alongside the internal call to transpile.
+Given scheduled qobj, running is as simple as
+The experiment memory for a given experiment may be accessed as a numpy array for measurement levels 0 and 1
+and counts for measurement level 2.
+In the above example we have shown how to build a phase estimation experiment, schedule/create a pulse Qobj and then run that Qobj on a backend to obtain results.
+The most opportunity for rearranging the order of pulses exists when mapping logically ordered gates to absolutely time-ordered commands as the gate logic maps may be used to optimize pulse scheduling (care must also be taken when scheduling classical logic).
+This will simply be made available with
+pulse.schedule will use passes of type SchedulePass and these will be designed to exploit the underlying logic of the gates to intelligently place pulses.
+Transpilation, scheduling and rescheduling may be accomplished in a single step with default passes
+This similarly extends to execute
+Can plot:
+Commands may be made conditional with
+Note that conditionals themselves have a duration and may be represented as a basic block within a control graph that is then split after (covered in later document). The backend must supply the duration of conditionals (as well as other operations)
+Unconditional jumps are implemented simply by appending schedules. In the future when named blocks are supported in Qobj if a given schedule is appended twice to another schedule an automatic block will be created. This cuts down on command duplication and makes optimization more efficient.
+Conditional jumps can be implemented just like a conditional Command but on a Schedule
+Variety of signal analysis methods
+to be completed
+Provide framework and basic implementation
+to be completed
+Provide framework and basic implementation
+to be completed
+
+Closing as API sans-scheduler has been implemented.

@@ -1,0 +1,32 @@
+pip install qsimcirq works on my Mac with the M1 chip but then import qsimcirq gives the following error
+I found these threads here and here that seem to have a solution which is way over my head but might be useful. If not, I'd also appreciate any suggestion for a work-around. Thanks!
+I have the same problem where I could install the package but encounter the below error when importing it.
+ImportError: dlopen(/Users/akimasaihara/opt/anaconda3/lib/python3.8/site-packages/qsimcirq/qsim_decide.cpython-38-darwin.so, 0x0002): Library not loaded: /usr/local/opt/libomp/lib/libomp.dylib Referenced from: /Users/akimasaihara/opt/anaconda3/lib/python3.8/site-packages/qsimcirq/qsim_decide.cpython-38-darwin.so Reason: tried: '/usr/local/opt/libomp/lib/libomp.dylib' (no such file), '/usr/local/lib/libomp.dylib' (no such file), '/usr/lib/libomp.dylib' (no such file), '/opt/homebrew/Cellar/libomp/13.0.1/libomp.dylib' (no such file), '/usr/local/lib/libomp.dylib' (no such file), '/usr/lib/libomp.dylib' (no such file)
+When I tried using a virtual environment I got the following error during installation.
+note: This error originates from a subprocess, and is likely not a problem with pip. error: legacy-install-failure × Encountered error while trying to install package. ╰─> qsimcirq
+Has anyone found any fixes?
+Bumping -- Same issue on Monterey 12.3 on an M1.
+This is currently held back by actions/runner-images#2187 - in short, we use Github Actions to build and release wheels for each platform, but Github Actions has no M1 runners.
+In theory, it should still be possible to install qsimcirq from source (e.g. by downloading and using make), but there may be some additional effort needed to get everything to play nicely together.
+Investigated with @aasfaw and @mpharrigan, and found that building locally on an M1 is blocked for all versions of qsim except qsim_basic. This is because ARM64 does not support the SSE or AVX instruction sets qsim uses for vector optimization, which constitute a significant portion of the performance advantages of qsim.
+As a result, we won't be prioritizing an M1 build for qsim in the immediate future. If you use an M1 and would still like to simulate Cirq circuits, you have a few options:
+We should make it clear that our wheels aren't universal2 so they don't seemingly install successfully but then fail to load
+Comment from #530: we should see if old universal2 packages can be marked as non-functional specifically for M1.
+I would suspect it would be "we push a higher patch-version of the package marked as universal2 whose only job is to say "I don't actually work on universal2". I don't know if this would help things or not.
+@95-martin-orion Just out of curiosity, how much of the qsim optimization relies on AVX-512 (or even BLAS optimized for certain CPUs such as Intel MKL)? Our university has a cluster of AMD 5950X CPUs (which lack AVX-512) and I'm curious if either of these factors would impact the performance.
+@95-martin-orion Just out of curiosity, how much of the qsim optimization relies on AVX-512 (or even BLAS optimized for certain CPUs such as Intel MKL)?
+Under certain conditions and with the right settings, AVX-512 can provide additional performance above and beyond what the base AVX version of qsim can offer - IIRC, we saw up to 2x speedup with AVX-512 in the best case. So if you can use AVX-512, it's a nice boost, but if you have to fall back on base AVX it's not a terrible loss.
+I don't think we use BLAS outside of the custatevec variant of qsim, which is for NVIDIA's cuQuantum SDK. Leaving this to @sergeisakov to confirm.
+Yes, we don't use BLAS outside of the custatevec variant of qsim. As @95-martin-orion pointed out, AVX-512 can give rise up to 2x speedup in the best case. In reality, the speedup is typically smaller than that. It depends on the number of threads and memory bandwidth.
+I faced this error on google colab recently with GPU runtime. I followed the following steps"
+and then
+which resulted in the following error
+Any solution for this?
+Hi @Gopal-Dahale! You may be able to resolve the issue by running python from outside the qsim directory - there is a known issue where running inside the qsim directory causes name collisions between installed qsim and the local branch.
+Try:
+Note however that this is a different problem from the one discussed in the issue - this workaround doesn't fix the issue of not being able to install qsimcirq on ARM64 machines.
+@95-martin-orion Thanks. it worked. New problem that I faced when using qsimcirq as backend in tfq.ControlledPQC.
+I have put the cuquantum files in  /usr/local/cuquantum and in .bashrc have added these lines
+followed by source  ~/.bashrc. Ran the test program given on docs site (statevec_example) which gave the result example PASSED.
+Any solution for this would be helpful.
+@Gopal-Dahale moving this discussion to #542 to keep this issue focused on the MacOS issue. In the future, feel free to open a new issue if none of the existing ones match what you're experiencing.

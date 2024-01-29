@@ -1,0 +1,25 @@
+Running compose() with inplace=True from an input generated with QuantumCircuit.control() leads to a circuit that when qpy serialized is not load-able. This points to an internal state that doesn't match the actual data of the instruction object. I expect the mismatch is caused by the number of arguments or qubits the gate reported in qc which is incorrect
+The specific failure in this case is:
+This should not error during the load() call
+I believe something about the compose call is corrupting the internal state of the circuit which is leading to a QPY payload that has a mismatch between a size
+For anyone experiencing this you can work around this failure by changing:
+to
+I think something's a bit odd about QuantumCircuit.control: it constructs a gate, from the circuit, controls that, and adds the resulting gate to a circuit.  That means that when you compose it onto a circuit, it's still a wrapped custom instruction rather than having been properly inlined.
+If I change QuantumCircuit.control to just return circuit_to_gate(self).control(...).definition, the QPY stuff works fine and that code makes more sense.  That said, it's not necessarily the correct fix for here (unless there's an actual bug in QuantumCircuit.control), because the current form should still be producing a valid circuit that roundtrips through QPY.
+Hmm, that seems odd qpy shouldn't care about it being wrapped in a custom instruction. I wonder if it's the same bug as #8941 where the controlled gates are ending up with the same names and that's causing issues.
+I'm suspicious that there's a mistake in the recursive handling, when there's multiple custom instructions that all contain other custom instructions.  I'm fairly confident the issue happens during the QPY dump, not the read. I instrumented write_circuit with a print(circuit.name), and it shows an asymmetry between how it handles the two gates - it shows that it touches qc.data[1].operation._definition and qc.data[1].operation.base_gate.definition, but only one of those two things for qc.data[0].
+Hi all, thanks for looking into this issue !
+The workaround proposed above (with inplace=False)  will create two empty circuits though right ?
+From what I could understand, when qpy dumps the base circuit (here: https://github.com/Qiskit/qiskit-terra/blob/16f6adb310719619f5cc07d314a95f12d6ea07c4/qiskit/qpy/binary_io/circuits.py#L649) something might be going wrong with the format. So when reading the .qpy file, the reader manages to read the first base circuit but fails at the second.
+Thanks again !
+The key to the workaround I suggested in #9746 (comment) is that it's using the  append() method instead of compose() and that is always done in place. So taking the OP code it returns a circuit that looks like:
+which decomposed looks like:
+and another layer deeper is:
+The workaround uses QuantumCircuit.append not QuantumCircuit.compose - append is in place as well.  The difference is that append adds things as a single instruction, whereas compose "inlines" the given circuit into the existing one.  It so happens that QuantumCircuit.control does some pretty weird stuff internally, so you probably wouldn't spot the difference in this case, but for most things, it's important for abstract optimisations in the transpiler (overuse of compose is akin to prematurely inlining functions in a classical language).
+I don't believe there's anything wrong with the QPY format itself, but I am suspicious that the recursive handling of custom gates (of which this is an example) might be skipping one of the necessary circuits when there's several compound custom gates in succession.
+Oh I didn't notice the compose to append switch sorry ! Indeed that's a good fix !
+Interestingly, as of 0.25.0, QPY now throws an error during the re-load, which might suggest where the underlying bug was:
+(or alternatively I broke something with #10392)
+Oh no wait, sorry, I totally forgot what the top comment says - the error's the exact same.  That's what I get for trying to come back to an issue after a couple of months and not taking the time to re-read everything properly.
+I've got it: it's a bug in outputting the custom operations for a circuit that contains more than one; the breadth-first search through the new operations wasn't actually going breadth-first, it was only going through the new custom operations that appear from the last gate in the outer circuit because it was overwriting gates from before.
+It's not actually anything to do with compose or control, it's solely about having multiple custom definitions that contain custom definitions of their own.  I'll provide the fix a little later today.  edit: actually, it so shakes out that there's no real problems unless the gate is controlled - it is something to do with handling of ControlledGate.

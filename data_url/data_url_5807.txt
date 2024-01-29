@@ -1,0 +1,26 @@
+The transpilation pass should look something like:
+This should work to iterate over all instructions in a circuit and for each instance of the specified instructions (or for every instruction is instructions is None) depending on the initialized method it should append, prepend, or replace the circuit instruction with the return of the callable.
+If the callable returns None, then that should not be added to the circuit. The edge case of method="replace" and the callable returns None, the instruction should be removed from the circuit.
+In addition to this general pass we should also add a specific thermal relaxation pass.
+After adding these passes one could add duration dependent relaxation noise to delay gates as follows:
+I'll work on this.
+I like the idea of method option of NoisePass.
+Don't we need qubits argument in NoisePass? Is this only for all qubits errors? But what happens if the fn returns errors on two or more qubits? Apply the error to all qubit pairs etc?
+I personally prefer a bit general FunctionalOpMapPass accepting fn which returns only Union[Instruction, QuantumCircuit, None]. By excluding QuantumError, it would be easier for the pass to live in Terra in the future. If we need NoisePass for instance check like isinstance(pass_, NoisePass), I like to have NoisePass as an "interface" mixin class, which has only abstract methods.
+Anyways, I'll try to create a draft PR based on the idea above as fast as possible. Let's discuss further based on the draft implementation.
+I don't really see the need for an abstract base class or mixin yet. This NoisePass is intended to be a concrete noise pass that I could use to implement any local gate or readout error model (ie errors that apply to a subset of qubits + clbits for the instructions, so LocalNoisePass would actually be a better name for it). Different passes would be needed for non-local noise which isn't the purpose of this pass.
+Specific qubit/clbit errors are handled by the callable itself, this is why the callable has the signature fn(inst, qubits, clbits) and I think is the most general thing you need for any local Markovian error model. For qubit specific errors it should return the correct error for the specified qubits (or None).
+eg: This LocalNoisePass could implement the current NoiseModel (minus non-local errors) as a single pass doing something like this (pseudo code, since you can't do dict lookup of noise model quite this easily with inst/qubit types):
+It is most convenient for user if the function can return QuantumError or any other operator. Since these can be appended to a circuit it shouldn't matter -- the NoisePass code should handle calling to_instruction on its return if its not already an instruction/circuit.
+@itoko After writing above example it seems that clbits aren't actually needed for the callable signature, so I think it should be simplified to just fn(inst, qubits) for this pass.
+Readout Errors are a bit of an odd case, but still fit, since in the current noise model they are looked up by qubits the measure acts on, but the returned readout error is a classical instruction applied to clbits of that measure instruction. This could be handled by the pass itself  instead of the callable -- it could looks at the return from func after converting to instruction, and can use num qubits, num clbits to figure out how to append for instructions that could be applied if its an instruction with only qubits, only clbits, or both.
+So if we do this I think the signature can actually be:
+where signature of function is expected to be:
+where InstructionLike means anything that is an Instruction or can be converted to an instruction (ie has to_instruction method).
+Some more examples of how you could use this pass for some single-error type cases are
+Though for many gate errors these single error passes are going to be much less efficient since you want to minimize number of passes, so should generally be avoided.
+@chriseclectic Based on your suggestions, I've created draft PR #1391.
+Minor things I tweaked are:
+As a bonus, you can visualize noisy circuits (not yet correctly implemented) (Note: I don't want to promote the API below very much)
+I'm not sure but the approach that LocalNoisePass always takes a function rather than a noise object might cause some performance issues because it might not work well with parallel_map used in the pass manager. I'll check if it really happens or not after completing the PR.
+Hello, I am not sure if this is a right place where I should ask my question. I am trying to implement custom noise model and add it to some predefined basis gates. In order to achieve this, I am using LocalNoissPass function. It works perfectly when a circuit has only quantum gates, but it is not functioning when there is some measurements or classical bits in the circuit.  Is there any way around it? @itoko @chriseclectic

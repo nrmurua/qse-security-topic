@@ -1,0 +1,71 @@
+I'm using 1.0 rc3 on Windows. I have the following experiment  IonMonitor in the background,
+And then I run another experiment TTL_test with a higher priority,
+This experiment executes and the previous experiment IonMonitor turns on again. However, between the last IonMonitor pulse and the TTL_test pulse, there's a gap of about 1.2s, and 1.1s between the TTL_test pulse and the next IonMonitor pulse. Is there a way to shorten this gap?
+Using 1.0rc3 on linux this gap is about 140 ms and 170 ms for before and after TTL test respectively.
+I would expect this to result from an additional constant latency of running the linker on Windows.
+Generally, you should expect a relatively high latency every time kernel mode is entered. Type checking and compilation take a while, especially once you move past trivial experiments.
+Is there a better way to code the background experiment then?
+Yes. The loop that performs the pulses should not preempt itself after every pulse. Instead, it should just run forever in the background, and be preempted once there is a higher priority experiment scheduled.
+However, I think this is not currently possible. @sbourdeauducq ?
+Could programming the idle kernel solve this? Would that turn on when there's a dead time between experiments or only when the ethernet cable is disconnected?
+Yes, I think so. There's very little dead time between stopping the idle kernel and starting the newly uploaded one.
+What about adding a function self.scheduler.has_higher_priorities() that returns whether a higher priority experiment is present, and self.scheduler.pause() will preempt the current one?
+This way IonMonitor can RPC it in its kernel and the kernel will only return when needed, and there will be a smaller gap (~millisecond) when there is no preemption.
+There will still be a large gap when it is preempted, though.
+And the problem with the idle kernel is it cannot access datasets.
+Sounds reasonable. And we can remove that gap easily by only preempting after compilation is done.
+How exactly? Add a feature to pre-compile kernels, which can be invoked in the prepare stage?
+That seems reasonable. How long could the gap be reduced to if the preempting is only done after compilation? But this wouldn't reduce the dead time for two non-looping experiments sequenced one after another, right?
+@sbourdeauducq I thought about some kind of hack to return from the has_higher_priorities RPC early from the kernel's perspective, let it do a few more loops while we're compiling, and then finally request termination. But this sounded much better in my head, we probably shouldn't actually do that.
+200 ms of the dead time are due to #398
+And the rest of the delay is likely due to windows generally being slow with new processes and especially python that opens many files.
+I would shape the behavior of yielding from a kernel by checking for higher priorities a bit differently. I would handle both TerminationRequested and a new YieldRequested through that channel. And preempt() from a kernel would RPC, potentially raise either of those, potentially return, and then the host side can handle them or convert them, e.g. into pause(), maybe with a nice and compact context manager idiom. (Suggestions for better names welcome).
+windows generally being slow with new processes and especially python that opens many files
+The pipelining should absorb the Python process creation. Could be the linker as @whitequark suggests.
+Now that we're on LLVM 3.8 we can use the LLVM linker, and rip out a whole bunch of cruft at the same time as making it all faster.
+That will also:
+Pipelining does not absorb anything significant for the experiments in question. They have a few us/ms of duration in run(). It is not a secret that Python startup is dead slow on Windows.
+Maybe the pipelining can play a role in some pause() cases. But in general, for a queue of experiments lasting a few ms each, it won't help.
+Pipelining does not help if the desired experiment rate is higher than the process creation rate. But for pauses, the scheduler only preempts the low-priority experiment when the high-priority one is ready to execute run (and build and prepare have been executed), so it does absorb process creation.
+We tried loading an idle_kernel but pulses a ttl but it doesn't seem to load in between kernels of the IonMonitor loop. Is that something that should happen?
+Is the IonMonitor code still exactly as above?
+No, but similar.
+Our idle_kernel is,
+If you have a look at the BDD on the scope, there's about 1.5 s dead time on the scope between ttl_bdd pulses.
+Okay, looks like putting in self.core.comm.close() is still required for the idle_kernel to run. I thought scheduler.pause called that automatically.
+With this code then it is expected that the idle kernel is not run. The idle kernel is only run when there is no valid TCP connection with the control PC, and on ARTIQ 1.x scheduler.pause does not implicitly disconnect.
+@whitequark 1.5s is particularly long. Could you do a quick profiling of the compiler on Windows to see if there are any low-hanging fruits?
+The desired behavior of the idle kernel would be to have it run when there is no other kernel running, not only at times where there is no TCP connection.  This is less of an issue if the delay time between kernels were ~100 ms, but at 1-2 seconds this is an issue for keeping ions in surface traps between experiments.
+With self.core.comm.close() the delay is still 750 ms before the idle kernel starts.
+No, use seamless handover. That will even cover your ~140ms delay on Linux.
+@r-srinivas Can you please recheck using latest builds? We've done a lot of work making the networking side more robust.
+Had a look at it using artiq 3.0 py_0+git04a9a0ce on Windows. The following experiment,
+Has about 680 ms between pulses on the scope. It's better than it was since we had last checked it when it was about 1s. What's it like on your system?
+Definitely an improvement over the ~3.5 s that was being seen with 3.0 previously.  See post in this issue from @r-srinivas on 12/1/16.  Still would be nice to understand how this compares to what you see @whitequark on your Linux and Windows machines.
+Isn't the "normal" Windows performance 500-750 ms and due mostly to AV slowdown?
+@r-srinivas OK, this is definitely the AV in NIST. But that's not the whole story. Even with the AV slowdown it should give you not much more than 300ms (I estimate maybe 100ms more taken by stripping, not accounted for in perf_embedding) delay between pulses, whereas you observe 500-700ms. Something else is afoot.
+I'm not sure if that's entirely right. Something else seems to be causing 200-450 ms delay?
+@r-srinivas Can you please recheck with the AV off? It's clear that performance is not going to be acceptable with it on anyway, so all the speculation on exactly how much delay it adds is unhelpful.
+AV off isn't an option for us at NIST, unfortunately, without jumping through a large number of administrative hoops, so we can't do any tests without AV in the near term.  @whitequark what do you see on your Windows machine without AV running the same code?
+AV off isn't an option for us at NIST, unfortunately
+Then, as per #407 (comment), you won't get any lower than ~280ms between kernel runs until #733 is done.
+ack.  Is there a timeline estimate for #733?  Has it been funded yet @sbourdeauducq @jordens ?
+@dhslichter Not currently. We'll need to move to LLVM 4.0 first (not a lengthy process). Then implement and test an LLD backend. I'll need to look at it in-depth to give an estimate.
+What kind of an improvement would you expect from #733?  If it's nontrivial, it's worth putting an estimate together for a contract.
+@dhslichter See #407 (comment) , #407 (comment) for an old measurement on our VM. You have somewhere between 100ms and 160ms. But keep in mind that NIST AV probably also penalizes the current (external) linker quite a bit beyond those numbers. We can't measure that easily.
+I don't know how much faster the llvm linker would be.
+@jordens ack.  Would #733 address this AV penalty for external linker too?
+I don't know how much faster the llvm linker would be.
+The LLVM linker should link (per se) about as quickly.
+Would #733 address this AV penalty for external linker too?
+This is the main reason to implement it. The LLVM linker (and stripper) run in-process so there is no penalty for running them.  Think in the range of 5ms at most for each step for small kernels.
+@whitequark aside from #733 and the AV, are there any other low-hanging fruit for reducing this dead time?
+Not that I recall.
+@r-srinivas @dhslichter I suppose the following experiment can be used instead of a scope:
+What is your result on Windows? I'm getting 62ms with Kasli, ARTIQ master, and Linux.
+And 68ms with KC705, ARTIQ master and Windows (no AV).
+@sbourdeauducq what changed between your original measurement of 83 ms (before you edited the comment) and the edited value of 62 ms above?
+It fluctuates, I had 83ms the first time but it is usually more like 60-65. Anyway, either 83 or 62 is a big difference from 500.
+As a benchmark for comparison, @r-srinivas ran the test on our ARTIQ 2 setup which runs the magtrap experiment (Windows 7 with NIST AV), and we got 450-470 ms.  Will run on the new ARTIQ 3 setup today and let you know how that looks.
+With 3.2 py_8+gitaa64b8ad (the most recent flashable gateware), it takes between 520ms and 570ms on our Windows system.
+Okay, so this is most likely the AV and #733 should address this.

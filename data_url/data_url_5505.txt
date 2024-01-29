@@ -1,0 +1,19 @@
+qFlex should implement the Cirq "SimulatesAmplitudes" interface to allow high-performance simulation of Cirq circuits. Prerequisites for this:
+I did some reading and the solution to expose the c++ part should be done using pybind11. I will try this over the weekend.
+@95-martin-orion could the contraction order be sent as a list of strings, for the beginning? effectively emulating the file reading.
+could the contraction order be sent as a list of strings, for the beginning? effectively emulating the file reading.
+This should be possible, but my concern is how to generate those strings. The input from a Cirq caller (defined by the compute_amplitudes_sweep method) won't contain these strings, so we have to generate them from the other circuit data provided. Up to this point we've generated contraction orderings for qFlex by hand, so we don't have a programmatic way of doing this yet.
+I did some reading and the solution to expose the c++ part should be done using pybind11. I will try this over the weekend.
+I had some success with wrapping it in Cython yesterday - examples are in the cython branch. I'm not very familiar with the tools in this space, though; if there's a strong reason to prefer pybind11, we should go with that instead.
+I am just learning qflex, but from what I am seeing the orderings are related to the device. It could be possible to include the ordering files with the Cirq Devices, and when the circuit is sent to compute_amplitudes_sweep, the method to consider from the circuit's device  (if is not None) the ordering (that was loaded from the file, shipped with Cirq).
+Does this make any sense?
+I am just learning qflex, but from what I am seeing the orderings are related to the device.
+I think this is true for the general case, but it might not hold for all circuits. Still, it could be a "good-enough" heuristic in lieu of more efficient options. @benjaminvillalonga, can you confirm this?
+It could be possible to include the ordering files with the Cirq Devices
+To my understanding Cirq is intended to support several simulators like qFlex, so qFlex-specific information should be kept in the qFlex directory. That said, "device" and "grid layout" are roughly synonymous as far as qFlex is concerned - we could store a simple map from grid to ordering if we choose to go this route.
+@95-martin-orion sent a PR with pybind11 example
+Would it be reasonable to use the qubit_order from the SimulateFinalStates to specify the contraction order, and otherwise load a per circuit default?
+Would it be reasonable to use the qubit_order from the SimulateFinalStates to specify the contraction order, and otherwise load a per circuit default?
+The main issue with this is that it doesn't allow us to specify 'cut' or 'merge-patch' operations, which are important for optimizing contraction. Apart from this, qubit_order here is used to specify how the input state is formatted (e.g., qubit values in row-major order); overloading it with simulation ordering would make specifying input states much more confusing.
+In general, the qFlex input should be generated in the qFlex-Cirq integration layer (i.e., somewhere inside the qFlex implementation of SimulatesAmplitudes.compute_amplitudes_sweep) instead of being passed as arguments to that layer.
+I knew that ordering refers to how qubits are arranged for the kronecker product, and for this case I thought that the it could refer to something like user specified operations refering to nodes of a network. It would be confusing indeed.... I am retracting the idea.

@@ -1,0 +1,29 @@
+Currently, the transpiler (and maybe other parts of terra) uses the coupling map to "count" the amount of qubits supported by the backend. For example:
+The assumption that every qubits in the backend will be a node in the coupling map is not correct, as the 1Q case highlights.
+The coupling map limits the amount of 2q gates. I should be possible to simulate a circuit with 3 qubits in a coupling map with a single edge if there no CXs or if the CXs can be allocated in that coupling map.
+The correct place to check the amount of supported qubits by the backend is backend.configuration().n_qubits.
+I take issue with the fact that a device with 3 qubits but only two connected is called a 3 qubit under this logic.  A 1000 qubit device with none of them coupled is just 1000 1Q devices.
+We do not break circuits into multiple devices currently. Should we?
+My point is, this circuit is compatible with coupling map q0 - q1 if the backend declares 3 qubits:
+But it is two devices; A 1Q device and a 2Q device.  They have no interaction between each other.
+But it is two devices; A 1Q device and a 2Q device. They have no interaction between each other.
+I agree if this is the full coupling map of the backend, but the coupling map here could be a reduced coupling map supplied by the user.
+e.g. if I want to partition my device into data qubits and (uncoupled) spectator qubits, so I supply a reduced coupling map including only edges between data qubits, but still want to be able to probe the spectator qubits.
+e.g. if I want to partition my device into data qubits and (uncoupled) spectator qubits, so I supply a reduced coupling map including only edges between data qubits, but still want to be able to probe the spectator qubits.
+Just defining a coupling map to not include the edges does not mean the spectators are uncoupled on the real device.  Indeed, by definition spectators are involved in the dynamics.  Again, my issue here is calling collective disjoint subsets of qubits a backends with n_qubits equal to the sum of the qubits in the topologies.  Again, by this logical a 1000Q backend would be easy to create; just make a bunch of uncoupled qubits.  Instead, the number of devices and qubits should be counted by the number of connected components in the topology under consideration and the number of qubits in each of the resulting sub-graphs, respectively.
+the number of devices and qubits should be counted by the number of connected components in the topology under consideration and the number of qubits in each of the resulting sub-graphs, respectively.
+What's the coupling map for a 1Q-device? [], None, [0,0]?
+None
+And the coupling map for a simulator?
+None
+How can you tell the difference between simulating a 1Q-device from simulating a NQ-device?
+Well first of all the choice of None was thrust upon us by the backend people. Better choices could have been made. However, for simulators, it does not matter provided that the number of qubits is below the max set by memory.
+What about simulating a 1Q-device is signaled by compling_map=None and n_qubits=1, while simulating a NQ-device is  compling_map=None and n_qubits=N?
+Not sure I follow. n_qubits set by the memory of the device, and the simulation method.
+The user should be able to simulate a real device. We need a way to say "execute with all these restrictions that I have in the real device, but run it in a simulator". Therefore, a 1Q devices needs to be simulated somehow. It should be possible to have an "effective q_qubits" set as 1 if the user wants to impose that restriction. The question is how.
+I see what your saying now. The solution is to either get the backend people to change the coupling map, and we make code changes, or we live with it. The latter is easier, and a 1Q device is really a special case. The only downside is a secondary check of the number of qubits in the circuit
+There is no need to change the backend end. The provider layer is there for exactly this situation: to transform the backend into qiskit.
+There was a decision made long ago (by Jay) that a device is N qubits if there's a path to connect all qubits. This was the reason melbourne was called a 14 qubit device (and not 16). So backend.configuration().coupling_map.size() is always equal to backend.configuration().num_qubits, at least for IBM devices.
+... at least for IBM devices.
+Not for 1Q, where backend.configuration().coupling_map == None and backend.configuration().num_qubits == 1. I think the provider should be in charge of adapting things to the terra meaning and terra should be backend agnostic (so we dont have to change things when the backends change).
+This is no longer relevant as we've moved away from these objects and the Target has a num_qubits field which is the source of truth for the number of backend qubits. The coupling map is built dynamically from the connectivity reported via the instructions defined in the Target object. I guess there is still a potential conflict if a backend says it has n qubits and there are < n qubits in the connectivity it says exists. But that's a bug in the particular backend's implementation and would need to be fixed, otherwise errors might be reported in various transpiler passes. I'm going to close this as out of date though. If there is still more to discuss here we can open a new issue with more up to date details.

@@ -1,0 +1,44 @@
+Using 1.0 on Windows, we have the following idle_kernel,
+When we start an experiment, ttl_bdd is usually on. For example, in the following experiment,
+You can see that the first pulse is messed up and ttl_bdd only goes low after 200*us. How should we setup the idle_kernel so it can transition to an experiment without ttl_bdd on? We're using the idle kernel to turn on the bdd to keep the ion cool, so we don't lose the ion in between experiments due to #407. That's why we have such a high duty cycle on the bdd.
+Is there a way to tell the idle kernel what to do if its stopped?
+No and this is somewhat difficult to implement. When writing the idle kernel, can you assume that it may be interrupted at any time, or is it too much of a constraint?
+Can you leave the bdd permanently on instead of pulsing it, or would that have dire effects on the experiment? Can you add on or off calls to the relevant TTLs modified by the idle kernel at the beginning of experiments to make sure that they are in known states, or would that be excessively messy?
+Can you add on or off calls to the relevant TTLs modified
+by the idle kernel at the beginning of experiments to make
+sure that they are in known states, or would that be excessively messy?
+The idle kernel is a kernel of last resort. That is, it puts the
+experiment (and ion) into a safe state following anomalous events like
+empty scheduler, master crash and core device crash. The idle kernel
+should make no assumptions about the state of the apparatus. It is
+therefore good practice for the idle kernel to put all resources into
+a well-defined state when it first starts. If setting all logic output
+to 0 is the desired well-defined state then that should be explicitly
+done by the user's idle kernel.
+I can think of scenarios where it would be disadvantageous for ARTIQ
+to automatically reconfigure devices (eg to 0) upon start of the idle
+kernel. I advocate leaving this in the hands of the physicist. -Joe
+@jboulder the issue is not about the idle kernel starting (it is straightforward to put everything in a safe state at the start of the idle kernel), but rather about what happens when the idle kernel stops.  Right now, the idle kernel is pre-empted at any time and leaves the core device outputs in an undefined state.  This is the question at hand.
+@sbourdeauducq @jordens we can work with the idle kernel as it is, but the behavior of the idle kernel (i.e. that the user is responsible for setting up all lines in a safe state, that when it is pre-empted it is not done so neatly, and so if you are using an idle kernel you should make sure you initialize all lines used by the idle kernel to a safe state before beginning your experiment) should be clearly documented.
+Another issue - our idle kernel outputs a pulse on a TTL line, but when the core device is rebooted all TTL lines are configured as inputs by default.  We were then unable to send any new kernels to the core device; problem solved by deleting idle kernel and rebooting, then everything worked OK.  Basically anything in the idle kernel needs to be set up in the startup kernel or else you will end in this kind of loop.
+I am not requesting a "fix" for this -- this kind of behavior is OK at low level -- but explicit warnings about this should be added to the idle kernel and startup kernel sections of the documentation.
+We were then unable to send any new kernels to the core device; problem solved by deleting idle kernel and rebooting,
+Sounds like a bug to me. What exactly do you mean by "unable to send any new kernels", and can you open a new issue for this?
+Will open a new issue in a second, attempting to duplicate first.
+@jboulder https://github.com/jboulder the issue is not about the idle
+kernel starting (it is straightforward to put everything in a safe state at
+the start of the idle kernel), but rather about what happens when the idle
+kernel stops. Right now, the idle kernel is pre-empted at any time and
+leaves the core device outputs in an undefined state. This is the question
+at hand.
+Ah! Indeed I misunderstood this situation. The idle kernel should only be
+able to be preempted when the experiment is in a well defined state. Doing
+otherwise is counterproductive to the aim of looping the apparatus over a
+safe pulse sequence that keeps ion chains intact. In regular experiments
+this is achieved using  self.scheduler.pause().
+The problem is that self.scheduler.pause() requires a TCP connection to the host, which is precisely the time when the idle kernel is NOT running :(  The problem could be addressed by requiring that, in order to be valid (and compile with the static compiler), the idle kernel run() method must consist of an infinite while loop.  Then the idle kernel can only be pre-empted between iterations of this loop.  It would be incumbent on the user to put things in the appropriate state, and to make sure the idle kernel does not have pathological behavior (i.e. another infinite loop within this outer infinite loop, such that you never go past the first iteration of the outermost loop).  Again, this requirement on the user should be clearly stated in the documentation.
+The problem could be addressed by requiring that, in order to be valid (and compile with the static compiler), the idle kernel run() method must consist of an infinite while loop. Then the idle kernel can only be pre-empted between iterations of this loop.
+That's not nice (nor easier to implement), better solutions are asynchronous exceptions (but in Python they have inherent race conditions so I don't like that) or a "check for termination" call like pause. The real difficulties are waiting for the idle kernel to terminate when starting a new one, a timeout and "hard termination" mechanism, switching to the new kernel rapidly after the idle kernel has terminated, and dealing with the future cross-experiment seamless handover. Nothing insurmountable but a nontrivial amount of work to do it correctly.
+When deleting an experiment that's running, does it also terminate at any point within the experiment if that experiment doesn't call scheduler.pause?
+You have the two options.
+As discussed during the meetings, the new inter-experiment seamless handover should make idle kernel runs rare enough that a "graceful idle kernel termination" mechanism is not necessary.

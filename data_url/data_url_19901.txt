@@ -1,0 +1,53 @@
+When a KEM keypair is derived in liboqs, it relies on randomness using rand.h. In some situations, it's useful to generate keypairs deterministically from a seed. When RFC9180 defines a KEM, they include a DeriveKeyPair option to generate keypairs deterministically from a seed. As an example use case, Messaging Layer Security makes extensive use of functionality to share multiple keypairs by communicating seeds. I think it would be nice to match RFC9180 and add a functionality to deterministically derive a keypair from a seed.
+This is kind of possible in liboqs currently. You can set the randomness to use OQS_RAND_alg_nist_kat, and derive all the randomness used from a seed, but this is a somewhat imperfect solution for a few reasons:
+I'm curious if others think this is a functionality worth adding and if so, what the proper way to tackle it might be. Some schemes, like Kyber, are already constructed in such a way that everything is derived from a seed, but liboqs provides limited ability to set that seed. I suspect the situation for other schemes is much more complex.
+I'm curious if others think this is a functionality worth adding and if so, what the proper way to tackle it might be.
+For reproducibility of any tests, IMO this is a functionality worth having. But then again, this is what OQS_randombytes_nist_kat provides. If this is too limited (48 bytes, concurrency issues), couldn't one simply call OQS_randombytes_custom_algorithm with an algorithm of personal choice to get around those issues?
+Finally, if such new RFC-compliant and multicore-capable rand provider is needed (?) and available, why not discuss adding it to the pre-existing rand-sources with a new name and thus make it available to all language-wrappers (assuming OQS_randombytes_switch_algorithm is available in all language wrappers)?
+I guess the question is to what extent new / custom randombytes algorithms can fix concurrency issues. The current algorithm (and its state) is globally defined. Not having a lot of concurrency experience, would we need something complex, like a randomness algorithm that keeps track of the current 'state' of the randomness for each thread?
+would we need something complex, like a randomness algorithm that keeps track of the current 'state' of the randomness for each thread?
+Well, the question is what degree of reproducibility is desired. But even if something simple (e.g., using thread-ID as seed) were not sufficient, ensuring proper synchronization of different threads on a global mutex shouldn't be overly complex. See e.g. different platform synchronization primitives implemented in openssl.
+To sidestep synchronisation issues, the implementations could be patched so that randombytes is passed as a function pointer to crypto_keypair.
+(This issue is blocking me from using liboqs to implement X25519Kyber768Draft00 in rust-hpke.)
+This came up again as (I believe) @bwesterb is trying to do HPKE with Kyber (using liboqs-rust). I think that the vast majority of schemes only call randombytes() once, and it would in principle be easy to patch all of the schemes to take a seed instead of them calling randombytes, and providing the original API as a wrapper:
+To me, it seems that a function pointer hack is just a more complicated way of achieving the same end result — in both cases, the implementation of every single scheme needs to be patched. The only case in which the function pointer mechanism might be better is if a scheme calls randombytes multiple times, which could be a problem with how the KAT work.
+The only case in which the function pointer mechanism might be better is if a scheme calls randombytes multiple times
+This is the case for Kyber, unfortunately.
+(I dug into this a little bit, we can't just make the SEED_LEN equal to the total number of bytes extracted, as the NIST rng looks like it will produce different output if called multiple times vs called once for the same total number of bytes).
+The NIST KAT don't really seem to make implementations better :(
+I suppose the issue of multiple calls and KAT compatibility can be hacked around in the following way:
+Then this would only remain problematic for those schemes where randombytes is called a variable number of times and/or if SEED_LEN is not fixed. I don't think there's any scheme in PQClean that calls randombytes in a loop (going off a quick grep)?
+@bwesterb do you only need derandomized key generation or also derandomized encapsulation?
+I'm amenable to adding an API for derandomized key generation, and having it exposed for Kyber.  We'll have to work through doing it in all the Kyber implementations (we pull from both PQClean and PQCrystals), but it shouldn't be too hard to patch in.
+There's the question of whether we also do it for the other KEMs in liboqs, but I think it's less pressing for them, so I'm okay with doing it first in Kyber and leaving the rest to another time.
+I suppose the issue of multiple calls and KAT compatibility can be hacked around in the following way:
+Then this would only remain problematic for those schemes where randombytes is called a variable number of times and/or if SEED_LEN is not fixed. I don't think there's any scheme in PQClean that calls randombytes in a loop (going off a quick grep)?
+My perspective would be that the seed parameter in the deterministic version is really the random bytes that are meant to be used, rather than a seed to an RNG/expander, because the latter would require that every implementation use the same expander.  In fact I'd go so far as to avoid calling it a seed and instead perhaps call it e.g. randomness with a scheme parameter randomness_length.
+@bwesterb do you only need derandomized key generation or also derandomized encapsulation?
+I need thread-safe derandomized key generation to implement HPKE API.
+To validate test vectors, I also need derandomized encapsulation, but it's ok if that's hacky or not thread safe: I can make that work if liboqs-rust exposes OQS_randombytes_custom_algorithm. I wouldn't like an easy to use derandomized encapsulation API, as that's dangerous.
+I'm amenable to adding an API for derandomized key generation, and having it exposed for Kyber. We'll have to work through doing it in all the Kyber implementations (we pull from both PQClean and PQCrystals), but it shouldn't be too hard to patch in.
+There's the question of whether we also do it for the other KEMs in liboqs, but I think it's less pressing for them, so I'm okay with doing it first in Kyber and leaving the rest to another time.
+Great!
+@bwesterb do you only need derandomized key generation or also derandomized encapsulation?
+I need thread-safe derandomized key generation to implement HPKE API.
+To validate test vectors, I also need derandomized encapsulation, but it's ok if that's hacky or not thread safe: I can make that work if liboqs-rust exposes OQS_randombytes_custom_algorithm. I wouldn't like an easy to use derandomized encapsulation API, as that's dangerous.
+I'm amenable to adding an API for derandomized key generation, and having it exposed for Kyber. We'll have to work through doing it in all the Kyber implementations (we pull from both PQClean and PQCrystals), but it shouldn't be too hard to patch in.
+There's the question of whether we also do it for the other KEMs in liboqs, but I think it's less pressing for them, so I'm okay with doing it first in Kyber and leaving the rest to another time.
+Great!
+Agreed. Derandomized key gen is also a little dangerous; I've seen some libraries include words like "hazardous" in the function API to flag that, do you think we should do so?
+Do you have any cycles for any of this?  I am traveling next week and certainly won't have a chance to work on it then.
+Agreed. Derandomized key gen is also a little dangerous; I've seen some libraries include words like "hazardous" in the function API to flag that, do you think we should do so?
+Yeah.
+Do you have any cycles for any of this? I am traveling next week and certainly won't have a chance to work on it then.
+Not for the coming two weeks at least.
+FYI @tedeaton I was talking to Peter Schwabe @cryptojedi who says there are some efforts underway to add a deterministic API to some of the Kyber implementations he works on.
+You can take a look at https://github.com/pq-crystals/kyber/blob/standard/ref/kem.c and https://github.com/pq-crystals/kyber/blob/standard/ref/kem.h to see what I did.
+It seems like this feature will be mostly "free" in the soon-to-be-integrated ML-KEM (formerly known as Kyber)—we would just have to add the necessary OQS API functions to expose the functionality. While we're at it, we might want to add this functionality to the older variant(s) of Kyber that we plan on supporting for the time being.
+we would just have to add the necessary OQS API functions to expose the functionality
+OK for ML-KEM. What for other KEMs? Shall they simply throw a "Not Supported" exception/return NOK when used in conjunction with this API?
+we would just have to add the necessary OQS API functions to expose the functionality
+OK for ML-KEM. What for other KEMs? Shall they simply throw a "Not Supported" exception/return NOK when used in conjunction with this API?
+That's what I had in mind. Alternatively, I suppose they could return an error code and call the randomized keygen / encaps so that the caller gets secure key / ciphertext material even if they forget to check the error code.
+Alternatively, I suppose they could return an error code and call the randomized keygen / encaps so that the caller gets secure key / ciphertext material even if they forget to check the error code.
+I'm not sure about this: Wouldn't this rather delay the inevitable (error occurring) for algorithms not geared to support this -- possibly to a (code) place where it's no longer obvious (creating support issues, well, probably an FAQ) for us? From the support perspective I'd much prefer a "hard exit" (or at the very least some error output) in such cases.

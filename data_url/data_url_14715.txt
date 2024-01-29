@@ -1,0 +1,38 @@
+This new feature is used for layout method in Qiskit (also called "qubit mapping problem").
+These two ideas are proposed in [1].
+[1] S. Niu, A. Suau, G. Staffelbach and A. Todri-Sanial, "A Hardware-Aware Heuristic for the Qubit Mapping Problem in the NISQ Era," in IEEE Transactions on Quantum Engineering, doi: 10.1109/TQE.2020.3026544. https://ieeexplore.ieee.org/document/9205650
+These modifications are based on SABRE layout method and improve both number of additional gates and output circuit fidelity.
+In sabre_swap.py,  it used the distance matrix to calculate the score of the swap candidates and select the best one. The distance matrix used is as follow:
+https://github.com/Qiskit/qiskit-terra/blob/3dec07aaccf3254432a93ed6b5990be27b47016d/qiskit/transpiler/coupling.py#L143-L158
+In short, Distance matrix D = shortest path length
+In [1], it proposed:
+D = α1 * S + α2 * E + α3 * T
+S：shortest path length matrix
+E:   cnot error rate matrix
+T:    cnot execution time matrix
+The three α weight parameters can be tuned by the users for their different objectives. For example, the parameters can be set like α1 = 0.5, α2 = 0.5, α3 = 0 with the aim of improving the fidelity.
+Using this new distance matrix, we can select the best Swap gate taking account into both calibration data and hardware topology. If the best selected Swap gate has a negative impact on the following gates, we should insert a Bridge gate instead (which will keep the current mapping).
+In [1], it ran several benchmarks on two ibm devices: ibmq_almaden and ibmq_valencia. It compared with sabre_layout and noise_adaptive_layout.
+Firstly, it set α1(distance) = 0.5, α2 (fidelity) = 0.5, α3 (execution time) = 0.
+The result shows that it has the best output fidelity and the least number of additional gates.
+Secondly, it set α1(distance) = 0.5, α2 (fidelity) = 0, α3 (execution time)= 0.5.
+The result shows that the execution time is reduced and the fidelity is improved. (Always the least number of additional gates).
+See #5105
+See #5105
+In 5105, it seems that you use cx error rate as the edge weights. I propose to normalize the shortest distance matrix, cx error rate matrix and cx execution time matrix to make the three matrices in the same order. Then add them using different weight parameters to create a new distance matrix. Use that new distance matrix as the edge weights.
+Yeah I understand that but it does not quite make sense to me.  The execution time already plays a role in the CX error rate so not sure why I would weight that again.  And the distance is the cx error rate in #5105, which is kind of the whole point.  Also it is unclear what the weights should be.  Indeed, the paper you highlight chose that as a heuristic metric as opposed to something more formal.  I am not claiming the one in #5105 is more than a heuristic, indeed all the swap mappers use heuristic inside, but the interpretation and useage is very simple, and in testing it seems to do what I want it to.
+I see and thanks for telling me that execution time already impacts the CX error rate! I was wondering if the Bridge gate has already been integrated in Qiskit. I also saw a similar issue in #1803 (comment)..
+Yeah I understand that but it does not quite make sense to me. The execution time already plays a role in the CX error rate so not sure why I would weight that again. And the distance is the cx error rate in #5105, which is kind of the whole point. Also it is unclear what the weights should be. Indeed, the paper you highlight chose that as a heuristic metric as opposed to something more formal. I am not claiming the one in #5105 is more than a heuristic, indeed all the swap mappers use heuristic inside, but the interpretation and useage is very simple, and in testing it seems to do what I want it to.
+Even if the CX execution time has already impacted CX error rate, we still cannot optimise the CX execution time just by reducing the CX error rate, can we? I think it's better to give the user more options and the CX execution time is useful..
+Moreover, I think at least it's better to combine  CX error rate matrix and shortest distance matrix together rather than only use CX error rate as the weight edges (like in #5105). Indeed, it makes no different for the swap candidates because the shortest distance is definitely one. However, if we use the "look-ahead" strategy and want to find the impact of the selected swap gate on the following gates, we need to use that "combined" matrix. When the error rates of all the links on the chip are approximately equal, it's true that the just using error rates matrix could represent both hardware topology and calibration data. But when we have different error rates (like current IBM chips that have a difference of up to 1 order of magnitude for different CX gate), I think it's more reasonable to combine the the two matrices together.
+No you cannot find the shortest time circuit just from the cx error rates.  There are many more elements that go into those numbers.  Don't let me stop you from writing a PR for what you propose, I am just a bit confused about the implementation, and how one automates setting the weighting criteria.
+No you cannot find the shortest time circuit just from the cx error rates. There are many more elements that go into those numbers. Don't let me stop you from writing a PR for what you propose, I am just a bit confused about the implementation, and how one automates setting the weighting criteria.
+Thanks for your reply! I thought that I can write a PR only if I get the "permission" from here :)
+I will do it asap!
+No you cannot find the shortest time circuit just from the cx error rates. There are many more elements that go into those numbers. Don't let me stop you from writing a PR for what you propose, I am just a bit confused about the implementation, and how one automates setting the weighting criteria.
+It's the first time that I try to contribute to Qiskit and I'm not familiar with the process.. I just clone the repository and I didn't find your code about #5105. But I saw your PR has already been merged.. I think it would be easier for me to implement based on your code.. Otherwise, I need to re-implement the same thing as you did.. Could you tell me what to do? Thanks!
+So you could fork my branch and go from there, but the downside is my changes could get pulled into yours if not careful. Also my changes work for all swap mappers where as I believe you are proposing more in depth changes to the Sabre mapper. If so, it might be best to just start anew.
+Also my PR is not merged. Indeed, changes to the mappers have an uphill climb to be accepted due to their importance.
+Also my PR is not merged. Indeed, changes to the mappers have an uphill climb to be accepted due to their importance.
+OK! Thanks for your advice!
+This issue was on its way to be fixed by #5186 If you want to build on top of that partial fix, please request to be assigned and don't forget add the original author as a co-author.

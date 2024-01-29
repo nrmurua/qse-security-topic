@@ -1,0 +1,18 @@
+Currently, it is not the case that
+always returns something equivalent to x, or even has the same type as x. It is not the case when x is a Numpy array, since the line above would return a list. But reversibility certainly seems to me like something that should be required of a serialization protocol. @mpharrigan @Strilanc
+eh I always envisioned JSON as a best-faith attempt to provide an accurate and interoperable representation of cirq objects.
+Relatedly:
+[it's worth noting that all these limitations stem from the standard library json serialization. Actual cirq objects are roundtrippable]
+If you want 1:1 serialization you are always free to use pickle. I think this clearly highlights the tradeoff between general/interoperable/lossy representation of python objects with specific/lossless representation.
+Is there something concrete in Cirq we could do here?  Does the issue with numpy arrays come up in our objects?
+I think the only action item would be to document the above limitations. If any of our objects don't handle numpy nuances, that would be a bug and we should fix it; but I don't think there are any.
+I'm actually in favor of implementing reversible serialization of Numpy arrays; this would be extremely useful, and the serialization protocol of TrialResult already does it.
+How do you want to do that?
+The implementation would be the same as what's used in TrialResult to serialize the measurements array. It is very similar to the implementation in #2712. But instead of wrapping arrays in a separate object, as proposed in #2712, we just serialize the arrays directly.
+i.e. modify the cirq.to_json CirqEncoder  to check for np.ndarray?
+Yup. That is, treat Numpy arrays as we do other non-Cirq objects that we serialize, like Pandas dataframes, Sympy symbols, etc.
+My original motivation was: typically when running an experiment you have a set of parameters that you may be sweeping over or similar. You've generated the set with np.linspace so its a numpy array. You save it with your results and later when you're trying to remember what set of parameters you ran you can pull up the json and quickly scan for the values instead of trying to decode a hexdump.
+Said another way: I posited that most of the time, numpy arrays are relatively small and list-like. In the other case when you have a big ol' blob of binary data, you have to explicitly encode it (or have a big json file).
+That was the original logic. If that's not the case, we can switch it
+For most of my use cases, the Numpy arrays contain a large amount of numerical data (such as state vector amplitudes), so space efficiency and reversibility are crucial. I think that for cases when the data should be human-readable, it's okay to force the user to convert to a list or other type.
+Discussed on Cirq Cynq:

@@ -1,0 +1,21 @@
+Hard-/software stack
+Revision c0cd590 (PR #96)
+Configuration
+./configure --serial --mpi --cuda --cudampi --arch turing --prefix install_intel-19.1_openmpi-4.0.5_c0cd5906 intel
+Test 18 fails for CUDA-MPI
+opt_wat_rhf_ccpvdz.out.txt
+This compiler combination works with Jamie's CMake build, revision 0e309f4.
+@agoetz This doesn't make sense. No matter what build system we use, cuSOLVER .so linking only requires two dependent libraries (libblas.so and libblasLt.so) for CUDA 11.0. The error says that quick fails to create cusolver handle  here: https://github.com/merzlab/QUICK/blob/master/src/cuda/cusolver/quick_cusolver.c#L165. Probably there is a bloody memory leak. On v100 (32 GB) the calculation runs fine but I can see that QUICK uses ~12GB (https://pastebin.com/fjvNUTJR), which doesn't make any sense for an example of this size. The same calculation on Titan V eats up the same amount of memory (https://pastebin.com/dEkwpPui) and immediately crashes.
+Not sure what is going on. But if you look at the output file (linked at the bottom of my first comment / issue), it happens only in the second geometry optimization step.
+The same happens with GNU/8.2.1 and CUDA/10.2 for ene_psb3_b3lyp_631g.in  example.
+@agoetz So I put a case statement here: https://github.com/merzlab/QUICK/blob/master/src/cuda/cusolver/quick_cusolver.c#L164 and printed what type of cusolverStatus_t we are getting when the calculation crashes. I find the following.
+According to the manual (see here: https://docs.nvidia.com/cuda/cusolver/index.html#cuSolverSPstatus) this could mean the following.
+An internal cuSolver operation failed. This error is usually caused by a cudaMemcpyAsync() failure.
+To correct: check that the hardware, an appropriate version of the driver, and the cuSolver library are correctly installed. Also, check that the memory passed as a parameter to the routine is not being deallocated prior to the routine’s completion.
+Perhaps we have a hardware/driver issue on Chinotto? Because this is the only platform I was able to reproduce this issue (tested on PGI and MSU clusters with GCC/4.8.5 and CUDA/11.0.2). Furthermore, I never had this issue when we had CUDA/10.2 installed and I am pretty sure we didn't make any changes to cuSOLVER implementation recently.
+The same happens with GNU/8.2.1 and CUDA/10.2 for ene_psb3_b3lyp_631g.in example.
+@vwcruzeiro Please confirm if you were able to run the tests successfully on Delorean.
+This compiler combination works with Jamie's CMake build, revision 0e309f4.
+@agoetz This gives the same problem as you would get from make built executable. I just tested.
+@agoetz @vwcruzeiro Ok, the problem is in CUDA/11.0 installation on Chinotto. If you use CUDA/10.2 (export CUDA_HOME="/usr/local/cuda-10.2") and compile the code with same GNU/Intel compiler, this problem will disappear.
+This has been resolved.

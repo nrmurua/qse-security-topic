@@ -1,0 +1,50 @@
+I tried to run the bernstein_vazirani.py example on my two-GPU server but got a "Too few GPUs for too many qubits" runtime error. The command I used is "mpiexec -np 2 python3 -m mpi4py bernstein_vazirani.py --size 31 --target nvidia-mgpu". I tried both the docker and the python-package, and got the same error.
+I have two RTX 3090 GPUs (24G*2) on my machine. I successfully ran "python  bernstein_vazirani.py --size 30 --target nvidia", and it used about 17G out of 24G. I also successfully ran "mpiexec -np 2 python3 -m mpi4py bernstein_vazirani.py --size 30 --target nvidia-mgpu", but the program took about 17G on each GPU and 34G totally. Doea this mean cuda-quantum cannot split a large state vector and make use of multiple GPUs? It does not make sense.
+Just follow the document, start a docker or install the python package locally, and then run "mpiexec -np 2 python3 -m mpi4py bernstein_vazirani.py --size 31 --target nvidia-mgpu". If your GPU has memory larger than 24G, you should use a bigger size. Anyway, you will see the multi-gpu target uses much more memory than the nvidia target.
+If I can run 30 qubits on one GPU, I should be able to run 31 qubits on two GPUs.
+One more question: How do I debug cuda-quantum after I get such an error?
+Not a regression
+No response
+@nadbp The memory usage that you've observed is expected. The nvidia target used fp32 while the nvidia-mgpu used fp64.
+To double check, you can change the target to nvidia-fp64. I think you'll get an out-of-memory error on your RTX 3090 setup (requires ~33-34G for 30-qubit bernstein_vazirani.py).
+@nadbp The memory usage that you've observed is expected. The nvidia target used fp32 while the nvidia-mgpu used fp64. To double check, you can change the target to nvidia-fp64. I think you'll get an out-of-memory error on your RTX 3090 setup (requires ~33-34G for 30-qubit bernstein_vazirani.py).
+Thank you for the reply. However, when I run 30-qubit bernstein_vazirani.py with the target nvidia, there is ONE print result consisting of encoded bitstring and measured state; when I run the 30-qubit example with mpiexec -np 2 and the nvidia-mgpu target, there are TWO print results. You can try the example by yourself. It means that mpiexec actually run the program twice. The memory usage is not because of fp64. The reason is two instances are running in parallel. In another words, so called 'nvidia-mgpu' does not simulate a single large state vector on multiple GPUs for this example.
+Could you please give me an example that clearly shows how a single large state vector is simulated on multiple GPUs? Thank you very much.
+Hi @nadbp,
+Yea, I'm aware of duplicates in the final printing. It is just a side-effect of invoking the whole application with MPI, namely, while the simulation is distributed between processes, the pre-processing (e.g., circuit generation) and post-processing (e.g., result printing) are duplicated work.
+To understand the detail running of the simulator, you can do export CUSTATEVEC_LOG_LEVEL=6 as described in the cuquantum docs. There, you can compare the nvidia/nvidia-fp64 target with the nvidia-mgpu target. For example, with nvidia-mgpu, we can see the logs related to custatevecDistIndexBitSwap, etc.
+For example, near the beginning, you might see
+telling us that the simulator is splitting the state vector between the two GPUs.
+Please let us know if that is not the case.
+Unfortunately, with only 2 GPUs available, I don't think we could clearly differentiate between nvidia (32-bit floats) and nvidia-mgpu (64-bit floats) in terms of the number of qubits that they can handle. We'll need at least 4 GPUs.
+BTW, when running the bernstein_vazirani.py example with MPI, make sure that you also pass the --seed to make sure all processes use the same hidden_bitstring, e.g.,
+Thank you for the information! I see different data types and other information from the log. How can I avoid the duplicated pre- and post-processing in my program? I guess I cannot use f32 for nvidia-mgpu, right?
+BTW, I do not see any log when I use mpirun and the tensornet target. It seems that the program runs on only one GPU. How can I run a tensornet simulation on two GPUs? Thank you again!
+I see different data types and other information from the log. How can I avoid the duplicated pre- and post-processing in my program?
+To filter the log, you can put print statements inside a MPI rank check like this
+I guess I cannot use f32 for nvidia-mgpu, right?
+Yes, that's right. Currently, the nvidia-mgpu target only supports fp64 data type.
+How can I run a tensornet simulation on two GPUs?
+Since the tensornet backend supports both MPI/non-MPI execution, we'll need to initialize MPI to enable MPI distribution.
+e.g., you might try something like this to test the backend:
+Then, run with MPI like usual: mpirun -np <N> python3 file.py.
+Note: currently, only the cuda-quantum docker images (not the wheels) support tensornet with MPI.
+I do not see any log when I use mpirun and the tensornet target.
+The equivalent environment variable to turn on cuTensorNet logging is CUTENSORNET_LOG_LEVEL, e.g., export CUTENSORNET_LOG_LEVEL=6 to enable detail logging.
+Hope that this helps!
+Wow, your answer really helps! One more question: How do I run a simulation over multiple nodes, statevec or tensornet, using the cuda-quantum docker image?
+How do I run a simulation over multiple nodes, statevec or tensornet, using the cuda-quantum docker image?
+This depends on the configuration of your cluster. I don't have any experience with self-managed clusters.
+On HPC systems, they will typically support running Docker containers via Singularity, Podman, or Shifter.
+We can use the cuda-quantum docker image with those tools to submit a multi-node simulation job using those backends.
+For example, in our docs, we have a section about building a singularity .sif from the docker image. Podman and Shifter would be able to take the docker image directly.
+The user guide of your HPC cluster should mention if it supports Docker containers and how to use it.
+Thank you very much. I run a tensornet simulation using the docker image. It seems that the program still runs on a single GPU. I start the docker using 'docker run -it --gpus all --name cuda-quantum nvcr.io/nvidia/nightly/cuda-quantum:latest' and then run the example 'mpiexec -np 2 python3 bernstein_vazirani.py --size 30 --seed 1 --target tensornet'. Anything is wrong?
+Did you insert calls to initialize mpi?
+Also, there is a bug (soon to be fixed) affecting the --target tensornet option.
+To get it working properly, you'll need to add the cudaq.set_target("tensornet") explicitly after cudaq.mpi.initialize()
+and run with
+Please let me know if that works.
+To check cutensornet log (CUTENSORNET_LOG_LEVEL=6), look for log lines such as "Initializing cuTensorNet distributed communication service interface", "Engaged distributed TN path finder with X processes", etc.
+It works now! Thank you for your patience!
+I will close this issue. Thank you again.

@@ -1,0 +1,41 @@
+There is no way that I can find to compute expectation values from sampled distributions in the core Qiskit library.
+The StateVector and DensityMatrix states in quantum_info have expectation_value methods.  Counts objects, and other related distribution classes, should have the same to be consistent and fix the above gap.
+Alternatively, or together, operators could have similar methods that take the distributions or states.
+I may well be misunderstanding this issue, but what output would you expect to get from a counts dictionary of {0: 50, 1: 50} for an operator of X?  I'd get those counts from either |+> or |-> (or whatever combination), so I'm not sure how we return something meaningful.
+I should be able to compute the expectation value of a string or operator of diagonal operators, eg IZZZ11Z.
+There is a code for calculating expectation value and stddev from measurement probabilities here:
+https://github.com/Qiskit/qiskit-terra/blob/c318725d679b0eb3aa8874fb9755fa0567c5e94b/qiskit/result/mitigation/utils.py#L35
+If the diagonal operator is given in a string format, it can be converted using:
+https://github.com/Qiskit/qiskit-terra/blob/c318725d679b0eb3aa8874fb9755fa0567c5e94b/qiskit/result/mitigation/utils.py#L71
+I think that we didn't want to add this expectation value method to the results classes (Counts etc.) since it should be calculated more efficiently using the Estimator class.
+@ShellyGarion I am not sure why one does not want this?  Count are an approximation of the diagonal of the corresponding density matrix for the state vector at the end of a circuit.  Already in Qiskit I can get the expectation value from these related objects, eg:
+both work.  The ability to do so from Counts is a natural (and important) extension of what is already there.
+It is also curious as to why you think that it is more efficient to compute an expectation value in the Estimator?  The computational overhead is likely the same given that the computation is identical.  Also using the Estimator directly I cannot do things like compute expectation values and plot the corresponding distribution.
+I'm not especially strongly for or against this method, but if it is added, I don't think it should be by analogy to Statevector - the allowed inputs would be completely different, and that would be clearer if we gave the methods different names.  Statevector contains a lot more information than Counts, so any attempt to unify an API between them is just hiding that fact, and the abstraction will leak.
+I'm also slightly concerned that the measure_x instruction that's being discussed in #7716 would cause confusion between itself and this proposed method.  The Counts type is not documented as specifically containing the results of Z measurements, and no methods on it currently need to make that assumption.  This proposed method would make the assumption, so we'd need to tread carefully, because it'll be adding formal assumptions onto a class that's already widely used.
+As an example, there'd be a confusing interaction with this circuit:
+When run on most existing hardware, that would be transpiled to some variant on h q[0]; measure q[0] -> c[0]; h q[0];.  Counts wouldn't be able to tell that logically it's the X measurement on that qubit that's diagonal, so you'd be in the weird situation of needing to do
+to get the X expectation.  If some hardware came along that could support measure_x natively, then the method on Counts really wouldn't work right.
+Hmm, I do not think I am advocating for the exact same, but rather a diagonal operator can be passed.  If it is not diagonal then raise.
+The measure_x and the like are just applying post-rotations that diagonalize Pauli-strings that are not diagonal in the computational basis, eg XZX -> ZZZ.  This is required for executing on hardware.
+The Counts type is not documented as specifically containing the results of Z measurements
+By convention, the computational basis is the basis that defines the Z-direction (diagonalizes Z).
+Counts wouldn't be able to tell that logically it's the X measurement on that qubit that's diagonal
+Counts would not know.  You would have rotated the x-component of the qubit in question to the Z-direction and measured.  This makes sense only in combination with a given operator (which you also diagonalize X -> Z in this process)
+What is being asked for here is really nothing groundbreaking, but rather basic functionality that we are missing.  It did exist for some item here: https://qiskit.org/documentation/stubs/qiskit.ignis.mitigation.expectation_value.html#qiskit.ignis.mitigation.expectation_value but now is deprecated (and was hard to find and not scalable)
+There already exists in Terra a mitigated expectation value calculation (correlated and local readout mitigation):
+https://qiskit.org/documentation/stubs/qiskit.result.CorrelatedReadoutMitigator.expectation_value.html
+https://qiskit.org/documentation/stubs/qiskit.result.LocalReadoutMitigator.expectation_value.html
+So, would you suggest to add a similar API to the Counts class?
+Namely, transfer the following function from utils to the Counts, call it expectation_value and update its API:
+https://github.com/Qiskit/qiskit-terra/blob/c318725d679b0eb3aa8874fb9755fa0567c5e94b/qiskit/result/mitigation/utils.py#L35
+From the Terra dev meeting: we'll add this functionality by a utility function elsewhere in Terra, potentially building on code that Shelly already has.  The reason not to add it as a method on Counts is to keep Counts agnostic as to what the counts actually represent.
+I was originally hesitant about this since it requires an assumption that Counts are generated from Z measurements. But thinking more about it, I think that is an underlying assumption in both Qiskit and OpenQASM? Maybe not documented as extensively as it should, but when we write "measure" in either Qiskit or OpenQASM, it means a measure-z. If that is the case, and Counts is generated from a bunch of measures, then I think it makes sense for it to compute diagonal expvals directly.
+My only doubt is: what if a backend has a native measure-x instruction (so they don't use H to rotate into Z basis)? Don't they still want to represent their experiment result with Counts? In that case the extra assumption is broken. But I don't know how to represent a native measure-x in Qiskit anyway since (contrary to unitary gates) we cannot provide a definition for it. So I think de-facto assumption of Z-basis measurement stands.
+Ok maybe we should keep open the possibility that in the future there will be other POVMs (measure-x and measure-y included) that would want to write to cbits. In that case, I think Counts should remain agnostic to basis, since it's just a tally of cbits. I think a utility function that does provide a "z-counts --> diagonal-expval" is the safest way to go for now. In the future if the POVMs that were used to populate Counts were somehow saved, then we can make this more generic and potentially calculate other observables as well.
+So in this case should we write a special utility function for expectation value or enhance the Estimator class (which is more general)?
+I am good where ever this ends up.  The current state of affairs is that I continuously have to show people how to compute this themselves or point to M3 that has a routine to do this.  Qiskit having its own routine would thus be most welcome regardless of how it is done.
+It would be curious to see how Counts would be able to be agnostic to differing choices of computational basis per qubit without placing all of the burden on the user to remember.  I would think one would need to keep track of what representation is used in order for anything to make sense.
+It is nice to make it as utility functions. In addition, it would be useful to take not only Counts but also ProbDistribution and QuasiDistribution.
+It is a slightly closer issue: I also thought it might be useful to have a Mitigator that does not mitigate.
+Closing in favor of #8465 8465

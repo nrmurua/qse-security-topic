@@ -1,0 +1,38 @@
+Describe the bug
+Running tests for qutip 4.6.2, on linux (Debian unstable), all tests pass successfully, but overall tests return error code 1, which would be treated as test failure. For instance, running tests via python3 -c "import qutip.testing; qutip.testing.run()"
+As far as I can tell this XIO error is related to the xvfb module (pytest-xvfb) used to manage graphical tests without display.
+Some relevant discussion is found at The-Compiler/pytest-xvfb#11 . They indicate there that this error can be triggered if windows managed by Xvfb are not properly closed before completing tests. So it's likely it's related to tests using matplotlib.
+The only test using matplot lib is testPlot in test_processor.py. Sure enough, if testPlot is skipped then test_processor.py passes successfully without triggering the XIO error.
+To Reproduce
+Run test_processor.py directly:
+The terminal output is
+Expected behavior
+The XIO error should not be triggered.  Exit value should be 0 not 1.
+Your Environment
+Linux (Debian unstable)
+Additional context
+The first thing to check for is whether plots are being closed.  But TestPlot already uses plt.clf(). Evidently it is not enough.
+Replacing plt.clf() with plt.close('all') seems to work, allowing tests to be registered as successful without error.
+@drew-parsons These tests pass in CI and pytest qutip/tests/test_processor.py -v passes for me locally on the master branch, so I'm not quite sure how to reproduce.
+@drew-parsons We don't usually run tests with pytest-xvfb, so perhaps that triggers the issue somehow?
+Sounds like it is xvfb that is interfering with the test environment.  I guess if you install it you'll likely be able to reproduce the error.
+@drew-parsons Is there a goal you are trying to achieve by running the tests headless on xvfb? Just curious about your use case.
+I don't have xvfb (pytest-xvfb) installed specifically for qutip, but it is used by other packages (The general use of pytest-xvfb is to facilitate testing of GUI, graphical or windowing functionality without having an normal Xserver active.  That is, it can be useful for automated CI testing of gui packages, for instance in chroots or cloud CI infrastructure).
+Since qutip doesn't use xvfb directly this bug won't be a problem for general CI testing, where only qutip is loaded on a cloud instance (for instance Debian testing done at https://ci.debian.net/packages/q/qutip/)
+But before I upload a package to the Debian infrastructure, I like to run the tests on my own system to be confident they're likely to pass.  So this is where the problem happens, running tests on my own system, where I have pytest-xvfb installed for testing other packages.  (pytest has this bad habit of loading all available plugins whether or not they're actually used by the tests being run. It's quite annoying actually. It would be better if it only loaded plugins specified in conftest.py).
+So the use case is running the qutip tests on my own system, where pytest-xvfb simply happens to be installed for other purposes not related to qutip.
+There are ways of working around the problem, for instance the --no-xvfb option could be explicitly added to the pytest command line.  But it can be useful if the test code itself can be made robust with respect to the problem (e.g. in this case just replacing plt.clf() with plt.close('all'))
+pytest has this bad habit of loading all available plugins whether or not they're actually used by the tests being run. It's quite annoying actually. It would be better if it only loaded plugins specified in conftest.py
+Absolutely agree with this.
+But it can be useful if the test code itself can be made robust with respect to the problem
+Also yes - if I understand right, it's just the testing code that's a problem here, right, not the actual internal code?  We can't swap to pyplot.close('all') in the library code (for obvious side-effect-y reasons), but if it's in the tests, then it shouldn't be an issue to change.  I wonder why it caused a problem in the first place, though - if we could track it down (does xvfb do similar things to inline backends with respect to "capturing" images during construction/return?) it would be nice to use something slightly more targetted than pyplot.close('all').
+@drew-parsons If fixing this will help packaging for Debian, we will definitely fix it!
+This appears to be considered an Xvfb bug (or at least the discussion in The-Compiler/pytest-xvfb#11 suggests that), but having tests close their windows does seem polite anyway.
+Installing xvfb and pytest-xvfb reproduces the error for me and adding plt.close("all") to the end of testPlot removes the error again. After that the rest of the test suite passes, although there have been some reports in the pytest-xvfb of timing or test order sensitive results, so there may be more problems to be found later.
+For now I'll open a PR that adds the plt.close("all").
+There's only those two references in test_processor.py that are affected as far as I can see.  So that PR should work fine. Closing only the specific fig from the test is a good idea too, not as stentorious as closing "all".
+Curious cross-reference from mdanalysis.  Their tests trigger the same error (likely again because of pytest-xvfb),
+Their error is not so simple to clear, since they use the object oriented matplotlib API (e.g. using AxesSubplot matplotlib.axes._subplots.AxesSubplot) rather than matplotlib.pyplot.  So they don't have access to plt.close() and axes.cla() doesn't prevent the error, probably for the same reason that plt.clf() didn't work for qutip.
+One point they have which is worth noting: they recommend using the environment variable MPLBACKEND=agg for headless CI testing.  And sure enough the XIO error does not occur with mdanalysis if MPLBACKEND=agg is set.
+For qutip the plt.close(fig) patch is still the best (more robust) solution though.
+@drew-parsons I imagine MPLBACKEND=agg avoids the issue by not using X at all. I have used it in the past for matplotlib tests, and it's not a bad idea perhaps to switch the QuTiP visualization tests to the agg backend, but it's not something I'm going to tackle right now I don't think (too many other big QuTiP changes up in the air at the moment).

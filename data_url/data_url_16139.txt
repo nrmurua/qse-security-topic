@@ -1,0 +1,25 @@
+After moving from qiskit 0.23.2 to 0.23.3, transpilation of a circuit fails on optimization level 3 with
+qiskit.transpiler.exceptions.TranspilerError: 'Maximum iteration reached. max_iteration=1000'
+It only fails for a subset of devices. E.g., it fails for ibmq_manhattan and ibmq_paris, but not for ibmq_16_melbourne.
+I can't publish my circuit but I logged the iterations of the pass manager for working (qiskit 0.23.2) and failing (qiskit 0.23.3) runs:
+qiskit.0.23.2.passes.log
+qiskit.0.23.3.passes.log
+Seems like the optimization steps
+ConsolidateBlocks
+UnitarySynthesis
+Optimize1qGatesDecomposition
+CommutativeCancellation
+UnrollCustomDefinitions
+BasisTranslator
+are stuck in an infinite loop trying to reach a fixed circuit depth. One can see a recurring pattern in the gate counts of rz and sx.
+An update. Transpilation also fails on ibmq_16_melbourne, but only for certain initial layouts. My code tries all possible perfect-match layouts and it turned out only 17 of 47 of them are reliably transpiled on ibmq_16_melbourne. The rest fail stochastically (with ~90% fail rate).
+This looks like the same issue as #5644 and should be resolved by #5672.
+Thanks for posting the logs @ishapoval !
+@kdk Wasn't #5644 mostly resolved in 0.16.2 by adding basis translation to the level-2 pass manager (#5671)? Here my problem though is in level 3, where it does seem like the old basis leftovers are removed by BasisTranslator but there is some other ping-pong for rz and sx going on, presumably between other passes?
+@kdk Wasn't #5644 mostly resolved in 0.16.2 by adding basis translation to the level-2 pass manager (#5671)? Here my problem though is in level 3, where it does seem like the old basis leftovers are removed by BasisTranslator but there is some other ping-pong for rz and sx going on, presumably between other passes?
+Hi @ishapoval , sorry for the delay. Indeed, #5671 worked around the issue of some passes introducing out-of-basis gates in level 2, but I suspect the problem reported here also occurred (though to a lesser degree) on Qiskit 0.23.2. (Looking through the logs, both 0.23.2 and 0.23.3 loop the optimization passes several times after they've finished making progress in optimizing the circuit, I suspect due to the reintroduction of u1 by CommutativeCancellation).
+0.23.3 introduced some additional optimizations for backends supporting sx/rz gates which may be responsible for the loop running infinitely, but because the issue occurs irregularly, its hard to be sure. Can you check out the code from #5672 to see if it resolves the infinite loop? If not, we may need improve the condition used to know when to stop running the optimization loop.
+@kdk Thanks! I've tried #5672 and it does indeed resolve the problem!
+I could stay on this branch while waiting for 0.17. But, just to avoid other WIP stuff being merged from master, is there any hope to have #5672 backported to 0.16? Just wondering as I'm seeing the backport tag...
+Thanks again!
+@ishapoval Great! After #5672 merges, it will be backported to the stable/0.16 branch, which you can use to avoid any churn on the development branch until the next minor or patch release.

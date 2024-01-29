@@ -1,0 +1,17 @@
+If Pytorch optimizer (torch.optim.SGD) is created in the workflow function and passed to the training function, the model does not train (loss doesn’t decrease).
+To reproduce the problem we can use code from the Covalent MNIST tutorial (https://covalent.readthedocs.io/en/latest/tutorials/0_ClassicalMachineLearning/mnist_images/source.html). If instead of initializing optimizer in train_model function as it is done in the tutorial we create optimizer in workflow and pass it to the train_model function, the model fails to train (loss does not decrease as shown in the output).
+Output:
+The loss should decrease with each iteration (weights update) and the output should look like this:
+This output can be achieved by creating an optimizer in the train_model function instead of the workflow.
+No response
+Hello @ineporozhnii! Thanks for trying out the tutorial. You have just stumbled on a rather subtle characteristic of heterogeneous workflows.
+Remember that different electrons can run on different computers, typically at different times. Thus, object references between different electrons have no meaning when a workflow is dispatched to Covalent.
+More concretely, suppose object_1 is instantiated in electron_1 and electron_2 contains a reference object_1_ref. All is well when the workflow runs as a normal Python function because the objects belong to the same process and therefore share the same memory space; object_1_ref is simply the memory address of object_1. Methods that mutate the underlying object, such as object_1_ref.update_in_place(), work as expected.
+But suppose now that electron_2 runs in a different process or even on a different computer. Since the electrons are now segregated from each other in memory, the memory address object_1_ref in electron_2 is now meaningless. electron_1's computer might have already shut down by the time electron_2 runs.
+The rule of thumb to keep in mind is that Covalent makes deep copies of all arguments passed to electrons. Now let's look at your modified workflow:
+Here, optimizer holds references to the parameters of the model passed as a workflow input. But now inside the train_model electron
+optimizer is a deep copy of the optimizer passed to the electron, and similarly for model. The relation between optimizer and model is broken.
+This is why the tutorial instantiates the optimizer inside the train_model electron; because all code within an electron executes in the same process, object references work as expected.
+@cjao Thank you very much for the detailed reply and explanation! One more thing I wanted to mention is that MNIST tutorial seems to have an incorrect output displayed (likely caused by the issue described above).
+
+Thanks for pointing that out. That image needs to be fixed.

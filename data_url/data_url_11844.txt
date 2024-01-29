@@ -1,0 +1,37 @@
+Calling QSVM_Kernel_Binary leads to a computer crash for even modest data set sizes because construct_kernel_matrix builds all the inner-product circuits at once, and creates two copies of them, before sending to execute.
+It should not crash a computer.
+Batch the circuits instead of building all of them in a single go.
+I agree that Aqua should not fail regardless of the number of data points only if the system can not store data with an extreme size of the feature dimension.
+However, do you know that the is the memory required by one quantum circuit and what is the data size you tested?
+Furthermore, do you mind pointing which line we create two copies of circuits?
+In my understanding, the circuits and to_be_simulated_circuits use the same circuits.
+The to_be_simulated_circuits just stores the memory reference. (I checked with the debugger in PyCharm and the memory address of the circuits in circuits and to_be_simulated_circuits are the same.
+Thanks.
+The len of x1 is 400, so it is creating 400**2 circuits. If it is not creating two copies then that is my error. I do not know the circuit size as they are create by aqua and not myself. Regardless, it easily crashes a laptop with 16gb of memory. The suggested solution will solve this.
+what is the setting you used in QSVM?
+so you have 400 data and the dimension of each data is?
+I tested with 1000 data and each with dimension 2, it works well on my 16GB laptop.
+I agree with batch approach will solve this but it might degrade the performance if we do not batch it in a proper batch size.
+The tentative solution is let the users to set up the batch size as most ML algorithms use this approach already; therefore, if the users crash their system with large batch size, they need to reduce the batch size by themselves.
+Thus, by default, batch_size = 0, which mean the whole batch.
+This approach will be adopted by QSVM.Kernel and QSVM.Variational
+Why not be a bit smarter and use sys.getsizeof(), for example, to get the size of the circuit objects and then make an educated batch internally. You can always have the user be able to modify this.
+yeah lets not have it crash
+@nonhermitian I was thinking to estimate the memory of a circuit and derive a suitable number on the fly.
+Nonetheless, Python is not easy to estimate the memory usage.
+The sys.getsizeof replies on the implementation of __sizeof__ method in the class but QuantumCircuit does not have this field. Therefore, no matter how complex a circuit is, I always get 56 bytes.
+I also try the other way to pickle a circuit and then count the number of bytes; however, this approach is not very accurate. That is why I think users should be responsible to determine the batch size.
+So, in general, you do not want your program to crash for an end-user.  They may not know how the algorithm is coded internally, and may not know what a good batch size is.  Therefore, you need to be able to conservatively estimate a batch size for them.  Indeed, determining the size of an object in Python is not easy, but quick and dirty methods exist (https://goshippo.com/blog/measure-real-size-any-python-object/).  You do not need to be precise, and you most likely want to play it safe.  Pickling may be a good way as well.
+maybe I do not mention how inaccurate through the pickling an object, my 16G laptop crash when the size reported by pickling is 3.5G. it is too inaccurate from my viewpoint.
+I will take a try with the reference you posted. Thanks.
+For most machine learning frameworks, they won't support such auto-batch technique, the program will crash if you set to large batch size. Anyway, I will try my best to avoid it crash and figure out a suitable batch size.
+@chunfuchen @nonhermitian  the example crashes in notebook, rather than in a native python run, partially because notebook is not good at memory management (it caches intermediate results and never frees them..). Similarly, the example would crash in a debugger mode.
+Meanwhile, if one keeps increasing the number of data points, the native run will crash for sure at some point. This happens to many other data-processing programs too.
+For the batching, we do not need to be byte-level precise.
+We may estimate at a coarser-grained level.
+for the above example, 400 X 400/2=80000 circuits, where each circuit has 5+5 X 4/2+5+5X4/2=30 pauli terms (assuming second order feature map). In total, 80000 X 30= 2400000 pauli terms are just about to crash a 16G machine.
+We can impose some coarse-grained control over the batch size:
+16G machine, <=2000000 pauli terms.
+8G machine, <= 1000000 pauli terms.
+4G machine, <=   500000 pauli terms.
+Note we assume the circuits created in the previous batch can be garbage collected by python. Otherwise, we may have to create a sub-process to run each batch and destroy the process to freeze the memory (multiprocessing.Process may be used here in the sequential fashion).

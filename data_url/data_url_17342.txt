@@ -1,0 +1,44 @@
+The following code does not work:
+I think is because it was assumed that the coupling map was always "complete", with the practical consequence that starts in 0. But, from after #2225, my reading is that we want to move away from that assumption. Is my reading correct @ajavadia ?
+It seems the issue was introduced in #1544
+To the best of my knowledge nothing supports partial coupling maps.  The example map you provided above breaks the transpiler:
+I am also not sure what the equivalent qasm would be in this case for a three qubit circuit that starts indexing at 10.
+What is the use case for this feature?
+Yes I'm not sure we want to support non-zero-based coupling maps.
+I thought the coupling_map.reduce() method produces new coupling maps indexed from 0..m-1, is that not the case?
+Okey... I will try to put in words my itching feeling about CouplingMap.reduce() and how is that related with non-zero-based coupling maps. For that, I will fully base on the use case described in https://github.com/Qiskit/qiskit-tutorials/blob/master/qiskit/terra/reduced_backends.ipynb.
+The goal is to run the following circuit in the qubits 11 and 12 (target_qubits=[11, 12] of ibmq_16_melbourne (Cell [14])
+The problem with the Standard transpilation is, if I understand correctly, the visualization of the fully padded circuit (Cell [16]). That could be solved by having a visualization option to disable the printing of empty wires.
+The tutorial, instead, does some juggling. First, "reduces" the coupling map to obtain red_cmap = [[0, 1]], then transpile using that coupling map and then executes.
+Notice that translation and execution are working with different assumptions. In particular, the layout for the transpilation is q_0 -> 0, q_1 -> 1 while the execution runs with q_0 -> 11, q_1 -> 12. That means that passes that assume the same layout (like NoiseAdaptiveLayout) are broken in this context.
+With execute, the circuit is transpiled again. The result of that transpilation (transpile(red_qc, backend, initial_layout=target_qubits)  have the same problems as transpile(qc, backend, initial_layout=target_qubits), in Cell [16]), which was undesired.
+A way that I see to simplify this full thing is by having non-zero-based coupling maps. The example from the tutorial would be quite straight forward:
+Notice that CouplingMap.subgraph has a stronger relation with the coupling map than CouplingMap.reduce which codomain is in a different space. This makes it much more intuitive.
+Additionally, non-zero-based coupling maps would allow to select sub-coupling maps based on the edges and not just the nodes, adding flexibility.
+So, in summary:
+Now, change my view :) (tagging this as discussion)
+PS1: In the tutorial, it seems that there is an understanding that running execute on red_qc and qc will yield different qobjs to be executed. I don't think that's the case.
+PS2: The tutorial says that CouplingMap.reduce  "gives a sub-graph of [the] device`. Does it? Here is a counterexample:
+So, the main focus of the reduce functionality was to allow noise modelling of sub-graphs of a device where the target qubits are higher up in the numbering, e.g qubits 48 & 49 on a 50q device.  Since the transpiler automatically scales the output circuit to the size of the device (the actual source of the issue), the solution is to reduce the coupling map to avoid this expansion.  The main issue with the non-zero coupling map is that it is not supported anywhere.  A two-qubit circuit with indices 11 and 12, looks to be a circuit of at least width 13, rather than 2, when written in qasm for example.  However, I am not sure if the circuit @1ucian0 proposes comes from the subgraph is actually reduced width of not.  In addition, the proposed solution is backend specific.  Instead, the reduce method allows for a subgraph to be targeted, swap mapped, and the resulting circuit used on any device (with any qubit numbers) that support the sub-graph.
+Also the proposed solution for the "ugly" visualization is a bad one.  We should not implicitly be truncating circuits in the visualizations.  This leads to things like circuits whose actual widths do not match the width shown to the user, thus leading to confusion.
+Indeed, transpilation might be strongly related to hardware.  This is something that needs to be worked on.  Perhaps a reduced coupling_map knowing where it came from.
+I am not sure why one wants to include edges in a sub-graph that do not point to a qubit in the subgraph.
+The whole point is that when run on the device the reduced map plus mapping gives the same thing.
+I am not sure about PS2.  The example does what is expected.
+
+In the end, all of this reduction business is because the transpiler expands the qubit count of a circuit to the full number supported by the device.  Personally, I am not in favor of this, as it leads to work arounds like those discussed here.  Indeed, I believe Aer already works around this by reducing some problems down to the original circuit width.  Instead, it would be nice if the transpiler kept the circuit the same width (perhaps enlarging only if the swap mapper needed it), and added meta data to the returned circuits indicating things like layouts, targeted backend, etc.  The circuits could then be padded to full size upon execute (if executing on a real device).  I know @ajavadia is against this, but I think it is the route we will have to go as the devices become larger.
+Since the transpiler automatically scales the output circuit to the size of the device (the actual source of the issue), the solution is to reduce the coupling map to avoid this expansion. The main issue with the non-zero coupling map is that it is not supported anywhere.
+I agree the transpilation process should be backend-independent.
+The two options I see are:
+Do we agree that reduce is a work around and should be removed in the long run?
+If the transpiler does not expand circuits, then much of the use of reduce goes away. However, it still has some worth for returning subgraphs that the user would otherwise have to implement by hand. I still do not like your solution for the fact that it is more backend specific, and qasm code (which we still use to store and retrieve circuits) does not support this.
+I will also point out that if you build a width 50 bell circuit using qubits 48, 49, then the transpiler outputs a smaller, reduced circuit, that uses qubits 0 and 1 only when backend=None
+Partial coupling maps should not be needed now with the layout fixes that were done and the decisions on layout/coupling map made there. For visualization purposes idle_wires=False prints the circuit with its active qubits only. So I think this can be closed.
+I dont think the way for saying "use this subgraph of the coupling map" is intuitive.
+This output makes little sense to me:
+These two coupling maps are not subgraphs if their labels mean the same (physical qubits) in both graphs.
+
+Dropping the assumption that coupling maps always start with 0 would help to have a cleaner support for defective qubits
+One can also just map to a reduced sub-graph and back.
+This is currently working:
+So, closing.

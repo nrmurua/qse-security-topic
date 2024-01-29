@@ -1,0 +1,19 @@
+A call to list.append() is causing attribute errors in electron.py related to the fact that the function attribute is set to None
+I expect the dispatch to run successfully. The outputs, which should be stored in node stdout and the result, are
+No response
+Hey @scottwn  actually this is not a bug, but rather a feature ask. We only support limited set of things that a user can do inside a lattice. This is because, whats inside lattice is used to build a graph and we need to know whats being executed. So lattice is almost like a mini compiler of sorts. In your case, when building the lattice, there is no way for us to know that y return type is going to be list to which one can append. Same is true for operations like addition/subtraction etc.. but we have overrided these options at object level.
+But this might be a good feature to solve for !
+PS: this should work tho
+this is because here, a is not an electron and thus can be handled in post process function.
+Actually thinking about it, even despite that, we have overwrited getattr so in theory this should work. @kessler-frost  thoughts ?
+Yeah I was thinking that I might have needed to wrap append in it's own user defined electron to get it to work. But even so, I don't think the attribute error is expected. Maybe we just need better error handling to let the user know when they've done something illegal in a lattice?
+@santoshkumarradha So in this case, the problem is that append is being used as a callable and not as an attribute. So these things are valid:
+That said, there is an issue which was recently discovered and addressed in PR #754 where even #1 wasn't working in some cases.
+For @scottwn 's comment, yes we should convey it better to the user on when they are doing something illegal, but I'm not sure how 🤔 .
+Even the patch in #754 wouldn't help here. All I do there is replace Electron.__getattr__ with the user-defined electron
+That works unless attr is a callable; in that case, Covalent has no way to inspect the signature of the callable during build_graph and therefore cannot establish the relationships between the callable and its inputs.
+At the risk of tooting my own horn, the incremental execution approach suggested in #761 might help here. By making Electron.__getattr__ immediately execute the partially built graph and wait for the result, in this line
+build_graph would first resolve y into a list, and then invoke append(x) on that list (x would also be resolved into its actual value).
+For the time being, I agree with @scottwn that the defining a custom electron like
+would be a workaround. However, this would be inefficient (quadratic with the number of append calls) since since such an electron wouldn't be able to manipulate external data structures in-place like list.append() normally does, so we must return a new array every time append is called.
+A related problem is that we currently don't support Electrons that return a Callable.

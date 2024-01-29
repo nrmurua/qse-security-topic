@@ -1,0 +1,32 @@
+What's wrong with just using a loop?  Adding the combine statement is already extra work for you, and using the solver in a loop will be much clearer about what's going on.  The Qobj object container is not meant to a vector of objects itself - use a list for that, or a numpy array if you're only going to do simple mathematical operations that you want broadcasting for (numpy will broadcast *, /, +, - and ** correctly).
+The calculational complexity of the solver isn't helped by knowing you're going to do it a few times, but there are some setup costs that QuTiP already gives you the tools to alleviate.  mesolve constructs a Liouvillian out the Hamiltonian and collapse operators; if you want to reuse the result of this, you should use qutip.liouvillian and qutip.QobjEvo, and use the compile method of the latter.  You can pass the result of this directly as the H parameter of mesolve and it'll skip all the setup.
+There is some work going on about making a class-based interface to the solvers, which allows easier use of the tools to reduce setup time, but those likely won't be released for some time yet.  In the meantime, just use a loop here.  There will not be a notable slow down (unlike numpy maths operations) because the Python iteration over elements takes a negligible amount of time compared to single numerical intergration.
+As a side note, in this particular case you're doing unitary dynamics with state vectors, so this call to mesolve is actually translated into one to sesolve, which does not need to construct the Liouvillian.
+@jakelishman
+What do you think is more efficient than doing
+?
+I'm saying that to do each state independently, mesolve and sesolve have to independently integrate each state, so even if we added this functionality into those functions directly, it would be little more than that loop I just wrote if you have used the tools I described in the first comment.  If you want the entire system propagator, qutip.propagator can calculate that for you.
+Lots of people have successfully used QuTiP already as part of reinforcement learning protocols - I've worked with at least a couple, but if you have very specific domain knowledge of your system, you often will be able to write an integrator which is faster for your cases, rather than the full general-purposes ones in QuTiP.
+thanks for the comment, I didn't know about qutip.propagator
+Lots of people have successfully used QuTiP already as part of reinforcement learning protocols - I've worked with at least a couple
+cool, can i learn more about this from you?
+are you saying
+is most efficient?
+even more efficient than
+?
+It depends on how many states you have, and what precision you require.  Constructing the whole propagator will always have a lower precision than evolving each state individually, but if you are working with a single qubit system and need to evaluate the evolution of many many different qubits under the same Hamiltonian, then using propagator will be faster.
+Really, getting the fastest speeds depends a lot on your system Hamiltonian.  Typically the more you can do analytically, the better.  For example, if you plan to use a piecewise-constant Hamiltonian, then you will be most accurate if you consider the individual components of the evolution and multiply them together.
+thanks for the quick reply, i don't really understand why but i will take your statements for now
+Lots of people have successfully used QuTiP already as part of reinforcement learning protocols - I've worked with at least a couple
+For those you worked on, do they include QOC via RL ?
+thanks for the comment, I didn't know about qutip.propagator
+Lots of people have successfully used QuTiP already as part of reinforcement learning protocols - I've worked with at least a couple
+cool, can i learn more about this from you?
+Sorry, I don't have much experience in it myself - you'll be reading about the methods in papers/lecture note by people smarter than me.  We have some tutorial notebooks about optimal control using the QuTiP optimal control package here: http://qutip.org/tutorials.html#optimal-control, which you may be able to adapt to your use case.  I believe there are components in there that you can subclass so that the optimiser is RL-based rather than using standard BFGS or something else.
+haha you are being humble i think, i saw your https://github.com/ImperialCQD/floq
+anyway, thanks a lot! I will close this issue now
+actually i just realized something,
+by calculating the qutip.propagator we are actually solving qutip.sesolve for N basis states where N is the dimension of H right? that is why qutip.propagator can be slower than qutip.sesolve ?
+by calculating the qutip.propagator we are actually solving qutip.sesolve for N basis states
+Yes, propagator returns the unitary matrix of the evolution. For large system, this will be much slower than sesolve. Roughly speaking, sesolve evolves only the given initial state while propagator all the N basis.
+From a very inaccurate estimation, if you want to evolve more than N initial states with the same Hamiltonian, propagator will be a better choice. However, you might also need a bigger memory to save the unitary.

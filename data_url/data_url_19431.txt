@@ -1,0 +1,22 @@
+Following our discussion, one of the asymmetries in the code is the state representation. We should provide an abstraction layer for the state and math/algebra operations.
+Regarding the backend abstraction we could possibly follow what they do in google/TensorNetwork. I may be biased because I contributed in this in the past, however I believe their backend scheme is very clean. In our case we could have the following:
+and then use the backends in other modules as
+This approach may seem a bit redundant because it redefines many methods (it would seem simpler to just do import tensorflow as K), however it has several advantages:
+Regarding the state abstraction, we currently have the DistributedState object that is returned from distributed (multi-GPU) circuits. This was created to avoid memory issues that arise when merging the state pieces in the end of a distributed simulation. So we have the following asymmetry:
+which will probably become worse if we add a different backend.
+A solution could be to force all circuit executions to return a custom State object which holds the final tensor (whose type is backend dependent) and the measurement results if applicable (that is if the circuit contained measurement gates) and raise errors / return None otherwise.
+@scarrazza let me know what you think about these. If you agree, I can open some PRs (preferrably separate for the two issues) with a more concrete proposal.
+The idea looks good. Does this includes some mechanism to switch backend on the fly?
+The idea looks good. Does this includes some mechanism to switch backend on the fly?
+In principle we could have something similar to our current precision, device and "backend" (custom/einsum) setters, however I did a few quick tests and it seems slightly more complicated. A potential solution would be to do the following in config.py:
+Then for example in hamiltonians.py or any other file that uses the backend one would have to do:
+Note that K should be set during initialization, otherwise the switcher will be ignored. Eg if we do
+or even
+then it won't work properly.
+Another possibility is to just use BACKEND.get("module") instead of K for every call (eg. BACKEND.get("module").matmul) but this is not good for readability.
+Ok, but then we need some way to change backend after initialization.
+For example, we could have an __init__.py:
+Followed by specific folders per backend, say in this example backendA/interface.py:
+and backendB/interface.py:
+This should provide this functionarlity.
+@scarrazza, thanks for this comment and the idea. I am not sure if I properly understood this but I did a small implementation based on this in #303. Please have a look and let me know if this agrees with what you have in mind.

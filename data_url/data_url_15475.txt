@@ -1,0 +1,45 @@
+Circuit drawers currently have reverse_bits, as an option to modify the order in which wires are represented. @ajavadia suggests a generalized version of that feature: wire_order. This parameter might define the order of the wires draw(..., wire_order=[3,0,2,1]) and can eventually replace reverse_bits with draw(..., wire_order='reverse'.
+In addition to the circuit drawers reverse_bits there's a QuantumCircuit.reverse_bits which doesn't currently work for registerless bits. Issue #7415 and open PR #7423 were opened to address this and there are discussions there. First question is whether there is a use case for QuantumCircuit.reverse_bits independent of the drawers. Right now it's possible to do QuantumCircuit.reverse_bits and add reverse_bits in the drawers, which probably does not always give you the original order back.
+If we want to keep QuantumCircuit.reverse_bits it could make sense to simply call this right before calling get_layered_instructions in visualization/circuit_visualization.py. In that case all the current internal code for handling the reverse_bits option in the 3 drawers could be removed.
+Since wire_order is just a generalization of reverse_bits, wire_order could be added to QuantumCircuit and the same process could be done in the drawers. Alternatively if the use case for QuantumCircuit.reverse_bits independent of the drawers is weak, we could focus all this on wire_order at the drawer level.
+I previously had worked on a version of the circuit drawers that used QuantumCircuit.reverse_bits prior to get_layered_instructions and removed the reverse_bits code from the drawers as discussed above. I was waiting on #7423 to merge which it did today. This code produces this in the mpl drawer for this somewhat convoluted circuit,
+
+If you add qc = qc.reverse_bits() before the draw command, it returns the original circuit,
+
+So the question is, is this the expected behavior? If so, I can proceed with a PR for this. I think additional work will be required for the latex and text drawers, but should be doable.
+Following this, a generalization for wire_order should be fairly straightforward.
+I think QuantumCircuit.reverse_bits() and QuantumCircuit.draw(reverse_bits=True) are slightly different, no? Because the former actually changes the circuit (an H that was done on q_0 is now done on q_N), whereas the latter just draws differently (q0 at the top or qN at the top).
+BTW I'm fine adding an option to QuantumCircuit to permute wires. Perhaps permute_bits is a better name. So we can have QuantumCircuit.permute_bits([3,1,0,2]), or QuantumCircuit.draw(permute_bits=[3,1,0,2]) --- the first one changes the circuit data. The second one changes the drawing.
+The drawers don't necessarily need to be concerned with reordering things, though - you can always do qc.permute_bits([...]).draw().
+So is there any real reason to just reverse the bits in the drawing, as @ajavadia notes above in a way that's different from the way it's done in QuantumCircuit.reverse_bits()? It seems the whole original reason for doing it was because qiskit ordered bits differently from what was done some other places, and this is solved with the QuantumCircuit version.
+As @jakelishman notes, it's simple enough to do both qc.permute_bits([...]).draw() and qc.reverse_bits().draw(). We could do what I suggested above for reverse_bits in the drawer as a backwards compatibility.
+But what I'm saying is that QuantumCircuit.reverse_bits() is not just a change in visualization, it actually changes the circuit. So I think we need both the circuit option and the visualization option.
+and so we need to add a generalization of these in the form of QuantumCiruit.permute_bits([....]) and QuantumCircuit.draw(permute_bits=[...])
+I buy Ali's point above.  Copying over a comment I had from our internal discussion:
+I don’t know how the reversal is handled in the drawers right now, but it probably doesn't need to be complicated code.  It should just be the case of carrying around an “order” mapping with you, and you can completely unify the code - the “regular” drawer is just a special case of the “permute” drawer.
+My 2 cents:
+I think we should use different names for the QuantumCiruit.permute_bits([....]) and QuantumCircuit.draw(permute_bits=[...]) as they seem to be doing different things (and i don't think their reverse_bits predecessors should have been named the same thing in the first place tbh)
+we aren't removing reverse_bits() or reverse_bits= in this issue right? I think it's still useful to keep around, although we should probably emphasise the differing functionality in the documentation somehow
+Some questions.
+I agree. I suggest QuantumCircuit.draw(wire_order=[...]).
+We are not. We are defining a generalization of QuantumCircuit.draw(reverse_bits=[...]). Internally, reverse_bits might use this new parameter.
+I would say so. Many of the questions are under the umbrella "how smart this parameter should be?". I lean towards a dumb parameter and let the caller to have that smartness, as the parameter is an advance feature.
+I would combine them. Under my "dumb parameter" principle, it's trivially doable by the smart caller to do [..., qc.num_qubits+<number>].
+Also would require turning off cregbundle since clbits in a register might not now be contiguous.
+Yes. I agree, cregbundle==False
+"dumb parameter" principle again, the length should match qc.num_qubits+qc.num_clbits.
+I would leave permute_bits out of this issue for now. In principle, yes QuantumCircuit.permute_bits(...).draw() == draw(permute_bits=...)
+Not sure if I follow this one.
+All sounds good. For this first PR, we just address the drawers and leave QuantumCircuit.permute_bits for later.
+The reorder_bits was just a suggested name for the option. wire_order works fine.
+A couple of more questions,
+If a user uses both reverse_bits and wire_order, do we
+If the the wire_order list is not the right length or does not have a unique integer for each bit, do we
+If a user uses both reverse_bits and wire_order, do we
+I think raise is reasonable. It is probably a user mistake to set both.
+If the the wire_order list is not the right length or does not have a unique integer for each bit, do we
+raise with separate explanations
+Hi, is @enavarro51 or someone else working on this?
+Yeah, I'm currently working on it.
+Okay, cool. 👍🏻
+@prakharb10, since this issue is part of the unitary hack initiative, I think it is fine if more than one person works on it in parallel or in teams. So feel free to jump in :) Consider that this particular issue might be a bit advance as a first contribution. There is a good first issue tag that are also part of the unitaryhack initiative if you add the phrase [unitaryhack] in the PR title.

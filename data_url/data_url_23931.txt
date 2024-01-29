@@ -1,0 +1,28 @@
+Now that we let users muck with the YAML directly, those with a penchant for saving invalid intermediate versions (yours truly) may confuse the automatic reloader. @blakejohnson @caryan I wasn't privy to the original design decisions, but were there reasons to not simply check if we need to reparse the ChannelLibrary when a sequence is processed?
+A side effect of our current system means that QGL throws loading errors into whichever notebook cell was executed most recently, which eliminates any causal relationship between compiling sequences and generating errors.
+I agree it's worth revisiting given the radically different way of interfacing with the compiler...  A watched file never loads
+I'm 100% on board with dropping the FileWatcher and just updating the dict whenever the channelLib is accessed.
+Define what you mean by "when a sequence is processed". The problem is that channel parameters are used at call-time in the pulse primitives. I.e. when you call X(q1), the parameters of q1 are baked into the resulting Pulse object. So, checking if the channel library needs to be updated in compile_to_hardware() is too late. The use case was for QGL in a jupyter console or notebook, where you want sequence output to reflect updated pulse parameters from calibration, delay updates, etc.
+If you check if the library needs updating in every pulse primitive (which is effectively the same as @gribeill 's suggestion), that would have dramatic performance impact.
+Your only other real alternative is to accept that the channel library will never be updated mid-session, and either provide a method to manually reload it, or restart your python kernel in juypyter.
+Hmm — if there were a good way to defer evaluation of the pulse primitives until a sequence is compiled then we might be able to come out on top. Seems like this is awkward at best in Python. Something heinous like
+would work (so long as the QubitFactory eval is also delayed), but we could save our aesthetics by having the PulsePrimitives return lambdas themselves.
+That seems also likely to be a performance trap, since I don't think python lamdas are particularly efficient.
+I would suggest considering two other possibilities:
+Make file watching a config option, perhaps off by default, and rely on manually reloading the channel library with some new method that you place at the top of all the pre-canned routines (e.g. RabiAmp, Ramsey, SingleQubitRB, etc.)
+Make file watching more robust to invalid config files. For instance, you might try loading the file, and if you fail to parse the whole thing, then log a warning, but carry-on without modifying the in-memory channel library.
+As part of 2) you probably need to make the loader less efficient in terms of object re-use so that you only replace the channel library if you succeed at all the steps.
+I became fairly curious about this. Some awful decorators did the trick, largely. The following sequence is rather basic, but for what it's worth:
+With liberal lambdas (feature/deferred-pulse-eval):
+without lambdas (load_from_yaml):
+RabiWidth is not an appropriate benchmark. You need to try something that produces a LOT of pulses, like the GST benchmarking from issue #4.
+@grahamrow we can try this in the morning with something like RGST where the namedtuple/caching doesn't help.
+Did you find time to try this with RGST?
+Even in a very modest test case the execution times are orders of magnitude different. e.g.
+Lambda QGL
+2.61 s ± 59.2 ms per loop (mean ± std. dev. of 7 runs, 1 loop each)
+Standard QGL
+249 ms ± 1.38 ms per loop (mean ± std. dev. of 7 runs, 1 loop each)
+Putting a nail in this coffin.
+i.e. lambda QGL is 6x slower...
+Closing this. Moving towards a new scheme that reduces the "automagic" nature of loading the channel library on import.

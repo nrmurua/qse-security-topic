@@ -1,0 +1,45 @@
+Master reboots (through artiq_flash start):
+
+Satellite reboots:
+
+c.f. #958
+Does the si5324 output maintain phase alignment after restarting (measured via the one of the Kasli clock-out SMPs)?
+If so, it is a manifestation of #958 (incorrect resets of IOSERDES). Otherwise it is properly the phase alignment module clocking.
+The master outputs? Aligned to what?
+The master si5324 output and the slave si5324 output should have a fixed phase relationship between resets. Equivalently non-serdes TTL outputs should have a fixed timing relationship over resets.
+Is the problem present at 150MHz with the original code in master?
+Was deterministic sync in the original code with 150 MHz not tested?
+Chris tested it (that was during siphaser developments).
+I tested deterministic sync on SERDES and non-SERDES outputs at 150 MHz on build shortly after #958 was fixed, and both had a deterministic time alignment (over ~100 resets).
+CI for this shouldn't be very complicated to do (using RTIO inputs and a TTL connection between master and satellite), if someone wants to fund it.
+Same with the current, original 150 MHz Master/Satellite variants. There was really no reason to suspect otherwise, was there? I'm going to pause here. It's probably best if you test code yourself. @sbourdeauducq
+@cjbe I don't follow your analysis. It can't really be SiPhaser (which what I assume is what you mean by "phase alignment module clocking") since that's only in Satellite and since that synchronizes fine each time. Looking at the SI5324 alignment between the master and the satellite is not not really the best bet. I did it anyway since you and @sbourdeauducq seem to think that's the problem: but the master-satellite SI5324 phase is deterministic as expected.
+@cjbe Do you have notes on what was tested back then? You said you may not have tested all possible combinations. Could you re-test it? You mentioned you have been using it this way for quite some time.
+The fact that this is at t_rtio_coarse/4 and only if the master is reset to me suggests the SERDES on the master. I'll give ttl_simple a run. @sbourdeauducq any chance you could document the design of the clocking code and the (D)RTIO logic?
+It's likely the SERDES then; but if not, it could be GTP shenanigans around the built-in clocking and elastic buffer (which is supposed to be disabled).
+ttl_simple on master against ttl_serdes_7series on satellite are deterministic.
+Hmm. Maybe it would be worked around by core.reset(). If it is, then I wonder why we can't get the master into a deterministic state without the manual reset.
+@jordens my test involved restarting the master and slave simultaneously (via JTAG), running a startup kernel (which waits for the DRTIO link, then runs core.reset()), and running an experiment that generates simultaneous pulses on master and satellite.
+The way we are using the 125 MHz DRTIO we are not sensitive to the SERDES output alignment, so I have no idea if the alignment works.
+If it is, then I wonder why we can't get the master into a deterministic state without the manual reset.
+Because the Xilinx SERDES doesn't get into a deterministic state without an explicit reset. The only solution is to inject a reset in the firmware or somewhere else once the clocks have stabilized.
+The satellite resets everything when it loses the link, which is why you're not seeing the issue there.
+Hmm, the reset should already be there:
+https://github.com/m-labs/artiq/blob/master/artiq/firmware/runtime/rtio_mgt.rs#L300
+I don't know what the issue is then. Maybe the SERDES needs it asserted for more than one cycle?
+core.reset() is not supposed to help as it does not reset the rio_phy domain.
+Yes. It doesn't help.
+Running the same thing on the master build (125MHz f_rtio) I do see variation in the latency across power cycles.
+@sbourdeauducq maybe a silly thought, but AFAICT, the startup sequence for the master is:
+
+Do you think the issue could be related to not giving the PLL enough time to settle before resetting the SERDES PLL?
+Quite possibly. Try adding some delay (spin_us) and see what happens, though the proper fix will be to wait for that pll to lock.
+already building that :)
+I need to run now, but provisionally it looks like a 1s delay there fixes this issue. I'll check more carefully later on. If it works, i'll submit a PR for a proper fix.
+b92350b please test.
+@jordens ping
+Waiting for another kasli.
+If you have two, you can test it yourself.
+Still the same behavior as of 5de319d7.
+@jordens I only fixed it on the switching (and switching125) branch for now, will merge switching into master after @hartytp tests it. The commit you mention is on master.
+cherry-picked for master, tested, works now.

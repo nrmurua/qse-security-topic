@@ -1,0 +1,106 @@
+Hi, I've been starting to learn qutip to write my dissertation on Quantum computing. I was running the script on Vacuum Rabi oscillations in the Jaynes-cummings model from the example section on qutip.com. Originally it was working correctly. However, I have come back to it after about a month and I have run into an issue. When I run the code copied straight from the website it returns this error
+"ODE integration error: Try to increase the allowed number of substeps by increasing the nsteps parameter in the Options class."
+so I increase the nsteps to 100000:
+output = mesolve(H, psi0, tlist, c_op_list, [a.dag() * a, sm.dag() * sm], options =  Options(nsteps= 10000))
+however I get an output that is completely different to what I should be getting.
+What I should be getting:
+
+What my code is outputting:
+
+Do you have any idea what could be causing this error?
+Any help would be hugely appreciated
+my code:
+import matplotlib.pyplot as plt
+import numpy as np
+from qutip import *
+wc = 1.0 * 2 * np.pi # cavity frequency
+wa = 1.0 * 2 * np.pi # atom frequency
+g = 0.05 * 2 * np.pi # coupling strength
+kappa = 0.005 # cavity dissipation rate
+gamma = 0.05 # atom dissipation rate
+N = 15 # number of cavity fock states
+n_th_a = 0.0 # temperature in frequency units
+use_rwa = True
+tlist = np.linspace(0, 25, 100)
+psi0 = tensor(basis(N, 0), basis(2, 1)) # start with an excited atom
+a = tensor(destroy(N), qeye(2))
+sm = tensor(qeye(N), destroy(2))
+if use_rwa:
+H = wc * a.dag() * a + wa * sm.dag() * sm + g * (a.dag() * sm + a * sm.dag())
+else:
+H = wc * a.dag() * a + wa * sm.dag() * sm + g * (a.dag() + a) * (sm + sm.dag())
+c_op_list = []
+rate = kappa * (1 + n_th_a)
+if rate > 0.0:
+c_op_list.append(np.sqrt(rate) * a)
+rate = kappa * n_th_a
+if rate > 0.0:
+c_op_list.append(np.sqrt(rate) * a.dag())
+rate = gamma
+if rate > 0.0:
+c_op_list.append(np.sqrt(rate) * sm)
+output = mesolve(H, psi0, tlist, c_op_list, [a.dag() * a, sm.dag() * sm], options = Options(nsteps= 10000))
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.plot(tlist, output.expect[0], label="Cavity")
+ax.plot(tlist, output.expect[1], label="Atom excited state")
+ax.legend()
+ax.set_xlabel("Time")
+ax.set_ylabel("Occupation probability")
+ax.set_title("Vacuum Rabi oscillations")
+plt.show()
+@ArchieB151 The output is very strange. No new version of QuTiP was released in the last month. The ODE integration error you received would only appear if the problem being solved changed somehow. The initial state in your plot doesn't match the psi0 defined in the code (i.e. both expectation values are zero).
+Could you try do everything from scratch again? Start with a completely fresh download of the notebook, restart the Jupyter kernel entirely run everything from the top?
+@hodgestar Thanks for replying so quickly. I had to wipe my laptop and reinstall everything not too long ago so I believe it might be due to that, however I followed the exact same procedure.
+I have just tied to run everything from the top again and nothing has changed
+@ArchieB151 I've now run the notebook myself using QuTiP 4.7.0 and it produces the expected plots. However, it has numerous small things that need to be fixed because it was originally written for an older version of QuTiP.
+We are almost ready to release a completely updated set of notebooks that updates all of these old notebooks. These notebooks are tested automatically regularly. You can find the updated version of the Jaynes-Cummings lecture at https://qutip.org/qutip-tutorials/tutorials-v4/lectures/Lecture-1-Jaynes-Cumming-model.ipynb and the full set of notebooks at https://qutip.org/qutip-tutorials/ (the page is very plain HTML, but it will be prettified soon).
+Could you try the updated notebook with 4.7.0 and see if it works for you?
+@hodgestar  Hi, I have made sure Qutip is running at version 4.7.0 however still after trying your updated version of the jaynes cumming model I am still experiencing the same issues. I have tried starting from scratch but this still doesn't change the output. I really appreciate your help as I'm writing my dissertation and I have to give a presentation on it in 5 weeks.
+Kind regards
+Archie
+I wonder if there is something wrong with your new QuTiP install? Since I can't reproduce the issue locally it might be difficult to suggest solutions, but I can give some debugging advice:
+If you manage to find a smaller reproducer of the error, report it here with as much information about your setup as possible (you can start with the output of qutip.about()).
+@hodgestar Hi, I have managed to reproduce the error with a much smaller code which i have attached at the bottom.
+Quitp.about() :
+QuTiP Version:      4.7.0
+Numpy Version:      1.21.5
+Scipy Version:      1.7.3
+Cython Version:     0.29.28
+Matplotlib Version: 3.5.1
+Python Version:     3.9.12
+Number of CPUs:     8
+BLAS Info:          OPENBLAS
+OPENMP Installed:   False
+INTEL MKL Ext:      False
+Platform Info:      Darwin (arm64)
+Installation path:  /opt/anaconda3/lib/python3.9/site-packages/qutip
+
+￼
+
+￼
+import numpy as np
+from qutip import *
+wc = 1.0 * 2 * np.pi
+wa = 1.0 * 2 * np.pi
+g = 0.05 * 2 * np.pi
+N=15
+rate = 0.005
+tlist = np.linspace(0, 25, 101)
+psi0 = tensor(basis(N, 0), basis(2, 1))
+a = tensor(destroy(N), qeye(2))
+sm = tensor(qeye(N), destroy(2))
+H = wc * a.dag() * a + wa * sm.dag() * sm +  g * (a.dag() * sm + a * sm.dag())
+output = mesolve(H, psi0, tlist)
+Ah, are you using an Apple M1?
+SciPy support for Apple M1 is still rather unreliable (this is more a function of the lack of availability of Apple M1 VMs for open source projects to run tests on than any fault of SciPy's).
+Perhaps you are encountering one of these two recent bugs:
+The bugs are closed but I don't know if new versions have been released. Various work arounds have been suggested in those issue reports. Hopefully one of them will work for your case.
+Yes, I am currently using the M1 chip. However, I previously had no issues with scipy or qutip before, only after I wiped my Mac and reinstall everything did these problems occur.
+Last time I installed qutip I went into the hardware_info.py script and changed two lines of code to get the module to work on my M1. I tried to do this again in the exact same way but once I navigated to the qutip folder I found there was no such file. Could this be an issue?
+QuTiP 4.7.0 remove the hardware_info file. I suspect that your new install is just different to your old one. E.g. you seem to now be running SciPy 1.7.3, but maybe a more recent SciPy would work better (e.g. 1.8.2 or 1.9.0).
+In either case, this is almost certainly an issue with SciPy on M1 and not specific to QuTiP. Of course we would still like QuTiP to work for you -- it's just that the solution may lie in updating or installing SciPy differently, not QuTiP.
+@hodgestar Hi, thank you for all the help. I managed to fix it, had to make sure Scipy and Qutip were running though Rosetta 2 correctly.
+I'm writing my dis on quantum computing with hybrid optical tweezer arrays and Rydberg Qubits. Are they're any resources you could recommend for me to look though?
+@ArchieB151 It's great the you got it working.
+For neutral atoms you could look at Pulser and it's associated paper. Pulser is a system for simulating and controlling neutral atom devices that was written using QuTiP. It might cover similar ground to you. You could also look at the notes for the recent tutorial I gave at SciPy 2022 -- https://hodgestar.github.io/qutip-scipy-2022/intro.html.
+I'm closing this issue now since it's been resolved but please feel free to ask more questions on the mailing list and to file any bugs you find on M1 here in the issue tracker.

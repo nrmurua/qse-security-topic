@@ -1,0 +1,14 @@
+Currently on_each in SingleQubitGate does this and then calls on in Gate once it is content that is has been given valid arguments. This verification should be moved to on or validate_args in Gate. This is particularly relevant since the signature for on was recently changed from expecting a list of qubits to an unpacked list of qubits. I would push for validate_args since it covers the most cases of user error. If we are going to perform this explicit type-checking anywhere, it makes the most sense in validate_args.
+Consider the following example:
+cirq.X.on(*cirq.LineQubit.range(3))
+cirq.X.on_each(*cirq.LineQubit.range(3))
+The second line is a valid way to get an op_tree of 3 operations with different qubits all acted on by an X gate. The first will raise an error because cirq.X is a SingleQubitGate and will complain about being applied to 3 qubits.
+Now consider this code:
+cirq.X.on(cirq.LineQubit.range(3))
+cirq.X.on_each(cirq.LineQubit.range(3))
+The second line raises an error because the list of qubits we passed in isn't a qubit. The first line doesn't do this because it doesn't check that it received qubits and instead only checks that the number of arguments it received is consistent with the number of qubits the gate acts on. Instead the user gets a nonsensical GateOperation object that will give them debugging issues down the line. In fact, cirq.GateOperation(cirq.X, "Q") will also not complain when it should.
+So basically this amounts to modifying GateOperation to verify that the qubits it was given are in fact instances of Qid. Alternatively, this could be put in Gate.validate_args.
+Pretty much. I think Gate.validate_args is the right place since almost everything that doesn't already perform explicit type-checking on qubit arguments already defer to it. Overridden validate_args methods will need to have super calls added to them as well. Most of the work will probably be in fixing tests that pass non-qubits into methods that defer to validate_args.
+Yeah, we should be more consistent about calling the parent method when overriding it.
+Can I give this a shot?
+Go for it!

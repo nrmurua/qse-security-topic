@@ -1,0 +1,44 @@
+Application
+I find it surprising and frustrating that zero entries are not automatically removed from models.
+Proposed Solution
+Check if a calculation results in a zero, and then remove - perhaps the datastructure could do this automatically.
+Additional Context
+Here's a minimal example. I expected the below to result in a BQM with no couplings (a scalar zero):
+Instead, we get:
+I realize that checking for zeros will incur an overhead. However, that must be weighed against the (potentially much larger) saved overhead when doing any kind of downstream calculation on the polymial, which will require iterating over all terms even the pesky zero ones!
+I agree that in the context of symbolic manipulation, this might be a bit unexpected. The reason that we keep them is because there are several ways to conceptualize the models. One is as a symbolic polynomial, in which case your suggestion of removing interactions/variables makes sense. Another is as a weighted graph, in which case a weight of 0 is perfectly valid. A third is a sparse matrix, where again it's not clear what the expected behaviour should be.
+I generally think it's better to err on the side of keeping rather than removing information. A user might want to retain variable order for instance, and if we add and remove the variable labels that order could change.
+That said, I would be very open to adding a .remove_zero_entries() method (or something with a better name) that does the pruning you suggest. Both for performance and aesthetic reasons. That method could/should also accept a threshold argument to allow the automatic removal of almost zero values - to help account for rounding errors etc.
+Another is as a weighted graph, in which case a weight of 0 is perfectly valid. A third is a sparse matrix, where again it's not clear what the expected behaviour should be.
+From my point of view as a user, it seems consistent, expected, and desirable that edges with weight zero would be removed.
+I generally think it's better to err on the side of keeping rather than removing information. A user might want to retain variable order for instance, and if we add and remove the variable labels that order could change
+To clarify, I think the order should not change, just an intermediate label would be removed (for example) - no relabeling of the nodes should happen. Perhaps they would no longer be sequential, but that's a price worth paying.
+That said, I would be very open to adding a .remove_zero_entries() method (or something with a better name) that does the pruning you suggest. Both for performance and aesthetic reasons. That method could/should also accept a threshold argument to allow the automatic removal of almost zero values - to help account for rounding errors etc.
+Sure, that would give the user more control, and as you wrote, it could remove almost zero entries too. However, I'd argue it is less aesthetic, actually...
+As an aside, please take a look at qubovert for an example where this feature exists (as well as #1215).
+To clarify, I think the order should not change, just an intermediate label would be removed (for example) - no relabeling of the nodes should happen. Perhaps they would no longer be sequential, but that's a price worth paying.
+I think we disagree on the "that's a price worth paying".
+Another key reason we support this format is for consistency with QuadraticModel, where variables have additional information like the upper and lower bounds for integer/real variables. In that case removing the variable from the model would also delete that information.
+Consistency between BinaryQuadraticModel and QuadraticModel is very important, because they are both used in constraints in ConstrainedQuadraticModel.
+Sure, that would give the user more control, and as you wrote, it could remove almost zero entries too. However, I'd argue it is less aesthetic, actually...
+IMO control trumps aesthetics. I don't want to prevent a user from doing
+if they wish. Adding the method allows users who want those biases removed to do so, while still enabling the above (as well as maintaining backwards compatibility).
+As an aside, please take a look at qubovert for an example where this feature exists (as well as #1215).
+I am familiar with the library. And users who prefer its design are of course encouraged to use it.
+Another option would be some sort of global or class-level toggle for this behavior. That would allow us to gracefully deprecate the existing behavior, if we did decide to do so. Of course, that comes with all the caveats and warnings associated with any global flags.
+Another key reason we support this format is for consistency with QuadraticModel, where variables have additional information like the upper and lower bounds for integer/real variables. In that case removing the variable from the model would also delete that information.
+To clarify, I was thinking of removing edges, not variables. But it's a valid point - if you remove all the edges that contain a variable, shouldn't you remove the variable? I would probably remove them (which I presume is what happens when you fix variables too, right?), but one possibility is to leave them in, which I think would answer the above comment (on not deleting variable-specific information).
+IMO control trumps aesthetics. I don't want to prevent a user from doing bqm = a*b.
+Just to clarify, even with the (my) proposed change, users would still be able to do that. It would give the same result as bqm = a, which as far as I'm concerned is the expected behaviour (I realize we disagree on this!). With the "no variable deletion variation" (see above), it would not give the same result, since it would have some additional "hanging" variables that don't matter.
+I am familiar with the library. And users who prefer its design are of course encouraged to use it.
+Just so you know, that's my current position. I tried to use dimod and unfortunately I can't implement my project on it effectively due to the lack of #1215. This (#1217) current ticket is (probably?) not a deal breaker, but from my position as a user, fixing this would make the library more intuitive. I realize that's a relative term, and one possibility is to collect more information from users to find out what is more intuitive to them as a group? Just an idea.
+Another option would be some sort of global or class-level toggle for this behavior. That would allow us to gracefully deprecate the existing behavior, if we did decide to do so. Of course, that comes with all the caveats and warnings associated with any global flags.
+and will complicate the code, and testing...
+That would
+To clarify, I was thinking of removing edges, not variables. But it's a valid point - if you remove all the edges that contain a variable, shouldn't you remove the variable? I would probably remove them (which I presume is what happens when you fix variables too, right?), but one possibility is to leave them in, which I think would answer the above comment (on not deleting variable-specific information).'
+I do find removing edges far more palatable, because they currently don't encode information other than the bias. Still, I can imagine use cases where I might want 0-bias edges.
+I realize that's a relative term, and one possibility is to collect more information from users to find out what is more intuitive to them as a group? Just an idea.
+I agree with this definitely. My hypothesis is that the more explicit/redundant form we currently have is less surprising, at the cost of aesthetics and solver performance (for solvers that don't remove 0-bias edges). But this is a hypothesis worth questioning. So I would like to implement the method to remove them, which would probably be a prerequisite anyway. And then leave this issue open to see if other users concur.
+We'll also do a bit of proactive information gathering on our side.
+Just so you know, that's my current position. I tried to use dimod and unfortunately I can't implement my project on it effectively due to the lack of #1215.
+For this one, I'll comment in #1215.

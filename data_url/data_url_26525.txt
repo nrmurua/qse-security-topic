@@ -1,0 +1,36 @@
+I have installed cp2k v9.1 recently using the toolchain method, with openmpi v4.1 and without sirius. Previously, I have also tried to use --with-openmpi=install, but my local openmpi is of v2.1, which leads to some illegal instruction error when compiling.
+Here is the exact command I used to build the toolchain:
+/bin/bash install_cp2k_toolchain.sh --with-libxsmm=install --with-fftw=install  --with-openmpi=install --with-sirius=no --with-elpa=no
+After source ./install/setup, I compile cp2k using the following command:
+make -j 32 ARCH=local VERSION="ssmp psmp"
+The compiled ssmp version successfully passed all the tests, but the psmp version fails due to lots of timeouts and wrong results. The machine I used has Intel Xeon Gold 6226 Processor, and I utilized 32 cores and 128 GB output. Following #2048, I used the following command:
+make ARCH=local VERSION="psmp" test TESTOPTS="--maxtasks 8". Changing the maxtasks option to a larger number, say 32, doesn't makes the test any faster.
+Here is a summary of the output:
+It seems like the mpi ranks, workers and threads are not following my command. How can I control the number of processes and threads to use for cp2k? What is potentially going wrong here? Shall I recompile the code with sirius and elpa? I have trouble in compiling elpa and I don't know how to solve it as well.
+Sorry for the late reply. First off, this issue is very well written!
+The --maxtasks does not change the number of MPI ranks or OpenMP threads - it only controls how many test directories are being run in parallel, ie. the number of workers: 
+So, make ARCH=local VERSION="psmp" test TESTOPTS="--maxtasks 8" should give you the following:
+Unfortunately, it's very hard to guess why you are seeing wrong results and timeouts without more information. Maybe you could add --maxerrors 9999 to get a complete picture of which tests are failing and which one are passing. Also, it won't hurt to run it a few times to ensure that the failures are reproducible.
+Thank you for your reply! I passed the make test by changing some configuration I was using, but I am not sure if I really solved all the problems I have and my CP2K should work as normal, so I will post my "solution" here and check whether I found the real bottleneck.
+I was running these experiment on a slurm managed cluster. Originally, I was using 2 nodes with the following setup:
+And these options gives me the incorrect output above. Following the advice from a lab consultant, I changed my setting to
+which utilizes 4 nodes, each with 16 processes. This gives me the correct output:
+I am wondering why the number of tests has increased significantly, and why adding just two nodes leads to such a significant speedup. Is that because I initialized less processes on each node so that each thread can occupy one core at a time? Shall I always ensure N*M equals to the number of cores I have on a node, where N is the number of openMP thread set by  export OMP_NUM_THREADS=N and M is the number of processes set by #SBATCH --ntasks-per-node=M?
+@hyhuang00
+I am wondering why the number of tests has increased significantly
+This is because there are this many tests, but in your previous case, the test will abort when more than 50 failed runs are detected. That is why --maxerrors 9999 was recommended to you.
+and why adding just two nodes leads to such a significant speedup
+This is indeed confusing. From https://www.cp2k.org/dev:regtesting I think the correct command should be make ARCH=local VERSION="psmp" TESTOPTS+="--mpiranks 32 --ompthreads 2" test, for example, if you are using 64 cores (32x2 or 16x4 in your case) and have export OMP_NUM_THREADS=2 in your job script. The product should be the number of cores, and how you divide them is subject to further tests to optimize the speed (they don't necessarily tie to how you partition the cores. They can even be "-mpiranks 8 -ompthreads 8").
+The above controls how the psmp version runs each task, and the -j parameter for make (in principle) will run different tasks in parallel. For example, make -j4 ARCH=local VERSION="psmp" TESTOPTS+="--mpiranks 4 --ompthreads 4" test is also for 64 total cores, but 4 different tasks running in parallel, and each task uses 4 mpi processors, and each mpi processor will spawn 4 openmp threads. However, when I use -j, the log tells me that make[3]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.. Not entirely sure if this really works. I suppose this warning is only for inner make, as suggested by make[3], thus the main make task is in parallel.
+I actually have difficulties in passing the tests. Is there any trick to pass the tests? Compiler choice? Intel or gfortran? Any special compiler flags? Like -fp-model precise?
+EDIT: I tried gfortran 11.1, the test passed. Is there a way to make intel compiler 19.1.3 work?
+EDIT2: intel compiler does work, as long as I do not link to the libraries I built. I need to rework the library compilation then.
+Oh, I should have seen what oschuett posted about --maxtasks earlier. What I wrote about make -j is completely wrong. make -j simply does not work, and the number of workers is determined by maxtasks. The thing I missed is that maxtasks by default is calculated by CPU number, not the total number of cores the slurm/pbs job requested. So the refined command for 64 total cores might look like:
+or
+such that it automatically has 64/2/2=16 workers.
+make ARCH=local VERSION="psmp" TESTOPTS+="--mpiranks 2 --ompthreads 2 --maxtasks 64" test
+using 2 MPI ranks per test case looks like the proper choice.
+It happened to me that test QS/regtest-negf-fft/li_chain_kp got timed out (more than 400 seconds) if I only use 2 mpi ranks x 2 openmp threads. Not sure what happened. Even ssmp version only took 50+ seconds. Passed that test with more mpi ranks. Maybe just some strange things and re-running with 2 mpi ranks would have worked. Now I kind of understand why mpi=2 omp=2 max=num_cpu is default. In principle, as long as the job is submitted to a full node, no TESTOPTS is needed and everything just works.
+Is it normal to see psmp version fail some tests? Even if I got gfortran/intel ssmp pass the tests with zero fail/wrong, I still get some fail/wrong with gfortran+openmpi and intel+openmpi. No optional libraries except MKL (and FFTW inside MKL) are linked.
+Maybe related to #2103?
+This seems to have been resolved.

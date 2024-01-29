@@ -1,0 +1,45 @@
+When running "pip install qsimcirq" on my mac I get the following two error messages:
+The rest of the error was:
+I would be grateful for any input as to how I could circumvent this issue. I am not sure how to interpret all of this error message, but the one part indicates
+Unsupported compiler -- pybind11 requires C++11 support!
+So, I attempted to use home brew to update my gcc but that also did not work.
+Hi @JacobBeckey,
+Before digging too deeply into this, I'll note that we recommend our Docker build instructions for running on MacOS. Since Docker builds run in a container, this would avoid any OS-specific issues you might be experiencing.
+If Docker isn't an option:
+The error messages point to an issue with CMake. Depending on how your version of CMake is configured, it may or may not use C++11 by default; based on the Performing Test HAS_CPP11_FLAG - Failed line above, I'm guessing it's not set in your case. There are a couple of options that may resolve this:
+Thank you for your response. I uninstalled cmake and updated and that did not work. I then downloaded the repo, changed the CMakeLists.txt file to set C++11 as the default. I saved the file, restarted my terminal, changed into the directory containing qsimcirq and then ran pip install qsimcirq and sadly got the same error as before. Any ideas?
+{...} changed into the directory containing qsimcirq and then ran pip install qsimcirq and sadly got the same error as before. Any ideas?
+Try this again but with pip install . (The . here tells pip to install from the current directory instead of the public release of qsimcirq.)
+If that doesn't work...since you're installing qsimcirq, I assume you are also using Cirq? Depending on your use case, you may be able to get by using the built-in Cirq simulators. They're not as fast as qsim, but for up to ~12 qubits the difference in runtime is usually less than a second.
+Sadly that still did not work. I appreciate your help though.
+Does cirq.DensityMatrixSimulator() work roughly the same as cirq.mixedsimulator then? The former ran fine on my machine and the latter was the root of this whole issue (it tells me to pip install qismcirq).
+Where is cirq.mixedsimulator defined/documented? I wasn't able to find it in my local clone of Cirq. Assuming you're trying to do mixed-state simulation though, cirq.DensityMatrixSimulator() should work; note however that it operates on density matrices and therefore has a much lower maximum-qubit count than the basic cirq.Simulator().
+Hey, this is the mixed simulator I was attempting to use: https://pennylane-cirq.readthedocs.io/en/latest/devices/mixed_simulator.html
+But, okay, I really only need to work with 8 or so qubits max for what I am attempting to accomplish.
+Ah, that checks out. Yes, cirq.DensityMatrixSimulator() will give the behavior you need and should have similar performance to cirq.mixedsimulator; both use the density matrix representation for quantum states.
+I'll keep this issue open to highlight the need for non-Docker options on MacOS.
+FWIW I tried this quickly and went down the rabbithole on my mac. Not sure it will be easy but could be worthwhile.
+I don't have a solution yet, some partial findings:
+I started with the same error as @JacobBeckey.
+After adding set(CMAKE_CXX_STANDARD 11) to CMakeLists.txt:
+ clang: error: unsupported option '-fopenmp'
+After this I realized calling make results in the same error, and I know a bit more about make than CMake so I continued on that path.
+I installed brew install llvm libomp and then in ./Makefile:
+CXX=/usr/local/opt/llvm/bin/clang++
+CXXFLAGS=-O3 -march=native -I/usr/local/opt/llvm/include -I/usr/local/opt/libomp/include -fopenmp -lomp -L/usr/local/opt/llvm/lib  -L/usr/local/opt/libomp/lib
+This makes make qsim work yay!
+However make pybind was still failing:
+After some digging it turns out -undefined dynamic_lookup helps in pybind_interface/Makefile:
+So now make works!
+But I have no clue how to make that work with CMake just yet :)
+I've simplified @balopat 's instructions to avoid modifying Makefiles :)
+Note, the three environment variables being set; You can put this in your .bashrc if you want to live on the edge and then it's just python setup.py develop (or install as the case may be).
+Note for those who may try to follow along: if you try to build once and then monkey with the environment variables, any changes likely won't get picked up and it will continue to fail in the same way. CMake caches everything in the build/ directory. While testing, I found it helpful to blow away this directory every time I tried something new.
+We'd have to be very careful packaging this as a wheel, though, as it links to our homebrew libomp
+Super cool! Thanks for adding to the solutions! I confirm that this compiles.
+The above recommendations (both modifying the Makefile as well as CMakeLists.txt) have failed in my case (Apple M1 Max)
+I'm getting errors of the following sort:
+@VolodyaCO Please see this comment - in short, the M1 architecture does not support the vector instructions qsim uses for fast simulation. Some alternatives are suggested in the linked comment.
+Thank you for linking the comment!
+#643 and #644 were just merged which enables Apple Silicon compatibility 🎉
+v0.19.0 was also just released.

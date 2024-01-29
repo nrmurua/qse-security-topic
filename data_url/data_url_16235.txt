@@ -1,0 +1,14 @@
+Transpilation of ExcitationPreserving to basis gates u1, u2, u3, cx is extremely slow, so much that it just can't be used.
+Here is code to demonstrate it:
+Output on my machine:
+Looking quickly, BasisTranslator is the slowest pass, with most of its time replacing the translated instructions. On my machine, the num_qubits=16 example with logging.basicConfig(level='INFO'):
+This is likely the same issue as described in #5174 (comment) , but seems exceptional in this case.
+Note that this probably affects any user who wishes to run VQE on a device, with ExcitationPreserving variational form.
+I looked into this issue a little further, and the runtime cost here appears to come from building the symbolic expression to track the global phase during transpilation.
+For example, ExcitationPreserving(num_qubits=12, reps=6)and (num_qubits=24, reps=12) have 480 and 3624 parameters, and so after transpilation, end up with a symbolic expression like global phase: -0.5*θ[0] - 2.0*θ[100] - 2.0*θ[101] - 2.0*θ[102] - 2.0*θ[103] - 2.0*θ[104] - ... which currently takes a surprising amount of our time to build.
+
+This looks to be a problem in how we're using sympy (possibly unrelated to #5174 ), in that building and summing large parameterized expressions in sympy is relatively quick (e.g. b = sum(sp.symbols(['x' + str(i) for i in range(1000)])) takes 6.4s on my machine) compared to the extremely slow transpile times seen here.
+As a short term workaround, binding parameters prior to transpilation reduces the time considerably (down from almost 4000s to 21s for (num_qubits=24, reps=12) on my machine) but some further investigation is needed to resolve the core issue.
+Does it make sense to allow ignoring the global phase in transpilation? @yaelbh I assume you want to execute the transpiled circuit and the global phase doesn't matter?
+The global phase doesn't matter
+Global phases don't matter only if you compute probabilities of the state. But if you use the circuit and do further processing, like controlling the entire circuit, it becomes a relative phase and does matter. Therefore I don't think we can just generally ignore it upon transpilation.

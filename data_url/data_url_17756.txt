@@ -1,0 +1,49 @@
+Python simulator alternative to the fastest C++ one is orders of magnitude slower.
+We have a fallback mechanism, where if for some reason the user doesn't have the C++ simulator installed in the system, we use the Python one without warning or noticing, while this is convenience for small experiments, many users may experience very poor performance executions.
+I'd just remove the callback mechanism and throw an exception if the backend name associated to the C++ simulator doesn't exist.
+This is a good candidate for first contributors!
+Some clues on where to start:
+BTW, we are going to remove this fallback on Aer.
+Assigning it to aer so you and get it :-). But i agree i never know when it works.
+Hi @atilag,
+I am interested on this issue and I would like to give it a try. Would it be OK?
+Regards.
+@indisoluble please go for it.
+Hi all,
+One question, just to be sure. We do not want AerProvider.grouped_backend_names() to return qasm_simulator_py nor statevector_simulator_py but we still want AerProvider.deprecated_backend_names() to return these values when necessary. As a consequence, qasm_simulator_py.py must not be removed, right?
+I just started to study the code, hope this question is not too silly :)
+Regards.
+Hi @atilag,
+I have another question. In AerProvider.grouped_backend_names(), we can read:
+Let say we replace this code as follows (removing the Python based simulators):
+As far as I can see, if qasm_simulator is not available, clifford_simulator will not be available either given than both are based in the C++ simulator. And if the C++ simulator is installed, qasm_simulator will always be selected first, i.e. clifford_simulator will never be used. So, is there any point on keeping clifford_simulator in this list?
+Regards.
+Hi again @atilag,
+Let me continue where I left it yesterday. If what I said was right, AerProvider.grouped_backend_names() could be rewritten like this:
+But, as we can see, given one name, AerProvider.grouped_backend_names() is going to return exactly the same name, which make it (at least at this moment) not very useful; what is more, I think it could be remove altogether.
+If you agree, after removing this method, I would simply have to remove parameter grouped from providerutils.resolve_backend_name() which, by the way, if it is not able to get a name, raises exception LookupError. Then, in method AerProvider.get_backend(), I would remove the code that captures this exception and simply discard it. The end result would be what you indicated at the beginning of this issue.
+I guess it would be a lot easier to follow what I suggest here with a PR but before creating it, what do you think? Is it aligned with your idea for this issue?
+Regards.
+Hi @indisoluble !
+Great analysis, you are right in your last comment, I want to get rid of grouped_backend_names(). This was introduced to have the fallback mechanism.
+I would remove the code that captures this exception and simply discard it
+What we want to show is a message to the user (using the logger.warning() facility) telling something like:
+another option could be showing a list of all the backends installed in the system:
+Summoning @jaygambetta @chriseclectic @diego-plan9 @ajavadia , any preference/alternative?
+I another vein, IMHO Qiskit components should be raising QiskitError based exceptions and not python standard errors, so the user code can easily discriminates what comes from Qiskit and act accordingly. So whatever message we decide to show, should be delivered by a QiskitBackendNotFoundError, you will need to create this exception in qiskit/backends/qiskitbackendnotfounderror.py and substitute the LookupError present in: https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/backends/providerutils.py#L105
+What we want to show is a message to the user (using the logger.warning() facility) telling something like:
+If the plan is to keep .get_backend() raising an exception, showing a warning as well might be redundant - what about tuning the exception message instead, as it is probably more guaranteed to reach the end user in a stronger way? Depending on how "intelligent" and flexible we want it to be (for example, displaying only the list of statevector simulators if they request statevector_cpp and is not available, etc) we might not be able to fully get rid of grouped_backend_names() (or the content in it). I think it would be cool to list the "really alternate" backends indeed, but as a first step, just listing all backends might make sense.
+So whatever message we decide to show, should be delivered by a QiskitBackendNotFoundError, you will need to create this exception in qiskit/backends/qiskitbackendnotfounderror.py and substitute the LookupError
+Yes, although the "important" exception should be the one thrown by get_backend(), right? The one in providerutils is quite internal (and if I'm reading the thread right, no longer a concern). If that is the case, please note this would be actually a change of the public API (albeit a soft one, as I'm assuming it would subclass the current exception raised). Can we actually use qiskit/backends/exceptions.py, and take the chance to also move JobError  and JobTimeoutError there along with the new one?
+We should only list the python version of that simulator.  Also let’s put a py on the end of unitary. I like having a new error.
+As Jay said add _py to unitary simulator to make it clear its python.
+@diego-plan9  I find the warning messages very useful for things like this (eg "simulator not found, try using this other one"). they stand out in a Jupyter notebook and appear before the long trace list of source code leading to the error that was thrown. You can always use both too.
+Hi all,
+Let me summarise what was said here:
+Now, if we print a warning message before raising the exception, I think the exception only needs to expose a brief message. On the other hand, the warning message has to be as expressive/intelligent as possible. I will do my best and depending on it, we might or might not be able to get rid of grouped_backend_names() (as @diego-plan9 pointed out).
+If you agree with this summary, I think I am ready to start working on the PR.
+I realise @diego-plan9 noticed that this would result in a change in the public API, we can always suppress the new exception if it ends up being a problem (by the way, remember that we are also renaming one of the simulators). Let me know if you do not want your public API to change for the next release.
+To end, I do not know much about JobError and JobTimeoutError. Let me write first a bit of code and then I will have a look.
+Just a note to mention that my comments are likely to be superseeded by @atilag or anyone who has looked at the issue in more detail - they were mostly single suggestions that might need to be reviewed when looking at the bigger picture!
+why cant we close this. @atilag
+Oh, yes we can. XD

@@ -1,0 +1,33 @@
+When you take a QuantumCircuit where one of its constituent gates is explicitly the identity and you attempt to generate a controlled gate from this unitary using the control() method, Qiskit raises the error:
+AttributeError: 'NoneType' object has no attribute 'global_phase'
+Examples of code that reproduce this error:
+This results in the following Traceback:
+Controlled unitary of QuantumCircuit is generated, regardless of what unitary gates make up the circuit.
+This seems to be related to how Qiskit handles generating controlled unitaries from circuits that explicitly contain at least one identity operator. This of course does not happen if the identity implicitly acts on one of the qubits since this would, by definition, break the control() method for all circuits. For example, the following code does not raise this error:
+This is because IGate, which we use to describe the explicit identity operation, doesn't have a _define method.  The fix is probably just to define in qiskit/circuit/library/standard_gates/i.py:
+but I wouldn't like to swear that won't have a couple of knock-on issues in the transpiler, or affect performance.
+I see. Thank you!
+I can confirm that this seems to remove the AttributeError. Of course, I haven't done any testing to see if it breaks something else or if it results in reduced performance.
+We didn't see any reason why opflow should actually insert an IGate for Pauli identity operations, especially since they are eagerly removed upon calling reduce on any operator expression. Actually, I think inserting an IGate is even wrong since it currently represent a waiting cycle in the circuit, but we expect a mathematical identity operation: nothing should happen!
+#7569 changes this behavior and as by-product fixes the first example shown in this issue:
+Now I'm not sure if we can close this issue if the linked PR is merged, since it only covers one of the described cases.
+I will just note that my original motivation for posting this issue was to fix the Pauli string op issue specifically. It could be that others will also care about the second case getting fixed. I think if the linked PR is merged, this issue can be closed since the second case is mentioned in #4010.
+It's probably best to leave the issue open, since the other part of it is still going to be an issue after this, until we're able to realign IGate to be more what most people expect.  But it's good that Julien's patch will fix your actual issue.
+We're going to defer the issue til the next minor release - we'll merge the immediate fix (#7569) into the main branch soon, but there's a risk that will break other code currently in use elsewhere in Qiskit or for users, so we'll wait til 0.20 before it gets released.
+Since #7569 has merged, I'm going to remove this issue from the 0.20 milestone. Is there anything here that's not covered by #4010 , #3950 and #7403 ? If so, can someone clarify what remains and update the title?
+I think the remaining problems raised by this issue are just duplicates of the ones that Kevin's raised, so I'll close this now.
+it's seems that i am getting similar error, i am using the following version  (latest):
+qiskit==0.37.1
+qiskit-aer==0.10.4
+qiskit-ibmq-provider==0.19.2
+qiskit-terra==0.21.1
+i simple create 4 random circuit and add control for all of them:
+repreduce step:
+error log:
+@jakelishman this issue seems to be closed but i am using the latest package and get the same error.
+do you have a workaround?
+We don't have a fix yet, sorry, this issue is just closed because it's a duplicate of #4010.  It's not at all ideal, but in your use case, you could either modify your random_circuit function so it never produces IGate instances, or you could write a wrapper function that looks something like this:
+That just uses the output of random_circuit, and throws away any id gates in it.
+Thanks for the detailed response!
+(Pretty much what I did.)
+Side question, it seems that the qiskit implementation of the control is very inefficient with depth increasing exponentially in the number of controls

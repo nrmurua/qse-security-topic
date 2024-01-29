@@ -1,0 +1,41 @@
+Currently, many users have trouble understanding / setting the Qconfig.py file.  This issue is the start of a Pull that replaces the current Qconfig file with a runtime config file, qiskitrc, that (by convention) is located in the users home directory: e.g. HOME\.qiskit\qiskitrc.  Tokens and other information can be saved and loaded by defining sections in the config file. e.g. When doing register(token, url, **kwargs):
+The tokens can also be encrypted before saving (if we want to go down that road), so that the user must input a password once, before the (decrypted) token is loaded into the current session.  Thoughts on this would be appreciated before I go and implement it.  This would be done after the modifications for the next release (0.5).
+This is great Paul! Thanks for jumping in!
+We have been having a lot of internal discussions about how to tackle this problem and this kind of solution popped in many times. One of the flaws we see is that for this solution to be as secure as possible we have to go down to the road of encryption, which drives us to the problem of asking the user for a password so consequently having to deal with GUI stuff, which might not be the responsibility of an SDK. Having said that, something needs to be done, because this is recurrent user request, so I was thinking about having this behavior as a default, but not forcing the user to go this way. We have detected many use cases where users might want to deal with authentication by themselves, to comply, for example with some kind of company's policy about privacy data... and this is probably the main reason we haven't implemented nothing yet, it's just not trivial, and it "only" affects users running the tutorials (which are the most nowadays I guess)
+Do you have anything in mind about how the encryption workflow will work?
+I was thinking of using the built in getpass module, so that a password can be obtained via:
+getpass.getpass('Password for %s token:' % token_name)
+This could then be passed to an encrypt/decrypt routine based onpycrypto that is in Anaconda by default (although it would be an extra dependency).  One could store the encrypted token in the qiskitrc, and then, when needed (i.e. called by a backend that needs it), the token is decrypted and stored in the current session.  We would ask for a password once per session.  We could of course have a flag that determines whether the user wants to encrypt a token or not.  Nothing requires a gui in this workflow.  getpass also plays nicely with the notebooks:
+
+Nothing requires a gui in this workflow
+Ups! my fault.. didn't mean GUI but UI (not only graphical User Interfaces, but non-graphical User Interfaces like command-line programs built on top of QISKit too).
+Ok, seems like a perfect valid solution for the use-case of command-line like programs. Anyway, it's important to not kill other programming use-cases like stand-alone services, backend programs, or GUIs as getpass.getpass() will only work with commnad-line like programs.
+I'm wondering if there's a proper way to expose this functionality to the user, so they can decide to get the password from our proposal - the standard input/output, or from any other source maybe written by them - DDBB, sockets, REST API, etc.
+We do need to truly reach a consensus and look at the situation fully - while the final solution will most likely involve making use a file on the user's folder, the problem has a wider scope and still needs to be fleshed out, as hinted in #226. Also, #376 is potentially a blocker as well, depending on how coupled we intend to make it with the authentication (qiskit.register() in particular still might need some debate).
+A non-comprehensive recap about things that might need to be considered:
+Personally, I think something along the lines of having an opt-in way of reading the configuration from a small number of "default" places (ie. the current working directory, the user config file and the environment variables), and a script that the users can execute to generate it for the first time (ideally for updating it as well) might be a good compromise - the "easiness of use" vs "be flexible enough" is the point that I find harder to balance.
+My concern about implementing this solution as a default from qiskit.register() (which I agree that need to be debated and polished) is that it will be incompatible with many other program use-cases I already mentioned, therefore I don't think this should be included in the core of the SDK.
+Building an external helper script that will manage this file, is the way to go IMHO, we can put this script into tools/ directory (this was it's purpose), and document its use in the README file.
+My suggestion:
+[1] The QConfig.py will slightly change. Instead of writing the token to this file directly, the new QConfig will read the token from the env variable, this way we DON'T NEED TO UPDATE ANY TUTORIAL, as the import QConfig will still work.
+Example of the new QConfig:
+What do you think?
+Good ideas all around.  My thinking was to do away with the user modifying anything at all, just registering backends, or updating credentials as necessary.  All the code for creating, modifying, and reading the configrc files is already created.  A blank file would be created at initial run, or during install.  Based on the feedback from @atilag, one could have an option for which service does the token handling.  Something like
+One could then pass url, token, and **kwargs to whatever handler the backend says to do.  The default could be we take care of it in the local qiskitrc.  Only our default handler would use getpass via the command line. If one wants to override the qiskitrc, you could modify the file via the SDK, or manually, or after loading qiskitrc we can look to override anything by checking os.environ, and then finally looking to see if there is a cwd override via the Qconfig.py file.  Perhaps that chain of lookups is inline with what @diego-plan9 has in mind?
+I should also mention that I am not advocating that everything be done in register, but I highlight that command since it seems like a reasonable place to handle things since the token is passed there.
+Closing this issue in the hopes of continuing the discussion at #540 and finally get the feature in place 🎉
+How to deal if this erro? I am trying to register, but I simply cannot
+Traceback (most recent call last):
+File "C:\Users\famil\Anaconda3\lib\site-packages\qiskit\wrapper_wrapper.py", line 52, in register
+provider = provider_class(*args, **kwargs)
+TypeError: init() missing 1 required positional argument: 'token'
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+File "", line 1, in 
+File "C:\Users\famil\Anaconda3\lib\site-packages\qiskit\wrapper_wrapper.py", line 54, in register
+raise QISKitError("Couldn't instantiate provider! Error: {0}".format(ex))
+qiskit._qiskiterror.QISKitError: "Couldn't instantiate provider! Error: init() missing 1 required positional argument: 'token'"
+Thank you any help
+For this to work, you need to be using the Master branch of qiskit-terra.  If this is the case, you need to follow the instructions in the readme:
+https://github.com/Qiskit/qiskit-terra/blob/master/README.md#executing-your-code-on-a-real-quantum-chip
+If these do not work, then please open a new issue.

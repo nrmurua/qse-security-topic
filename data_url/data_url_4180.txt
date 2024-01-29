@@ -1,0 +1,9 @@
+I found this to be really confusing:
+yields:
+The most bizarre part is that it errors on the Measure statement. I had commented out an Uncompute block for testing something but forgot to comment the compute, then it took me a few moments to figure out where the error was.
+The reason you get the recursion error stems from the way the context manager is implemented in the case of the Compute/Uncompute/CustomUncompute statements. This needs a bit of context to be fully understood.
+The way a Compute context manager works in ProjectQ is that it inserts a ComputeEngine compiler engine right after the MainEngine in the engine list. This new engine basically records all the commands that pass through it so that these may be properly uncomputed in the future. Upon exiting the Compute region, this engine is not immediately dropped. Instead, the ComputeEngine gets dropped in the Uncompute/CustomUncompute region, which is not present in your case.
+This essentially means that you have a list of 1000 ComputeEngine that are right after the MainEngine and each time a command gets sent by the MainEngine it calls the send method, which itself calls the receive method of CompilerEngine, which essentially lead to a recursion depth larger than what Python allows by default.
+This only happens when you send the Measure (or any other gate for that matter) because only then will the send and receive methods will get called.
+I believe the main reason this was implemented so was to allow an easy way to check that upon reaching an Uncompute/CustomUncompute region, a corresponding Compute region exists.
+Sure that would be something fairly easy to implement. I don't know when I'll have the time to get to implementing it though.

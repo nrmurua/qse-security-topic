@@ -1,0 +1,41 @@
+This issue is on behalf of a post in the forums by Louis Fry who is trying to implement Lindblad operators which cannot be written in the form of a known f(t) * A, because the operators are related to the instantaneous eigenstates of a time-dependent Hamiltonian.
+The documentation in the docstring of mesolve says that c_ops may be a callback function of the signature f(t, args) -> Qobj, similarly to the Hamiltonian.  This is not the case, and as best as I can tell, has never been the case.
+Basic reproduction (though the functionality is just completely missing, so this won't ever succeed).
+As of tag v4.4.0, the code does not support it.  The failing line of code would be 
+At the current master at the time of writing (QuTiP ~4.5.1, 4102b99), we're in the same place as at tag v4.4.0.
+In previous issues, people have been told to rewrite the Liouvillian in the supported form, however that's not reasonably possible here.  Technically it can be well-approximated by using an interpolation for each individual matrix element, as the time-dependent Hamiltonian can be solved ahead of time, but that's not at all sensible.
+Most pressingly, the documentation is currently wrong and should be changed to reflect reality.  Secondly, we have to decide whether we're going to implement this functionality at all, perhaps as a part of @Ericgig's refactor of the solvers?
+There is no support at all right now, but it is in progress.
+It should work with the QobjEvoFunc PR, but it will take a quite some time before it is finished, an more before it is merged and released, it probably won't come before v5.
+For now, H can be a callback to a liouvillian. So he can make it work like this:
+Oh of course, I had mcsolve in mind as to why that couldn't be done (and in that case, my interpolation wouldn't work either because of the separation of the decay channels)... Whoops!
+So the only solution right now is to correct the documentation.  I'll do that now.
+Mentioning issue #1254 for book-keeping
+Haha, I totally missed that the issue was already created.  I am not having a good day at all with this.
+Anyway, #1261 is a PR fixing the documentation.  If Eric is planning on completely overhauling the solvers and there's currently a valid work-around (that is actually documented!), then it may not be worth merging in a PR which changes the functionality?
+Hi guys, thanks for looking at this! I actually made a fork to implement this: https://github.com/lfry512/qutip
+In my fork I added some extra type checks and some extra functions in _LiouvillianFromFunc that support a c_ops callback. The way this was done just requires the user to use qt.lindblad_dissipator where appropriate. The use case that isn't implemented is H in list format and c_ops as a callback.
+@Ericgig thanks for the neat suggestion! This is very pertinent as I then moved on to try the same functionality with mcsolve, which doesn't support a callback for H and c_ops in the master branch. Yesterday I got callback functionality working for H in mcsolve but haven't committed it yet. However it's about 20 times slower than using the equivalent list format in my tests.
+@jakelishman it sounds like you worked on mcsolve. If you are interested I would love to discuss with you how to make the H callback method for mcsolve more efficient. I'm also trying to figure out if it is possible to make a cython callback builder class that can be used for building the Lindblad operators from instantaneous eigenstates of the Hamiltonian more efficiently.
+I am not sure how my changes fit in to the overhaul of the solver system, but in mcsolve I did somewhat make use of the SolverSystem instance that is built in place.
+Hi Louis,
+There is work in development that will allow QobjEvo to be build from callback also, not just list. This will make callback work anywhere easily.
+I was in the impression that H callback worked already for mcsolve. I rewrote part of mcsolve and broke it. Looking at your commit, I inverted _funcrhs_with_state and _funcrhs...
+Sorry to have you take time to correct it.
+The 20x is big, but the list format allows for optimizations that are hard to do with a callback. A big one is that you don't need to create a new matrix/Qobj when calling mul_vec, just use it. With this code, I see a 20x between mul_vec and creating a Qobj a python function.
+One optimization you could do is having the callback return a np.array instead of a Qobj. In mcsolve, this would probably be simple to implement and I expect some speed gain. But it can't really be officially supported in Qutip, for now.
+ps. All those 'redundant' argument setting are for reusing the system (ss) in multiple call of mcsolve with different args, used in correlation. Using string coefficient, the compilation step can take a few second, so it is set to be able to reuse a compiled system, changing the psi0, args, e_ops, etc. This will become a less obscure feature in v5 when solver object are available.
+Trying np.array callback:
+It beats the QobjEvo for small arrays. Qobj overhead is big and Qutip only use sparse matrix, Jake will be working on this during the summer.
+Speaking of this, can we talk about the solver classes and what they're aiming to do in the next call?  I'll write up some notes before then, but as I think about my plans more, the only sensible way forward always seems to involve completely unifying all QobjEvo types into one (and possibly even with Qobj itself), and that will invariably be affected by what you want to do with the solvers.
+I think it's something that needs to be talked about and planned, because I think there's two main ways to solve the issue of "we want the solvers to be as fast as possible", and segregating the data layer is an orthogonal approach (which also permits speed-ups outside of the solvers) to solver classes which make their own choices about the data layer.
+It'd be good to talk, so I know exactly what your plans and aims are, rather than me just making assumptions, though.
+Hi @Ericgig, @jakelishman,
+Thanks very much for the very helpful replies! I will try these suggestions in my application Eric!
+Jake, when you say the following:
+Oh of course, I had mcsolve in mind as to why that couldn't be done (and in that case, my interpolation wouldn't work either because of the separation of the decay channels)...
+Is it that, this:
+won't work due to _funcrhs treating h_func as a Hamiltonian always? If this is the only factor (as far as I can see), then I think I can further hack this to make callbacks work for me locally. I'm not yet sure if the numpy arrays method will work here but this is what I will strive for.
+Some details of my plans: I am doing dynamics simulations of quantum annealing processes. We use a certain number of qubits (between 4 and 8) biased and coupled in certain ways to produce examples of 'difficult' problems for adiabatic quantum computation, where the instantaneous energy gaps can have very small minima during evolution. The resulting ODEs appear to be 'stiff' and long evolution times are required to observe high probabilities of being in the ground state. The combination of these things appears to make solving for long evolution times very time consuming. I observed a massive speedup using mcsolve however. What I wish to do is include various decay channels, which in the physical systems we use, we understand to be in the 'weak coupling limit' defined by T. Albash here:
+https://arxiv.org/pdf/1503.08767.pdf
+Another note: A number of colleagues have found most useful the RK45 method implemented in what I understand to be 'new' ode solver scipy code scipy.integrate.solve_ivp. I notice that the 'dopri5' option for scipy.integrate.ode is likely the same thing. This is something I will play with also.

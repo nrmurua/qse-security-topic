@@ -1,0 +1,13 @@
+In #1712, the code to manually construct the terminal "inversion" Clifford in randomized benchmarking was replaced with a call to protocols.inverse:
+
+In my tests, protocols.inverse doesn't create a single gate, but rather creates an inverted copy of the entire circuit (i.e. each gate is inverted separately and their order is reversed). I would expect a noisy simulator to see roughly half as much noise if the inversion step was a single gate - does this change affect the RB experiment when running on hardware?
+Yes, in RB the inversion operation should be one(-ish) moment
+Agree that this is wrong. The inverse needs to be optimized into a fixed length sequence to make noise behavior better and probably also to avoid undoing noise in a way that wouldn't happen in actual computations. We could replace it with a stabilizer tableau simulation and then map the Tableau to minimal sequences, but may not be faster than the unitary simulation.
+(It sounds like maybe the slow test that triggered this optimization is testing too much stuff and we should cut down how much it does.)
+Some clarifying points on this:
+The root cause of this issue comes from removing step (b) above. If we're okay with a ~15s unit test, we can simply revert that section; otherwise, we'll either need to optimize the creation of the two-qubit map or use a different approach (e.g. the tableau method recommended above).
+I agree that this was a mistake on my part. I removed the construction of the two qubit matrices and the multiplication of each of the two qubit matrices with the unitary of the circuit to find the inverse and replaced it with the protocols.inverse to save the time but without realizing the issue it brings up in terms of circuit length and noise.  To fix this we need to replace with the former inversion scheme or with another which is faster.
+Would it be difficult to utilize existing decomposition code to convert the unitary that inverts the circuit into a sequence of single qubits Cliffords and CZ gates that generate the inverse two qubit Clifford?
+Would it be difficult to utilize existing decomposition code to convert the unitary that inverts the circuit into a sequence of single qubits Cliffords and CZ gates that generate the inverse two qubit Clifford?
+This mostly depends on our expectations for the inversion step. I haven't found any decomposers that convert to XPow + YPow, so if we want the inversion step to have the same format as the rest of the circuit we'll need to make a new decomposer.
+If instead any inversion is sufficient, then existing decomposers (e.g. single_qubit_matrix_to_gates and two_qubit_matrix_to_operations) should suffice.

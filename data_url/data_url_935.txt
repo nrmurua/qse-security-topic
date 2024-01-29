@@ -1,0 +1,55 @@
+Description of the issue
+When looping over certain gate operations and measurements, the trace of the density matrix decreases and eventually approaches 0.
+How to reproduce the issue
+The following script (@kinetic-cipher) reproduces the issue:
+The printed output is:
+(0.9999999+0j)
+(0.99999976+0j)
+(0.9999994+0j)
+(0.9999988+0j)
+(0.9999976+0j)
+(0.99999523+0j)
+(0.99999034+0j)
+(0.99998057+0j)
+(0.999961+0j)
+(0.99992204+0j)
+(0.99984396+0j)
+(0.9996879+0j)
+(0.99937594+0j)
+(0.9987523+0j)
+(0.997506+0j)
+(0.9950181+0j)
+(0.99006104+0j)
+(0.98022074+0j)
+(0.9608326+0j)
+(0.9231992+0j)
+(0.8522966+0j)
+(0.7264095+0j)
+(0.5276707+0j)
+(0.27843636+0j)
+(0.07752679+0j)
+(0.0060104034+0j)
+(3.6124948e-05+0j)
+(1.3050119e-09+0j)
+(1.703056e-18+0j)
+(2.9003994e-36+0j)
+0j
+with error (cirq v0.14.0):
+or with error (cirq v1.0.0):
+
+When modifying the same script to use np.complex128 as the dtype of the DensityMatrixSimulator
+the density matrix traces get very large.
+with the same error:
+Cirq version
+We tested this in cirq version 1.0.0 as well as 0.14.0 and found the error in both cases.
+This seems to be happening in the factor when the measurement gate is encountered. https://github.com/quantumlib/cirq/blob/8953eebe05e2510d798356dfd9fc2d5ba922cfe9/cirq-core/cirq/linalg/transformations.py#L636 likely needs to renormalize after getting the partial traces.
+For now, OP can create the simulator as DensityMatrixSimulator(split_untangled_qubits=False), which avoids the factoring after measurement.
+Note reverting #4300 fixes this, though that implementation is still incorrectly (and worsely) normalized in other cases. I think the pre-#4300 implementation should be faster since it calculates both factors at the same time rather than two calls to partial_trace (I haven't tested this). However it needs renormalized as a density matrix rather than a state vector (extracted /= np.trace(extracted) and same for remainder).
+This seems to be happening in the factor when the measurement gate is encountered. https://github.com/quantumlib/cirq/blob/8953eebe05e2510d798356dfd9fc2d5ba922cfe9/cirq-core/cirq/linalg/transformations.py#L636 likely needs to renormalize after getting the partial traces.
+For now, OP can create the simulator as DensityMatrixSimulator(split_untangled_qubits=False), which avoids the factoring after measurement.
+split_untangled_states = False seems to work in the provided test script
+Ran some tests and the newer implementation using partial_trace is faster than the old implementation. Will push a PR that restabilizes the DM by trace after factoring.
+I closed the linked PR with the fix because I think the right thing to do here is to do the renormalization in partial_trace itself. The einsum there is losing precision and ending up with a not-quite-one trace. Doing the renormalization factor_density_matrix (which calls partial_trace), as I did in the PR, solves the issue for density matrix simulations, but leaves the problem open for any algorithms or users using partial_trace directly.
+Of course fixing this in partial_trace will have larger perf impact and the extent of that impact needs to be understood before making the change. This investigation and the determination of whether that is acceptable or not is a something that needs to be managed by a core maintainer.
+NaN seems to be a problem.  Otherwise this appears to be accumulation of numerical errors.
+We may consider if the input state should be renormalized to have trace equal 1.

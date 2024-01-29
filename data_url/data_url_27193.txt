@@ -1,0 +1,25 @@
+As of a recent fix based on this issue on the qiskit-quantinuum-provider project, one can now invoke a backend instance of a Quantinuum device via the Qiskit provider interface (as is done for the other supported backends within QED-C).
+As a proof of concept (assuming one has access to a Quantinuum device), doing this following:
+yields the following output:
+indicating a successful run on the device.
+Now, presumably, one can run one of the QED-C benchmarking algorithms via the newly obtained provider functionality. Taking the quantum-fourier-transform Qiskit benchmark as an example, adding the following snippet to the bottom of this file:
+supplies the QFT benchmark with the custom Quantinuum Qiskit provider. However, running:
+with this addition appears to fail:
+Am I making use of the provider_backend argument correctly? Based on the initial code example we know that we can successfully connect to and run a simple circuit on the Quantinuum device, so presumably this is failing because either I am using this incorrectly or because the QFT circuit is more involved and requires some type of transpilation for the Quantinuum device, or something else.
+Any obvious reason as to why this is presently failing?
+@rtvuser1 @WrathfulSpatula @nathanshammah @ninjab3381
+@vprusso Remember that we've seen already that the Quantinuum provider in its current form might not fully adhere to the ProviderV1 API defined in Qiskit. (I'm referencing the earlier the issue you ran into trying to pull results out by the job ID, which isn't supported.)
+Actually, looking at the stack trace, this might be exactly the issue, as Quantinuum currently only supports 1 job at a time, and the provider developers opted to deviate from the usual API by cutting certain metadata and metadata query capabilities designed to support multiple jobs.
+@vprusso Please do me a huge favor, since you have Quantinuum API access: please check what happens if you (locally) install the branch that commit 346469e is in (from above) and run this again.
+Note: You can also set the global variable
+to just 1 and it will only launch one job at a time.
+Or, even better, you can set the following variable to True
+Either way will execute only one job at a time, but the job_mode will process the result directly returned from backend.execute() instead of from querying for the job_id
+Note: you should also pass the backend_id to the run method, as we do in the benchmark notebooks. In this case it seem like it should be "H1-2E".  This is only used for identifying the run in the charts that get created and is not likely the source of your status issue
+Thank you, @rtvuser1! That's excellent to know, and we likely need to do that, too.
+All the same, now that I've perused the Quantinuum provider code and compared to the stack trace from @vprusso, I think we (also) nonetheless need to open a PR on the upstream provider repo for my branch, above. That variable isn't anticipated to be a JobStatus at all, but it looks like that's what they're getting back from Quantinuum, here, hence the case needs handling in general.
+I flipped both of these global variables such that
+within execute.py. Indeed, the job still fails, but now it fails serially:
+I also attempted to pull down the patch from @WrathfulSpatula:
+And ran again, but this still appears to fail with the same output as stated above. The code I'm running has been updated to reflect the "*Provider" pattern that is used in the benchmarks-qiskit.ipynb file as well, specifically:
+@vprusso I can take another look at this if I have the stack trace from the error in jobs.status().

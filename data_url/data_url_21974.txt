@@ -1,0 +1,95 @@
+Building .bit from source using
+I see...
+Possibly caused by 7429ee4?
+The typical valid read region seems to be ~170 LSB on my board, so I don't think that commit (increasing the initial step from 8 LSB to 16 LSB) caused this.
+This also looks different from the problem that commit solved for me, where the size of the read window was always the size of the initial step. Here the gaps vary from 16 to 20.
+What Vivado version?
+We use 2017.4.
+I'm using 2016.2. Will upgrade and try again.
+I'm using 2017.4 and I also got this issue, though with build from 25.01. I'm currently building against 0edc34a, will update when it finishes.
+Here is everything I built from the current master (with RTM bridge, RTIO and other things disabled to save compilation and RTM yak-shaving time):
+http://dl.free.fr/lAFdh3oQV
+With those binaries, I verified that SDRAM works fine on both Florent's board and Sayma-1.
+Can you try those binaries on your boards?
+@marmeladapk You can use the Ethernet TX clock phase adjustement script I posted in the RGMII issue on those binaries.
+@marmeladapk If the problem persists, can you use Sayma-2 that I shipped to you to debug Ethernet, since I didn't have SDRAM problems on that one?
+thanks @sbourdeauducq. I'll look at that. The read leveling procedure is probably still not robust enough.
+@sbourdeauducq I loaded it to check if memory tests are passed:
+So it works. I'll try the script you mentioned later.
+Good. You do however seem to get a large number of Ethernet RX corrupted packets (preamble errors). Is the PHY correctly set in RGMII mode? Does this happen for every packet? You can change the RX phase as well by using this script command instead: set_property CLKOUT0_PHASE <phase> [get_cells crg_ethrx_mmcm]
+@sbourdeauducq Should I change it in xdc in artiq/artiq_sayma/gateware/top.xdc and rebuild? Will latest artiq pass memory tests?
+No. Please follow the instruction in my comment: #854 (comment) - you just save the script as edit_pll.tcl and run the mentioned vivado command.
+There is no bitstream rebuilding and it is a rather quick process. Nothing in the design other than the PLL phase will be changed, the routes etc. will be exactly as before, so yes memory test should be unaffected.
+I also see the problem with the default build (including SAWG) on ARTIQ 4c22d64, migen e554f072905ceeb27c9c179c8c7b785acd1676bc, misoc cb8e314c7515eade46f5bcde4e48903d7ec92490
+When disabling the SAWG (--without-sawg), the system boots correctly.
+@enjoy-digital Can you move forward with JESD SC1 by disabling SAWG (which you want to do anyway to reduce compilation time)? I cannot reproduce the "no output on UART" bug.
+@sbourdeauducq: yes i'll continue on Monday.
+@hartytp Are you looking into this?
+This definitely worked when I did the SAWG test and posted the scope screenshot. So it should be possible to isolate what code change exactly caused this problem, maybe with the help of tools like git-bisect.
+But I suspect this is due to the non-determinism of Vivado compilation, or to plain Vivado bugs. In the first case, this is normally solvable by adding appropriate timing constraints. In the second case, considering how Xilinx technical support has been degrading for the past years, the first option is basically to apply somewhat random non-functional changes to the code, as Xilinx engineers certainly do, and hope that ça tombe en marche, or try various Vivado synthesis options. (Xilinx's answer to the bug invasion is pretty much the usual)
+@whitequark's addition of RTM loading gateware is a good suspect for the triggering of this kind of Vivado misbehavior.
+@hartytp Are you looking into this?
+I wasn't planning to, no. In general, I'm trying to prioritize things like the HMC830 on Sayma, which seem to be (at least in part) hardware issues. In contrast, the mem test thing is just firmware/gateware, isn't it? As such, it seemed like the standard yak shaving required to get a new board up and running, and not something particular to Sayma. So, I figured that you guys were probably best placed to look into it.
+I have a busy week lined up this week, but I might have some time to look into it.
+Side note: we've had Sayma for quite a while now, but the ARTIQ tool chain still feels quite hacked and fragile. It would be great to get to the point where Artiq flash can do the RTM as well, the package includes the correct version of JESD204B, etc.
+Anyway to be clear, in case I do find time to look into this, your plan is basically to dig through the git history, building various versions of Sayma gateware/firmware with SAWG (at a few hours per build) until we find the point where it stopped working? IIRC, that's a bit complicated by the fact that the tools to build Sayma have changed a bit over time, so it's not always the same instructions to build/flash it, and by the fact that the package doesn't include the right version of JESD204B (also misoc/migen?), so one needs to track the history of several projects to make sure that each build uses the correct version of each. Doesn't sound like fun.
+Doesn't sound like fun.
+Yep, standard fare.
+Anyway, the first thing I'd try is removing the RTM loading gateware.
+Another thing that makes the SDRAM work is removing a lot of peripherals using the patch I posted elsewhere, so there would not be such versioning issues. Just the long Vivado compilation times.
+Well, as I said, as this seems like standard yak shaving for getting a board up and running, rather than a particular hardware/design issue with Sayma. So, do you mind taking a look at it first -- it's likely to be quicker for you since you've probably kept a closer eye on the changes that have been made to ARTIQ over the past weeks.
+That's what I thought - the patch below works around the problem.
+@whitequark What about using GPIO and bit-banging instead? Hopefully the Vivado trash will behave then.
+@sbourdeauducq With latest commit (2d4a134) when I compile python3 -m artiq.gateware.targets.sayma_amc --without-sawg I still get memory test failed.
+My best guess here is that there is something wrong like a missing/incorrect timing constraint, an output drive not being set optimally, etc. AFAICT, Vivado is struggling to meet timing with the SAWG in place, so I wouldn't be surprised if it's doing something funny here, so it's important to have everything optimally set up and fully constrained. Also, if there is anything we can do to make timing closure easier to achieve (e.g. elsewhere in the design), that might well help...
+Could one of you (maybe @jordens for a fresh pair of eyes if he can find the time) double check that you can't see anything else suspicious in the way this is all setup?
+As always, if you can think of anything you want me to try/look at then let me know.
+Does it pass on your board (and everything looks good) when SAWG is disabled?
+Did last time I checked. Can rebuild and recheck if that helps
+@sbourdeauducq Without SAWG https://hastebin.com/qagicibita.sql
+No mem test errors.
+No errors in the middle of the working region AFAICS.
+Looking again at the "bad" eyes, with errors in the working region, AFAICS, the problems are all with the read leveling rather than the write leveling. I wonder if there is something wrong with the IDELAY code. Could we fuz this by looping an OSERDES to an ISERDES and sweeping the IDELAY for different ODELAYs?
+Could everyone who currently has access to a board with this issue try the current artiq/misoc/migen with sawg (and otherwise presumed and/or known worst case conditions) and report the console messages? @jbqubit @enjoy-digital @marmeladapk
+From @enjoy-digital with @hartytp 's board and SAWG. That's just fine.
+@jordens: i'm doing more tests with @hartytp's board:
+I also regenerated the design with SAWG and the 64 bits DRAM, i'm going to test it when the startup test with the 32 bits DRAM is done.
+I'd just do the memtests in a loop. That's much faster and it isolates problems. If those work, then there is little left to check (other than the eye location algorithm but i don't see how that could be improved) on that board.
+Great work all! That eye scan looks really good. Given the build-build variations we've seen, it's hard to be 100% sure that this is fixed properly, but that does look extremely encouraging. Will be interested to hear from the other people with Sayma about how this looks on their boards.
+I'd be really interested to know which of the recent gateware changes did the trick/what the problem actually was.
+@hartytp if I understand correctly, with the gateware you were using @enjoy-digital sees ~1% failures - IIRC you were seeing a rate much higher than this (i.e. >90%). Could this difference be a power supply issue at your end?
+@cjbe
+Could this difference be a power supply issue at your end?
+Not likely. I'm running by board from a good 5A linear PSU and Sayma only draws something like 1.7A IIRC. I'm using a short cable to connect the PSU to the board and measured the voltage on the PCB to be something like 11.9V (again, from memory, but that was one of the first things I checked when we had issues, having been stung by that before on a different design).
+Also, my setup passed Florent's stress test fine and, again from memory, the overall current draw isn't that much higher at startup with the SAWG build. So, again, I don't suspect the PSU as the issue.
+A larger difference between setups is potentially the temperature. My board runs pretty cold because I've a couple of beefy CPU fans blasting it. But, I don't expect that to actually make a difference.
+if I understand correctly, with the gateware you were using @enjoy-digital sees ~1% failures - IIRC you were seeing a rate much higher than this (i.e. >90%).
+hmmm. You're right, I was seeing pretty frequent mem test errors in all versions I built (between 100% and 25% dependent on the gateware IIRC).
+In any case, I don't think comparing mem test results is as instructive as looking at eye scans. The eye scans that both I and @marmeladapk posted look horrible compared to the one that Florent posted from my board. If Florent can reproduce something that looks like the previous eye scans with the old gateware, then it's not so relevant what the mem test says.
+Not likely. I'm running by board from a good 5A linear PSU and Sayma only draws something like 1.7A IIRC.
+I've calculated the maximum rated power draw based on the values in the schematics just today. AMC alone is 2.9A and AMC+RTM are 11.5A.
+I've calculated the maximum rated power draw based on the values in the schematics just today. AMC alone is 2.9A and AMC+RTM are 11.5A.
+hmmm...that doesn't sound right and I've certainly never seen anything close to that. Is that maximum value when all the supplies are shorted? Or, a maximum when the FMCs and everything else is fully loaded?
+IIRC @gkasprow posted the expected current draw in another issue and it was around the 2A mark (again, I checked this when picking the PSU to work with) which is consistent with what I've seen when running the boards.
+Thinking about this more, the board where @gkasprow and @marmeladapk carefully verified the PI also showed bad eye scans, which also suggests that this isn't related to the PSU I'm using (we looked into all that carefully before M-Labs started their thorough gateware investigation....)
+Is that maximum value when all the supplies are shorted? Or, a maximum when the FMCs and everything else is fully loaded?
+If I'm reading it right, the latter. It's a very conservative number, of course, I calculated it while trying to figure out why a power connector burned up in the lab.
+ack.
+Well, for a very conservative estimate, that's probably consistent with what I see then. There is a tonne of stuff we're not using (clock mezzanine, ADCs etc). Plus, I think that budgeted for a lot of power consumption in the AFEs, which I don't even have atm. Good reminder though to keep an eye on this once we start plugging more things into Sayma.
+With @hartytp AMC (no RTM) and last gateware/bootloader i get:
+sayma_hartytp_ddram_startup_test.zip
+@hartytp: your board has been running memtest (64 bits ddram) continuously today without errors (>8h).
+It would be good to have results from @marmeladapk and @jbqubit to know if all boards are now working correctly. (building also things on their side if possible to be sure results are the same between builds, if it's too long to rebuild, i can provide the bistreams) Do you want i send your board back tomorrow or should i wait results from others boards?
+@enjoy-digital feel free to hang on to that board a bit longer if it helps - I have to work on other things for the next week or so.
+Id still be interested to know which of the gw changes fixed this issue.
+@jbqubit has (or will soon get) one of our Saymas which had worse results. Our second Sayma is in use by wizath at the moment (he's working on MMC).
+Built from master with SAWG. Loaded onto board that I've had for many months -- not the one that @marmeladapk mentioned is in the mail.
+In subsequent load.... success.
+@jbqubit: thanks for testing.
+Is there anything else to do here, or can we close this (we can re-open if the issue resurfaces)? AFAICT, the eye scans now look good on all boards that we have access to.
+Did you plan to track down which commit/change fixed this problem for future reference? Or, is it not worth the hassle?
+Seems like adding a unit test based on the eye-diagram would be a good measure. Especially in light of recent experience that modifying other parts of the UltraScale gateware (eg SAWG) can impact SDRAM timing.
+Seems like adding a unit test based on the eye-diagram would be a good measure.
+The bootloader memory test is now extended, which should catch more subtle problems.
+Did you plan to track down which commit/change fixed this problem for future reference? Or, is it not worth the hassle?
+Let's do this once we are absolutely certain that it works correctly on all boards with the current code. Otherwise, if we change the code there, we're adding more loose screws.

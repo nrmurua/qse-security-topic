@@ -1,0 +1,41 @@
+On the test server, this test fails about 50% of the time. Are we sure the test is supposed to work?
+W:\pyrpl>nosetests
+......F.............................................................................................
+Traceback (most recent call last):
+File "C:\Python27\lib\site-packages\nose\case.py", line 197, in runTest
+self.test(*self.arg)
+File "W:\pyrpl\pyrpl\test\test_modules.py", line 92, in test_scope_pretrig_ok
+assert(self.r.scope.pretrig_ok)
+AssertionError
+Ran 167 tests in 75.939s
+FAILED (failures=1)
+1/ What I had in mind when writing the test:
+If the trigger_delay = duration/2, then there should be no waiting for pretrig_ok (since no pretrigger data  are acquired)
+==> The fact that I forgot the factor /2 was a mistake, and in the current state, the test passes if one adds the factor of 2 on line 88 of test_modules.py
+2/ Why I am still not satisfied with the above solution:
+I discovered over the week-end that trigger_delay works fine with any 32 bit unsigned integers (which is nice because it means the data can also be acquired a long delay after trigger).
+==>  So in fact, for any value of trigger_delay>=duration/2, the test should pass since no pretriggered data needs to be acquired.
+3/ What I suspect goes wrong:
+I guess the 2 following lines in redpitaya_scope.v (line 98) are not doing what they should:
+However, this goes slightly beyond my current Verilog skills. Is (2**RSZ) interpreted as a 32 bit register ? Moreover, I suspect there is a more efficient way to test the second line than just performing the full 32 bit subtraction.
+Do you have any advise on that one ?
+Let me summarize the scope logic here for future reference (mostly for myself, skip to the end if youre bored):
+set_trig_src contains the trigger source from the moment of setting it until the scope has been acquired.
+adc_trig = trigger_signals[set_trig_src]
+adc_arm_do is the 'armed' state of the scope as set from the PS
+once arm_do goes high, adc_we goes too, until adc_dly_do is finished.
+adc_dly_do goes high once pretrig_ok is fulfilled and adc_trig goes high.
+While adc_we is high, the buffer is filled with incoming data and adc_dly_cnt is decreased by one per new sample (from initial value set_dly). Indeed, set_dly can be a 32' unsigned integer, so we can do a trigger delay much longer than the scope trace duration.
+So to summarize: Once the scope is armed, data is acquired. The trigger only becomes sharp after 2^14-set_dly samples have been written. Once the sharp trigger has been triggered, set_dly samples are written into the circular buffer of size 2**14. Then acquisition is stopped and data ready for readout. adc_we == 0 is the condition for this.
+To answer the question a few more pesudocode snippets from python:
+trigger_delay = (self._trigger_delay - self.data_length//2) * self.sampling_time
+_trigger_delay = Verilog register "set_dly"
+data_length = Verilog value 2**RSZ
+... and from scope.v:
+pretrig_data_min <= (2^RSZ) - set_dly;
+pretrig_ok <= (adc_we_cnt > pretrig_data_min);
+If trigger_delay > duration>2, that means set_dly > 2^14. That means the register pretrig_data_min becomes negative. But it wasn't declared as "reg signed", so it will cycle back to the largest possible integer. Fortunately it is only a 14 bit register, so it wil start back at 2^14-1 and not at 2^32-1.. The next verilog line (the comparison), is also made fully in unsigned logic, so in order to be comparable verilog will zero-extend the leading 32-14 bits of pretrig_data_min.
+But you see, we should make sure that there is no negative overflow, like this for example:
+pretrig_data_min <= (|(set_dly[32-1:RSZ])) ? 14'h0 : (2^RSZ - set_dly);
+That is, if any of the leading 32-14 bits of set_dly are high, pretrig_data_min is zero, otherwise the previous situation is implemented. I commited the change to develop.
+fixed by #48

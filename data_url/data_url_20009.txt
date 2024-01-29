@@ -1,0 +1,61 @@
+Hello. I need to build liboqs on Android to develop a command-line HTTPS client with post-quantum cryptography support. I followed all instructions for building on Linux (because Android is actually Linux distributive). But got a compiling error at ninja step.
+Here is what i did, and what I saw in terminal:
+Finally, I have installed all these packages manually, except for astyle, graphviz. (I haven't found any ARM-versions of them).
+This is what happened after:
+I think its okay, like previous.
+Please help me to properly compile the library, if you understand where is the problem and how to do it.
+Sorry, I don't have Android experience... But this looks related to #1072: Did you already review that discussion?
+What about the suggestions at https://stackoverflow.com/questions/67044851/android-ndk-build-error-undefined-symbol-aligned-alloc ?
+What about the suggestions at https://stackoverflow.com/questions/67044851/android-ndk-build-error-undefined-symbol-aligned-alloc ?
+I tried, but it didn't work. When I specify C++ version to 17, I'm still getting the same error. Arm compiler doesn't know what is aligned_alloc(), but why...
+Sorry, I don't have Android experience...
+Android is generally like Linux, I think the problem is in the ARM architecture, not operating system
+. But this looks related to #1072: Did you already review that discussion?
+Error is the same, but #1072 is about cross-compiling FOR Android, on Linux. I am trying to direct compile liboqs ON Android.
+I am trying to direct compile liboqs ON Android.
+OK, then the headers should be all there: Then what was the result when you followed the suggestion from the error message
+/data/data/com.termux/files/home/sys/liboqs/src/common/common.c:251:9: note: include the header <stdlib.h> or explicitly provide a declaration for 'aligned_alloc'
+? Is this function not present in any system include on your build machine?
+OK, then the headers should be all there
+Already done, Linux kernel on my Android is 4.19.127-g171183e-dirty.
+Then what was the result when you followed the suggestion from the error message
+If you mean adding #include <stdlib.h> to C-file "common.c", I already tried it. The same error remained.
+? Is this function not present in any system include on your build machine?
+(If I got it correctly) When on Linux PC with Intel x64 processor, the build succeeds. But not on ARM devices. And not cross-compiling.
+Cross compiling on Linux FOR Android (using NDK) is giving the same error.
+(If I got it correctly) When on Linux PC with Intel x64 processor, the build succeeds. But not on ARM devices. And not cross-compiling.
+Hmm -- after googling some more, I wonder whether this gives the answer: android/ndk#1339 (comment) :
+You can't use aligned_alloc directly unless you have minSdkVersion 28 or higher.
+-> what is your SDK version?
+-> what is your SDK version?
+31
+Hmm -- after googling some more, I wonder whether this gives the answer: android/ndk#1339 (comment)
+Thanks, I have edited common.c file, replaced function aligned_alloc() with memalign(). Now the ninja successfully passes the build of common.c, but error at element 35. Output was:
+I think I should get rid of this if (CPU_SUPPORTS_NEON) etc., by replacing it with if (1 == 2).
+Now im trying to do this.
+Thanks, I have edited common.c file, replaced function aligned_alloc() with memalign().
+Good to hear: Looks like a #define for aligned_malloc to memalign may be a general solution if __ANDROID__ is defined.
+I think I should get rid of this if (CPU_SUPPORTS_NEON) etc., by replacing it with if (1 == 2).
+Yes: Simply defining CPU_SUPPORTS_NEON by a suitable ANDROID- and ARM- "guarded #ifdef" to minimize the code change should let you get around this.
+Now im trying to do this.
+Very good -- if you're successful, please consider a PR for others to benefit from this work.
+if you're successful
+Today, I continued to do this. Edited 29 files, and then ninja builded 482 objects with success, but then new error occurred. I don't know how it can be fixed here. ninja output:
+I tried to edit .../files/usr/include/stdio.h at line 388, adding ")" in various places, but it didn't help.
+You added a #include, right? Try adding that #include before all the other headers, rather than after.
+You added a #include, right? Try adding that #include before all the other headers, rather than after.
+The issue with "CPU_SUPPORTS_NEON" was already solved, by batch-adding a line "int CPU_SUPPORTS_NEON = 0;" to All C-files.
+It's all that I did. I didn't add any "#include" strings to files, etc..
+Can I ask about the current status? How exactly did you run cmake prior to the ninja call above? What did you change in the code?
+/data/data/com.termux/files/usr/include/stdio.h:391:6: error: expected identifier or '('
+indicates IMO that a macro definition somewhere (probably just prior to the include for stdio.h in this case) is fishy...
+Thanks, I have edited common.c file, replaced function aligned_alloc() with memalign().
+Good to hear: Looks like a #define for aligned_malloc to memalign may be a general solution if __ANDROID__ is defined.
+In Picnic we have already done that work. See https://github.com/IAIK/Picnic/blob/master/compat.c#L42. The availability of the functions can easily checked with cmake: https://github.com/IAIK/Picnic/blob/master/CMakeLists.txt#L70
+If there is interest in that, I can port it to liboqs.
+The issue with CPU_SUPPORTS_NEON is a typo in the OQS clue code of Picnic. PR is coming up.
+If there is interest in that, I can port it to liboqs.
+If it's not too much of an effort, it'd be very nice to have.
+Done in #1300.
+@ilovevkapi Fixes for both issues are now merged into the main branch. Can you confirm that they fix the issues for you?
+@ilovevkapi Did you check whether @sebastinas fix resolves the issue for you? We'd close the issue due to inactivity otherwise.

@@ -1,0 +1,103 @@
+Our setup: one Kasli master (with several connected EEM boards) plus two satellite Kaslis (with a BNC DIO unit each) in star configuration.
+The two satellites are constantly giving triggers to one laser setup each (from the DIO TTL), and every once in a while (seems random) one of them will stop triggering and we get no more laser output (we have verified by connecting a scope that it is actually the DIO channels not giving a signal anymore). It is then necessary to reboot the system and wait until it works again. We have implemented a SW service that now continuously reads the log output and when such a thing happens, we get errors such as these on the master:
+[  1653.021630s]  WARN(runtime::rtio_mgt::drtio): [LINK#0] aux packet error
+[  1653.026969s] ERROR(runtime::rtio_mgt::drtio): [LINK#0] error(s) found (0x04):
+[  1653.034106s] ERROR(runtime::rtio_mgt::drtio): [LINK#0] timeout attempting to get remote buffer space
+[  1653.043690s] ERROR(runtime::rtio_mgt::drtio): [DEST#1] received unexpected aux packet: TSCAck
+[  1653.252187s]  WARN(runtime::rtio_mgt::drtio): [LINK#0] unsolicited aux packet: DestinationOkReply
+Continuous pulses
+Operating System: Windows 10, using Conda
+ARTIQ version: ARTIQ v7.8044.c440f9f.beta
+Version of the gateware and runtime loaded in the core device: see attachment
+coremgmt_log_output.docx
+If using Conda, output of conda list: see attachment
+conda_list_output.docx
+Hardware involved: Kasli master + 2 satellites, 8-channel BNC DIO units
+[ 1653.043690s] ERROR(runtime::rtio_mgt::drtio): [DEST#1] received unexpected aux packet: TSCAck
+[ 1653.252187s] WARN(runtime::rtio_mgt::drtio): [LINK#0] unsolicited aux packet: DestinationOkReply
+Is it always those packets (TSCAck / DestinationOkReply)?
+How are the satellites connected to the master?
+What's in the satellite logs?
+@pmldrmota Looks familiar?
+[ 1653.043690s] ERROR(runtime::rtio_mgt::drtio): [DEST#1] received unexpected aux packet: TSCAck
+[ 1653.252187s] WARN(runtime::rtio_mgt::drtio): [LINK#0] unsolicited aux packet: DestinationOkReply
+Is it always those packets (TSCAck / DestinationOkReply)?
+How are the satellites connected to the master?
+Let's say some variants of it?
+Sometimes it's
+[243991.941215s]  WARN(runtime::rtio_mgt::drtio): [LINK#0] unsolicited aux packet: TSCAck
+[243991.950491s] ERROR(runtime::rtio_mgt::drtio): [DEST#1] communication failed (aux packet error)
+[243992.158728s]  WARN(runtime::rtio_mgt::drtio): [LINK#0] unsolicited aux packet: TSCAck
+or so
+What's in the satellite logs?
+I find it a bit difficult to synchronize the two, but from the times it might be something like this:
+[   654.373558s]  INFO(satman): TSC loaded from uplink
+[   654.378340s] ERROR(satman): received packet of an unknown type
+[   654.384160s] ERROR(satman): timeout attempting to get buffer space from CRI, destination=0xa1
+[   660.772436s] ERROR(satman): write underflow, channel=0, timestamp=1497806049992, counter=17032679824712, slack=-15534873774720
+Would that make sense?
+[ 1653.043690s] ERROR(runtime::rtio_mgt::drtio): [DEST#1] received unexpected aux packet: TSCAck
+[ 1653.252187s] WARN(runtime::rtio_mgt::drtio): [LINK#0] unsolicited aux packet: DestinationOkReply
+Is it always those packets (TSCAck / DestinationOkReply)?
+How are the satellites connected to the master?
+Oh and sorry, the satellites are connected to the master by 15m long optical fibers, one each.
+Does this answer the question?
+A routing table is then set up ([     5.948030s]  INFO(satman): routing table: RoutingTable { 0: 0; 1: 1 0; 2: 2 0; }), but as far as I understand, the star configuration is also the default.
+@pmldrmota Looks familiar?
+Yes. For us, this issue appeared for the first time when we added a Kasli v2.0 to the system (we tried it in both roles as Master and as Satellite, but the issue was the same).
+Before that, we had only Kasli v1.0 and v1.1, Master clocked externally by 125 MHz.
+With v2.0, only using the internal clock fixed it completely (artiq_coremgmt config write -s rtio_clock int_125).
+The failures appeared at random times. I have not noticed any correlation with a particular kernel in our system - it also happened while the idle kernel was running (see Example 1)
+This happened at least a dozen times per day.
+Here, both destinations failed.
+In this case, there was an obvious cause (RTIO clock failure), consequently affecting both destinations - but this was a unique occurrence.
+Maybe I should highlight a difference: we never had error(s) found (0x04), it was always 0x03. Also, I've also never seen unexpected TSCAck. It might well be several issues with DRTIO.
+[ 654.373558s] INFO(satman): TSC loaded from uplink
+This message should only appear once after the link is established. Is it appearing a second time after 10 minutes? Is this reproducible?
+[ 654.373558s] INFO(satman): TSC loaded from uplink
+This message should only appear once after the link is established. Is it appearing a second time after 10 minutes? Is this reproducible?
+[   654.373558s]  INFO(satman): TSC loaded from uplink
+[   654.378340s] ERROR(satman): received packet of an unknown type
+[   654.384160s] ERROR(satman): timeout attempting to get buffer space from CRI, destination=0xa1
+[   660.772436s] ERROR(satman): write underflow, channel=0, timestamp=1497806049992, counter=17032679824712, slack=-15534873774720
+[   809.638325s]  INFO(satman): resetting RTIO
+[   809.656198s]  INFO(satman): TSC loaded from uplink
+[   809.659620s] ERROR(satman): write underflow, channel=0, timestamp=1646506530354, counter=863196292409463688, slack=-863194645902933334
+[   809.671725s]  INFO(satman): TSC loaded from uplink
+This is how it continues afterwards.
+OK, TSC reloads are normal after RTIO resets, though the RTIO resets are not.
+destination=0xa1
+counter=863196292409463688
+Those look completely wrong, and those values are taken from DRTIO packets (RTIO write packet, and TSC load packet respectively). The unknown/random packets also seem to point to some kind of data corruption.
+Did your gateware meet timing and is your fiber and optical transceiver in working order?
+OK, TSC reloads are normal after RTIO resets, though the RTIO resets are not.
+destination=0xa1
+counter=863196292409463688
+Those look completely wrong, and those values are taken from DRTIO packets (RTIO write packet, and TSC load packet respectively). The unknown/random packets also seem to point to some kind of data corruption.
+Did your gateware meet timing and is your fiber and optical transceiver in working order?
+I'm sorry, maybe I'm just not enough of an expert to answer those two questions... So what does it mean that our gateware "meets timing"? Mikolaj kindly prepared that gateware for us and I could upload it here if that helps?
+The fiber is brand new and we have replaced it several times, the issue is not solved (if this particular error was gone directly afterwards, I can't say for sure, but we're definitely still having the issues). Similar for the optical transceivers... So we have replaced them, and I would say that immediately afterwards things got better... but obviously the issues came back, so I'm not sure if that's actually connected...
+Is it possible to break these things by something that we're sending or so?
+Is it possible to break these things by something that we're sending or so?
+No.
+@pmldrmota Looks familiar?
+Yes. For us, this issue appeared for the first time when we added a Kasli v2.0 to the system (we tried it in both roles as Master and as Satellite, but the issue was the same). Before that, we had only Kasli v1.0 and v1.1, Master clocked externally by 125 MHz. With v2.0, only using the internal clock fixed it completely (artiq_coremgmt config write -s rtio_clock int_125).
+The failures appeared at random times. I have not noticed any correlation with a particular kernel in our system - it also happened while the idle kernel was running (see Example 1)
+This happened at least a dozen times per day.
+Here, both destinations failed.
+In this case, there was an obvious cause (RTIO clock failure), consequently affecting both destinations - but this was a unique occurrence.
+Thank you for your input, very interesting!
+We are also using version 2.0 of Kasli, also with an external clock (it is not a possibility for us to use the internal one for sure). So it does seem like that same issue.
+I've also seen DRTIO issues in a 3 kasli setup with two kasli v1 and a kasli v2 sattelite. However, as discussed in #1730, in my case switching out the SFP connectors fixed the issue. If you have a spare pair and/or fibre, it might be worth checking if it solves the issue for you. I see you've already tried this
+I've also seen DRTIO issues in a 3 kasli setup with two kasli v1 and a kasli v2 sattelite. However, as discussed in #1730, in my case switching out the SFP connectors fixed the issue. If you have a spare pair and/or fibre, it might be worth checking if it solves the issue for you. I see you've already tried this
+Did you switch out all involved SFP connectors, and did you simply use the same kind? Or is there a better/more powerful version that we could try?
+And after that the issues were completely gone? Like I said, for us they got better for a while and then kind of came back... (a little less frequent still, though, I would say)
+I've also seen DRTIO issues in a 3 kasli setup with two kasli v1 and a kasli v2 sattelite. However, as discussed in #1730, in my case switching out the SFP connectors fixed the issue. If you have a spare pair and/or fibre, it might be worth checking if it solves the issue for you. I see you've already tried this
+Did you switch out all involved SFP connectors, and did you simply use the same kind? Or is there a better/more powerful version that we could try? And after that the issues were completely gone? Like I said, for us they got better for a while and then kind of came back... (a little less frequent still, though, I would say)
+Sorry, I just went to the issue you posted - excuse my question. So it was the same kind then, just from a different batch, hm.
+Thanks for the input!!
+Regarding the particular case that @pmldrmota mentioned above, it appears that this might have in fact been related to some glitches coupled in through the external clock input, i.e. appears to be a hardware issue (though where exactly is TBD still).
+ok this is interesting, I have seem similar error messages and then found this issue. it is a bit tough to produce the exact same error messages, but the general experience was the same and I am using a 125 MHz external clock with PLL bypass (ext0_bypass_125 to be exact) as well as one satellite crate.
+based on what I read here, I set the RTIO clock to int_125 which solved the problem, but does not synchronize the RTIO clock to other equipment. then I tried ext0_synth0_125to125, which also seemed to solve my problem. the latter is an acceptable workaround for me.
+so to conclude, I agree that external clock with PLL bypass seems to be broken. though fortunately ext0_synth0_125to125 can be used as a workaround.
+Yes, ext0_synth0_125to125 is what we've switched too (after I fixed the clocking setup code). Still no idea what exactly causes the quality of the Si5324 bypass path to be so bad.

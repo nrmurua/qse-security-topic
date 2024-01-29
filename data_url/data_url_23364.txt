@@ -1,0 +1,27 @@
+We need a suite of scripts that check the performance of the database communication. Perhaps a mix of some higher-level "integrated" checks of measurements using the context manager, the sweep, etc. and some more unit-test like checks of single commit speed.
+Let's make the profiling scripts first and then worry later about how frequently we'll run them.
+A link of interest: https://github.com/airspeed-velocity/asv
+Great idea! As an example of a heavy task, we can use the T9/T10 "4 GB of raw data" measurements.
+I just had a quick look at asv, and I think it looks both useful and manageable. I like that it can track arbitrary numerical values (like number of database commits) and not just time and memory usage.
+First, let's agree on performance metrics that should be measured:
+We can distinguish writing actions and retrieval actions. I think in the first instance we should focus on how well we can write data to the database.
+One requirement I got while talking to experimentalists is that the data write speed should be at least 100 MB/s. This value is based on the maximum rate at which data is generated and on the desire to not keep piling up data in memory.
+Also, we need to agree on the hardware to perform the profiling on: This, of course, needs to happen on the computers where the measurements are performed (and not on the local development computer)
+Please view the first, very rough version of a profiling script here: https://github.com/sohailc/Qcodes/blob/data_set_profiling/profile_script.py
+I would love to use: https://github.com/uber/pyflame
+but it seems to be Linux only
+This is very useful as well: https://zameermanji.com/blog/2012/6/30/undocumented-cprofile-features/
+@sohailc The link to your profiling script seems broken for me at the moment
+@jenshnielsen Yes that is because I did some reorganizing. You can find it here: https://github.com/sohailc/Qcodes/blob/data_set_profiling/profiling/profile_add_results_sizes.py
+I am using airspeed velocity now: the benchmark script can be found here: https://github.com/sohailc/Qcodes/blob/data_set_profiling/benchmarks/benchmarks.py
+A question: Will we run the benchmark script manually or as part of the CI?
+One of the tests I would like to include is data retrieval from large datasets. But for this test we need to have a large dataset; where do we get that from? We could have a dataset "somewhere" on the file system that we load every time we run the benchmark but then it becomes important to know in which environment the benchmark is run. @jenshnielsen @WilliamHPNielsen @Dominik-Vogel any input to these questions?
+@sohailc I don't know what size of data set you have in mind. It could be created dynamically with an option to leave it remaining on disk.
+A question: Will we run the benchmark script manually or as part of the CI?
+Good question. On one hand, it makes sense to always check that new code neither breaks anything (passes the tests) nor compromises performance (passes the benchmarking). On the other hand, it may be a bit overkill to always run the benchmarks, since we, as opposed to tests, are not going to benchmark the entire codebase. I guess it also depends on how long the benchmarking takes and whether asv offers a nice hook for github.
+For now the priority is on defining benchmark scripts and making sure that we can run them anywhere. Systematic benchmarking and CI integration is IMHO outside the scope of this issue.
+@jenshnielsen Well, mission accomplished :-) At least as far as timing performance is concerned. Adding memory tests is not difficult though, now we have the framework up and running
+@Dominik-Vogel I thought about dynamically creating data sets as well, though 1) this will create long run time for benchmarking scripts and 2) I was thinking of datasets of at least several megabytes. Ideally, we would like to see performance on terabyte-sized datasets but that is impractical, so we will investigate performance on smaller sets and extrapolate. But even megabytes of data is not easily generated. The easiest thing would be to download data from storage and benchmark off of that.
+Great. The way I see this issue is that the end result should be:
+Initially I would not worry about how long (within reason) it takes to run the profiling. We can worry about that when we do CI stuff. This means that we can write scripts that create huge databases
+Just as a reference, here is another project that uses Airspeed velocity: https://github.com/MDAnalysis/mdanalysis/tree/develop/benchmarks

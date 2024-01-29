@@ -1,0 +1,87 @@
+Description
+Hello, for testing purposes, I'm trying to use pyinstaller to bundle the dwave- simulated annealing algorithm into a custom pyqt app that I'm building. In this custom app, I can successfully import and run successfully the dwave-sa algorithm. However, when I try to bundle the app and run it using pyinstaller, I get the error:
+Steps To Reproduce
+The error occurs when you try to bundle the file using Pyinstaller.
+Expected Behavior
+This error should not occur when you attempt to bundle the app.
+As a side note, looking at the Dimod directory tree, I cannot find this libs folder anywhere. So, not sure why the pyinstaller is even looking for this folder?
+Environment
+Additional Context
+Not sure if this is a dimod error, or a pyinstaller error? Thanks,
+Can you post the full command you're using that causes the error? I suspect pyinstaller is not not interacting well with the Cython/C++ libraries.
+Hi @arcondello ！
+Sure- Easiest way to reduplicate the error is to just set up a new directory called test somewhere on your hard drive somewhere (i.e. md test).
+Type cd test to enter the directory.
+Inside the test directory, type pip install dwave-sa to install the dwave-sa package. Then type pip install pyinstaller to install pyinstaller.
+Within the test directory, create a blank file called "test.py."
+Populate it as so:
+From here, you should be able to run the file by typing python test.py. Ideally, the file will run successfully and print the result.
+Then, use pyinstaller to bundle the file into an .exe file by typing pyinstaller test.py within c:\test.
+After about a minute or so, the bundled file should be created. To access it, type cd dist and then cd test.
+In this directory, type ./test in order to run the test.exe file and also to see what error pops up (if any). At this point, the following error should show:
+Note that in my original repository, I fixed this error by setting up a virtual environment in the directory, and then reinstalling pyinstaller and dwave-neal in the virtual environment. Then, I re-ran pyinstaller test.py, which led me to the error I mentioned in my original post.
+Oddly enough, trying to-reduplicate this process in the c:\test directory, I cannot get past the error mentioned above.
+That said, as you mentioned, it's possible that 'pyinstaller is not not interacting well with the Cython/C++ libraries'... I suspect that both errors are possibly related to this premise?
+What else can we try to solve this issue?
+Thanks in advance for your help and attention,
+Rob
+I see. The issue is that pyinstaller looks at the import statements to find the files it needs (see docs). However, on windows systems some of the files are imported via a patch added to the __init__.py by delvewheel. That patch, for dimod, looks something like
+Consequently, pyinstaller doesn't know that it needs those files. To solve this, you'll need to add them manually via a .spec file.
+Hope this helps.
+Hi! That is a good suggestion and much appreciated. I gave it a shot to manually add the files to the pyinstaller installation using both prescribed ways:
+test.spec file
+a = Analysis( ['main.py'], pathex=[], binaries=[], datas=[], hiddenimports=['dwave-neal', 'dimod'], hookspath=[], hooksconfig={}, runtime_hooks=[], excludes=[], win_no_prefer_redirects=False, win_private_assemblies=False, cipher=block_cipher, noarchive=False, ) 
+and then running pyinstaller test.spec
+as well as
+2） adding them via command line via pyinstaller --add-data dimod --add-data dwave-neal test.py and then running pyinstaller test.py
+In both cases, after the file compiles, I still get the original ModuleNotFoundError: No module named 'dimod.cyqmbase error when I try to run the generated .exe file.
+Note that I believe I am using pyinstaller correctly because I have also experimented with importing and using the numpy and pandas packages within a pyinstaller-created .exe file, and they both seem to run without issue.
+Any additional thoughts you may have on this?
+Your help is greatly appreciated. :)
+I don't actually have a windows machine handy to reproduce.
+Can you post here the output of
+or the equivalent? I am curious what binaries (if any) it is managing to find.
+I am also interested in the contents of dist/test/dimod/cyqmbase/ if it exists.
+Absolutely! Here is the content of dist/test/dimod:
+From this screenshot, already I can see an issue, which is that not only does cyqmbase not exist, but neither does a host of other folders/ files that apparently exist in the current dimod repository?
+If this is a packaging-related issue, how to fix? One solution would be to try to manually bundle the dimod folder into a .whl file and then install it as a binary via pyinstaller?
+I think what's happening is that pyinstaller's discovery is not able to follow the import path into the Cython files. So it is including the .pyd files that are imported from Python, but not when they are imported from eachother. That's why cyutilities.cp310-win_amd64.pyd gets added but not cyqmbase.cp310-win_amd64.pyd.
+I suspect there is some way to fix it via
+but you'll need to do some sort of discovery of all of the .pyd files in your dimod install directory.
+but neither does a host of other folders/ files that apparently exist in the current dimod repository?
+I think this is normal, I believe it only needs the .pyd files, not the .py ones. Though of course there are a few .pyd files you're missing.
+Yea, that's a good suggestion. I edited my .spec file to collect all dynamic libraries (including .pyd files) imported by dimod, as follows:
+test.spec
+``
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+block_cipher = None
+a = Analysis(
+['test.py'],
+pathex=[],
+binaries=[],
+datas=[],
+hiddenimports=['dwave-neal', 'dimod'],
+hookspath=[],
+hooksconfig={},
+runtime_hooks=[],
+excludes=[],
+win_no_prefer_redirects=False,
+win_private_assemblies=False,
+cipher=block_cipher,
+noarchive=False,
+)
+-# collect all dynamic libraries (including .pyd files) imported by your application-
+a.binaries += collect_submodules('dimod')
+-# add the required modules to the hidden imports list-
+a.datas += collect_data_files('dimod')
+``
+and that issue seems to go away. However, a new issue then arises, which I'm not sure if is still related to the dimod package or something else...does any of this make sense to you?
+7120 INFO: Building EXE from EXE-00.toc completed successfully. Traceback (most recent call last): File "C:\Users\robli\anaconda3\lib\runpy.py", line 196, in _run_module_as_main return _run_code(code, main_globals, None, File "C:\Users\robli\anaconda3\lib\runpy.py", line 86, in _run_code exec(code, run_globals) File "C:\Users\robli\anaconda3\Scripts\pyinstaller.exe\__main__.py", line 7, in <module> File "C:\Users\robli\anaconda3\lib\site-packages\PyInstaller\__main__.py", line 194, in _console_script_run run() File "C:\Users\robli\anaconda3\lib\site-packages\PyInstaller\__main__.py", line 180, in run run_build(pyi_config, spec_file, **vars(args)) File "C:\Users\robli\anaconda3\lib\site-packages\PyInstaller\__main__.py", line 61, in run_build PyInstaller.building.build_main.main(pyi_config, spec_file, **kwargs) File "C:\Users\robli\anaconda3\lib\site-packages\PyInstaller\building\build_main.py", line 1019, in main build(specfile, distpath, workpath, clean_build) File "C:\Users\robli\anaconda3\lib\site-packages\PyInstaller\building\build_main.py", line 944, in build exec(code, spec_namespace) File "test.spec", line 48, in <module> coll = COLLECT( File "C:\Users\robli\anaconda3\lib\site-packages\PyInstaller\building\api.py", line 929, in __init__ self.toc = normalize_toc(self.toc) File "C:\Users\robli\anaconda3\lib\site-packages\PyInstaller\building\datastruct.py", line 325, in normalize_toc return _normalize_toc(toc, _TOC_TYPE_PRIORITIES, _type_case_normalization_fcn) File "C:\Users\robli\anaconda3\lib\site-packages\PyInstaller\building\datastruct.py", line 340, in _normalize_toc for dest_name, src_name, typecode in toc: ValueError: too many values to unpack (expected 3)
+Thanks,
+Alright, so trying another way to import the dimod submodules:
+leads to the following DOS header magic not found error when I try to compile using pyinstaller:
+3232 WARNING: Cannot get binary dependencies for file: C:\Users\robli\anaconda3\lib\site-packages\dimod\__init__.pxd 3233 WARNING:   Reason: 'DOS Header magic not found.' 3234 WARNING: Cannot get binary dependencies for file: C:\Users\robli\anaconda3\lib\site-packages\dimod\binary\__init__.pxd 3234 WARNING:   Reason: 'DOS Header magic not found.' 3235 WARNING: Cannot get binary dependencies for file: C:\Users\robli\anaconda3\lib\site-packages\dimod\binary\cybqm\__init__.pxd 3235 WARNING:   Reason: 'DOS Header magic not found.' 3236 WARNING: Cannot get binary dependencies for file: C:\Users\robli\anaconda3\lib\site-packages\dimod\binary\cybqm\cybqm_float32.cpp 3237 WARNING:   Reason: 'DOS Header magic not found.' 3237 WARNING: Cannot get binary dependencies for file: C:\Users\robli\anaconda3\lib\site-packages\dimod\binary\cybqm\cybqm_float32.pxd 3238 WARNING:   Reason: 'DOS Header magic not found.' 3238 WARNING: Cannot get binary dependencies for file: C:\Users\robli\anaconda3\lib\site-packages\dimod\binary\cybqm\cybqm_float32.pyx 3239 WARNING:   Reason: 'DOS Header magic not found.' 3240 WARNING: Cannot get binary dependencies for file: C:\Users\robli\anaconda3\lib\site-packages\dimod\binary\cybqm\cybqm_float64.cpp
+Not sure if this error message is more easily solved than the previous one?  Is there a way to break apart the dimod package so that its submodules are more easily accessed？
+Unfortunately we have exceeded my knowledge of pyinstaller. I am not entirely sure what is going wrong at this point, other than the general observation that it seems to still be having trouble finding all of the dependencies it needs.
+Is there a way to break apart the dimod package so that its submodules are more easily accessed？
+Do you mean only installing the parts of dimod that you need for your program? Or something else?

@@ -1,0 +1,73 @@
+Cryptography Bill of Materials (CBOM) [1] is a format to describe cryptographic assets (such as libraries, algorithms) and their dependencies. It's an extension to the CycloneDX standard [2] for Software Bills of Materials.
+(C)BOMs simplify, for example, the exchange of component composition and add visibility of components and dependencies.
+This issue is about generating a CBOM of liboqs. Much of the required information is already available on the yml-doc files. They can be used to generate a CBOM (json file).
+[1] https://github.com/IBM/CBOM
+[2] https://cyclonedx.org
+Can you please explain the benefit of this for OQS (users and developers)? Who uses "CBOMs"?
+At first sight this looks like a vendor-specific/proprietary code description format, i.e., useful only for one party. The draft PR in turn adds changes to core data structures that make maintenance of liboqs more cumbersome for everyone (e.g., by duplicating oqs-openssl information in liboqs YML files that then apparently manually have to be kept in sync between projects).
+Additionally, can I ask whether this has to be in liboqs? It seems like this could be run "outside" (and for any library you'd like to document with this format). Lastly, glancing over your spec with its references to OIDs (and the "openssl forward references" in the PR), if at all, shouldn't this rather reside in oqs-openssl?
+Thanks @baentsch for the comments.
+Can you please explain the benefit of this for OQS (users and developers)? Who uses "CBOMs"?
+At first sight this looks like a vendor-specific/proprietary code description format, i.e., useful only for one party.
+The CBOM spec was just recently released. It's an open specification based on the OWASP CycloneDX specification (see references above), with the plan to upstream to a next version of CycloneDX.
+The benefit for OQS users is to have a standard format that documents its crypto components and dependencies, which makes it accessible for related tooling from CycloneDX.
+The draft PR in turn adds changes to core data structures that make maintenance of liboqs more cumbersome for everyone (e.g., by duplicating oqs-openssl information in liboqs YML files that then apparently manually have to be kept in sync between projects).
+I think the changes you refer to is the addition of a oqs_alg field in the algorithm docs (yml files). The intention was to be able to retrieve the OIDs of algorithms as they define an algorithm more uniquely (e.g. OID 'should' differ if there is a change between round 3 and 4, the name is the same). At the moment, this is only possible by retrieving the OID from oqs-openssl. I see that this is not optimal. Alternatively, would there be value adding the OID definitions to liboqs and let openssl and oqs-provider fetch OIDs from here?
+Additionally, can I ask whether this has to be in liboqs? It seems like this could be run "outside" (and for any library you'd like to document with this format). Lastly, glancing over your spec with its references to OIDs (and the "openssl forward references" in the PR), if at all, shouldn't this rather reside in oqs-openssl?
+The format itself can be used for any library. Having the CBOM in liboqs allows other components to refer to its CBOM. OQS-openssl would have a different CBOM than liboqs. It would add a dependency to liboqs (and its CBOM) and to the algorithms it uses from liboqs.
+Thanks for the background, @bhess.
+The CBOM spec was just recently released. It's an open specification based on the OWASP CycloneDX specification (see references above), with the plan to upstream to a next version of CycloneDX.
+When is this planned? It just "feels wrong" for an OSS project (not controlled by one company) to include reference to one company's (github) repo as proposed here
+The benefit for OQS users is to have a standard format that documents its crypto components and dependencies, which makes it accessible for related tooling from CycloneDX.
+I'd see the benefit of such format and tooling if & when this is truly open and generally used. What is positive is your use of the Apache license for your project.
+I think the changes you refer to is the addition of a oqs_alg field in the algorithm docs (yml files).
+Correct. See additional questions in the PR. The goal should be to avoid anything that creates dependencies across projects that have the potential to break things without suitable manual intervention (ensuring naming consistency in this case).
+The intention was to be able to retrieve the OIDs of algorithms as they define an algorithm more uniquely (e.g. OID 'should' differ if there is a change between round 3 and 4, the name is the same). At the moment, this is only possible by retrieving the OID from oqs-openssl. I see that this is not optimal.
+Then we're two already :)
+Alternatively, would there be value adding the OID definitions to liboqs and let openssl and oqs-provider fetch OIDs from here?
+That I find an even less desirable approach given that only a minority of algorithms with OIDs in oqs-openssl or oqs-provider are implemented in liboqs (the majority are hybrids not even visible in liboqs).
+The format itself can be used for any library. Having the CBOM in liboqs allows other components to refer to its CBOM. OQS-openssl would have a different CBOM than liboqs. It would add a dependency to liboqs (and its CBOM) and to the algorithms it uses from liboqs.
+Could you contemplate doing that for the downstream projects first before deciding how/what to include in liboqs? I have a hunch that that would provide input for solving the "OID quagmire".
+I'd see the benefit of such format and tooling if & when this is truly open and generally used. What is positive is your use of the Apache license for your project.
+Yes, correct: it's under Apache-2.0 and therefore open and available for general use.
+Correct. See additional questions in the PR. The goal should be to avoid anything that creates dependencies across projects that have the potential to break things without suitable manual intervention (ensuring naming consistency in this case).
+The intention was to be able to retrieve the OIDs of algorithms as they define an algorithm more uniquely (e.g. OID 'should' differ if there is a change between round 3 and 4, the name is the same). At the moment, this is only possible by retrieving the OID from oqs-openssl. I see that this is not optimal.
+Then we're two already :)
+Alternatively, would there be value adding the OID definitions to liboqs and let openssl and oqs-provider fetch OIDs from here?
+That I find an even less desirable approach given that only a minority of algorithms with OIDs in oqs-openssl or oqs-provider are implemented in liboqs (the majority are hybrids not even visible in liboqs).
+Isn't it then more a question where the best place is for the definitions (names, oqs algorithm name, OID, code point, ...)?
+So far it seems to be a bit scattered:
+Thinking about it: could it make sense to move these definitions to a separate repository, e.g. oqs-definitions? The different projects can then pull and include it as a git submodule, and use the parts they need for templating, documenting etc. Definitions can so be centrally maintained, and duplicates and manual syncing become obsolete.
+Could you contemplate doing that for the downstream projects first before deciding how/what to include in liboqs? I have a hunch that that would provide input for solving the "OID quagmire".
+I think it makes most sense to start with the core component liboqs and later the downstream projects that depend on liboqs.
+But since liboqs currently doesn't have a notion of OIDs, it might indeed be better to omit them in the liboqs CBOM.
+Again, if we put the OID definitions in a central repository it's different. It would also allow new API like OQS_KEM_new_by_oid which solves some ambiguity about the algorithm version one expects.
+It would also allow new API like OQS_KEM_new_by_oid which solves some ambiguity about the algorithm version one expects.
+Such API is a very good suggestion I'd whole-heartedly welcome. Albeit -- OQS_SIG_new_by_oid I'd understand more -- where/what standardized KEM OIDs?
+Thinking about it: could it make sense to move these definitions to a separate repository, e.g. oqs-definitions?
+Conceptually Yes -- particularly as this is a rather general problem that already was suggested/came up in contexts beyond OQS, e.g. IETF-Hackathon/pqc-certificates#3. The lack of such "online registry" for "not-yet-quite standardized" IDs lead to the many sample PQ deployments done without interop in mind/capabilities (AWS, Cloudflare, Google, etc.).
+Thoughts welcome how/where to locate this! IETF to me sounds like a good place. This arguably would need support by quite a few teams, though.... Maybe worth while a post to the various dev mailing lists (oqs, pqc, ietf, ...)? Thoughts, @dstebila @christianpaquin ?
+Such API is a very good suggestion I'd whole-heartedly welcome. Albeit -- OQS_SIG_new_by_oid I'd understand more -- where/what standardized KEM OIDs?
+Right, I primarily meant OQS_SIG_new_by_oid. Still, unique identifiers would also useful for KEMs. OIDs for KEMs could also become a topic for applications like KEMTLS I suppose.
+Hi all, just joining the conversation. Looks reasonably interesting. But I'm not very familiar with the software bill of materials landscape.  Basil, do you know if there are other competing formats or has everyone coalesced around CycloneDX?
+Regarding a registry for interim identifiers, nothing has stuck; we had a spreadsheet but it stopped getting updated, then we had our YML files, but those were hard to find, and others seem to be in the same boat. IETF won't want to establish a registry for non-standardized identifiers; once they create standards, they have IANA registries to list them in.  We could try again to create a spreadsheet of identifiers that are known to be used; perhaps having it as a Github repo that anyone can edit (rather than a Google docs spreadsheet that I had to maintain) might make it easier?  Would have to think about the relevant fields.
+I do like the idea OQS_SIG_new_by_oid and OQS_KEM_new_by_oid, once proper OIDs start getting assigned.  KEMs would still need OIDs if they're used in certificates, such as in the KEMTLS setting but also in CMS or S/MIME for email encryption.
+We could try again to create a spreadsheet of identifiers that are known to be used;
+No spreadsheet, please -- we do need a way to trace changes.
+perhaps having it as a Github repo that anyone can edit (rather than a Google docs spreadsheet that I had to maintain) might make it easier?
+Yes: That would also allow tracking if code and artifacts (e.g., certs) fall apart due to an incorrect edit.
+then we had our YML files, but those were hard to find
+Well, we still have them and use them to drive all code generation. That they're hard to find is our fault alone: We'd simply need to publish them prominently -- if we have the chutzpah to be the "guardians of the unassigned numbers" (IUNA, so to say ;-)
+Basil, do you know if there are other competing formats or has everyone coalesced around CycloneDX?
+We found CycloneDX the most aligned with a cbom use case, it was initially designed for application security analysis and already supports several use cases in this domain. The main alternative is SPDX which is mainly about licenses. As far as I know there is no other open format that supports the cbom use case out of the box.
+Regarding registry, I'd also support a github repository to be able to keep track. As first step just collect the different yml definition files there. The projects can then directly pull it as subrepo.
+Basil, do you know if there are other competing formats or has everyone coalesced around CycloneDX?
+We found CycloneDX the most aligned with a cbom use case, it was initially designed for application security analysis and already supports several use cases in this domain. The main alternative is SPDX which is mainly about licenses. As far as I know there is no other open format that supports the cbom use case out of the box.
+Okay, makes sense.
+Regarding registry, I'd also support a github repository to be able to keep track. As first step just collect the different yml definition files there.
+Sure, we can create it as a repo under the OQS organization on Github or create it somewhere else.
+The projects can then directly pull it as subrepo.
+I have never had much success using Git's submodule feature. In principle it works, but I think it is quite awkward because clones of the repo don't actually give you the contents of the sub-repo, you have to do extra steps.  But we can worry about that if and when the time comes.
+I have never had much success using Git's submodule feature. In principle it works, but I think it is quite awkward because clones of the repo don't actually give you the contents of the sub-repo, you have to do extra steps.
+ACK. Using submodules isn't a fool-proof approach to always get the most current version of some file. I'd rather suggest a git-based repo that also is viewable via web-browser (to address the "hard-to-find" concern): So, in summary of all of the suggestions above, what about this:
+I'd suggest this to be (the git repo behind) openquantumsafe.org, to announce this widely and invite everyone to submit new entries (if they for some reason don't want to/did not already use an ID listed there). As soon as IANA assigns IDs we simply add those and refrain from updates to such IANA-assigned IDs: The (new/TBD) alg-id logic in our projects would keep ticking identically for truly standardized and still-experimental algs.

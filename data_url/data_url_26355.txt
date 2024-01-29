@@ -1,0 +1,21 @@
+I ran the H2O-64.inp benchmarks using 4 MPI, 1 OpenMP, and 4 P100 GPUs on a dual socket EPYC node.
+What is striking is that:
+So, we might be suffering from a bad assignment of GPUs to MPI ranks.
+@alazzaro started to look into it, but we have not yet switch to his new mp_get_node_global_rank() routine.
+I found another (if not bigger) problem. I tested with a dual-socket system and one V100 per socket, i.e., multi-GPU. I got H2O-64 test case to crash if I did not use multirun.sh. I thought, CP2K and DBCSR can now handle multiple GPUs correctly like no need for manipulating the CUDA_VISIBLE_DEVICES? My experiments below are based on CP2K/master and DBCSR/develop.
+I tried the following with two GPUs (multirun.sh 2 ...), which works:
+I also tried the following with two GPUs (no multirun.sh), which does not work:
+Even the case with two ranks (and two GPUs) crashes:
+Specifically, I get a bunch of CUDA error: invalid argument errors, and subsequently usually acc_devmem_setzero crashes (in multiply_cannon).
+we have not yet switched to his new mp_get_node_global_rank() routine.
+I believe this work must be about the local rank number. The global rank like GLOBAL_RANK_ID % NDEVICES is the way CP2K currently uses?
+( As an addendum, the above mentioned multirun.sh also uses just global rank number, i.e., no awareness of the socket/PCIe-slot. )
+I got H2O-64 test case to crash....
+I can confirm this. On my dual GPU system cp2k crashes when run with more than one MPI rank and more than two threads.
+The problem reaches back to at least 6d12638, which makes me wonder why nobody has noticed this before.
+I got H2O-64 test case to crash....
+I can confirm this. On my dual GPU system cp2k crashes when run with more than one MPI rank and more than two threads.
+The problem reaches back to at least 6d12638, which makes me wonder why nobody has noticed this before.
+Running tests/dbcsr_perf from DBCSR itself using multiple ranks/threads does not seem to reproduce the "multi-GPU crashes". Therefore, CP2K seems to "drive" DBCSR differently than DBCSR's own reproducer/test. Further, I cannot see significant imbalance running tests/dbcsr_perf on multiple GPUs.
+I just wanted to note, that some "CUDA quirks" is about thread-local active device. A number of CUDA functions implicitly refer to an "active device" similar to a global variable (but at least thread-local). If CP2K activates a device as per latest policy for handling (multiple) GPUs, it should be for every thread.
+I also do not oversee what happens if the active device on a per-thread basis changes due to a different policy/scheme.

@@ -1,0 +1,92 @@
+I am not sure whether the following is a bug, or something to do with pickling behavior. I am trying to write some pretty awesome code, but I get stuck at step number 1: trying to define and measure a parameter (in a loop) that is defined within the ipython notebook (instead of in the instrument)
+I try to run the following code inside ipython notebook
+Where sim is a python instrument with parameters a and b.
+I expect that the first loop will give me a horizontal rainbow and the second loop will give me a constant square (of height 1.)
+The first loop works as expected, but the second one doesn't run.
+I see no measurement process starting (but it might be too quick to see), but when looking at the data, I only see nan's
+operating system
+Windows 10
+qcodes branch
+master
+qcodes commit
+7422b56 euchas on 6/2/2016 at 08:10
+@damazter your guess about pickling is correct (did you see a traceback or did it just fail silently?) This is a known problem, but I'm not sure if there will be a way to solve it or if we just have to live with this limitation. When you use multiprocessing on Windows (or elsewhere with the 'spawn' method) all of the code needed by the other process must be importable. Which means no interactive definitions. (This is also why we can't use closures)
+Obviously this is a pretty annoying limitation for an experimental workflow; you have to move all definitions to separate files, import them, reload them when you change them... big headache.
+Possible strategies for getting around this:
+@alexcjohnson
+using *nix is not really an option for me at the moment ;)
+But on a more serious note:
+Upon running at above mentioned loop fails silently which is a bit strange.
+I would very much like stuff like this to work without giving up anything from the multiprocessing from qcodes, so I would like to think about the solutions you mentioned above or maybe new ones. What I don't really understand at this moment, though, is what the difference is between parameters defined in ipython notebook, and parameters defined elsewhere. Would it be possible to elaborate a bit on that?
+The issue is just that any object you need in the new process must be importable - i.e. you can do a from module import object - and if it was defined in an interactive session it doesn't exist anywhere on disk to be imported from
+what an annoying constraint, but ok, so be it.
+I think it's ok to close the issue then
+@damazter @alexcjohnson I do get a traceback.
+@damazter  did you check the console where the notebook is running ?
+@giulioungaretti
+I did not check the console window, my bad
+@damazter  now worries, It could also not be printed on win. IDK.
+If you can live with your definition on a file (which at least adds the nice feature of making  things reusable) then this error goes away. ❤️
+@giulioungaretti
+Yeah, I know. But I just keep thinking that it would be so super useful to define a parameter on the fly, without having to change the drive file (or any file).
+my mind made up the most horrible non-working code:
+but I see now that I just might be out of luck. I really like the code above as it solves a general problem in one line of code (in th interactive ipython window), but it has this annoying downside that it doesn't work (for two reasons actually
+1: the parameter is only defined in an interactive context as discussed above)
+2: it contains a lambda function so it creates a closure problem as well
+)
+I feel your "issue", it impacts the workflow.
+But on one hand it's only Windows to blame , on the other hand we may find
+better ways to do multiprocessing in the future.
+Multiprocessing is a though beast.
+On Tue, 7 Jun 2016 at 19:43, damazter notifications@github.com wrote:
+@giulioungaretti https://github.com/giulioungaretti
+Yeah, I know. But I just keep thinking that it would be so super useful to
+define a parameter on the fly, without having to change the drive file (or
+any file).
+my mind made up the most horrible non-working code:
+l = qc.Loop(sim.a[0:0.4:0.005]).loop(sim.b[-0.2:0.2:0.005]).each(
+StandardParameter("sum", get_cmd=lambda *x:sum(sim.get_something()))
+)
+data = l.run()
+but I see now that I just might be out of luck. I really like the code
+above as it solves a general problem in one line of code (in th interactive
+ipython window), but it has this annoying downside that it doesn't work
+(for two reasons actually
+1: the parameter is only defined in an interactive context as discussed
+above)
+2: it contains a lambda function so it creates a closure problem as well
+)
+—
+You are receiving this because you were mentioned.
+Reply to this email directly, view it on GitHub
+https://github.com/qdev-dk/Qcodes/issues/214#issuecomment-224357812, or mute
+the thread
+https://github.com/notifications/unsubscribe/ACkcN_FZZX1DS-4-WFl0HfLy-deQv9Usks5qJa2bgaJpZM4It2sH
+.
+@giulioungaretti
+@alexcjohnson
+I feel... Strange. Both my future and past self are hating me, but I think I found a solution:
+class definition (could be in parameter.py but is in my case in wines.dc)
+and for measurement loop:
+How bad is this? (it works)
+EDIT: updated for clarity
+Hah, yes, eval will work, and we could make it more general (and maybe faster by pre-compiling):
+I'm not opposed to this... the biggest issue (aside from the obvious hackiness and folks' appropriate aversion to eval) is that it's limited to an expression, you can't define a function. Maybe that's a good thing though, if you want to do something more involved than that you should put it in a code file :)
+Also, if what you're going for is really expressions involving existing Parameters, I was about to point out DeferredOperations, which we made to support BreakIf but also supports get like:
+Except that I seem to have added some overzealous error checking... should be a quick PR though to fix that!
+Oh, it just needs a name attribute:
+not sure how to supply that inline, but that's a separate issue.
+How many of your use cases will that cover?
+@alexcjohnson
+My use cases now are for array handling. My parameter returns an array with several thousand entries, and I don't know yet if I want to save the value at a single point, or the sum. This hacked parameter gives me the flexibility to experiment with that without having to add the parameter to the code every time I change my mind.
+So it is definitely code I want to have available somewhere, but that might also be in my personal code base. It is super useful and powerful if you need it, but people shouldn't use it except if it is absolutely necessary.
+Shall I make a proper pull request and discuss there with more people whether it should be included in QCodes?
+I am definitely keeping this code somewhere, you can make settable parameters in the same manner allowing basis transformations of you parameters:
+Note how you can pass libraries as locals as well
+@alexcjohnson
+@giulioungaretti
+Thanks to your help, I have come to realize that although this is a pretty neat solution, it would only be usable by people familiar with the qcodes source.
+It's very error-prone (giving a module as a local makes the parameter unpickleable again, see my previous post in this issue) so I think I am going to keep this code myself.
+It could be useful to others, so maybe we need some place to place this kind of 'nuclear' code, but I have come to realize that this place is not in the qcodes source.
+Therefore I am closing this issue
+Sorry for reopening, I was just reading this, and  pressed the wrong button

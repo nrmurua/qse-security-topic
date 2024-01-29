@@ -1,0 +1,27 @@
+There have been a number of attempts at fixing barriers in the latex drawer (#1727, #1534, #1361), but there are still bugs.
+
+Bug 1: The barrier should only be on qubits 1, 4, 5, 6 -- but it is on qubits 1 to 4.
+Bug 2: It cuts through the U3 gate.
+Hi, I want to try this issue.
+Bug 2:
+Hi @Guruhegde, I think this has to depend on the width of the gate in question. It's not just U3, it happens with other gates such as U1 and U2 as well. So I'm good with any solution that works but it should not hardcode to certain gates and be general. Thanks.
+Details of the problem - for barrier one column space (say A) is allocated. But in the circuit image, barrier location (where it appears)  depends on the next column (say B) width - -0.95em from the center of the B. Boxed gates with single characters won't overlap, but for others, there will be overlap.
+The proper fix is to place the barrier in the column space allocated for it using offset value arg, which is in em unit.
+I am not sure how to map column width(in characters) to offset value, so that solution is generic.
+What I have in mind - If op is multi-character gate and previous column contains barrier, set
+offset= -4.0em elseoffset = -1.65em (lesser value).
+One plus is fix will be local (All change happens in one place).
+@ajavadia What do you suggest?
+It's actually more than just column width in characters because the shapes of different circuit elements isn't fixed. We've encountered this with things like swaps and cx gates in the past. The approach we've taken in the past is like: https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/visualization/latex.py#L626-L634 and https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/visualization/latex.py#L743-L753 Basically when drawing a gate or any other circuit element with a real position in the xymatrix check the previous entry if there is a barrier and adjust the spacing accordingly. These values are typically found by trial and error by hand editing the latex until something looked good enough.
+I think there are probably 2 ways to fix this for real instead of playing whack-a-mole with edge cases like we have been. Either the brute force approach where you figure out a hard coded value for every possible combination of gate type and offset and add that everywhere it's needed. This basically involves a lot of trial and error and testing every possible spacing combination.
+Or the more complicated approach, where we'll have to come up with a general solution that figures out/calculates the spacing between columns when there is a barrier and divide that in half to use as the horizontal offset and update the barrier to use that. The tricky piece, as you said above (although it's more involved than just label character counts), here will be figuring out that spacing because it's not exactly obvious to me how to do that from the generated latex source which is all we have at the point we'd want to adjust offsets.
+The last option is probably to try and change the \barrier implementation in the qcircuit library. The way I implemented this is to use an arrow (\ar) in the xy matrix to draw a vertical line. This isn't actually an element in the xymatrix which is why we need to manually space it. If we could come up with a way to draw it as a matrix element then we wouldn't need to play around with offsets anymore,  xypic would do it for us. That being said I implemented it with \ar because I couldn't figure out a way to add a vertical line spanning multiple rows as an xymatrix element, but that doesn't necessarily mean there isn't a way.
+Thanks for the explanation!
+There is one more idea - When barrier op is present, add \qw in a new column, but append  \barrier[0em]{*} to the previous column. This way barrier location would be fixed.
+@mtreinish What is your opinion on this?
+@Guruhegde personally I've had mixed success using a \qw to make placing a barrier consistent. But, I don't think I've tried post pending a empty \qw column after a barrier (I might have, but I don't remember if I did). If your suggestion works reliably then yeah we should totally go for it. That would be a lot simpler than either of the other proposals.
+I'm a little concerned it might mess up the spacing of the larger circuit. But it's worth trying to see how it works out.
+I raised a PR to test the changes. I tested manually with simple circuits (few found in previous bug reports) and so far good. Also tried circuits in this link - https://github.com/Qiskit/qiskit-iqx-tutorials/blob/master/qiskit/advanced/terra/3_advanced_circuit_visualization.ipynb. I didn't find any issue.
+Fix added here - https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/visualization/latex.py#L626-L634 and https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/visualization/latex.py#L743-L753 can be removed right? Can you point me where test circuits for those changes can be found?
+Fix added here - https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/visualization/latex.py#L626-L634 and https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/visualization/latex.py#L743-L753 can be removed right? Can you point me where test circuits for those changes can be found?
+Yeah, we should remove those and any similar code blocks (I think there are a couple of other spots that do the same thing) in #2918 before we merge it. That's the only blocker I see with it before merging.

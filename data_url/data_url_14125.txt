@@ -1,0 +1,33 @@
+Qiskit Terra version:
+qiskit | 0.44.1
+qiskit-terra | 0.25.1
+qiskit_ibm_runtime | 0.11.3
+qiskit_aer | 0.12.2
+qiskit_ibm_provider | 0.6.3
+Python version:
+Python version | 3.10.8
+Python compiler | GCC 10.4.0
+Python build | main, Nov 22 2022 08:26:04
+OS | Linux
+CPUs | 8
+Operating system:
+IBM Quantum lab
+When drawing pulse schedules with qiskit runtime services, the following error occurs because name is an attribute not a function:
+Since for the most part backends and runtime services are interchangable, this is kind of annoyin
+The schedule should be drawn (least surprising upgrade to runtime from backend.run); uncomment the commented line to see.
+The pulse drawer could wrap evaluating backend.name() in a try/catch and cast backend.name to a string on fail, or it could introspect the type of name or backend but those seems more fragile.
+This doesn't seem super-critical to fix though.
+hey @oliverdial, can I get this one? I think that I can fix it
+Sure, let me assign you thanks!
+I went into the code and found some things:
+The IBMBackend, returned by the .get_backend() function, is using the BackendV2 class, but this one doesn't have a name() method, however, it has a name  attribute, which is raising this error.
+To fix it, there are some approaches that I thought:
+1- change the name attribute from BackendV2 to backend_name or _name and add a .name() method.
+2- just adding an if statement in device_info.OpenPulseBackendInfo.create_from_backend() to check the type of backend.name.
+For me, the better approach is the first one, but it may cause more errors in existing backends that inherit from BackendV2. however, the last one is securer.
+BackendV2 is an interface definition and cannot be changed; it would break everybody that is already using a BackendV2.  Option 2 is more along the right lines, but the more correct thing to do is to check the type of the backend and dispatch to the correct creation logic depending on whether it's a BackendV1 or BackendV2; both should work, and the chances are that it's not just the name attribute that the drawer will have a problem with.
+I tried to use the following code in device_info.OpenPulseBackendInfo.create_from_backend()
+and it works. I didn't run the tests, but the sample code provided ran with no problems.
+However it seems more like a workaround instead of a real solution.
+Although, I've tried to work with the qiskit-ibm-runtime code, but I haven't found any solution without creating another backend based on BackendV1 or making a tone of changes in the actual code, that may work worse than let it as it is, once they're many places that are using backend.name instead of backend.name() and changing it may cause further problems.
+Also, as a curiosity, going in the qiskit-ibm-runtime code, there were traces of BackendV1 in some parts, and BackendV2 in others. For me it seemed like the idea was implementing the V1, but for some reason, maybe an update, made them let this version mismatch.

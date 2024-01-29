@@ -1,0 +1,37 @@
+Hi,
+I am currently writing a cryptography library in C++: https://github.com/Steppenwolfe65/CEX
+and I wonder if I can get your opinions on a couple of things.
+You have collected a number of RingLWE implementations (thanks for that), but do you have a preference for one implementation over another?
+Are there functions or features of these implementations that you would like to see combined in an ideal implementation? The library I am writing is targeting application developers, so multi-threading and SIMD parallelization are high priority, is one version better suited for this than the others?
+I think the most important criteria though is, do you feel one version is more secure than the others, this includes upwardly flexible parameter sets, and the application of attack vector counter-measures like constant time functions.
+I looked at Supersingular Isogeny a few years ago, but could only find the one 'cython' implementation on git.. it's an interesting idea, and could be made quite fast, but I wonder if it has had enough study. The same goes for the McBits version of McEliece.. but again, I would be really interested to know what you think about this..
+Anyways, thanks so much for all this great work, it is certain to make my job a lot easier.
+Regards,
+John
+@Steppenwolfe65 i'm not a member of the project, but here's my opinion as another c++ library developer targeting applications:
+Hope that's helpful.
+@jjl Just from a brief review of the codes yesterday, I see a number of spots where performance can be enhanced. The fft's might be parallelized, the key generation can be multi-threaded, but perhaps most significantly, adding a fast rng (I have a pipelined and parallelized CTR generator that outputs AES-256 NI at less than 3 cycles per byte, or about 10GB p/s across 8 cores on my desktop).
+My thinking now is to just grab the best bits from each implementation and make my own, I would also like to expand the parameter sets, so I'll borrow from this project: https://github.com/vscrypto/ringlwe
+I'll look at Frodo, next week I plan to review all the papers before I begin writing.
+I looked at supersingular isogeny a while back, and remember noting that some of the functions might also be pipelined, I'll review the latest papers, but I'm not sure how much time I want to put into it right now, same for NTRU.
+Hi @Steppenwolfe65 and @jjl,
+Certainly there are places where performance can be improved.  Some of the original implementations have assembly/SIMD optimizations that we haven't compiled in yet to our build, but we do want to do that.
+Parallelizing FFT or key generation obviously improves runtime of a single execution, but for a server serving many clients it wouldn't generally improve throughput, so it's up to you which is more important.
+Ring-LWE and LWE should be quite amenable to vectorization.
+If you have a faster AES implementation, we'd love to be able to use it.  :)
+As for a preference of which algorithm/implementation, I don't have a preference at the moment, and I'm waiting to see how the NIST PQ crypto project goes.
+Douglas
+@dstebila and @jjl
+Hi Douglas,
+I'm kind of glad you didn't add simd/asm yet, makes it a lot easier to follow the logic.. nice job cleaning up and consolidating these codes btw.
+All parallelization in my library is optional, and can be tuned and turned on/off via a parallel options class, the same will hold true for the asymmetric ciphers and signature schemes.
+There is a high degree of automation in what I am writing, as it targets application developers directly (so simd scale [128/256] multi-threading and fallbacks are all chosen automatically at runtime based on system capabilities).
+The AES-NI implementation is here:
+https://github.com/Steppenwolfe65/CEX/blob/master/CEX/AHX.cpp
+and the Generator is here:
+https://github.com/Steppenwolfe65/CEX/blob/master/CEX/CMG.cpp
+The AES-NI implementation uses an optional HKDF Expand generator to power the key schedule using any one of the implemented digests (Skein, Keccak, Blake2, or SHA-2), and in extended mode can process up to 38 rounds.
+The generator has predictive and backtracking resistance using one of the implemented TRNGs, (native, CPU jitter, entropy collector, or RDRAND/RDSEED).
+So.. quite a few dependencies, but if you want help boiling down an implementation that you can use in this project, I'd be glad to help. Note though, that at this time, this is a windows library...
+There's an introduction to CEX paper that lists the current capabilities as well.
+John

@@ -1,0 +1,21 @@
+parameter_binds of IBMQBackend.run or execute are explained as follows.
+parameter_binds (Optional[List[Dict[Parameter, float]]]) – List of Parameter bindings over which the set of experiments will be executed. Each list element (bind) should be of the form {Parameter1: value1, Parameter2: value2, …}. All binds will be executed across all experiments; e.g., if parameter_binds is a length-n list, and there are m experiments, a total of m x n experiments will be run (one for each experiment/bind pair).
+Terra's execute
+Terra's assemble
+IBMQBackend.run
+The value part is expected to be a value for Terra and IBMQ provider.
+But, Aer seems to expect a list of values.
+Which behavior is correct?
+output w/ qiskit-aer 0.10.4 and qiskit-ibmq-provider 0.19.2
+Same behavior between aer and ibmq-provider
+We think that this is an issue of qiskit-ibmq-provider. Aer takes a list of values for each parameter in parameter_binds.
+ibmq-provider invokes assemble to bind parameters. Do you mean that Terra's documentation and implementation are wrong?
+Do you mean that Terra's documentation and implementation are wrong?
+No. This is not an issue of Terra. This is an issue in qiskit-ibmq-provider because parameter_binds specifications of qiskit-aer and assemble() are different. To use Aer's parameterized qobj, qiskit-ibmq-provider should not use assemble() which just expand circuits, and should use AerSimulator._assemble().
+Types of parameter_binds of AerSimulator._assemble() and assemble() are different and Aer may be able to support  both types.
+OK. I ask it to qiskit-ibm-provider repo. It has the same issue. Qiskit/qiskit-ibm-provider#370
+The fundamental issue you're seeing is that parameter_binds is not a standard interface, it's custom between every provider and just happens to have a name collision between aer and ibmq/ibm. Each implementation of it is custom to a provider. This is because most providers don't natively supported running parameterized circuits. For Aer in particular it has extra features that allow it to efficiently bind multiple parameter values per circuit without copying which is why the input is a list of dicts with list values. While the ibmq/ibm provider doesn't have this kind of support because real backends don't support that kind of binding, so at submission time each parameter must have a defined value. That's why the ibm provider's parameter_binds only takes a single value, since under the covers it's just calling QuantumCircuit.bind_parameters() before building the qobj.
+I agree the tricky piece here is that the ibmq provider lets you run on ibm's hosted aer but fails to expose the same feature set of the local aer provider. It treats the aer backend as basically any hardware backend which limits the functionality. @hhorii is correct that this is an issue in the ibm provider especially if you want to use multiple bind values when running on the ibmq hosted aer backend. One bad alternative you can use in the meantime is manually constructing the parameterizations field when using the ibm/ibmq provider and pass that in to run() directly (which should put it in the proper place in the qobj payload). The format isn't the most user friendly though as it is nested lists of the form: [[[circuit_index, parameter_number], [bind_values]], ...]
+Thank you, @mtreinish. You suggestion [[[circuit_index, parameter_number], [bind_values]], ...] sounds relevant to my use case. I will try it.
+Perhaps Primitives absorb these differences. (One of the motivation of introducing primitives.)
+I believe that @t-imamichi satisfied with the comment of @mtreinish.

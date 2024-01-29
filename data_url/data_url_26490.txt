@@ -1,0 +1,23 @@
+Hello,
+I am on the Intel Fortran compiler team and work on ifx. (I was also a heavy user of CP2K during my physics post-doc back in the day.)
+We would really like CP2K to be able to run correctly with ifx. At the moment, it is hanging soon after start-up with the H2O benchmarks. I have been able to trace the issue back to the timers in the timeset routine in src/common/timings.F:
+https://github.com/cp2k/cp2k/blob/master/src/common/timings.F#L228-L229
+https://github.com/cp2k/cp2k/blob/master/src/common/timings.F#L280-L281
+https://github.com/cp2k/cp2k/blob/master/src/common/timings.F#L308-L309
+https://github.com/cp2k/cp2k/blob/master/src/common/timings.F#L383-L384
+You have in two places this timeset routines that look like this:
+The CRITICAL inside the MASTER is redundant and unfortunately causing issues with Intel OpenMP (based on the LLVM OpenMP). MASTER means only the MASTER thread will execute, so there is no need to have a nested CRITICAL.
+The simple solution is to get rid of the !$OMP CRITICAL and !$OMP END CRITICAL sections statements in the lines that I have indicated. Is the CP2K team willing and able to do this?
+Thanks in advance,
+Nick Romero
+This is a 10 years old commit. The reason of the critical region is part of the commit message (nested regions), but I agree with you we can now remove them...
+Thank you @alazzaro. Your patched fixed the issue in src/core/dbscr_timings.F, does that mean the timers in src/common/timings.F are no longer used?
+IIRC, @vondele experimented with ThreadSanitizer around the time of that commit. He presumably added the critical region to eliminate some false positives. So, we should go ahead and also remove it from src/common/timings.F.
+Thank you @alazzaro. Your patched fixed the issue in src/core/dbscr_timings.F, does that mean the timers in src/common/timings.F are no longer used?
+No, what you are mentioning is DBCSR, which is an external repository to CP2K. I'm surprised you get notified of my change, actually (note that CP2K uses a default DBCSR as submodule under exts/dbcsr). I suggest you open a PR with your changes so that we can check it passes the tests.
+I took the liberty of just removing those critical regions.
+@naromero77intel please let us know if you need anything else.
+We really appreciate your support for CP2K!
+All, thank you very much for your quick action.
+We had an internal discussion about the hang that occurred in CP2K due to the aforementioned source code. After additional triage and investigation, there was in fact a regression in the ifx compiler which is now fixed.
+If you wish to undo these changes to avoid false positives in your thread sanitizer, go ahead and do so. Please accept my apologies for requested that you make this unnecessary change. Though, since the nested CRITICAL region didn't do anything, it might be best do leave  as it stands now.

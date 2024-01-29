@@ -1,0 +1,17 @@
+A direct call to feature_map.construct_circuit(x=np.array([0.3, 0.2])) doesn't work:
+_construct_circuit_with_template
+    qc.data[key].params[pos] = Float(2. * new_param)  # rotation angle is 2x
+AttributeError: 'tuple' object has no attribute 'params'
+Just create a feature map feature_map = FirstOrderExpansion(feature_dimension=2, depth=2), and call feature_map.construct_circuit(x=np.array([0.3, 0.2])).
+Because it's a direct call to construct circuit (not through an algorithm like QSVM), it has to initialize the circuit
+ if qr is None:
+      qc = self._construct_circuit_with_template(x) line 191 192 of aqua/components/feature_maps/pauli_expansion.py
+But there is an issue with _construct_circuit_with_template(x). At line 167 qc.data[key].params[pos] = Float(2. * new_param) # rotation angle is 2x,
+it should do .params on qc.data[key][0], beacause it's actually a tuple.
+Just change the line 167 in _construct_circuit_with_template(x) to qc.data[key][0].params[pos] = Float(2. * new_param) # rotation angle is 2x, just like in other parts of the code. (as line 146 in method _build_circuit_template(self)).
+And maybe change the comment in the declaration of the field QuantumCircuit.data because it can lead to bad interpretations: it's written # Data contains a list of instructions and their contexts, in the order they were applied., while in reality it is a list of tuple (Instruction, list quantum register,  list of classical register). If we're not carefull we can think it's a list of Instruction, the type, and try to call .params on a tuple, when we should add a [0] to get the .params from the Instruction.
+Thanks for pointing out the issue.
+Since Terra support parameterized circuits now, I think that should be the right way to do.
+However, we need to figure out what is the best way to utilize the parameterized circuit.
+The previous approach is kind of hacking the underlying data structure to preventing reconstruct the whole circuit.
+For now, I will simply remove the capability of reusing circuit since it should not be the computational bottleneck.

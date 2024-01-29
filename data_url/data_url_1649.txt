@@ -1,0 +1,19 @@
+We check isinstance(op, GateOperation) while verifying that the given operation can be decomposed using analytical / tabulation methods. This leads to the problem that we don't recognize two qubit controlled operations as known gates and hence don't support them.
+
+For example:
+The above code fails with the following error:
+The reason it fails is because ControlledOperations don't satisfy the isinstance(gate, GateOperation) constraint.
+gives
+However,  the gate is actually just a two qubit controlled gate and should be decomposable into the native gateset via known_two_q_operations_to_sycamore_operations.
+gives the following decomposition
+
+should be modified to also recognize two qubit ControlledOperations.
+Cirq version
+0.11.0.dev
+Part of #3242
+I'm assuming the GateOperation check is supposed to filter out Operations that don't have gates.
+We have had these discussions about Operation hierarchy and how the type checks are used as proxies for whether there is an underlying Gate or not. I think it's useful to have a has_gate protocol that actually tries to get the underlying gate and performs not-None, etc checks. This would be more pythonic than type checking IMO.
+op.gate is not None seems about as simple as cirq.has_gate(op), and I think that's basically all the has_gate method would do anyway. Certainly the isinstance(op, cirq.GateOperation) checks are too restrictive in this case.
+The protocol will also be doing a getattr check for gate first. op.gate is not None assumes that op is some Operation type which might not be the case for all instances of these checks in Cirq.
+Upd: Similarly, _is_native_xmon_op checks for isinstance(op, cirq.GateOperation) and hence does not recognize gates like CS(0, 1) to be native gates which leads to much worse (decomposed) target circuit lengths. xref #4172
+Discussed in Cirq sync: Recent work on the circuit transformer APIs should fix this.

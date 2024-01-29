@@ -1,0 +1,11 @@
+The current lifetime check for function parameters is unsound and can lead to memory corruption.
+Even if #1497 (compiler: Function return values (?) not lifetime-tracked) is fixed appropriately, the current escape analysis for function parameters is still unsound and can lead to memory corruption. The reason is that the lifetime for function parameters are treated as the same, but they should be treated as incomparable for correct analysis.
+For example, consider the following code:
+This would cause a compilation error, as the compiler correctly identified that the variable a is mutable, and does not outlive the variable ls which is passed from the caller. However, if we change the function a bit:
+Instead of assigning it directly, we pass to another function foo which does the assignment. As the current escape analysis treats each parameter to have the same scope, this passes the lifetime check, but the behavior is exactly the same as the previous one, and should be rejected.
+Run the following code:
+Either reject the code or print
+This is because we saved a = ls[0]. The function bar should assign a new list [1, 2, 3] to the first element in ls, so it should not affect our variable a.
+Prints
+I think I might have just seen another version of this. We had some code that did something similar to:
+Which crashes in the UTF-8 validation of the RPC call to write back the value of s (the crash looks similar to #1379, but I'm convinced that this is the underlying cause). The original code involved more nesting and an explicit RPC that tried to use a reference that had outlived the lifetime of the value. But the upshot was the same.

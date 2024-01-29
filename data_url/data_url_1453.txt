@@ -1,0 +1,23 @@
+ClassicallyControlledOperation was recently introduced to enable classical controls in Cirq. The method takes as input a sub_operation and a list of conditions, which correspond to measurement keys of previous measurements.
+
+The operations is implemented in a way that the qubit set it acts on remains the same as the set of qubits of the underlying operation to be controlled, and the operation "assumes" that measurements corresponding to the conditions have already occurred to the left of the operation.
+This is a big problem for transformers because this introduces an implicit dependency between a measurement operation and a classically controlled operation which makes use of these measurement results.
+Cirq version
+cc @95-martin-orion @daxfohl
+Marking this as high priority as this has potential to impact the design of either transformers or classically controlled operations.
+My main question is: Can we make ClassicallyControlledOperation act on sub_operation.qubits + qubits corresponding to previous measurements?
+If not, we need to find another way to capture this implicit dependency for transformers.
+We already have logic in circuit.append to ensure that when you append a control, it does not fall back beyond the measurement that creates the key. 
+I don't think it would be good for usability if we require users to state which qubits correspond to the measurement key when instantiating the classically controlled operation. Maybe there'd be some way to hack this in such that there's a lookup somewhere that we can get the qubits corresponding to the key, and can avoid the user needing to specify it manually, but nothing comes to mind.  Also the latter solution won't work once we allow repeated measurement keys, as each measurement could correspond to different qubits (potentially, depending on the design).
+So, I think the best solution is to reuse the logic from Circuit.append if possible.
+I think Dax has the right idea - this will require some deeper awareness of measure/control keys in optimizers (possibly handled by a new protocol?) but it shouldn't affect anything which doesn't make use of CCOps.
+Note that CCO is currently also broken with the commutes protocol, which is even worse and should be fixed (we can probably fix this by overriding the __commutes__ protocol.).
+In the code snippet above,
+Also, just to reiterate my concerns, I think the problem is that the mentality of assuming operations commute if they don't share qubits is very deeply ingrained in Cirq code (and I assume also in Cirq users). This would be a sudden and unexpected change against that mentality, and I'd very much like if we can somehow reduce the impact.
+Another example which breaks:
+Though I agree that including control qubits in the CCO operation is also not a good idea because it can then lead to other bigger issues.  For example, it introduces an additional barrier which takes away flexibility of moving the controlled operation around. So, in the following circuit it wouldn't be possible to put H and CCO X in the same moment because they'd have overlapping qubits if we included qubit 0 in CCO X.
+This also inspires an explicit CircuitDAG representation where it's easier to add such indirect dependencies between the nodes of the DAG.
+There's a protocol measurement_keys_touched that could be used the same way as qubits for commutes; we just return False if two ops touch the same measurement keys. It's slightly suboptimal because controlled ops that check the same measurement key should be able to commute--they should should be able to commute with the corresponding measurement gate. But as a simple stopgap it should work.
+The fix was pretty straightforward. I added a note that if we ever allow repeated measurements then those functions will need to account for that as well (maybe it's better to just go ahead and add that now). Timely enough, I just added some caching for the control keys of CircuitOperation in #4855, so this is a perfect use case!
+Plausibly we could extract the condition into a shared function somewhere, but that would require circuit.append to keep calling the protocol on the passed-in op, and slow it down. Anyway, rule-of-three.
+Seems to be an issue with CI, something unrelated in Pandas is broken for that PR but the test passes locally.

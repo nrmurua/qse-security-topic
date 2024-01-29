@@ -1,0 +1,21 @@
+Description?
+The basic idea is to preload the first kernel of the next experiment into the core device, and have the core device pre-switch to it without PC intervention.
+This can reduce the dead time between experiments to microseconds, and helps in the case of experiments that continuously use RTIO inputs and need feedback. If there can be only pre-defined pulses between experiments, seamless handover (#425) and deep enough FIFOs are much easier to implement.
+Seems inter-experiment seamless handover will be enough. Closing for now.
+According to @dhslichter , a feature like this is still wanted, but the desired dead time between experiments is ~10ms (not microseconds), so we can afford a round-trip with the PC and simplify the scheduler design (and the current scheduler could be kept as-is).
+How about the following: experiments in the prepare stage open connections to the core device, compile and load a kernel into the core device memory, and when that kernel is actually called (in the run stage, and run() itself can be a kernel) then all that needs to be done is send a message to the device to start it.
+The problem is, like with caching kernels, the memory model. Can arbitrary code execute between compilation and execution of the kernel?
+No, we would need to restrict that. Maybe even enforce it so that the user cannot modify a Python object that has been included in a kernel compilation until the kernel is run, but I'm not sure if that can be done without horrible/unreliable hacks and/or slowness.
+Surprisingly this is a supported use case. We can override __setattr__, temporarily.
+And note that, in this case, the currently executing kernel and the next are from separate processes.
+In that case there's nothing to be done except making the second kernel execution wait until the session drops instead of interrupting, no?
+Yes, we can override setattr, but this won't catch all modifications, e.g. object.__setattr__(target, key, value). But it could be good enough.
+Yes, we can override setattr, but this won't catch all modifications, e.g. object.setattr(target, key, value). But it could be good enough.
+No, github mangled my comment. I was suggesting overriding __setattr__ not setattr.
+We don't know the scheduler's decision nor the host control flow of the next experiment, so the start of the next kernel should be when it is actually called, not when the previous session ends. And there could be multiple kernels preloaded, from different experiments or from the same. So this becomes essentially a kernel caching mechanism. Something like:
+Does this imply multiple concurrent session connections?
+Yes.
+What would happen if the previous experiment modifies a dataset that's called in the prepare of the subsequent experiment? That would mean it would get preloaded onto the kernel before that dataset was modified, right?
+You mean "used in prepare() of the subsequent experiment"?
+You need a barrier there. Already now we are pipelining prepare(), run(), and analyze() in that way.
+You could obtain such datasets via RPC from the kernel, which is faster than kernel compilation and loading.

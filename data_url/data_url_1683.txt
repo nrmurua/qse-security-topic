@@ -1,0 +1,19 @@
+The simulation of circuits is somewhat slow because the underlying algebraic operations are carried using NumPy.
+We would like to leverage the GPUs' power by using the CuPy library to speedup the simulations
+Below is the simulation time of supremacy circuits using Cirq, Cirq with CuPy, Qsim and Qulacs
+
+Hey @oumjunior , from that graph it looks like qsim performs "better" than CuPy. qsim's execution time is lower than CUPy's up until around 20 qubits. After that, their execution times are pretty similar. Is this feature request to add the CuPy simulator to Cirq?
+Hi @vtomole, indeed the speedup starts to kick in around 20 qubits and the execution time ratio CuPy/Qsim is around 2 (for width > 20 qubits). Note also that only starting from this threshold (~20 qubits) that the time execution of the ordinary simulator (with NumPy) explodes.
+Below is another sample: simulation time of the Multiplier circuit from https://arxiv.org/pdf/1706.05113v1.pdf
+
+This is something of a tangent to the issue at hand, but it will help establish a better comparison between cupy and qsim:
+How many qubits appear in each gate for the Multiplier circuit, and can they be decomposed to 1- and 2-qubit gates? The fact that qsim is barely keeping pace with Cirq (when it's normally expected to beat Cirq by 10x or more for 20+ qubits) suggests to me that the gates are larger than 2 qubits, which limits the effectiveness of qsim optimizations.
+This can be remedied by passing qsim_options={'f': gate_qubits} to the QSimSimulator constructor, where gate_qubits is the number of qubits in each gate. This feature is documented here:
+https://github.com/quantumlib/qsim/blob/795293072ef0f5f6b2bc099e94c5080c5e22473d/qsimcirq/qsim_simulator.py#L79-L86
+Would you be able to re-run this experiment with the option described above? This should give a more accurate comparison with optimal qsim performance on these circuits.
+@95-martin-orion indeed, most of the gates in the multiplication circuit are Toffoli gates so, as suggested, I re-ran the experiment by passing qsim_options={'f': 3} and there were some improvements in the execution time
+
+This issue is stale because it has been open 30 days with no activity. Remove stale label or comment or this will be closed in 30 days
+Issue closed due to inactivity.
+The reference implementation is not workable, but should the issue be closed entirely?
+I think ultimately to get this working in simulators, all we have to do is pass the corresponding module into act_on and act_on_fallback. (Can you pass modules around in Python? That would be ideal. But if not, passing a bool/enum corresponding to which module would suffice). In particular, I believe density matrix could be quite straightforward as there are very few DM-specific act_on implementations (perhaps only measurement gate), and only one act_on_fallback strategy.

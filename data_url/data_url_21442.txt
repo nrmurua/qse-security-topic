@@ -1,0 +1,30 @@
+For gateware/firmware built against an ARTIQ-7 revision after (including) c60de48 (smoltcp update and DHCP feature), the coredevice cannot be accessed across subnets.
+This is a regression compared to gateware built against 06ad76b.
+The coredevice is configured with a static IP XX.YY.0.137. With gateware/firmware built against 06ad76b, pings from XX.YY.0.5 (frames 1 to 4) as wells as from XX.YY.2.5 (frames 5 to 8) are successful:
+With gateware/firmware built against d17675e (to this date, any revision after the DHCP feature), pings from the same subnet (frames 4 to 9) still succeed, with a small hickup in the beginning (frames 1 and 2), but pings from another subnet (frames 10 to 13) do not find their way back to the ping source:
+The firewall configuration is unchanged between the two settings above. Only the coredevice gateware/firmware was updated. The faulty behavior persists when doing TCP requests instead of ICMP ones.
+Given the captured ARP requests, it seems that the gateway is not configured properly on the coredevice. This faulty behavior is unchanged when using ip=use_dhcp.
+If this is the issue, is there a way to set the gateway in the static IP case? For the DHCP case, I would expect the gateway to be broadcast by the DHCP server and set accordingly.
+@mbirtwell
+I'll try and take a look at this today or tomorrow.
+Reverted for release-7
+So it seems like this wasn't really intended to be supported by smoltcp. smoltcp used to have a feature where it would fill the neighbour cache from any packet that it saw to try and avoid unnecessary ARPs. But that was removed because it caused problems if there were certain buggy devices also on the network. See commit and PR.
+The artiq firmware configures the IP address with 0 prefix bits. Effectively claiming that we're on the same sub-net as the entire internet. Which when coupled with the above smoltcp feature meant that every packet received would add an entry to the neighbour cache even if they weren't strictly speaking neighbours. So a packet that had been routed on to a subnet from another subnet would result in a neighbour cache entry mapping the origins IP to the routers MAC address. Again not strictly correct, but good enough to make this work in your case.
+So options are:
+That's roughly in order of my personal preference and there's a big gap between options 2 and 3.
+The artiq firmware configures the IP address with 0 prefix bits.
+This is the issue. You should configure the smoltcp device with the correct prefix length: XX.YY.0.137/24. Then, when it wants to send packets to XX.YY.2.5, it'll see it's an out-of-subnet IP and send it to the default route instead (say, XX.YY.0.1), which knows how to route it.
+If the default route is not in the ARP cache it'll find it with a Who has XX.YY.0.1? Tell XX.YY.0.137 ARP request. It should never do an ARP request for an out-of-subnet IP like the Who has XX.YY.2.5? Tell XX.YY.0.137 you're seeing now.
+Except that there is no default route, nor currently any support for setting one.
+Then you should add it! :)
+Thanks for the investigation! This look promising.
+It is a quite fortunate accident that cross-subnet access used to work and is now quite central to our workflow. @mbirtwell do you have capacity to work on a resolution?
+@airwoodix You can use release 7 in the meantime.
+The behavior was not at all an accident and smoltcp was explicitly written to support this. It just turned out to be too fragile. @airwoodix and @mbirtwell what are your plans here?
+I think doing the work to add the default gateway configuration is the best way forwards. I don't mind doing that, but it's not likely to be soon.
+I also don't really have capacity to work on this at the moment. We track release-7 for now to work around it.
+I've managed to make a start of on this: d0fe2c5, but it's not tested yet.
+Hi @airwoodix , could you please tell (or better draw) the network topology mentioned in this issue (including the router, that connects subnets)?
+I'm trying to reproduce the problem, but currently have only managed to create an inner subnet, and the router I used looks like doesn't have the possibility to allow me access inner devices from outside, though I could access outer devices from inner network.
+My setup for testing this was something like:
+Which should set up a new network namespace on your computer, put a new network node in that namespace and setup your computer as a router between that node and the rest of the network you are on.

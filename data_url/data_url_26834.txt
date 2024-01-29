@@ -1,0 +1,19 @@
+Test QS/regtest-ri-rpa-axk/RPA_AXK_H2O.inp is failing on Daint/GPU.
+We use 4 ranks and 2 threads, the log is at:
+/scratch/snx3000/alazzaro/CP2K_AUTO_REGTEST/DAINT/CRAY_XC50-gfortran_gpu/psmp/TEST-CRAY_XC50-gfortran_gpu-psmp-2019-05-27_09-23-35/QS/regtest-ri-rpa-axk/RPA_AXK_H2O.inp.out
+The crash is at line:
+0x1473f72 in __rpa_communication_MOD_fm_redistribute
+at /store/uzh/uzh1/CP2K_AUTO_REGTEST/DAINT/CRAY_XC50-gfortran_gpu/psmp/cp2k/src/rpa_communication.F:428
+@fstein93 is it something that you can fix?
+I'm not sure if there is any relation with the problems in the valgrind test...
+In the mentioned lined there is an allocation of an array. I am not sure why it is failing here because the test is running on the multicore section and this line is not specifically related to GPUs (to my knowledge). Is it possible that the actual error occurs somewhere before and is caught here?
+Unfortunately, I have not written that code, I only added this regtest to make sure that my changes do not let crash the AXK code. Maybe @rybkinjr who wrote that code has an idea.
+Just for reference, I will test whether this error already occurs with an older trunk.
+Yes, it is strange that it doesn't crash on multicore... Is it because we are using 4 ranks? I will check...
+To understand the error, I have added the checks for the bounds, i.e.
+FCFLAGS    += -fcheck=bounds,do,recursion,pointer -Wconversion -fbacktrace
+but it doesn't help...
+My suspicious is that buffer_rec is not allocated, so I have added a check
+Voila', this is the case...
+Somewhere in the executoin, the buffer_rec is not allocated (I see a bunch of conditions there).
+Close via #386

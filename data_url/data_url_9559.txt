@@ -1,0 +1,33 @@
+Many methods are not hinted correctly by vscode Pylance language server, and I believe the situation to be the same with other LSP and different context.
+Here are some examples among others:
+
+
+
+Even though the docstring is available, it makes the type hinting pointless in terms of user experience, with a bad "discoverability" of these functions usage. In particular, completion and suggestions are unavailable for the arguments.
+It seems the decorators of these functions overwrite the type hints. For example, Sequence.add() receives the @_store decorator
+
+Removing all the type hints for the _store() and wrapper() functions restore the expected types, and Pylance behaves as expected:
+Following PEP 612, I would suggest redefining decorators using the following pattern:
+But these features are 3.10 only, while we fix the type_hints to version 3.7 in requirements.txt.
+If keeping the 3.7 requirement is necessary, the workaround would then simply be eliminating all type hints from the concerned decorators.
+@HGSilveri @sebgrijalva what are your thoughts ?
+@lvignoli Did you check if mypy complains if you remove the types from the decorators?
+But these features are 3.10 only, while we fix the type_hints to version 3.7 in requirements.txt.
+Do you mean this?
+It's just installing these two packages only when the version is 3.7, because they are built-in from 3.8 on. However, I would say that including version 3.10 only changes is a bit premature, so I would go with removing the type hints from the decorators if possible.
+@HGSilveri I have checked mypy and it does complain of the lack of types...
+Remove all type annotations and add type: ignore to prevent mypy complaining.
+This gives a way to correctly type the decorators using python>3.5, if I am not mistaken.
+Here an example on @parametrize from pulser/parametrized/decorators.py:
+It seems to me that the current very permissive typing of these decorators functions has shadowed large part of the code base to mypy checks.
+Using either the above typing or the 3.10 one would likely highlight several type abuses, so I think it is an ungrateful but necessary task.
+I attach the git diff of this change against current head of develop (commit 7405d8c) for reproducibility:
+I think this is given as an example to show that you can type *args and **kwargs, but it's only valid if they are always the types you specify.
+It seems to me that the current very permissive typing of these decorators functions has shadowed large part of the code base to mypy checks.
+Using either the above typing or the 3.10 one would likely highlight several type abuses, so I think it is an ungrateful but necessary task.
+I agree, if we do find type abuses we should fix them. Can you please make sure that what you were getting was not because of the type hints for *args and **kwargs?
+I think this is given as an example to show that you can type *args and **kwargs, but it's only valid if they are always the types you specify.
+Indeed, I read too fast and thought it was a stub for unspecified types, but Any is already there, so my mistake...
+I agree, if we do find type abuses we should fix them. Can you please make sure that what you were getting was not because of the type hints for *args and **kwargs?
+Putting Any on *args and **kwargs do not change mypy complains about test_parametrized.py. It seems the cast to Callable[..., Any] of the wrapper — along with the Any on the arguments — is enough to make the correct types flow in the code.
+You may checkout this branch to reproduce the failing checks.

@@ -1,0 +1,68 @@
+I'm trying to build Scaffold on OSX High Sierra and am getting a build error.
+I followed the installation instructions and am on the OSX branch. After following the OSX installation instruction, cmake was still missing so I installed that through brew.
+During the make I get the following error:
+Let me know how I can help debug the issue.
+Before make, it is able to:
+@xiangzhai I tried, but that gives the same error.
+One thing to check in case you haven't already is that you have the proper Xcode developer tools installed.
+Have you run
+xcode-select --install?
+@ah744 Yes, I have. To verify:
+(There are also no update available)
+Still working on replicating your bug. One thing to make sure is that you are using python 2.7 as primary on your path. We have not futurized to python3 yet, so that is a potential failure point.
+All OK on that front:
+Can you dump your output of
+ROOT/build/CMakeFiles/CMakeOutput.log?
+The specific error you are showing has to do with the interaction between the C++0x and C++11 compilers. One solution would be to make this change in line 131 in the file
+ROOT/llvm/tools/bugpoint/ToolRunner.cpp
+errs () << OS
+to
+errs() << OS.str()
+I suspect that if the compiler is detecting the incorrect C++ version, then you will have other errors pop up after this one is fixed though.
+Here you go:
+CMakeOutput.log
+@eddieschoute reproduce the issue: use your clang-900.0.37 to build LLVM Release v3.1 whether or not failed to build OLD LLVM?
+Try to modify the Makefile if failed:
+And still export CC and CXX to GNU toolchain.
+Or you can try scaff-llvm I have migrated to LLVM UPSTREAM.
+I cloned LLVM from the official repository (http://llvm.org/git/llvm.git) checked out branch release_31 and then executed cmake ../llvm in the build directory:
+As far as I can see the build has no errors, so it succeeded. It succeeded, so what now?
+@eddieschoute what about make? did you get the following error as described:
+ScaffCC didn't modify tools/bugpoint/ToolRunner.cpp:
+@xiangzhai I think there's some misunderstanding, because you said that I should build LLVM v3.1. And only if it failed modify the ScaffCC makefile (and build?).
+Could you explain again what you'd like me to do?
+I cloned LLVM from the official repository (http://llvm.org/git/llvm.git) checked out branch release_31 and then executed cmake ../llvm in the build directory:
+You might not executed make after cmake? alike GCC, NEW gcc (6.x) failed to build OLD gcc (4.x) without patches.
+Ok, so I tried make for LLVM v3.1 and indeed it failed. So then I modified the Makefile of ScaffCC as instructed, and performed:
+I still get a build error:
+@eddieschoute it is better to rm build directory after changed to GNU toolchain, then executed make. and you can try to build llvm 3.1 with your GNU toolchain at first, then build ScaffCC if no error.
+I used GCC 6.4 to build LLVM 3.1 and 6.0 (upstream) successfully, migrated ScaffCC to LLVM 6.0 https://github.com/ScaffCC
+But I want to fix the issue, for example https://github.com/ScaffCC/scaff-llvm/issues/1 not just workaround like comment the error report when Name + Surrfix != Function Name, but try to find the root cause.
+My gcc is not version 6.4 but Apple LLVM version 9:
+The same holds for g++. I am unable to build LLVM with those (I get the same error as described in https://github.com/Homebrew/homebrew-versions/issues/384)
+I also tried building scaff-llvm: I cloned the repository, made a subdir ./build and ran cmake .., this also gives multiple errors:
+@eddieschoute Please git checkout master branch https://github.com/ScaffCC/scaff-llvm/tree/master I only test release_31 branch for Fedora
+I checked out master and removed the entire build directory and rebuilt the project, but that doesn't work either:
+output.log
+@eddieschoute that is my fault: I migrated scaff-llvm to LLVM UPSTREAM version 6.0.0 (trunk 316308) (based on LLVM 6.0.0svn), and I often git merge upstream/master without checking the changes...
+And please wait for this issue fixed, LLVM 6.0 is not able to LoopUnroll, but 3.1 and 3.9.1 are still able to work. Although it is able to generate flattened QASM (for example: qft.n05.qasmh), but the simulation's output is different with LLVM 3.1:
+Workaround patch:
+One solution would be to make this change in line 131 in the file
+ROOT/llvm/tools/bugpoint/ToolRunner.cpp
+errs () << OS
+to
+errs() << OS.str()
+Or fixed all LLVM 3.1 ~ 6.0 issues :)
+@eddieschoute please git pull origin master, I have fixed the issue, and QFT works correctly now:
+@xiangzhai Ok it builds successfully. But I don't know how to use that fork. Is there a manual?
+@eddieschoute
+QX: Quantum Computer Simulator https://qutech.nl/qx-quantum-computer-simulator/
+But I have no idea how to compile Shor #10 in my Thinkpad X220... the same story is Boolean Formula and Class Number
+I recently reinstalled OSX and still encounter the same issue as the opening post, do you have any update @ah744 ?
+I'm interested in running some samples with your SHA-1 implementation.
+I met the same problem in Ubuntu 17.10. Do you have any update?
+The build on ScaffCC_OSX branch seem to be working perfectly fine on macOS Mojave version 10.14.5.
+I did have to do the following for regression tests to pass (as I saw stdio.h missing):
+open /Library/Developer/CommandLineTools/Packages/macOS_SDK_headers_for_macOS_10.14.pkg
+See: https://discourse.brew.sh/t/clang-can-no-longer-find-usr-include-header-files-fatal-error-stdlib-h-file-not-found/4523/2?u=kartik
+Consider closing this issue?

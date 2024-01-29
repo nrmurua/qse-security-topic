@@ -1,0 +1,18 @@
+When you evaluate
+or (if the system is loaded), simply
+you get an error message like the following:
+This happens with the most recent version qvm: v1.14.0
+In qvm repo, the commit de95ead "density-qvm: provide missing kwargs to DENSITY-QVM" changed qvm:make-density-qvm function to pass along any old keyword you give it as args to make-instance on QVM:DENSITY-QVM. That turned out to be a breaking change for the caller invoked by this test TEST-MEASURE-SEMANTICS in quil.
+Now, this test function has been passing in unknown keyword :AMPLITUDES since many moons ago. Here's the code: (from: quilc: tests/misc-tests.lisp)
+But it seems it was being ignored silently, whereas now it's getting passed in, and that results in the immediate error.
+The forward-trace from the test function is as follows: (leaving out package prefixes)
+Some background: the breaking change was recent-ish, Jan 2021. Here's why it took until now for this error to bubble up. The previous version Quicklisp used for QVM does not pass along random keywords but silently ignores them. (That somehow does not cause any problem for the test passing, whatever.) The version of QVM was bumped on June 24 2021, and that was what would trigger Quicklisp took to take it in. But Quicklisp can take its sweet time to start pulling the new version, in this case about 5-10 days later. Only then would this the error occur in a quil test, as it does now.
+It's been observed and remarked that noticing breaking changes across projects, at the whim of Quicklisp, is not handled very well, and something should probably be done about it when there's time.
+This issue arose out of a discussion in originally the PR #721. It was there only because it happened to trigger the CI run that exposed this error.
+I was looking at the code. It seems it could be fixed in one of two ways: (1) fix the caller to bind the instance it creates and then setf the amplitudes of the instance before returning it, or (2) change and document the initialize-instance :after method of density-qvm to take a keyword argument :amplitudes and setf the amplitudes of the instance.
+Actually, I overlooked something: it seems this resulted from a simple renaming of the amplitudes slot, i.e., in this commit in qvm:
+So actually this ought to just be fixed by just doing the corresponding renaming in this one caller (and any others we may find, but this is the only one in quil).
+Actually, I overlooked something: it seems this resulted from a simple renaming of the amplitudes slot, i.e., in this commit in qvm:
+So actually this ought to just be fixed by just doing the corresponding renaming in this one caller (and any others we may find, but this is the only one in quil).
+Oh, sorry, not so fast. That amplitudes slot was on a pure-state class, and it was not a renaming of a slot but a method.
+Back to original two alternative plans.

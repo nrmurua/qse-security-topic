@@ -1,0 +1,53 @@
+Coveralls will often indicate spurious changes in coverage, due to randomness, or protective code not needing to run.  For example, this comment indicates a change in qiskit/pulse/library/waveform.py, even though the PR didn't change it or any of its tests.
+Make a PR, and look at Coveralls' comments (if you're unlucky).
+Test coverage should be deterministic and repeatable every single test run.
+Code only included to smooth over dodgy test VMs and things like this can be added to ignore lists.  This includes some of the code in qiskit/test, but not much.  Lines that are frequently dropped due to randomisation changes should gain more tests, ensuring that the flaky paths are targeted with direct tests, regardless.
+Just collecting other times when I see spurious coverage changes, to try and make sure we're seeing all files:
+Mercurial files:
+the coveralls github action generates coverage reports by running tox -ecoverage so we should edit our coverage3 configs for this. I don't think we have a dedicated coverage config file with any existing ignore lists, so would probably need to add it in tox.ini. Having a quick look at the coverage.py docs it seems we could add a regex based exclude_lines list, and/or add comments (# pragma: no cover) in the code itself to ignore specific lines. Based on your findings are there any common regex we could add to an ignore list?
+I think more likely the main problem with the fluctuations is residual randomness in the tests. We've been gradually adding explicit seeds to the worst-offending tests outside of randomized/ subdirectory but I'm sure there's plenty that were missed.
+Adding exclude_lines and pragmas I think would be separately useful for getting to 100% coverage by avoiding "false positives" - for example there's no point writing a test for a stub method raising returning NotImplementedError or (as jake mentioned) type stubs. https://github.com/asottile/covdefaults is a plugin that sets some sensible-looking defaults to ignore kind of thing.
+Yeah, the type hinting stubs thing isn't really the same thing as the other spurious coverage changes, but that repo Lev's linked looks good for it.  I don't know if we need the other things in that plugin though, so we could just copy over their defaults into our pyproject.toml rather than adding another dependency.
+It's probably going to be impossible to eliminate all randomness from tests and keep things that way, but we can also write some extra tests that specifically test both branches of flaky bits of code.
+test.python.pulse.test_pulse_lib.TestWaveform.test_pulse_limits seems like nondeterministic. It can be reproduced as:
+Some of the executions error with:
+Hi @1ucian0 - I've been reading the discussion here, but I've been unable to reproduce your test results. I ran the same test 1500 times and it produced no failures.
+Initially, I was wondering whether the class variable limit_amplitude could've introduced some flakyness, due to it being modified in different tests, and also several times within the same test (in general, class variables, defined and modified in such way, are a nightmare to test sanely, due to coupling with order of execution etc.), but then I read the discussion further and realised the failures occurred even in isolation.
+Could something have been updated elsewhere, since your comment was posted? If you wouldn't mind, could you, please, try to reproduce your previous results? Another possible explanation might be difference in NumPy versions (resulting in different floating-point results) due to how the version requirement is expressed.
+Update: I've attempted to reproduce (but have been unable to do so) the failures with different versions of NumPy (1.17.0, 1.19.0, 1.20.1, 1.21.6), and also via testing the entire test_pulse_lib.py module with both unittest and pytest.
+Thanks!
+I can still reproduce this issue. Here is my env:
+@hristog it does not look like the it depends on the NumPy version. I could reproduce with 1.21.6 and a fresh env. Maybe the Python version?
+@1ucian0, thanks a lot for the further details!
+I confirm I haven't attempted with Python 3.9.12, nor with different versions of scipy and SymPy. I tried different qiskit-terra commits, including ones from around the time you posted your results, but that didn't result in any test failures either.
+I'll try to reproduce with your env versions when I get a chance, and I'll confirm here what my associated thoughts are (if I have any that I feel may contribute constructively to the discussion).
+Hi again, @1ucian0  - I'm still unable to reproduce (even with the most recent env you've conveniently specified).
+Just to clarify - I'm attempting to reproduce this issue via
+as per the linked comment.
+By not having been able to reproduce the issue, I mean I haven't been able to run into any test failures whatsoever.
+It's possible it's related to version of BLAS in use by Numpy, or by the particular CPU instructions available (SIMD vs non-SIMD) since it looks like we're 1 ULP away from tolerance.  If so, it's possibly not going to be reproducible for you, @hristog.
+For what it's worth, I've got a Mac with Python 3.9, Numpy 1.22.3 and the following BLAS/CPU instructions:
+and I can also reproduce the errors occasionally.
+In this script, I tried to add the minimum to reproduce the nondeterminism behaviour this in my system:
+bug_7235.zip
+I have the same openblas conf than @jakelishman
+The problem seems to be in np.abs, when dealing with complex numbers.
+bug_7235.zip
+It's hard to say it's necessarily a bug in Numpy without more study.  Certainly the exactly floating-point bit output of Python's built-in abs and Numpy's ufunc absolute are returning values that differ by up to 3 ULP (for this particular input), which definitely isn't ideal, but there's a good chance they're both being accurate to their own specs.  I'm not 100% sure how each propose to handle these types, though - we'd need to look into the difference in semantics between raw Python complex and Numpy's np.complex128.
+Hi again @1ucian0 @jakelishman!
+The BLAS direction has been a good one for exploration, because it indeed establishes differences in our envs (also on a hardware level). Prior to this direction, I was deliberating whether to create a Dockerfile to enable a more reproducible approach (as I suspected something might've differed in my environment in terms of how Python or Qiskit Terra have been built).
+For completeness, my np.show_config() output is as follows (from two different machines, one running Ubuntu and the other one - WSL2):
+Regarding @1ucian0's example from this comment, as suspected, I'm getting 1000 Falses out of a 1000.
+I can reproduce the failures called the absolute ufunc on single elements, which means BLAS probably shouldn't be involved, but for complex amplitudes, it's quite possible that some SIMD trickery is accounting for the minor floating-point differences.
+If I were guessing, I'd reckon that either Numpy or Python is specialising the absolute ufunc down to something that uses a fused multiply-add instruction and the other isn't.  Those have different rounding behaviours at the FPU level (fused add-multiply rounds only once, but multiply-then-add involves two separate FP operations, so rounds twice), and since the differences seem to involve 1 ULP (before the difference between two values), that looks like it lines up to me.
+I know Numpy does some specialised magic based on the available CPU instructions, but we could all be using Pythons compiled for different instruction sets as well, so I don't know which way round it is.
+Either way, the most likely solution is probably to relax the checker to allow an extra tolerance of 1 ULP in the norm checker.  Since we're comparing to a norm of 1.0, 1 ULP is easily accessible as sys.float_info.epsilon, so we could change the test to clip = possible < 1.0 + epsilon + sys.float_info.epsilon or something.
+There's a logical square root after the real * real + imag * imag operation in an abs calculation, but sqrt(1 + x) == 1 + 0.5 * x if x <= 2 * float_epsilon (there are extra non-zero terms if it differs by more), so I would guess that the sqrt isn't affecting things (if anything, it possibly helps more than hurts).
+I suspect some kind of manifestation of GCC bug 323 behavior (FPU excess precision not stored).
+For comparison and completeness purposes, my GCC version is gcc (Debian 8.3.0-6) 8.3.0. It seems to me, however, that the referenecd "Bug 323 - optimized code gives strange floating point results" dates back to as far as 2000. I appreciate in the case here, we may as well be facing a related/derivative GCC bug, not necessarily 323 per se.
+Either way, the most likely solution is probably to relax the checker to allow an extra tolerance of 1 ULP in the norm checker. Since we're comparing to a norm of 1.0, 1 ULP is easily accessible as sys.float_info.epsilon, so we could change the test to clip = possible < 1.0 + epsilon + sys.float_info.epsilon or something.
+@jakelishman, would the change only be on the unit-tests' side? I could've misunderstood, but it seems to me some changes would to the following method would be necessary: https://github.com/Qiskit/qiskit-terra/blob/f960d05ab664665d2fdcbe4060d9f17b09274a16/qiskit/pulse/library/waveform.py#L56
+It's definitely not the tests that would need changing, it'd be in the method you've highlighted, yeah.  I think we need to ensure that if to_clip triggers, then the absolute values of samples are strictly capped to 1.0, which might mean doing np.clip(np.abs(clipped_samples), 0.0, 1.0).
+It would be good to open up a separate issue about this - the potential test failure is different to the original issue here (which was just about flaky coverage).
+I've created #8163 for the latter.
+It's unclear to me where the non-determinism of test failures - given repeated executions of the same test - originates (assuming no other tests are run at all, as part of each test run).

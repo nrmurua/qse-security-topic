@@ -1,0 +1,45 @@
+The current codebase is a bit of a mess w.r.t. imports - we have a fair few near-circular imports that are just hacked away and reappear during refactoring.
+I'm not entirely sure what the correct standard is for importing in python, but especially as we're now Python3 only and don't have to worry about doing everything in a way that works for Python2 as well, if someone wants to find a more rigorous way to solve this problem it would be great.
+@tanujkhattar - would be great if you could take a look at this, as it's a CS/standards issue rather than having anything to do with the physics.
+Looking around, it appears that the solution to this is 'dont have everything depend on each other'. Lol - easier said than done.
+However, maybe this is something we need to take into account in this new reorg, as we want to make sure that sensible code edits don't wind up breaking some hacked import that was working before.
+One breaking refactor that might be nice would be to make modules like ops (and perhaps also linalg) not depend on any higher-level modules (e.g. transforms/utils). For example, QuadraticHamiltonian currently contains a lot of code to transform a QuadraticHamiltonian, that would probably be more appropriate inside transforms (this has caused a circular import issue in PR #632 that I could only fix by pulling some imports within functions, which is not ideal).
+Looking at cirq's strategy (https://github.com/quantumlib/Cirq/blob/master/cirq/__init__.py), it seems it takes two parts:
+It seems this would be reasonable to enforce here as well, but then we should pin down exactly what our dependencies look like, and also see what of the testing/delaying code can be directly taken from cirq.
+I did some reading and spent time investigating this issue. My thoughts are as follows:
+Errors due to circular imports happen mainly when, during a circular import, python is unable to find a symbol x from module m because m has already begun loading (reference to m was inserted into the cache and is fetched from the cache during next lookup) but it hasn't finished executing yet (and therefore a reference to m.x doesn't exist in the cache yet). While traversing the cycle, we lookup symbol x (for eg: during from m import x) and python throws an error. This can be avoided if we used import m at the last node in the cycle traversal instead. While accessing x via m.x inside the file, python would still complain in cases where m.x is needed at the top level because the whole file is executed during import, but it would not complain if m.x is used inside functions / classes etc. (which is the most common use case)
+For eg: PR632 introduced a TODO to move the import statement out. If we do that, the error we get is as follows:
+Notice the cycle caused here is as follows:
+and the error says
+This happened because we tried to access QuadraticHamiltonian after quadratic_hamiltonian.py had started executing, and therefore existed in module cache from where it was picked in conversions.py, but before it was executed fully, and therefore QuadraticHamiltonian was not yet defined.
+But, we don't really need QuadraticHamiltonian at the top level in transforms/repconversions/conversions.py. Therefore, modifying the import statement in conversions.py from
+to
+and modifying the call sites of QuadraticHamiltonian and QuadraticHamiltonianError resolves the circular import issue in this case and hence is enough to fix the TODO.
+This approach is also recommended by the google's python style guide and should be a fairly easy fix to do, as compared to other approaches like changing the design etc.
+This is problem is highlighted well in the comments above by @obriente. However, we need to find good ways of understanding the complex dependencies. I played around with tools like pydeps to generate the dependency graphs, but analyzing these graphs is non trivial and I don't have any concrete action items.
+I think finding such bad dependencies would be a bigger project and would require significant time commitment.  A good approach, IMO, would be to flag any such bad dependency which we observe while refactoring / adding new features and tackle them as and when we find them.
+I am still pretty new to python (my background is mainly in c++) so It would be great to hear from others who have more experience. I am very interested to learn more about better ways of solving problem 2 above.
+@tanujkhattar Thanks for the analysis and recommendation!  I agree with your second point.  good to know about pydeps.  Seems useful.
+@tanujkhattar Thanks for the analysis! And thanks for finding pydeps. I'm running into a recursion depth error when I run it (similar to those in thebjorn/pydeps#33) --- how did you get it to work?
+Regarding your first recommendation, I know that we've forced using the full name of each import in openfermion up till now. I think this has made the possibility of simply importing files unwieldy as our filenames tend to be quite long.
+The Google style guide suggests (copied):
+Following this, it seems
+import openfermion.ops.representations.quadratic_hamiltonian as qh
+would technically not be in style, but
+from openfermion.ops.representations import quadratic_hamiltonian as qh
+would pass. Does this work the same as far as circular dependencies go?
+@ncrubin , how do you feel about the style change if it works?
+Cheers,
+Tom.
+I'm running into a recursion depth error when I run it (similar to those in thebjorn/pydeps#33) --- how did you get it to work?
+This is because the graph size is too big so we need to increase python's default recursion depth in pydeps binary. To fix this, I added sys.setrecursionlimit(10000) at the beginning of the pydeps script, by directly editing the file present at path returned by:
+Does this work the same as far as circular dependencies go?
+Yes! All the same arguments hold for this approach as well. IIUC, these two approaches are identical.
+Ah ok, thanks - I had assumed pydeps was running into an infinite loop rather than just a really large one. I'll try that out.
+If that works, it might be a simple solution to this circular dependencies problem, though it will be quite a large change throughout. I'm still a bit worried though that a) this might reappear in the future under another guise, and b) having an import hierarchy is probably something we want to aim for regardless. (Especially as I notice cirq doesn't follow this.)
+There's also the relatively minor complaint that this makes basically every function call 3-4 characters longer, though this isn't such a big deal in the big scheme of things.
+@ncrubin , and maybe also @babbush, @mpharrigan and @kevinsung , what's your opinion on this?
+One thing that needs to be ironed out is whether we're committed to percolating everything up to the top-level. This can provide convenience and discoverability of functionality and we do it in cirq by being very careful about layering our intra-package dependencies and importing submodules (not functions; classes directly) within the package. Crucially, all user code [including tests! which should be written as if a user was executing a script!] uses the top level cirq.x imports.
+In openfermion, it seems that everything is written assuming you'll use pycharm, press alt+. to get the fully-qualified import everywhere and be on your merry way using classes and functions directly. This is another style. As pointed out, this isn't the official google style but I personally like it better :) As you all are finding out, this doesn't mesh well with throwing everything into a top-level import as well.
+In fact, I was able to solve the specific instance @tanujkhattar identified above (i.e. moving the local import to the top of the package) by strategically blowing away some imports from __init__.py and changing a couple of things in the test to use fully-qualified names
+Here's a patch of my hack-job:

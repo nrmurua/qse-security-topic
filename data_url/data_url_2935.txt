@@ -1,0 +1,24 @@
+Suppose we make a circuit matrix:
+Should the returned matrix be
+or
+?
+(Assuming that it is implied that a qubit named 'control' comes "before" a qubit named 'target' due just to lexicographic ordering.)
+Looking for comments from @maffoo @dabacon @idk3 @kevinsung .
+I vote for
+because I think that's what most users (including me) are used to. It's also consistent with scipy.linalg.kron assuming lexicographic ordering.
+So you could compute the result as scipy.linalg.kron(control, target)? (Well, I mean, not exactly that... you know what I mean.) Qubits that are "first" also come first in the call to kron when combining single-qubit matrices to form full-circuit matrices?
+Yes, exactly. I don't know if any changes need to be made to the Simulator but we should make sure that is consistent too.
+Ah I see this is the lexical ordering problem again.
+I think the simulator will need some changes. Executing the following:
+prints out
+which is proportional to [0 1 0 0] but with the new convention it should print something proportional to [0 0 1 0].
+The convention we use internally in pyle is to use little-endian bit order for multi-qubit states, so if you have a list of qubits = [qa, qb, qc] and you want the index of the multi-qubit state where the qubits are in states = [a, b, c], then you do sum(s * 2**i for i, s in enumerate(states)). So the state [0, 0, 1] corresponds to 0b100 = 4. This means is that if you have single-qubit matrices matrices = [Ua, Ub, Uc] then you have to reverse the order of the matrices when taking the tensor product, e.g. reduce(kron, matrices[::-1]).
+This is also why, whichever convention we pick, I want to continue to advocate for #252, because a multi-qubit matrix doesn't mean anything unless you can specify the qubit basis and know the tensor product convention. In particular, if you construct the gate g = CNOT(control=qc, target=qt), then as I mentioned in that PR you could ask for the matrix g.matrix(basis=[qt, qc]) which, with the tensor product convention given above would give
+while g.matrix(basis=[qc, qt]) would give
+I don't think #252 adds any new wrinkles, because each gate forces an implicit order via the order qubits given to its on method. Or at least, that can all be handled separately. This issue can be purely in terms of "what should circuit.to_matrix() return?".
+@maffoo Please state directly what you think the example code I provided should output. It is implied that the basis would be basis=[control, target] because "control" < "target".
+@Strilanc, in that case if the basis is [control, target] then I'd say stick with little-endian ordering of multi-qubit states and return
+@maffoo would you mind explaining why you like little-endian? I think consistency with the literature and scipy.linalg.kron are great advantages of the big-endian convention in terms of user-friendliness.
+@kevinsung, since this is just a convention, either choice is fine as long as we define it carefully and stick to it. We use little endian internally, so I'm biased to that, but I do think that writing the translation from a list of states to a multi-qubit state index as sum(s * 2**i for i, s in enumerate(states)) is convenient. I would also say that the literature doesn't really define the convention in detail (not in enough detail to write code, say), but it's certainly true that we write binary numbers with the digits in big-endian order, so if you think of that as a string of digits you might say big-endian is more natural (if you think of binary numbers in terms of a formula like I wrote above, little-endian seems more natural).
+I'm going to flip this to match openfermion's convention.
+...This is not going to be pretty. Basically all of the simulator code is using the opposite convention.

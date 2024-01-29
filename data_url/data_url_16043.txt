@@ -1,0 +1,14 @@
+Circuits with feed-forward logic are incorrectly transpiled for optimization levels >0
+The condition on the last h gate is preserved when transpiler optimization level 3 is run. Looking through the output of the callback function it is dropped by the consolidate blocks pass
+Examine consolidate blocks section of transpiler (identified by @mtreinish )
+From a quick look through the transpiler the consolidate blocks pass is eliminating the condition on the gate in that circuit. This will only be an issue with optimization level 3 (or if you use the synthesis translation method) since we only run consolidate blocks by default in the optimization level 3 pass manager. (I've updated the title and issue to reflect this)
+I looked into this briefly and I'm fairly sure this isn't a ConsolidateBlocks/Collect2qBlocks issue (even though those are the passes where the issue becomes apparent). Looking into the PropertySet in between Collect2qBlocks and ConsolidateBlocks, the conditional gate (correctly) isn't being collected into a block by Collect2qBlocks, and then is (correctly) being re-inserted in to the DAG in place by ConsolidateBlocks.
+However, when re-inserting DAGNodes that weren't collected into a block, ConsolidateBlocks calls dag.apply_operation_back which looks at node.op.condition to know if the instruction to be inserted should be classically conditioned. At this point, for the conditional U2Gate, node.condition is (ClassicalRegister(1, 'cr_anci'), 1) but node.op.condition is None. Likely one of the previous passes (probably the BasisTranslator via DAGCircuit.substitute_node) incorrectly replaced the instruction without carrying over the conditional information.
+Steps to remediate:
+@kdk. I did a quick dive into this and I think there is more to it. It's true that substitute_node should be propagating the condition to the new node, but just doing that does not solve it.
+The problem is in BasisTranslator and if you force set the condition in there, then both of the u2 gates get the same condition. In the above circuit, in this code,
+https://github.com/Qiskit/qiskit-terra/blob/f3e2b7a5fdd6789f7b3ce8bd15de28e5561d0378/qiskit/transpiler/passes/basis/basis_translator.py#L155-L159
+the u2 loaded into dag_op is repeated with the same instance of the u2. Therefore you will either get both u2's with conditions or neither. A copy.copy when assigning dag_op along with adding the condition to dag_op solves the problem.
+In regards to node.condition, I like your idea of doing an @property. There are about 20 references in the code to node.condition, though there might be many more with a name other than node. So eliminating node.condition could require a lot of code changes.
+And though there might be other issues with substitute_node, I don't see a reason based on this example for removal.
+If you'd like me to make the changes to load the condition in substitute_node and add the @property and copy.copy, I can do that.

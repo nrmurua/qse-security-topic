@@ -1,0 +1,12 @@
+The following code produces an incorrect output:
+produces output:
+But the correct output should be roughly
+as the correct probabilities are about [0.38, 0.62].
+The branch stable/0.7 produces correct outputs, but stable/0.8 does not. This appears to correspond to the move from the qutip Qobj to using qiskit.quantum_info operators. The simulation shot outcomes are computed in line 61-63 in unitary_controller.py. I've visually inspected the state psi when running in both branches and it looks to be the same in both cases, so the real divergence seems to come from line 61 when the probabilities are computed. In stable/0.7 they are correct, but in stable/0.8 they are all approximately 0. This appears to either be the result of an error in the construction of pulse_sim_desc.measurement_ops, or in the function occ_probabilities, or both.
+@vvilpas if I remember correctly you did the final migration from qutip Qobj to the Operator - do you have any thoughts/insights? I think there may also be potential issues with differences in dunder methods between Qobj and operator in the measurement operator construction, but I'm not certain.
+We can simplify the above example to reduce dimensionality via:
+This changes the expected/correct counts due to subsystem truncation, but the discrepancy between stable/0.7 and stable/0.8 is preserved.
+The issue probably lies in the call to op_gen.qubit_occ_oper_dressed in line 195 of pulse_controller. The estates appear to be the same in stable/0.7 and master (after accounting for the difference between Qobj and Operator), but the measurement operators output from op_gen.qubit_occ_oper_dressed differ between stable/0.7 and master.
+Okay so the issue is in line 151 in operator_generators.py. The construction of out_state requires doing some tensoring of states, and whether or not the Operator is a row vector or column vector messes with the tensoring. Flattening the states being tensor-ed before hand seems to alleviate the problem, and doesn't mess with any existing tests (which is pretty confusing to be honest). I think this should be fine states and out_state are just constructed for book keeping in this function.
+We need to be sure though that the use of @ and * is correct in these operator generator functions. Their use currently raises deprecation warnings, so I think a full fix for this issue should address that.
+@DanPuzzuoli  You saved me! I am now revising Qiskit Textbook - hamiltonian tomography - and stuck on the same bug for so many days!  Using stable/0.7 solved my errors

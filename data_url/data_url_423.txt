@@ -1,0 +1,30 @@
+The outputs are suspicious.
+Here is a test case input.zip
+Run this:
+./staq   -f  quil  -o  quil_output.txt   input.qasm
+When the quil_output.txt is pumped into the rigetti QVM simulator 9q-square-qvm to run on rigetti Forest SDK 2.12.0, it will crash. It seems that staq expects the mapping information to produce a correct quil program. If that is the case, the above command should fail, instead of producing an invalid program.
+So, I specify the mapping like this:
+./staq   -m   -d  square   -f  quil  -o  quil_output.txt   input.qasm
+Now, the program won't crash on rigetti Forest SDK 2.12.0 , but it will produce a final state that is inconsistent with what the input QASM would produce. It will still crash on rigetti Forest SDK 2.20.0.
+It is very likely that the problem exists for other output formats. I am almost sure the QASM output (i.e. -f qasm) will also produce a wrong final state, but I cannot verify it with the sister project Quantum++ until its own bug related to QASM execution of ry and rz gates is resolved.
+@DevelopDaily q++ is now fixed softwareQinc/qpp#77, can you please try now?
+Since that was fixed, I am able to verify the problem with this Quantum++ example qasm2.
+Well, I modified that example a little to remove the clean qubits to make it run faster. Here it is.
+Run this:
+./staq   -m -d square -f qasm -o output_square.qasm input.qasm
+Then run this:
+./qasm2   output_square.qasm "3 5 6 7 8"
+The final state is:
+But if we run the qasm2 on the input QASM file like this:
+./qasm2   input.qasm
+The final state, which is correct, is:
+Sorry for taking so long to get to this. After looking at the generated circuit and the outputs of the two programs, I think staq is compiling the circuit correctly.
+The circuit generated with the command you give and the most recent commit maps qubits 3 --> 1, 2 --> 4, 1 --> 2, and 0 --> 0. If everything is working correctly, simulating the compiled circuit should give you the same state as the uncompiled circuit, up to this qubit permutation.
+The (identical) non-zero amplitudes of the correct final output are on the following set of basis states {000, 0011, 0110, 1001, 1100, 1111} while the "incorrect" output has non-zero amplitude on the basis states {0000, 0011, 0101, 1010, 1100, 1111}. If the qubits are arranged left to right, and the qubit 4 in the mapping is labelled qubit 3 (since qubit 3 is never used in the compiled circuit), applying this permutation to the correct non-zero basis states gives exactly the set of incorrect non-zero basis states.
+This is making some assumptions about the labelling (and endian-ess) of qubits in the simulator, but it appears to be correct to me. This raises a good issue for debugging quantum compilers and quantum hardware, however. Maybe compiled circuits should include mapping information in the comments so that developers can properly test such circuits.
+When everyone is satisfied I'll close this.
+You are correct, sir. Thank you for this fantastic tool.
+Please do include the mapping information in the compiled circuits as another output file, preferably in the JSON format. If you already have the information inside the system like this 3 --> 1, 2 --> 4, 1 --> 2, and 0 --> 0, it would be so helpful if you could output that.
+For those who are interested in my example, I have made a nice picture here.
+
+Glad you like it! Thanks for all of your input. I'll open another issue for the mapping information output.

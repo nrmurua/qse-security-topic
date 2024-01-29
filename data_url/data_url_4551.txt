@@ -1,0 +1,15 @@
+When allocating large circuits there seems to be a larger memory usage than expected. A lot of memory is used in the CPU regardless if the circuit is going to be executed on CPU or GPU.
+That also seems to affect the running time of the algorithm, up to a point where circuit allocation might take longer than circuit execution.
+To Reproduce
+This might not be an issue normally as circuits are encouraged to not scale exponentially with the amount of qubits. Nonetheless, I think the memory issue is something we should look into.
+@igres26 do you mean that the circuit allocation takes memory (I believe 5gb for this example) before the execution?
+Exactly, the memory I mean is before the execution.
+I understand that it needs to allocate memory to keep track of all the gates, but after some tests with @stavros11 we felt like it might be taking a bit too much space.
+Here some numbers from cProfile, in particular we can spot the prepare, convert to eager, append, cast.
+Here are some experiments related to this:
+I tried running the following script with the gate.prepare() line in circuit.add enabled and disabled and got the following times:
+From this it is clear that prepare causes the main bottleneck both for time and memory. Also, since prepare creates and casts the matrices and some other arrays, it is expected that tf is slower than numpy. However, even without prepare we still take about twice more memory compared to Cirq.
+takes 0.15GB and 4.6271sec for custom (similar for all backends).
+takes 1.1GB and 7.8094sec for custom and 1.3GB and 8.2764sec for numpy_defaulteinsum or defaulteinsum. Note that this takes more memory than the above which means that the garbage collector actually destroys gates for which we do not keep references.
+takes 0.8GB and 3.7384sec. This is the bare minimum without any matrices or functionality to apply to states involved.
+takes 97.9564sec and about 3GB. This is similar with the circuit.add timing in the first table.

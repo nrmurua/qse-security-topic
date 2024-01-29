@@ -1,0 +1,17 @@
+Looking through the commit history, @nonhermitian wrote the graph functions back in 2013: see fd4920d.  Since then, he contributed a lot of the same code to scipy in scipy.sparse.csgraph: see scipy/scipy#3751.  I suggest we consider dropping most of them, and consequently their surrounding Cython code to ease maintainability and reduce code bloat of the repository.
+First, a couple of arguments against doing so:
+I think the main argument in favour of removal is that they're now also in scipy as scipy.sparse.csgraph.  For the speed argument, for 1000 by 1000 matrices we're talking 780us vs 850us per matrix difference, so it's unlikely to be a limiting factor, and I think the ability to remove a large chunk of Cython code and maintainability cost outweighs this.
+I began investigating this because I was looking at qutip.graph.reverse_cuthill_mckee, since some of its tests are incorrect.  The error is here:
+
+to test if all the elements match.  As it stands, it currently tests that not all are different, or in other words, it would only fail if not a single element in the two arrays matched.  On fixing this line, we then learn that the test is actually a failing test, because the expected and actual results do not match (though they do however have equal bandwidths).
+I also note that qutip and matlab are in disagreement for the test case there: for the matrix
+we get
+(where I converted the matlab indexing into 0-based), however they both have the same "bandwidth" of 5, so I assume they are all equivalent.  I don't really know anything about the theory here, and just went with what the matlab documentation said: https://uk.mathworks.com/help/matlab/ref/symrcm.html.
+In commit 0ce36d0 it is clear that the functions in qutip.graph were meant to be distinct from Qobj, so ideally they would be beyond our purview in this package.  This actually has already lead to problems with the documentation, since the docstrings in
+
+I find that the only uses of qutip.graph are in qutip.steadystate, which uses reverse_cuthill_mckee and weighted_bipartite_matching.  The former can be replaced directly with the scipy version, at the cost of ~10% speed.  The latter is not yet in scipy, so we ought to perhaps keep it, since it is used and documented for qutip.steadystate.steadystate.  All other functions in qutip.graph are not used, and not documented (and in scipy anyway).
+While obviously I don't want to trample on anybody's code, I think it might be worth considering how we can reduce the package complexity of qutip, especially while significant new complexity is frequently being added in the interests of speed.  We only have a finite amount of resources to maintain the codebase, and it's already quite difficult to get a handle on bug reports, documentation, testing (what I'm working on in #1181), and keeping old features up-to-date with the new.
+In the tracking down of these points, I can also strongly advocate for a stricter policy on git commit messages and keeping the commit history tidy and descriptive, but I'll live to fight another day on that one!
+Matlab does a bit modified algorithm.
+I agree they could be removed. Only 2 of qutip.graph's functions are used in qutip (steadystate). Functions that are purely math, not quantum physics, should only be there if they improve the physics code significantly (and hidden to the users). I don't think any user is using qutip for it graph functions.
+So we could change steadystate to use scipy's version and add deprecation warning to qutip.graph. The actual removal should come later.

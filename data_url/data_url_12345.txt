@@ -1,0 +1,57 @@
+I have built a custom tf.keras.layers.Layer layer having a quantum circuit which is ControlledPQC. But now that I have to use two different models but at some point I want them to share the same trainable weights, i.e., say model H1 have a quantum circuit whose weights gets changed after training (say, for some number of epochs). After a certain number of epochs, I need the same weight values to be for, say, another model H2 which has the same circuit (using ControlledPQC) but needs to have same weight values as that of model H1 quantum circuit. I saw the documentation which consists of tf.keras.layers.Embedding but haven't got any idea how it can be used. Can you help me figure this out?
+Should just be a matter of h2.set_weights(h1.get_weights()) whenever you want to do this (in training or whatever epochs or whatnot). I just tested that with H1 being a PQC based model, and H2 with a ControlledPQC custom layer and it worked (although I had to do some reshaping, specifically h2.set_weights(tf.expand_dims(h1.get_weights()[0], axis=0)])). I'm pretty sure they don't have to even be the same circuits at all, but I only tested with same circuits.
+Thanks for the reply!
+Actually in my case, I have got 2 circuits attached in one ControlledPQC inside tf.keras.layers.Layer and out of those 2 circuits, one circuit is as ControlledPQC, but the issue is that I can't return the parameters of the same circuit from the combined ControlledPQC as it is a tf.Variable value. Can you help me out on how this can be done?
+So its like, circuit H1 -> state -> H2 as ControlledPQC in, say, layer1 (by creating a subclass with tf.keras.layers.Layer module) and circuit H1 -> observable as ControlledPQC in, say, layer2 (similarly built with tf.keras.layers.Layer). Now in this case, layer2 updates similarly as H1 updates itself in layer1. But I can't take the weights from layer1 of H1 and integrate it into layer2. I tried using get_weights(), but I can't slice out of it as weights are tf.Variable.
+I see, that this was all happening in the custom layer was unclear. Here is an example of what I think you want, which can be achieved by just indexing the weights. I made up circuits H1 and H2 (which are different here but could be the same), then made one controlled PQC for H1 -> H2 and one for H1 -> obs. Then when calling it, you can just take the H1 params you care about for the second PQC. I tested this and it runs, and seems gradable. I verified this, as the gradients for the H2 params are all zero when using the H1 obs.
+Output:
+Thanks for the reply!
+One last thing. Will the parameters of H1 circuit change simultaneously if I apply gradients on value and energy both? Or will it cause some sort of error? I mean that the parameter values will be same for H1 circuit in both cases when I will use opt.apply_gradient()?
+If you apply gradients sequentially (i.e. take gradient for value, apply gradient, take gradient for energy, apply it), it will work and H1 params (which are just part of the overall theta Variable) will be changed both times (as both value depend on those parameters). If you mean, your "loss" is actually a combination of those values (not applying the gradients for each), then it will still work but H1 params (well all theta params) will be changes only once. TF autograd will deal with exactly how to compute it. See for example, these two situations in order (same code as above):
+Results in:
+Thanks!
+But how can I extract the parameters of just H1 circuit, because by using get_weights() I am getting the parameters of H1 and H2 circuit combined. Also, the combined circuit parameters are inter-twined (I guess that's because ControlledPQC does it internally). Because if we can extract the trainable_variables of H1 and H2 separately, then I guess using tape.gradient and opt.apply_gradients separately for separate circuits would make sense, right?
+You can access the H1 params just by indexing the layer weights (as I did in the call function). However, if you are taking the gradient and the function only depends on them (I.e. energy) then the gradient will be 0 elsewhere so you wouldn't have to specifically select for them.
+You could extract each by just indexing the trainable variables.
+It makes sense that H1 could be separate (but you don't need to index as I mentioned above), but the other function depends on both H1 params and H2 params. You of course could just update the H2 params if that is what you want.
+How I can update the parameters of just H2?
+Probably easiest to just make the H1 and H2 params separate variables since you are using them a lot independently it seems. The following does that, allowing just params of H2 to be updates easily.
+Result
+Thanks for the reply!
+So I want to clear out what you just wrote above. So when you doing the tape.gradient with repsect to l.trainable_variables[1], you are basically evaluating gradient of value with respect to just the weights of h2, right?Similarily, for the opt.apply_gradients?
+Yes
+I wanted to know that is there any difference in the circuit h1 in self.h1h2obs and self.h1obs? I mean, since both of these circuits are working in two different tfq.layers.ControlledPQC, is there any possibility that these two circuits operate differently, say, the output density matrix of self.h1obs (which we can not evaluate) is different from the output density matrix of h1 in  self.h1h2obs (also, which we cannot observe)?
+The same weights and circuits are fed into the controlled PQC so they should be the same in the call function. Since the h1 circuit is pre defined and the same weights are used, I don't think there is a way for them to be different statevectors. They could operate differently, but I am feeding them the same circuit and parameters (for h1), so they shouldn't be different (of course the H2 at the end changes one of them). But if the flow is input -> h1 -> state() -> op and input -> h1 -> state() -> h2 -> op, and h1 is the same structure and params in both, then state is the same in both (assuming simulator, h1 might encounter different noise on a real hardware system on a second run).
+Ok, got it! Can you please suggest a way to evaluate the probability of each state from a tfq.layers.ControlledPQC? I mean like in above example, I am using 2 qubit circuit for h1 and h1h2obs. So I need the porbability of each state (in this case |00>, |01>, |10> and |11>) after h1 and h1h2obs. Is it possible in ControlledPQC or is there any other way you may suggest?
+Sure, you can just use a state layer (https://www.tensorflow.org/quantum/api_docs/python/tfq/layers/State). Just put in the circuit and parameters and it will give you the state. This isn't from a controlled PQC (since it is tied to observables) but it will generate your state.
+Won't the circuit parameters be fed-up in a different manner for tfq.layers.State as it is distributed in tfq.layers.ControlledPQC? Also, say if I just use tfq.layers.State instead of tfq.layers.ControlledPQC, is the resultant output density matrix differentiable as in the case of above code snippet that you shared where the output is an observable (as you used tfq.layers.ControlledPQC)?
+They should be distributed the same, since in controlled PQC and in state the param value is connected with a specific param name somewhere in the circuit (which is managed by the layer.
+No, state is not differentiable.
+Thanks!
+But I am facing an issue of evaluating the probability of each possible states using tfq.layers.State as it evaluates the output density matrix. How to evaluate the probability of each possible states (even I can't find using cirq)? Can you help me figure this out?
+You want to get the probability from the output of tfq.state? If you are doing noiseless simulation you can just multiply the statevector by it's conjugate and that is the probabilities of each state. For noisy simulation with density matrices, you just apply the measurement matrices in a slightly different way (see: https://www.cs.cmu.edu/~odonnell/quantum15/lecture16.pdf).
+In cirq, there is a state = cirq.Simulator().simulate(circuit).state_vector() to get the state vector (or maybe that has changed recently, there was a bunch of changes leading up to cirq 1.0)
+Does tfq.layers.State works on |0> state initially, or is there any other way to define these initial states?
+State accepts any circuit and parameters and generates the state. The initial state could be anything, but you just have to prepend that to the circuit you feed in to it.
+How can I prepend a zero-initialized state |0>?
+Every circuit starts off in |0>.
+Oh! Thanks!
+I am getting trouble to evaluate the conjugate of the output state of tfq.layers.State and the probabilities of each state (by the product of state and its conjugate). Can you share a short snippet how it can be done?
+There are examples in the docs, see (https://www.tensorflow.org/quantum/tutorials/research_tools):
+Thanks a lot! It was really helpful.
+I am ending up with None value for the following code below:
+Why is it happening so?
+State is not differentiable, so no gradients are possible. That specific error is actually because you shouldn't index the result outside of the call (if you move the indexing to the call it can build the AD graph through it). With that you would see
+Ok. So is there any alternative to this where I can evaluate the probabilities of the possible states and also evaluate the gradient with respect to them as well? I have extensively used tfq.layers.ControlledPQC, tfq.layers.PQC and tfq.layers.State.
+There's nothing built in if that is what you mean. You will have to get a little creative lol. Just an idea I had, you could take the Z exp val of each qubit, get the probability of each qubit being in each state, then reconstruct the probability vector manually. E.g. given a two qubit system, suppose the results of Z, Z are [0.5, -0.2], map to probs [(0.75 |0>, 0.25 |1>), (0.4 |0>, 0.6 |1>)], maps to vector [0.3 |00>, 0.45 |01>, 0.1 |10>, 0.15 |11>]. Not 100% this is a universal solution (or that the TF ops to make this are differentiable), but it's an idea.
+I don't quite get how you are mapping the Z, Z results [0.5, -0.2] to probabilities (0.75|0>, 0.25|1>), (0.4|0>, 0.6|1>). I am sorry asking such a dumb question, but can you share some insights into it?
+That's just from the definition of expected value. <Z> = P(|0>) * (1) + P(|1>) * (-1), thus 0.5 = P(|0>) - P(|1>), and P(|0>) = 0.75 and P(|1>) = 0.25 (since they must sum to 1).
+How can I programatically derive the expected value to probability of states?
+My previous comment outlined how to go from expected value to probabilities. All that needs to be done is just codeify it in TF.
+I tried implementing this, but yet I get the tape.gradient to be None.
+I have shared the code below:
+Can you share some insights? Is there some way I can tweak this code into differentiable?
+Edit: I observe that when I am applying tape.gradient with respect to generator_discriminator.trainable_variables[0] I get None value, but on the other hand when I am applying the tape.gradient to generator_discriminator.trainable_variables[1], I get some values. Why is it so?
+This worked for me:
+As a minimal example.
+You encountered the None because the trainable variables are indexed by the order in which they are created and disc params is the first variable created which has no gradients.

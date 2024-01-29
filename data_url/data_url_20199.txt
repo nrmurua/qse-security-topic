@@ -1,0 +1,38 @@
+When i try to
+cmake --build build
+I get  following error
+Strangely, I can build the lib on another machine. I suspect that openssl may be the problem, since on the compiling machine
+The machine that has problems compiling
+It seems to miss the FIPS module, thus also the problem in fips202... file. I build OpenSSL 1.1 manually from source on the problematic machine. I have checked liboqs.a by nm on both the machines and they seem to contain identical symbols.
+Since LibOQS switched to OpenSSL 1.1+, there is no FIPS module available (afaik is expected in OpenSSL 3.0). If my assumptions are correct, then OQS will not be runable on distros without packaged OpenSSL with vendor-provided FIPS module.
+I have tried numerous workarounds yet the error is always the same (and always on the far far side of linking phase).
+Just to be clear, the problem persists even if I configure via
+So, I played around with some switches and eventually made it work by disabling
+OQS_USE_CPU_EXTENSIONS
+I will keep the issue active since I believe there is some mistake in the switch logic that breaks the build, I suspect OQS_USE_BMI2_INSTRUCTIONS and so on, yet it is beyond my understanding.
+The "broken" machine /proc/cpuinfo flags:
+The "working" machine /proc/cpuinfo flags:
+Hi @onavratil-monetplus. We haven't ever tried to do anything relating to the FIPS module, so it's unclear how that might be affecting things.  What platform are you building on?  Note @baentsch may have encountered something like this before, I'm looking him into the conversation.
+Hi @onavratil-monetplus Thanks for twiddling with the system and sorry for having to find the absolutely right workaround: By switching off use of CPU extensions you disable Kyber_avx2 (using KeccakP1600times4_PermuteAll_24rounds).
+Side note: The "working machine" doesn't have BMI2, so this optimized code simply doesn't get activated on that machine as per
+Now, I think the problem is indeed independent of the baseline OpenSSL (FIPS or not) as the symbol in question (KeccakP1600times4_PermuteAll_24rounds) should be generated when compiling (the liboqs-provided) src/common/sha3/sha3x4.c.
+--> Could you please check that this symbol is indeed  contained in your freshly built liboqs.a (and if not, as I suspect, what the make/ninja -v output generated say about 'sha3x4.c' (quick grep)? What symbols are contained in a newly built './src/common/CMakeFiles/common.dir/sha3/sha3x4.c.o'? If the Keccak symbol is missing, can you please post here the actual compile command with which the file sha3x4.c gets built on your machine?
+On my box the command is
+and the result does contain (nm src/common/CMakeFiles/common.dir/sha3/sha3x4.c.o)
+Thanks in advance for helping us figure out what's going wrong here.
+Hi @dstebila ,
+Originally, I suspected FIPS module in OpenSSL, yet if you read my later posts, it turned out that the problem was elsewhere.
+Hi @baentsch ,
+I tried a fresh build of the latest commit. Default settings, no cmake switches.
+I assume this given my particular processor flags, some of the required targets is excluded.
+If it helps, i tried also to grep the liboqs.a from the build
+@onavratil-monetplus Thanks very much for the additional information. I now understood the problem: Your platform has a set of CPU features we never imagined: You have AVX2 and BMI2 (which enables optimized build of Kyber512) but do not have AES (which enables optimized SHA3x4 which Kyber512 also depends upon). I'll create a fix in the build dependencies in liboqs for this & thank you for letting us know.
+@baentsch Glad to hear I am special :) I assumed it may have a similar cause. Thank you for the great work you guys are doing.
+@onavratil-monetplus Thanks for the kind words. Let's see whether we're worth them...: Could you please check out master and re-try (with OQS_USE_CPU_EXTENSIONS re-enabled, of course)? If now all builds, even "special" :), you should see performance differences, e.g., when running tests/speed_kem Kyber512, for example.
+Hello, thanks for the patch!
+I have managed to succesfully build the library on the problematic machine with default value for OQS_USE_CPU_EXTENSIONS.
+I have tried to run tests gmake run_tests but I get
+pytest.py: error: unrecognized arguments: --numprocesses=auto
+I guess my distro has a different version of pytest packaged, but its not necessary to unvestigate this issue. Nevertheless, I was able to succesfully run some tests manually, as suggested tests/speed_kem Kyber512 and some others, seems like it works fine.
+More importantly tho, I have also rebased my fork to this commit and was able to build & run it on both machines without the abovementioned switch. Seems to work just fine.
+Thanks again for the fix!

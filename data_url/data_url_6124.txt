@@ -1,0 +1,39 @@
+When asked to compute snapshot_probabilities on qubits in a specific ordering, the order of the probabilities is mistaken.
+n = 3
+q = QuantumRegister(n)
+c = ClassicalRegister(n)
+qc = QuantumCircuit(q, c, name="circuit")
+// the purpose of the circuit is to create a vector of 8 different probabilities
+qc.u2(0.8, 0.1, 0)
+qc.u2(0.2, 0.3, 1)
+qc.u3(0.6, 0.2, 0.4, 2)
+qc.u2(0.4, 0.1, 0)
+qc.u2(0.5, 0.3, 1)
+qc.u3(0.8, 0.2, 0.4, 2)
+qc.snapshot_probabilities("prob1", [1, 0, 2])
+BACKEND_OPTS_SV = {"method": "statevector"}
+res_SV = execute([qc], QasmSimulator(), backend_options=BACKEND_OPTS_SV, shots=1).result().results
+probs_SV1 = res_SV[0].data.snapshots.probabilities['prob1'][0]['value']
+print("SV result")
+print(probs_SV1)
+The probabilities vector in the default ordering is
+[0.00718398, 0.0307873,  0.110185, 0.472202, 0.00439641, 0.018841, 0.0674301, 0.288975]
+I am not sure what the specification is for the vector in other orderings, but I see 2 options:
+For the ordering [1, 0, 2], I expect the result to be:
+[0.00718398, 0.0307873, 0.00439641, 0.018841, 0.110185, 0.472202, 0.0674301, 0.288975]
+if the qubits are ordered as written: 102.
+If the qubits are ordered in reverse, i.e., 201, I expect the result to be:
+[0.00718398, 0.110185, 0.00439641, 0.0674301, 0.0307873, 0.472202, 0.018841, 0.2889750]
+However, the statevector_method gives neither of these two options. Its result is:
+[0.00718398, 0.110185, 0.0307873, 0.472202, 0.00439641, 0.0674301, 0.018841, 0.288975]
+Just copying some of our offline conversation here.
+I believe this is correct and I think what you expected to happen would be if the ordering in the dictionary bit-strings were reversed.
+The keys in the output dictionary are hex representations of integers which you are returning as vector positions. If we converted them to bitstrings {"abc": p_abc,...} we have that the vector representation would be [p_000, p_001, p_010, ..., p_111].
+Now for the snpashot command snapshot_probabilities("probs", qubits) we have that the bitstring refers to the args of qubits in little-endian: qubits[0]->"c", qubits[1]->"b", qubits[2]->"a". Eg if qubits=[C, B, A] then qubits[0] = C etc.
+Hence qubits=[0, 1, 2] is the "standard" order, and the prob vector would be the statevector squared where P_vec = |psi|^2 = |psi_2 \otimes \psi_1 \otimes psi_0|^2.
+The order qubits=[1, 0, 2] swaps qubits 0 and 1 in the output dictionary. So this would be like permuting the statevector and squaring P_vec = |psi_2 \otimes \psi_0 \otimes \psi_1|^2, or simply swapping the bit-labels in the dictionary compared to the standard order p_abc -> p_acb.
+If [0, 1, 2] gives:
+then I expect [1, 0, 2] to give:
+@chriseclectic can you please check.
+@chriseclectic , @yaelbh , I re-ran this example manually, based on Chris' explanation that the [1, 0, 2] refer to the qubits as LSB on the left and MSB on the right. This means that if the default ordering gives  ABC, this ordering gives ACB, and now I agree with the results of the statevector. So I now think there is no bug after all.
+We agree this is not a bug.

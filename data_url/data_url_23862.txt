@@ -1,0 +1,64 @@
+I am implementing the pyqtgraph 2D live-plotting in our setup and though that instead of creating my own I'd try to improve the one @alexcjohnson made. So far I've found that there are some features I'd like to add, some minor bugs and some things I don't understand. I thought it would be good to create a single issue which I can close once my upcoming pull-request is done. So here it goes.
+@guenp
+I made a repo with some additions to pyqtgraph, like buttons and widgets such that you can see a snapshot of a graph in-line in the ipython notebook, which could be useful for Qcodes. It's here: https://github.com/guenp/colorgraphs
+He Guen, I'd like to take a look at your widgets buttons etc, however the link is broken. Could you post a new one?
+There will probably be some more things that will come up later :)
+What are the ways I can send data to the pyqtgraph?
+I am not a big fan of *args and **kwargs
+Yes, confusing for sure, and also poorly described. The idea was to make the QtPlot constructor work identically to QtPlot.add just with a few extra keyword args that describe the overall figure. *args and **kwargs more or less follows how matplotlib handles its args, which may not be the best baseline but that's what I started with. you can always pass in x, y, and z as **kwargs (and if any is missing we try to fill it in with indices from 0, if it's not a DataArray with setpoints we can find). If you pass in *args they can be y, z (these two are distinguished by the dimensionality of the data), x,y, or x,y,z.
+All of this is basically so in the most common case we can just do
+QtPlot(data_array)
+rather than
+QtPlot().add(z=data_array)
+(with the one caveat that at the moment .add doesn't return the plot, so it's not properly chainable... but that will be an easy fix) and at the same time we look for a set_arrays attribute of the main data to pull out x and y, otherwise we'd have needed even more
+QtPlot().add(x=data_x, y=data_y, z=data_z)
+and finally we look for a label or a name attribute in each of these (though I notice now that I didn't even allow the option for kwargs to override these... another easy fix.)
+So you can do any of these:
+Clear a window. Currently a new pyqtgraph is instantiated everytime a plot is created. It makes sense to reuse the same pyqtgraph window
+Haha if you've seen the way people use Igor here... twin 34" monitors isn't enough space for all the plots people leave open most of the time! But yeah, that would be a nice add. Syntactically I imagine something like:
+perhaps .clear could take the same args as the original constructor, so you could use it to alter figsize etc?
+Explicitly updating data. Currently the live plotting updates by calling the update() function once every "interval", works great but it assumes the underlying dataset changes (which is true for qcodes dataset), I found a workaround by explicitly setting my_qcplot.traces[0]['z']=z_data but that is obviously less than ideal. I would suggest adding it as **kwargs to the update that you can explicitly overwrite data in some traces. An alternative is to add a special function for this purpose.
+Wait, now you like **kwargs again? 😄
+Even if it's not a DataSet you can update the data in place as long as it's a mutable type:
+Allow the add() function to either add a plot in a new row or in a new column. (current seems a sensible default)
+You mean adding subplots? Yeah, I just did something super simple to get this working. You want to take a look at doing something more flexible?
+Thanks for all the input @alexcjohnson , the short code-snippets are especially useful. Let's see how far I get tonight.
+[... ] and finally we look for a label or a name attribute in each of these (though I notice now that I didn't even allow the option for kwargs to override these... another easy fix.)
+I guess this means it is not possible to set the axes labels when passing just plain old numpy arrays? That explains :), I'll see where this get's set and add an option to overwrite this from the **kw.
+You mean adding subplots? Yeah, I just did something super simple to get this working. You want to take a look at doing something more flexible?
+I want to add something like this anyway so I'll give it  a shot.
+Wait, now you like **kwargs again? 😄
+Even if it's not a DataSet you can update the data in place as long as it's a mutable type:
+Somehow that does not work, however explicitly setting it self.QC_QtPlot.traces[0]['config']['z'] = self.TwoD_array does work. I guess the difference here depends on if I hand it a view onto an object or an array itself, altough I am not sure on this. Nonetheless something to directly force update the parameters makes sense I think.
+Then for some "bug" reports.
+I tried plotting a known dataset and seeing how it behaved. I am using the following different representations of the same array.
+When using these in plot I get different resuts.
+I think the representation in p0 is the way we should think about our data, just 3-1D arrays or one long array of 3 element tuples that belong together. The advantage is that this would also allow plotting non-square arrays of data, such as multiple patches of 2D scans or a non-rectangular grid.
+p1 is still a very sensible way of plotting and p4 is the matlab/matplotlib default which I consider to be absolutely horendous (yet continue to reshape my data for).
+I think I understood from one of your (@alexcjohnson ) comments that p0 is the way that pyqtgraph likes to think about data but I am not sure as I haven't really looked into this part that deep yet. If it is that would make our life tremendously easy.
+For the moment I am happy with using the representation of p1.
+I'll try to make this clear in the docstring.
+Another small bug, add image in pyqtgraph plot overwrites the existing plot. Should be pretty easy to reproduce, I'll probably try to fix this this weekend.
+After running the first command I get my regular plot
+
+Adding a second plot overwrites the first (which is not intended)
+
+Somehow that does not work, however explicitly setting it self.QC_QtPlot.traces[0]['config']['z'] = self.TwoD_array does work. I guess the difference here depends on if I hand it a view onto an object or an array itself, altough I am not sure on this. Nonetheless something to directly force update the parameters makes sense I think.
+Huh, that's odd - the exact snippet I showed worked in my notebook... and it's basically what I'm doing for the DataArray updates too.
+I see various sporadic Qt issues, dunno if any of these are related... fairly often the notebook freezes until I click on the Qt window, then it's fine. But other times it tries to make a graph and just locks up until it hits some internal timeout and I get a horrible traceback from deep in Qt.
+I think the representation in p0 is the way we should think about our data, just 3-1D arrays or one long array of 3 element tuples that belong together. The advantage is that this would also allow plotting non-square arrays of data, such as multiple patches of 2D scans or a non-rectangular grid.
+pyqtgraph doesn't seem to have anything built in to plot non-gridded data, or even irregular grid data. All it knows how to handle is "images" with every pixel identical. So if we want anything else we're going to have to build it ourselves, I guess by interpolating into such a grid. But this is actually a bit different from how we normally display 2D data: to make it clear to the viewer exactly what was measured, we don't show interpolated data, we show bricks of constant color, centered on the setpoints. I suppose one way to generalize this is to show the Voronoi diagram with each polygon a constant color... which in the regular grid case ends up being exactly the bricks we draw (if you add suitable boundary conditions)
+The data I based these plots on is what you physically do in a regular 2D sweep: the outer loop setpoints only have 1D data because you only set it once per inner loop, but the inner loop has 2D data matching the shape of z. But you're right, we should be able to handle any inputs that, just by looking at the shapes of the arrays, we know what they mean.
+I'm surprised p4 didn't get the right y values, did it give some warning? Might be just a question of convention, it was expecting transposed data or something... which is a bit tricky - I tried to go with the idea that the image draws the way it prints as text, ie the inner loop is x. But the alternative z[x][y], ie the first index you specify is x, is also compelling.
+Another small bug, add image in pyqtgraph plot overwrites the existing plot.
+Didn't it just draw the second image on top of the first one? If you want another subplot, you need to tell it that (.add(..., subplot=2) in the current syntax). I often put multiple images in the same subplot, if they're mapping out different patches of the same 2D parameter space, so I don't think we want to blindly make a new subplot for every image.
+Didn't it just draw the second image on top of the first one? If you want another subplot, you need to tell it that (.add(..., subplot=2) in the current syntax).
+Looks like you are right :) that solved my problem. It does beg the question how we deal with the extra histogram windows (box on the right). To me it makes sense to couple all the images in the same figure to the same z-scale and therefore histogram bar. Not sure how to do this though and at the moment not  my top priority. I do think it makes sense to be able to easily stitch together multiple patches of 2D-scans.
+pyqtgraph doesn't seem to have anything built in to plot non-gridded data, [ ... ] So if we want anything else we're going to have to build it ourselves, I guess by interpolating into such a grid
+I agree that interpolating into a grid is a bad idea, the way I would do this (and I am still puzzled why this does not exist in the standard graphing libraries) is by abusing the scatter plot. Use the x-y value to determine the location of the scatter and the z- to set an RGB color value. Set the marker to be a square marker and fix it's size to a size in the data coordinates (and prevent resizing) that is sensible, such as the minimal separation between points altough details are of course still speculative.
+The advantage of this method is that it has no dependencies whatsoever on the structure of the input data (like having to be an n*m matrix).
+The data I based these plots on is what you physically do in a regular 2D sweep: the outer loop setpoints only have 1D data [... ] the inner loop has 2D data matching the shape of z.
+I still find this an odd convention, but I guess I am just biased here towards having a single 3*n (in the case of 2D scan) array that contains xyz "tuples". Again, advantage of that method is that it generalizes to n-d sweeps as well as adaptive measurements without needing to change anything on the data-handling and analysis front.
+@alexcjohnson , Is there a particular reason why all the colorscales_raw in qcodes.plots.colors start with a capital letter? In matplotlib all the same colormaps exist but they start with a lowercase letter.
+Is there a particular reason why all the colorscales_raw in qcodes.plots.colors start with a capital letter?
+just because it was a straight port from plotly's colors. Lowercase is great, feel free to change it.

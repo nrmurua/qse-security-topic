@@ -1,0 +1,20 @@
+The method UnitaryGate.__eq__ calls matrix_equal with parameter ignore_phase=True. In particular, when u1 and u2 are two objects of type UnitaryGate that differ by a phase, the comparison u1 == u2 returns True.
+This is not consistent with other objects of type Gate.
+This leads to unsound optimizations in CommutativeInverseCancellation transpiler pass that removes inverse gates by checking something like g1.inverse() == g2. Note that in the full circuit this translates to changing local and not just the global phases.
+As a super-simple example,
+outputs True.
+Was there some reasoning to define equality of two unitary gates up to a phase?
+A simple fix would be to change ignore_phase=True to ignore_phase=False (unless this is not a bug but a feature).
+An additional thought that a method that checks whether two objects of class Gate are equal up to a phase would also be useful (e.g., in the mentioned CommutativeInverseCancellation pass).
+This leads to unsound optimizations in CommutativeInverseCancellation transpiler pass that removes inverse gates by checking something like g1.inverse() == g2.
+I'm not sure I understand how this could be a problem, measurement-wise. I guess if you build controlled-gates out of these gates, effectively transforming the global phases into relative ones, the transpiler won't consider these as equal anymore.
+Can you give an example of a circuit where this yields an unsound optimization?
+Thanks @tnemoz, I now think that you are correct. I was worried about the following: suppose that we have a quantum circuit over n qubits (say n=6) with many different gates, and suppose that two consecutive k-qubit gates (say k=2 and the gates are over qubits q2 and q3) are only inverse up to a phase. If we remove these pair of gates from the circuit, does it only change the global phase (of the n-qubit circuit)?
+@alexanderivrii Unless I'm mistaken, it does! Essentially, we have a quantum gate $U$ that is applied, followed by a quantum gate $\mathrm{e}^{\mathrm{i}\varphi}U^{\dagger}$. Thus, the product of the two equals $\mathrm{e}^{\mathrm{i}\varphi}I$, where $I$ is the identity gate.
+I think what you mean is that this identity gate is only the identity gate on the subset of qubits $U$ applied to in the first case, but that's not the case! Indeed, What is applied is in fact $I_1\otimes \mathrm{e}^{\mathrm{i}\varphi}I\otimes I_2$, where $I_1$ is the identity operator on q1 and $I_2$ is the one on q4-q6 in your example. You can factor out the $\mathrm{e}^{\mathrm{i}\varphi}$ and you end up with $\mathrm{e}^{\mathrm{i}\varphi}I_{\text{total}}$, where $I_{\text{total}}$ is the identity operator on all qubits. Thus, it is indeed a global phase.
+Thank you very much for this very clear explanation. I am going to close the issue.
+The transpiler is supposed to maintain global phase in the absence of measurements, so it's entirely possible that this could produce unsound optimisations (though in practice, I'm not certain we've got any built-in passes that would trigger it).
+Thanks @jakelishman. I believe that the example that @kdk had in mind was that if we have two equal gates/circuits, then we expect their controlled versions to be equal as well. This does not hold with the word "equal" replaced by the word "equivalent up to global phase".
+A possibly important case is (recursively) applying transpiler passes to the definition circuits of various gates, and in particularto the definition circuits of base gates of controlled gates.
+The transpiler pass where I see global phase changed is the CommutativeInverseCancellation pass which cancels pairs of gates A and B if A == B.inverse(). When A and B are of type UnitaryGate currently the global phase is ignored.
+I will commit a fix shortly.

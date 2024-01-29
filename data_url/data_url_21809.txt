@@ -1,0 +1,29 @@
+Processing of output values of the Novogorny sample() function requires long delays, that considerably slow down the effective sample rate.
+For example, saving the sample() output in a class attribute requires 10x as long as saving it in a local variable.
+However, passing a local array of dimension >1 filled with sample() outputs as an argument to an asynchronous rpc function also causes RTIO underflows and takes considerably longer than passing a local array of the same size with fixed values as argument.
+My questions are
+(i) why is there a difference in the duration of writing the output to a class attribute or a local variable?
+(ii) why is it so slow to pass the local array as an argument?
+(iii) is there a way to readout data faster than case 2 in the below example, where data is written to a class attribute with long delays, and if yes, how?
+Issues (i) and (ii) might also be unrelated to each other.
+Here are two examples to demonstrate and reproduce the two problems:
+(The code was run on a Kasli v1.0 controller with the opticlock gateware (commit 46fb5ad) connected to a Novogorny rev1.1)
+Thanks for the report. To triage:
+Does this also occur with Sampler?
+Your measurement strategy (that dt) is broken. You want to do t0 = now_mu(). Otherwise you are wrongly counting whatever the slack was before calling sample().
+What's the problem with your second code snippet? As documented, sample() eats all slack. On the second invocation you are bound to get an underflow because 8 µs is not enough.
+Your save_value_v2() doesn't work. We don't do attribute writeback before calling an RPC, only when returning from a kernel.
+If after all this there is still a difference between an attribute and a local variable the suspect would be attribute writeback.
+Ping @vmsch
+Sorry for the slow reply.
+I tested it with the Sampler, and there is no difference between saving to local or member variables with the sampler.
+It still requires a very long delay of 110us when trying to sample repeatedly using self.sampler0.sample(voltages) however.
+This delay is only 5*us when using sample_mu. Maybe some people would find it useful to have a comment in the code or documentation, that the difference in speed between the two functions is this large, as this seriously affects the possible sampling rate?
+To your other comments:
+(2): I think it still gives a roughly accurate value, as I adjusted the delays to just not give an RTIO underflow error, and it runs the loop repeatedly? When using your method I get similar values.
+(3): Ok. This was just a hack trying to increase the sampling rate, but since it works with the sampler it is no longer necessary.
+(4): Yes
+I guess since the Novogorny has been replaced by the sampler and the problem doesn't occur with the sampler this shouldn't be an issue then.
+I also met the same question.
+The delay is very long(~100us) when using sample(). Is there any way to improve the sampling rate?
+The actual sample rate is much faster (see the sample_mu() speed). Sample scaling is limited by floating point speed #535 #1007

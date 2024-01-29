@@ -1,0 +1,199 @@
+@alexcjohnson
+Hi Alex,
+When you visited just before Christmas we had some good discussions on QCodes and we agreed that I would provide a list of features that would be required in order for us to start using QCodes.
+Modifications to Loop() concepts we use that are currently not mapable to QCodes
+In addition to these essentials there are quite a few modifications we need to make to our code to transfer over. For instance we need to translate our sweep and detector functions to set-able and get-able parameters, we need to  change our analysis to work with changes to the dataformat etc.
+Our plan for beta testing is to first transfer over the bare-essentials. This means transferring over basic instrument drivers but continue using our existing measurement control and analysis. The plans are to convert our sweep and detector functions to parameters such that they can be used both by QCodes and our measurement control before switching over completely.
+When beta-testing those first features I will probably run into all the little details of features that are nice to have. I will also add those to this issue
+Q: I saw some notes in the code about python 3.3 vs 3.5, which version are you actually using and why (and can I just use 3.5 or do I need 3.3)
+Q: Do you prefer if I mess around on a branch of QCodes or if I make a fork when trying out new things (e.g. demonstration notebook )
+P.S. I tried to keep this issue short to prevent the whole wall of text thing and to make it a nice short checklist. However it does rely a bit on the discussions we had before christmas. If you (or anyone else who is interested) has any questions, comments etc feel free
+Thanks @AdriaanRol ! This is a great list. Let me just address a couple of them right now:
+Q: I saw some notes in the code about python 3.3 vs 3.5, which version are you actually using and why (and can I just use 3.5 or do I need 3.3)
+3.3+ is the requirement. I downgraded so people wouldn't be forced to use 3.5, but 3.5 is actually what I have installed for development. But you raise a good larger point:
+Q: Do you prefer if I mess around on a branch of QCodes or if I make a fork when trying out new things (e.g. demonstration notebook )
+The sooner you (and others) get started developing within this repo the better, so I'm heartily in favor of a branch, not a fork! That way it's easier for me to see what you're doing, and for us to work together on the same features.
+Nesting of loops(execute a Loop() object within an existing loop) (not trivial from a datasaving standpoint)
+What do you think of my AverageGetter example? This one just returns a single value but it's a parameter like any other so could return various values of arbitrary size. (I'm working now on extending parameters to allow a single parameter to return several different sized outputs)
+@alexcjohnson
+Nesting of loops(execute a Loop() object within an existing loop) (not trivial from a datasaving standpoint)
+What do you think of my AverageGetter example? This one just returns a single value but it's a parameter like any other so could return various values of arbitrary size. (I'm working now on extending parameters to allow a single parameter to return several different sized outputs)
+Looks great, from what I see it would indeed allow arbitrary code inside the loop. Altough from what I see it saves only the outer value (and not the intermediate data) while quite often we do want to access the intermediate data afterwards.
+I think the tricky part here would be how to handle the datasaving. If I understand correctly there are two challenges here
+I can think of two ways to address the datasaving problem (and once that is clear it should be possible to think of the best way to do point 1).
+This is what we do now, very inelegant and inefficient but easy to implement and easy to extract.
+Could work with separate instances of the dataserver that each create their own dataset/file in the datafolder.
+Keeps all the data corresponding to the same Loop in one file. It would require the dataserver keeping track of which Loop is a "child" (wrong word but cannot think of the correct term) of which outer loop in order to keep the nesting straight. Would also require a way to extract the inner datasets.
+Only save the outer loop :(
+Just to be concrete, lets say the nested parameter runs a Loop that measures a 1D array of 200 points, then fits a line, and returns 2 fit parameters 'y0' and 'slope'. The Parameter would look something like:
+Now lets suppose we repeat the acquisition and fitting ten times like this:
+What I had in mind was not to make a separate data array for each of the internal measurements, but to incorporate them into one higher-dimension output. So this loop would create three output arrays:
+How does that sound? To pull out an individual raw measurement you have to slice the raw array. One nice thing about that is it makes the correspondence (which part of the raw array corresponds to which point in y0 and slope) obvious. Also if you want to slice the raw arrays differently (look at the first point from each measurement, for example) it's equally easy.
+So to be clear, this isn't either option a or b that you describe, but all the innerdatasets get combined into a higher-dimensional array.
+Initially we also wanted to do it as a big array that you slice. However it is not obvious to me how to  scale up to higher dimensions/levels of nesting. An additional disadvantage of this method is that it requires you to specify all levels of nesting explicitly in the outer loop (altough some would argue that is an advantage)
+I think there are several advantages to nesting the data in the same way as nesting the measurement loop.
+One a different note, nesting is ofcourse the same as creating a multi-dimensional array on an abstract level.
+e.g. a three level nested measurement can be saved as
+par_1 (N, 1, 1) array
+par_2 (N,M,1) array
+par_3(N,M,L) array
+However it is not obvious how to visualize a 3 or 4 D array in a way that is different from the conventional hierarchical folder way and you lose the symmetry between different levels of data (no option for metadata for reach layer of nesting)
+@alexcjohnson
+Hi Alex,
+In order to convert instrument drivers to QCodes I figured it be a good idea to create a tutorial notebook explaining how to make an instrument driver, first based on your MockInstrument class and then using custom parameters.
+I have now finished the mock instrument creation (see 663cb0d) but am running into a BrokenPipeError with the dataserver when attempting to use it with a Loop. I saw a comment in your example code about having the instrument definitions in a different file.
+Could this be the same thing that is causing my error, and if so do you know what causes it?
+Could this be the same thing that is causing my error, and if so do you know what causes it?
+It's possible, did you try moving the class definition to a separate file and importing it? That looks like a slightly different error than I got, but it's still related to pickling which is where it failed before.
+Definitely an annoying limitation for the sake of making self-contained examples... in actual use there's something nice (for maintenance and reusability) about putting definitions into a separate file, but ideally not something we'd have to force on people. I'll look a bit into whether we can do something to get around it.
+One can create new nested measurements without spending a lot of time
+Can you elaborate?
+Identical analysis functions can be used as the datasets (raw_data + snapshot/meta-data) look the same irrespective of level of nesting
+Meta-data (e.g. snapshot that might be relevant to those analyses) can be stored in the inner nested folder.
+I bet we can solve this by abstracting the concept of slicing an array a little. So, if you have the DataSet from my example above and you want to run an analysis on just the portion at c1=3 we could do something like: data_c1_3 = data.slice(c1, 3) which would make a new DataSet doing the following:
+Then any analysis you could do with an un-nested measurement can be done with a slice of a nested measurement.
+@alexcjohnson
+Could this be the same thing that is causing my error, and if so do you know what causes it?
+It's possible, did you try moving the class definition to a separate file and importing it? That looks like a slightly different error than I got, but it's still related to pickling which is where it failed before.
+I haven't had time to look into this yet but so far the instrument drivers I have made seem to be working fine.
+One can create new nested measurements without spending a lot of time
+Can you elaborate?
+Because nested datasaving preserves symmetry between different levels of the data acquisition loop the preexisting analysis can be used on all layers, additionally when creating the loop there is no need to specify variable names and shapes beforehand as you have done in your average getter example.
+Altough I can imagine a similar automated way can be made for other varieties we can come up with.
+I think the main advantage of using a hierarchical dataformat to nest is that it is a more general form of slicing. Addressing nested levels of a hierarchical dataformat can work in a very similar way to slicing with the only difference that you are not slicing an array but a datastructure that can contain other types of variables (such as nested dictionaries with metadata or snapshot objects).
+I think disallowing taking metadata at nested levels is a bad idea as you throw data away (or at least make it harder to access if you use a logging system.)
+The reason why I am advocating a hierarchical system is that it is a preexisting method that already provides all the functionality we are looking for. No need to reinvent the wheel. And if you insist on text based datasaving, JSON should be able to handle that just fine :).
+I think your method can work but that it also requires a lot of code for the datareshaping, something which is hard to do in the most general way possible, makes the code less accessible for collaborators and reduces the modularity.
+When converting QTLab instruments I run into a lot of instruments that have simple "holder" parameters. They exist t ensure some parameter of an instrument is logged and viewable. They usually look something like
+To have the same behaviour in QCodes I would have to do the following
+Add the parameter to the init.
+Replace the set and get functions with an underscore
+There is probably also another way by creating a parameter from scratch in the init and using that but I haven't looked into that yet.
+As I very much like the idea of passing strings for instrument driver write commands I thought a similar shortcut for such 'holder' variables would be very nice, something along the lines of
+I do not know how best to implement how best to implement this as I am not familiar enough with all the under the hood things in QCodes but as it is such a common task I thought it might be a good idea to consider.
+Is there some reason why you can't completely code-gen this (parameter-holding parameters)? Define an "add_simple_parameter" method that just takes the parameter name and vals, and that generates the getter and setter methods and adds them to the object directly?
+I know you could do this back in old-school Python (I'm still vintage 1.4), but I don't know if 3.x has made it impossible.
+"Holder" parameters are an interesting case, and you're right that these will come up all the time. I'm guessing these are mainly for manual settings that the software otherwise has no way of knowing about, like what kind of attenuation, resistors, cables you have installed, or switches/dials that are invisible to software?
+I'll make a Parameter subclass and Instrument method for them, they'd be pretty simple. I'm not sure about the name though... on the one hand I want to call them SoftParameter because they exist only in software, but that contradicts the fact that they are mirroring physical objects that have NO presence in software. Perhaps we call them ManualParameter because when you manually change them outside the software, you have to also manually change them inside software?
+Which brings up the other challenge with these parameters: making sure they stay in sync with reality. The only way I see to promote this is visibility: making sure these parameters are very apparent (and easy to update) in whatever monitoring panel we make.
+The reason why I am advocating a hierarchical system is that it is a preexisting method that already provides all the functionality we are looking for.
+You're absolutely right that we shouldn't be dropping functionality just because some technical aspect of a different system forbids it. But I still think we can get everything a hierarchical structure can do and a bit more with a multidimensional structure. The reasons I'm advocating such a structure (which are all interrelated) are 1) it preserves the meaning of the outer loop(s) so you and the software don't have to infer this from the hierarchy, 2) it makes analyzing and visualizing the whole easier and 3) it makes it easy to slice in arbitrary ways, which would otherwise require looping across the hierarchy.
+I guess what it all comes down to is I think it's easier to slice than to put things back together again - so it puts the pressure on me to demonstrate that the slicing method I propose is as easy as I think it is!
+I suppose when you talk about nested metadata, you're thinking of monitor data (fridge temperature, for example) that might have been acquired many times during the larger measurement loop? That's a fair point, but it seems to me the right solution is just to make an array of metadata dictionaries that mirrors the structure of the data. That could lead to a lot of redundant storage, if this becomes a problem we can strip out anything that matches the highest-level metadata dictionary, and reconstitute the full set on slicing.
+While building drivers I ran into some more issues/questions
+Cannot be called in a convenient way
+Additionally this also breaks terminal completion to see what functions a parameter has.
+the instrument add_function() is not very convenient
+Good point - I delegate __getattr__ (eg instrument.reset) and __getitem__ (eg instrument['reset']) to parameters only, not functions. I guess ideally we'd delegate it to BOTH, as well as preventing you from adding a function or parameter that already matches an existing function or parameter.
+wiring this up to tab completion is on my todo list
+The set function for instrument parameters must be a string or function with one input argument
+Ah OK, I wondered if this would come up... I wanted to enforce a single argument here to maintain the idea that each settable parameter is a single degree of freedom, but I guess with an argument like this you're defining how you set that value, not what you set. Do you think this is going to come up often enough that it's worth breaking this rule (allowing one "value" and arbitrary kwargs, for example)? We can certainly do that, but first lets think about alternatives that would let us keep the rule.
+If it's only going to happen a few times, and you're not going to need the extra args in measurement loops, it might be better to make the less-common form of the parameter into a function (that can call the original parameter's _save_val method to record this for the snapshot).
+If you're going to need both forms in measurement loops, the multiple argument issue gets a lot worse (how and where do you provide the extra args? do they need to be saved as part of the setpoints?) That might argue for a bit of a structural change, for example make the extra args into parameter or instrument state variables - like param.set(val, force_reload=True) could become param.needs_reload=True (or a callable param.require_reload() and then param.set(val) checks the value of self.needs_reload, acts on it, and clears it.
+Good ideas - these will all be easy adds.
+There's a fairly small set of symbols in the main namespace and an even smaller set people will need most of the time... I hate from qcodes import * but I kind of had in mind for the actual experiment to do something like:
+But that's kind of a matter of taste - I'm happy with qc, I agree q could cause issues somewhere, but I bet qc will be safe for just about everyone.
+When I use a visa write command the visa handle returns an error code (0 being no error) (e.g.)
+I found that while writing drivers or when testing devices it is quite essential to get a confirmation that my command is executed correctly. The set_cmd gets routed to the self.write_async(cmd) of the VisaInstrument class. This function looks as follows.
+I would propose adding error handling to this function, the most naive way I had in mind would be something like
+This self.check_errors could be included as a function in the VisaInstrument in which it checks for all standard Visa errors. The function could then be overwritten within the specific instrument classes to include driver specific errors.
+good idea - and the default self.check_errors would justraise any nonzero error.
+I added the following function to one of my instrument drivers (AWG5014) and thought it might be useful for all instruments. Should I just add this to the instruments.base.Instrument class? Or do we want a different name, or perhaps have it as an option in self.snapshot(), e.g. update=True
+Instrument get all
+I like the idea of this being an option to snapshot 👍
+@alexcjohnson
+At the moment I am converting a lot of drivers we have. Some of these are pretty easy to convert to a clean driver whereas some others are a patchwork of code made by a lot of different people.
+I will convert these drivers to a point where we can use them but probably will not have time to clean them up and make them into a pull-request worthy driver.  I think that at this point it would be very valuable to have those functional but not perfect drivers somewhere in QCodes so that we can work on it with multiple people. So my question is, what should we do with them?
+Shall I just add them with a notice of what is working and what needs to be improved?
+You're right, we definitely want this incomplete code in QCodes - the only thing I'd be concerned about is locking people into an API that we will want to change once the drivers get cleaned up. If you think the cleanup is going to require breaking changes for users of the early version, there are a few options:
+As I was adding another driver it occured to me that adding the tektronix driver we are using (based on a heavily modified qtlab driver) has a GNU licence in it.
+I don't know about the GNU licence but maybe we don't want to add that (or later remove/replace it with a rewrite) in order to prevent open source licence contamination.
+Thought I'd ask before committing it, (note that the other drivers I add either were never part of QTlab (the Signal hound driver) or are a complete rewrite/port by me)
+Just out of curiosity, what is the intended license for Qcodes?
+GNU public licences
+Ah, good question - by the time this is open sourced we don't want to have the GPL on anything, but for the moment I'd vote for putting it in the repo, maybe just in a distinct folder so we don't forget about it? Then before broad release we can replace it. @alan-geller does that seem like a reasonable strategy?
+@MerlinSmiles the intended license is MIT or similar, so it could potentially be freely included in commercial products. That at least seems to be the consensus, but it could still be up for discussion.
+I was working on the IVVI driver yesterday (ee95806) and ran into some limitations of the base instrument class.
+I also had some thoughts on separating the label in name and units. I remeber that in issue #6 there was a discussion on separting the label into the name and the units. I could at the time not come up with a fundamental reason why one would want to do that, however  I think ther are are two reasons to do so.
+It would be very convenient if the parameter get and set cmd creation would also work with bytes and instead use the visa_handle.write_raw() command.
+Indeed! This is stickier than I thought at first - I hoped we could just add bytes in here and go on our way... but bytes don't support .format. Seems like an odd choice on Python's part... but there it is.
+bytes do support % formatting in Python 3.5, it seems awfully awkward to bring that in for bytes and use .format for str but I suppose we could do that at the level of syncable_command - or use % formatting for both, though I do much prefer .format.
+Or, though this is a bit speculative, we could do our own conversion between the two when we find bytes so from the user's perspective it's always .format. It may actually be quite easy, just need to convert {(stuff)} to %(stuff) and % to %% assuming we're not using any features .format supports that % doesn't (which is a lot, but I think it's true).
+Alternatively, if just a couple of commands need non-ascii bytes, the others could take a string, and in a custom Instrument.write (or write_async) method you encode this to ascii and send it via visa_handle.write_raw(), then just the ones that really need binary data would get custom functions.
+Thoughts? Do you want to give me some more info on what the custom byte-based protocol looks like?
+Units and labels
+Sold. we'll put in a separate unit field. Maybe if we're extra clever this will even let us dynamically adjust the label if there are exponents factored out of the tick labels.
+Updating multiple parameters from a single get command. The IVVI rack only has a single get-function which returns the voltages for all the different dacs. The way the driver operates now is that it executes a get_all command to the hardware and then slices the list.
+Yes, I guess that will come up occasionally... and more generally, I think we'll see more things that at first seem like one-off quirks that turn out to be repeated across many instruments. That's a nice advantage of the instrument drivers being contained in the same repo, so we can develop the functionality in a particular instrument at first and then generalize it and shift it up to a base class, updating the original instrument at the same time so upgrading is easy.
+I was going to suggest:
+If your get_all command calls _save_val on every parameter in the list, then you could have the parameter.get function check self._last_ts, and if it's more than a millisecond or something old, call get_all again, else just take self._last_value - that way if you do something that sets some parameters, then goes in and measures 5 of the DAC channels back-to-back, you'll automatically get only one hardware call each set.
+But on Windows time.time() and by extension datetime.now() seem to have only 10 millisecond resolution, though this guy somehow sees 1 millisecond... still not short enough, I'd say (I'm on win 7, he listed win 8, maybe that's it?). However time.clock() seems to have sub-microsecond resolution and basically measures wall time since you first called it, so we could use that, store it as something like self._last_clock. We'll have to eventually write some platform-dependent code for that though... because time.clock() only counts process time on mac/linux while time.time() has 1 microsecond resolution (on my mac anyway).
+actually that platform-dependent part won't be hard at all:
+However @damazter suggested using a meta-function that creates the specific parameter functions.
+sounds like a good stepping stone before incorporating some behavior in the base package. Just be careful to do it without making closures or lambdas - no functions or classes inside other functions or classes - that's another thing (or maybe the same thing) that "spawn" multiprocessing doesn't like. I transformed some of the closures I had made before finding this out into callable classes qdev-dk-archive@c866552
+On licenses: I have been assuming MIT, but that's not decided yet as far as I know. I think putting GPL-ed code into another folder that is optional to use (i.e., not pulled in by the main code, but something that the user has to explicitly include themselves) is OK, but I'm no lawyer.
+Sorry for the delayed response, I was out of town (and mostly off the grid) over the weekend.
+putting GPL-ed code into another folder that is optional to use
+I think once it's open sourced, we'd better have the whole repo on the same license - otherwise people will still get antsy about having that code there, even if they don't use it. At that point if need be we can split these out into a separate repo of "optional drivers." Ideally though we only have a few of these drivers and we can find a time to rewrite them ourselves.
+@alexcjohnson: Yes, definitely, a separate repo would be best.
+However @damazter suggested using a meta-function that creates the specific parameter functions.
+[ ... ] Just be careful to do it without making closures or lambdas - no functions or classes inside other functions or classes [ ... ]
+In that case I propose the following syntax for adding a get_cmd/set_cmd
+Method would be the way to generate all basic and basic multi-channel commands.
+Method 2 would be for parameters that require a custom function
+Method 3 is the analogue of 2 for creating multi channel functions easily. This would avoid the problem of creating closures while still providing the flexibility we want.
+What do you guys think?
+I am running into some errors with one of my instruments and get the following error.
+This happens in the parameter.get() function when I call my get_all() function. This error message itself is quite fine but it would be super convenient if it would additionally tell me for which parameter this error gets raised.
+Better error messages
+It's going to be hard to do much in general for messages like this that we don't generate. But do you know about the debugging magic command? Type %debug in any cell after getting an error, and you can (among other things) go up the stack until you get to the right context to see what parameter it is.
+Better error messages
+It's going to be hard to do much in general for messages like this that we don't generate.
+Agree completely on not being able to fix error messages that we do not generate. However this is an error that is generated by QCodes and quite hard to find out where it comes from, as it is in the quite low-level auto-generated parse function. A simple addition of a self.name in the print statement would make it far easier to find out which parameter this bug corresponds to. Especially because this is an error that I expect will be quite common.
+However I do not know if all objects that will ever use the sync_async functions will neccesarily always have a .name property.
+But do you know about the debugging magic command?
+No I did not, I'll check it out
+I don't see anything in sync_async that would do that, so I'm guessing that self.parse_function is float, and that's what's generating this error?
+The error is not in the float function. The driver is correct, however this occurs when I miss a message. The response to the specific parameter should be '0.0\n' which can be converted to a float, however because commands get out of sync (due to some user related mistake) I am reading out the response to the previous query which is something that should get parsed to a string.
+The issue is not with the error being raised but rather with the ease of debugging it.
+Working with QCodes for the last weeks made me realize that there is one feature I miss a lot and that is the tab-completion to quickly see what the functionality is the instrument provides.
+I noticed that you made Instrument.param_name redirect to Instrument.parameters[param_name]. This works great in allowing parameters to be addressed in this way but does not make it a direct attribute of the object, thus breaking compatibility with the default ipython auto-completion.
+I would suggest adding both functions and parameters as attributes to the base instrument object to allow the tab-completion and easy to use commands. This would then get rid of the custom __getitem__ and __getattr__ methods defined in the base instrument class. The dictionary of attrs and functions would remain as these are used in generating the snapshot.
+On a separte note, what would be a good merging strategy? I think that the stuff I made is not yet up to release quality but I think it makes sense to keep things together in some sort of development branch in order to prevent us from diverging in development.
+Auto-completion of parameter names
+I will first take a look at implementing this with __dir__ - having the same thing defined twice, rather than defined once and looked up automatically, will be error-prone.
+But I agree, I likewise find myself sorely missing autocomplete while working with remote pyqtgraph, where the proxy apparently doesn't map __dir__ either...
+merging strategy
+What kind of quality issues? I don't think it's a good idea to develop a strategy to allow us to punt code quality to a later time, because it will never happen. If there are specific things missing it's OK to put in # TODO notes. If there are edge cases for example, that you're not handling now, put in a detailed TODO about it, otherwise we will forget and it will be much harder to find, let alone fix, later.
+I've been punting tests myself, in an effort to get the code in more peoples' hands quickly, but pretty soon I think I'm going to have to set aside a week (or more) just for tests, to catch up here. I'm OK with omitting instrument driver tests for now, we're going to have to develop a coherent strategy around this to do meaningful testing (not just mocking the hell out of everything in mindless pursuit of coverage) without the actual hardware.
+And if there are things you want me to do within your branch prior to merging, I'm happy to.
+Auto-completion of parameter names
+I will first take a look at implementing this with __dir__ - having the same thing defined twice, rather than defined once and looked up automatically, will be error-prone.
+Agree defining things doubly is a bad idea, I did not know of the __dir__ method, I think what you propose is a better way of achieving this.
+merging strategy
+I don't think it's a good idea to develop a strategy to allow us to punt code quality to a later time, because it will never happen.
+I think this is a pretty solid answer to the merging strategy. I already have a test-suite running for our homebuilt FPGA box (not in QCodes). I was planning on making a similar test-suite for the RS source because that is the simple example and makes it easy to find out for what other RS models it works. (Don't expect it tomorrow though ;) )
+Also what package are you using for unittesting? I currently use unittest but I find that I cannot pass an initialized instrument to it (Ideally a unittest should be completely self-contained but I find that I need to specify some initialization arguments to the instrument such as the address), Instead I use a workaround where I make the instrument object globally available to all tests but that is a bit dirty.
+I have heard that nose is supposedly better but have never used it.
+Also what package are you using for unittesting?
+I currently use unittest ...... I have heard that nose is supposedly better but have never used it.
+I have to admit I don't know what nose is, other than a way to run unittest tests 😇 Check out the test directory: I use unittest.TestCase tests and run them with nose, specifically (from either the root dir or the qcodes dir): nosetests --with-coverage --cover-package=qcodes (note to self - we need a CONTRIBUTING.md file with info like this)
+It might be worthwhile creating a config system for testing against real hardware, then maybe passing in a filename to the tests (a file that's outside the repo), in which we define which instruments to test and what their addresses / other config settings are.
+http://stackoverflow.com/questions/1660520/nose-test-script-with-command-line-arguments
+nose-testconfig as referenced in that SO post looks like a nice way to go... but lets leave this for a little while.
+Auto-completion of parameter names
+pandas does this on dataframes, perhaps copying the code from there is the simplest option.
+@alexcjohnson
+Are you about ready to merge this stuff in? Make a pull request and I'll look it over!
+Thanks, there's a few more things I want to do before the pull-request:
+The pull request will then contain a set of basic drivers
+There is also another issue with the way the instrument parameter behaves. If I understand correctly the get-command is always called after a set. This should normally not be a blocking operation as the QCodes loop is constructed such that this can be done asynchronously.
+However that is only true when considering it from a software perspective. In the case of the IVVI driver the get-command actually starts a measurement that reads out all the (16) dac voltages that takes ~.450ms to execute. Because the hardware blocks at this instance it is impossible to do a quick dac-sweep.
+I have a workaround in mind where calling the IVVI._get_all_dacs() method updates some internal list of dac values and setting a value only updates a single entry in this list but this is obviously less than ideal.
+Additionally calling get-all on the IVVI driver takes ~8.1s because it performs the underlying get-all function for every single channel.
+If I understand correctly the get-command is always called after a set.
+Is it? It shouldn't be... where are you seeing this?
+Thanks, there's a few more things I want to do before the pull-request
+Primitive test suite for the RS driver (could be a separate PR)
+Great! Most of those sound pretty quick. I'm trying to balance the desire for small, frequent PRs (which so far I've set a bad precedent for, but I'll try to make them small from now on) with encouraging testing... I think testing wins, but you can always make the PR before writing the tests, so I and others can start looking at it, make a checklist in the PR itself so reviewers know there is more coming, and push tests into that branch when they're ready.
+Close for now, make a new one if things are still relevant <3 !

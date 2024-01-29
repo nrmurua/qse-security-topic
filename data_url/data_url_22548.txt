@@ -1,0 +1,178 @@
+Currently OpenOCD must be built from source (even more hassle on Windows).  Existing compiled binaries for OpenOCD are from older releases that do not include jtagspi, and users would have to manually download the needed .cfg files.  It would be nice to have packaged OpenOCD binaries for both Windows and Linux.
+Sidenote for packaging: You don't have to manually download any .cfg files. Packaging the current openocd master is sufficient. There are a bunch of conda recipes out there.
+Yes, packaging the current openocd master from https://github.com/ntfreak/openocd would suffice as it contains all the necessary .cfg files already.  I would imagine the trick is getting OpenOCD to build on Windows - afaict this requires cygwin and a bit of a song and dance.
+I successfully compiled openOCD on 64 bit windows 7 this morning.  There are still a few little problems to work out but here is the recipe so far:
+install msys2 on my 64 bit windows 7 box
+run the following from msys terminal:
+go to line 562 and observe that there is no case statement for "msys" (which is what we are running on).  Copy the 10 lines for mingw and use it to set up a case statement for msys.  This enables the build to recognize we're dealing with a windows environment.  I'm working with the openocd folks to patch in this change to configure.ac permanently.
+The next step would be to get artiq_flash to work with the openocd installation correctly.
+Here's what I've done to that end:
+-edited the windows PATH environment variable so it can find my openocd-install/bin directory
+-copied various dlls from the /mingw64/lib into my openocd-install/bin directory so it can be found when running artiq_flash (libhdiapi-0.dll, libusb-0-1-4.dll, libusb-1.0.dll).
+-run artiq_flash from the openocd-install/share/openocd directory because the subdirectory "board" needs to be handy so that artiq_flash can find "board/pipistrello.cfg"
+Unfortunately, when I run artiq_flash under all these conditions I still get an error.  The current error indicates that openocd failed to find libUSB:
+Error: libusb_open() failed with LIBUSB_ERROR_NOT_FOUND
+Error: no device found
+Error: unable to open ftdi device with vid 0403, pid 6010, description 'Pipistrello LX45', serial '' at bus location ''
+[Thread 7716.0x36c exited with code 0]
+This surprises me since I put two libusb dlls in the same directory as openocd.exe.
+I'll be out for the next several days.  When I come back in a few days I'll work on this some more.
+The current error indicates that openocd failed to find libUSB:
+No, it found libusb, since it was able to call libusb_open(). It was unable to find the device, possibly because it has no permission to access it, or because it's already claimed... not sure.
+Windows doesn't really like user mode drivers. You need to install libusbK.sys in order to use libusb on Windows machines. The Zadig installer can help here. Click Options > List all devices and look for a "Dual RS232-HS" device or similar (FT2232H). One port is for JTAG, the other is for serial.
+I don't know which one is which on Pipistrello, so replacing the driver for on port still doesn't work, try replacing the other. You can use Device Manager to remove/revert to the previous driver.
+Note that you will lose the default functionality (USB serial port) from Windows when you replace the driver. For the JTAG port, this is perfectly acceptable.
+Thanks cr1901.  I installed zadig and got a bit further.  Here is the next error that gets thrown:
+[artiq-main] C:\Users\kmclewin3\Tools\foolingaroundwithdirs>artiq_flash -t pipis
+trello -m qc1
+Design name: b'top.ncd;UserID=0xFFFFFFFF\x00'
+Partname b'6slx45csg324\x00'
+Date b'2016/04/18\x00'
+Time b'15:22:00\x00'
+found binary data length: 1318204
+Open On-Chip Debugger 0.10.0-dev-00270-ga8d302f-dirty (2016-05-06-09:45)
+Licensed under GNU GPL v2
+For bug reports, read
+http://openocd.org/doc/doxygen/bugs.html
+none separate
+adapter speed: 30000 kHz
+Info : auto-selecting first available session transport "jtag". To override use
+'transport select '.
+jtagspi_program
+Info : ftdi: if you experience problems at higher adapter clocks, try the comman
+d "ftdi_tdo_sample_edge falling"
+Info : clock speed 30000 kHz
+Info : JTAG tap: xc6s.tap tap/device found: 0x44008093 (mfg: 0x049 (Xilinx), par
+t: 0x4008, ver: 0x4)
+Error: couldn't stat() C:Anaconda3envsrtiq-mainlibsite-packagesrtiinariespipistr
+ello-qcscan_spi_xc6slx45.bit: No such file or directory
+failed loading file C:Anaconda3envsrtiq-mainlibsite-packagesrtiinariespipistrell
+o-qcscan_spi_xc6slx45.bit to pld device 0
+Traceback (most recent call last):
+File "C:\Anaconda3\envs\artiq-main\lib\site-packages\artiq\frontend\artiq_flas
+h.py", line 128, in main
+"-c", "; ".join(prog),
+File "C:\Anaconda3\envs\artiq-main\lib\subprocess.py", line 584, in check_call
+raise CalledProcessError(retcode, cmd)
+subprocess.CalledProcessError: Command '['openocd', '-f', 'board\pipistrello.cf
+g', '-c', 'init; jtagspi_init 0 C:\Anaconda3\envs\artiq-main\lib\site-packa
+ges\artiq\binaries\pipistrello-qc1\bscan_spi_xc6slx45.bit; jtagspi_program C
+:\Users\KMCLEW~1\AppData\Local\Temp\tmp0vxpjp2o 0x0; jtagspi_program C:\A
+naconda3\envs\artiq-main\lib\site-packages\artiq\binaries\pipistrello-qc1
+\bios.bin 0x170000; jtagspi_program C:\Anaconda3\envs\artiq-main\lib\site-
+packages\artiq\binaries\pipistrello-qc1\runtime.fbi 0x180000; xc6s_program x
+c6s.tap; exit']' returned non-zero exit status 1
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+File "C:\Anaconda3\envs\artiq-main\Scripts\artiq_flash-script.py", line 5, in
+
+sys.exit(artiq.frontend.artiq_flash.main())
+File "C:\Anaconda3\envs\artiq-main\lib\site-packages\artiq\frontend\artiq_flas
+h.py", line 132, in main
+os.unlink(bin)
+PermissionError: [WinError 32] The process cannot access the file because it is
+being used by another process: 'C:\Users\KMCLEW~1\AppData\Local\Temp\tmp0v
+xpjp2o'
+I guess this piece is the important bit: "Error: couldn't stat() C:Anaconda3envsrtiq-mainlibsite-packagesrtiinariespipistr
+ello-qcscan_spi_xc6slx45.bit: No such file or directory"
+Perhaps the path to this file is being messed up by the "/" vs "" issue in windows.
+The file "C:\Anaconda3\envs\artiq-main\Lib\site-packages\artiq\binaries\pipistrello-qc1\bscan_spi_xc6slx45.bit" does exist on my box.
+The TCL implementation in OpenOCD is escaping Windows backslashes. To prevent escaping, TCL wants a string enclosed in "{}". The fix should be identical to the following patch in migen: m-labs/migen@daa53ef
+Try escaping all "{}" with "{{{}}}" in artiq_flash.py https://github.com/m-labs/artiq/blob/master/artiq/frontend/artiq_flash.py#L72-L121
+Okay, that helped some.  We now make it down to line 132 of artiq_flash.py where the finally block breaks when calling os.unlink(bin).  Here's my output:
+[artiq-main] C:\Users\kmclewin3\Tools\foolingaroundwithdirs>artiq_flash -t pipistrello -m qc1
+Design name: b'top.ncd;UserID=0xFFFFFFFF\x00'
+
+Info : sector 28 took 265 ms
+wrote 327680 bytes from file C:\Anaconda3\envs\artiq-main\lib\site-packages\artiq\binaries\pipistrello-qc1\runtime.fbi in 17.581200s (18.201 KiB/s)
+Info : Found flash device 'micron n25q128' (ID 0x0018ba20)
+read 271632 bytes from file C:\Anaconda3\envs\artiq-main\lib\site-packages\artiq\binaries\pipistrello-qc1\runtime.fbi and flash bank 0 at offset 0x00180000 in 0
+.093600s (2834.034 KiB/s)
+contents match
+Traceback (most recent call last):
+File "C:\Anaconda3\envs\artiq-main\Scripts\artiq_flash-script.py", line 5, in 
+sys.exit(artiq.frontend.artiq_flash.main())
+File "C:\Anaconda3\envs\artiq-main\lib\site-packages\artiq\frontend\artiq_flash.py", line 132, in main
+os.unlink(bin)
+PermissionError: [WinError 32] The process cannot access the file because it is
+being used by another process: 'C:\Users\KMCLEW~1\AppData\Local\Temp\tmpwti_k3hu'
+Sounds like the board was correctly flashed anyway?
+I doubt it was correctly flashed because my windows box can't communicate with it at all right now.  I can't re-do the artiq_flash call because since the device is unrecognized.
+Okay, I plugged the device into a different windows box and used pipistrello's fpgaprog to write a bit file to the flash (I used linux.bit from here http://www.saanlima.com/download/pipistrello-v2.0/linux.bit).  That seemed to work fine so then I took the device back to my desk and my box can now communicate with it again.  I ran artiq_flash again and received the same error (pasted in my comment above).  Next I turned on artiq master, turned on the gui, and tried to run coredevice_examples/simple/BlinkForever.  Nothing happened except an error on the artiq_master terminal:
+[artiq-main] C:\Anaconda3\Lib\site-packages\artiq\examples\master>artiq_master
+ERROR:worker(3,blink_forever.py):root:Terminating with exception (gaierror: [Err
+no 11004] getaddrinfo failed)
+Traceback (most recent call last):
+File "C:\Anaconda3\envs\artiq-main\lib\site-packages\artiq\master\worker_impl.
+py", line 220, in main
+exp_inst.run()
+File "C:\Anaconda3\envs\artiq-main\lib\site-packages\artiq\language\core.py",
+line 192, in run_on_core
+return getattr(self, arg).run(run_on_core, ((self,) + k_args), k_kwargs)
+File "C:\Anaconda3\envs\artiq-main\lib\site-packages\artiq\coredevice\core.py"
+, line 108, in run
+self.comm.check_ident()
+File "C:\Anaconda3\envs\artiq-main\lib\site-packages\artiq\coredevice\comm_gen
+eric.py", line 222, in check_ident
+self._write_empty(_H2DMsgType.IDENT_REQUEST)
+File "C:\Anaconda3\envs\artiq-main\lib\site-packages\artiq\coredevice\comm_gen
+eric.py", line 189, in _write_empty
+self._write_header(ty)
+File "C:\Anaconda3\envs\artiq-main\lib\site-packages\artiq\coredevice\comm_gen
+eric.py", line 171, in _write_header
+self.open()
+File "C:\Anaconda3\envs\artiq-main\lib\site-packages\artiq\coredevice\comm_tcp
+.py", line 46, in open
+self.socket = initialize_connection(self.host, self.port)
+File "C:\Anaconda3\envs\artiq-main\lib\site-packages\artiq\coredevice\comm_tcp
+.py", line 28, in initialize_connection
+sock = socket.create_connection((host, port), 5.0)
+File "C:\Anaconda3\envs\artiq-main\lib\socket.py", line 693, in create_connect
+ion
+for res in getaddrinfo(host, port, 0, SOCK_STREAM):
+File "C:\Anaconda3\envs\artiq-main\lib\socket.py", line 732, in getaddrinfo
+for res in _socket.getaddrinfo(host, port, family, type, proto, flags):
+socket.gaierror: [Errno 11004] getaddrinfo failed
+ERROR:master:artiq.master.scheduler:got worker exception in run stage, deleting
+RID 3
+Also, when I unplugged the device and plugged it back in I found myself back at the state of my windows box no longer being able to communicate with it.  Specifically, I get an "Unknown device" error that pops up when I plug it in and fpgaprog can't find the device.
+Did you establish a PPP connection with the Pipistrello (NB: no one has done this on Windows before) and set the device's IP address in device_db.pyon?
+Haven't done that yet.  I will let you know how it goes.
+artiqflashdiff.txt
+After applying the attached patches to bit2bin.py and artiq_flash.py, the artiq_flash executable no longer throws the error I posted on May 16th.  Unfortunately my box still can't communicate with the device after the flash script + a power cycle.  Fooling around with drivers now...
+You should not replace the windows driver on the second interface (FTDI port 1). That's the serial port.
+There is now OpenOCD packaged for 64-bit Linux, 32- and 64-bit Windows in the m-labs Anaconda channel. You can test it if you want (or wait until I do and confirm that it works).
+@whitequark  It won't even install on Windows
+Oh, looks like a complement of the bug in conda-build... investigating.
+@jboulder what's your conda version? I can successfully install and run openocd on conda 4.0.5, freshly installed just now.
+I just verified that openocd from conda together with artiq_flash from dev channel can be used to successfully flash a kc705 board. I've used the WinUSB driver. It comes up and responds to pings.
+@sbourdeauducq Should we package the driver .inf and prompt the user to install it during installation of the conda package? That should be straightforward, just ask zadig to create an inf and add a post-link conda script (assuming that's not broken).
+@sbourdeauducq I've looked into that and it seems like asking the end user to use Zadig is the only foolproof option. (In principle we could also redistribute the .inf and the co-installers but I think that doesn't work on retail versions of Windows without some additional hassle with the driver signatures, so maybe not.)
+I will add the Zadig instructions to the documentation.
+Should we package the driver .inf and prompt the user to install it during installation of the conda package?
+Sounds good.
+@sbourdeauducq See the next comment. I could not find a way to do that cleanly, the documented rundll32 incantation (that is also run by Explorer when you click RMB→Install) refuses to install this .inf file, I presume because it has to be attached to a specific physical port and a device and not just generally VID+PID. So if we want to do this in a post-link script we need to a) require the user to have the device inserted at conda install time b) reimplement a part of Zadig ourselves, because the documented API that I could find doesn't work. I figure that can be done but easier to document the Zadig way.
+Ok
+I've updated the docs. There is still one more problem, openocd cannot find the board file on Windows (so you have to run it from ...\miniconda\envs\artiq\Library\share\openocd\scripts). I will look into it.
+UnicodeDecodeError: 'charmap' codec can't decode byte 0x8f in position 3353: cha
+racter maps to 
+Error is still present here with conda 4.0.7 and 4.0.5.
+Following instructions here
+https://m-labs.hk/artiq/manual-master/
+Confirmed successful flashing of KC705 using Windows 7 and ARTIQ 2.0.dev
+(py_376+git6983f35).
+On Sun, Jun 5, 2016 at 2:01 PM, Sébastien Bourdeauducq <
+notifications@github.com> wrote:
+UnicodeDecodeError: 'charmap' codec can't decode byte 0x8f in position
+3353: cha
+racter maps to
+Error is still present here with conda 4.0.7 and 4.0.5.
+—
+You are receiving this because you were mentioned.
+Reply to this email directly, view it on GitHub
+#256 (comment), or mute
+the thread
+https://github.com/notifications/unsubscribe/AFbNxin-XU_RsYwU6zCPuJ1fxA8uhsKwks5qIw77gaJpZM4HTqPe
+.
+There is still one more problem, openocd cannot find the board file on Windows (so you have to run it from ...\miniconda\envs\artiq\Library\share\openocd\scripts). I will look into it.
+This problem has been fixed. I believe openocd in our conda repository should work out of the box now.

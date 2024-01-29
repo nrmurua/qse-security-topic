@@ -1,0 +1,64 @@
+The dashboard occasionally throws "Task exception was never retrieved" errors on Windows, even with no user activity.
+These errors seem to occur occasionally (~10 per day). They occur even without any user activity. For example, on a dashboard which has some applets open plotting actively changing datasets, but without any user button presses, or any applets being opened or closed.
+No known reproduction
+The traceback is always like this:
+Using Artiq from master
+I haven't seen this. Also on windows.
+Sometimes after an experiment terminates with an exception I see
+Different issue? Windows vs Linux, pipe_rpc vs sync_struct, different errors, different code area, different tools and components.
+Yes, it is (and I'll break it out in a second). Just posting here as a reminder that the frequency of the occurance of these events is due to the fact that it has more than one cause...
+The latter is due to a feature not merged upstream (yet), although I thought I had fixed that particular issue a while back.
+I think this is a race condition inside asyncio....
+I hacked my local copy of asyncio as follows
+and I see...
+I guess this is a bug to do with python's lazy evaluation or something like that? It looks like by the time self._handle is captured for the call to CloseHandle it's already been set to None.
+@cjbe can you try patching your local asyncio here https://github.com/python/cpython/blob/a2fedd8c910cb5f5b9bd568d6fd44d63f8f5cfa5/Lib/asyncio/windows_utils.py#L105-L108
+to be something like:
+@cjbe @dnadlinger can you apply that patch locally and confirm that it fixes the error? If so, I'll close this issue and move the discussion to asyncio.
+@hartytp: Fixed the RID namespacing-related issue in our local fork.
+As for the handle closing issue, doesn't this look more like a race condition between (OS) threads? If that is the case, your patch would only paper over the actual problem. (There shouldn't be any lazy evaluation of that kind in Python.)
+Did you stumble over a good way of reproducing this? Repeatedly opening/closing a bunch of applets maybe?
+(Maybe it's actually our, i.e. dashboard, code calling close() from different threads after all – an awkwardly straightforward way of debugging this would be to, in close(), save backtraces into a thread-safe global buffer, and fetch/print all of them for a given when the above issue occurs.)
+Did you stumble over a good way of reproducing this? Repeatedly opening/closing a bunch of applets maybe?
+Yes, that basically does it.
+As for the handle closing issue, doesn't this look more like a race condition between (OS) threads? If that is the case, your patch would only paper over the actual problem. (There shouldn't be any lazy evaluation of that kind in Python.)
+hmmm...I must have misread the log I posted. The original thing I was looking for was a race where a PipeHandle is closed twice, which is what the log clearly shows is occurring. Somehow I convinced myself that wasn't the case.
+So it is a race between threads.
+Which two threads would that be, though? Or does CloseHandle itself cause some callbacks to be invoked? (Or e.g. the object to be deleted indirectly?) It's been too long since I've had to deal with IOCP…
+That's a good question. I haven't figured it out.
+AFAICT the handle is only closed by the AsyncioParentComm._auto_close task. 
+So, unless there is some other code path I'm not aware of (when I have time, I'll hack in a stack trace each time we close a handle to rule this out), it looks like create_subprocess is being called multiple times on the same AsyncioParentComm object or something like that. If that happened, I can see how a race could occur.
+The handle is also close()d by its __del__, but that shouldn't be invoked while pipe_ipc still has a reference…
+Looking at the trace, I think this race is probably in a single thread (which seems most likely given the original asyncio code). I'd bet a beer that it's a race in the applet code that's scheduling two autoclose events...
+But then (i.e. if it's a single thread) how would self._handle change between time of check and time of use?
+sigh...sorry, you're right. It's late.
+Well, then I'm back to not understanding this at all. The next step I can think of would be to add a stack trace print to the PipeHandle.close to verify whether _auto_close is indeed being called twice, or if it's actually some other code path I haven't spotted yet. I'll do that when I have time.
+Improved the diagnostics to show which thread the calls are coming from:
+So, we definitely see the PipeHandles being closed from two threads...
+With stack traces:
+So, the issue is that the pipe is being closed from proactor_events._call_connection_lost which is called in a different thread to the main thread of execution.
+I suspect the issue is that _force_close is being called, which schedules a close event in a separate thread.
+https://github.com/python/asyncio/blob/a791d884b9110b59bada18c2dddd399e6adc40fd/asyncio/proactor_events.py#L111-L124
+__del__ being called outside of the main thread of execution:
+This seems to be the most common race path.
+So, it looks like a race where __del__ is in the process of executing in a different thread (python gc?) while our _auto_close method runs. I don't fully understand python weak refs, but I would have expected the use of a weakref here to prevent this
+@dnadlinger I'm out of time to look into this. I can reproduce it pretty reliably if I restart the dashboard with some applets already open from the last time I ran it, then close the applets promptly after startup.
+I still don't understand exactly where __del__ is being called, and why that doesn't invalidate the weak ref. I suspect it's probably something to do with quamash, and maybe this code isn't as threadsafe as it claims...
+https://github.com/OxfordIonTrapGroup/quamash/blob/b006c9a163f55aba044a9ad8532c65c13f35121f/quamash/_windows.py#L84
+@sbourdeauducq: Any ideas/memories from when you wrote the ARTIQ side of things originally?
+I guess a reference to the pipe is being held in some other thread, and released at some point, triggering the garbage collection race. But, I don't know enough about python gc to debug that.
+Does anyone actually understand python garbage collection and weak references? When the last (strong) reference to an object goes out of scope, when are the weak references to it invalidated? When the gc calls __del__? If so, which thread does that occur in? and, how is one supposed to avoid races?
+The handle is also close()d by its del, but that shouldn't be invoked while pipe_ipc still has a reference
+@dnadlinger FWIW, __del__ is invoced regularly when self._handle is not None. Asyncio has some warning code there, but it doesn't make it to the console. If you add a one-line print you'll see lots of cases of that, so no surprise we see occasional exceptions due to a race.
+The traceback from __del__ always seems to look like #1216 (comment) however, I don't understand that execution flow. Is calling self__.poll triggering the python gc? If so, how does one go about debugging this kind of issue? I can't see any decent way of tracking the references to the pipe and figuring out what the actual problem is.
+Regarding the warning not being shown, ResourceWarning are filtered out by default (https://docs.python.org/3/library/warnings.html#default-warning-filter).
+@dnadlinger yes.
+FWIW, if this is a gc issue then it would have to be a cyclic reference since it's not being cleaned promptly. So, we might be able to find it using something like: http://code.activestate.com/recipes/523004-find-cyclical-references/ If it's not a cyclic reference thing then I'm at a loss to explain the stack trace I posted where we jump from the poll to the PipeHandle destructor.
+Edit: or simpler, turn garbage collection off (gc.set_debug(gc.DEBUG_SAVEALL))and each time we close pipe handles check whether the pipe is in the garbage pile
+Nope, not garbage collection at all. What's happening is this: quamash processes events in a separate thread. Those events can store a reference to the handle. When they are released, for example here https://github.com/OxfordIonTrapGroup/quamash/blob/b006c9a163f55aba044a9ad8532c65c13f35121f/quamash/__init__.py#L210 __del__ gets called from that thread, leading to a possible race with the main program thread.
+@sbourdeauducq summarising this then:
+So, all in all, it seems pretty clear that this is a quamash issue and not an ARTIQ bug. Since these errors aren't harmful (just a Pipe being double closed), I think the best bet is to catch the exception in __auto_close and ignore it for the time being. If you're happy with that, I'll put in a PR.
+Actually, one thing that might fix this is modifying _autoclose to lock the qt thread, something like:
+Next time I can reproduce this issue, I'll try that...
+Is this still an issue with the new Python 3.7 packages?
+Assuming it isn't.

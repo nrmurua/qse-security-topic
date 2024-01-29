@@ -1,0 +1,33 @@
+The two columns run_timestamp and completed_timestamp in the runs table of the SQLite database have type INTEGER, but are in fact used to store floats.
+
+I am not really sure how or why that even works in QCoDeS, in particular, which converter is used to read back these numbers? Why not int?
+In any case, that typing becomes a problem when third-party applications try to parse the DB file, since these applications will most likely "Believe the type". In the best case, doing so leads to the timestamps losing their sub-second precision, will can cause hard-to-debug problems down the line, since identical datasets will have slightly different timestamps. In the worst case, the timestamps simply appear to be invalid.
+I propose that we make a type converting DB upgrade, changing these two INTEGER types to REAL. Alternatively, we could use an integer number of milliseconds, but that is WAY more work and seems like the wrong solution to me.
+@QCoDeS/core
+yes, yes, yes! agree to a small DB upgrade that just fixes these types and makes them REAL :)
+I'd also add start_time/end_time in the experiments table, see here
+https://github.com/QCoDeS/Qcodes/blob/master/qcodes/dataset/sqlite/initial_schema.py#L25-L26
+And for reference, here is where the type for run timestamps are defined in the "wrong" way -
+https://github.com/QCoDeS/Qcodes/blob/master/qcodes/dataset/sqlite/initial_schema.py#L52-L53
+Do we really care about sub second resolution? The other alternative could be to just round the time to int
+Do we really care about sub second resolution?
+important question. i personally feel like we should but i can't find actual reasons.
+The other alternative could be to just round the time to int
+which will mean just changing return types for timestamps everywhere to int, fixing docstrings to explicitly say "seconds", and correct casting in respective functions/methods, right? would we also want to add a "converted" for type "INTEGER" (because the way our sqlite3.Connection is created, its us who decides on converters and sqlite3 defaults seem(!) not to be used)?
+Do we really care about sub second resolution? The other alternative could be to just round the time to int
+True, but then we'd have to round off existing timestamps as a part of the DB upgrade, meaning that we'll be (slightly) modifying user data. That makes me a little anxious. Could somebody have been using that part of the timestamp for anything? Can we be sure that they haven't? Changing the type seems like the path of least potential complication.
+@WilliamHPNielsen I would not change the type of any stored data but only have the reader do the round off of any old data when read
+@jenshnielsen but for the user, will that not amount to the same thing? I am specifically worried about someone, somewhere having a check like:
+a check that will suddenly behave differently after the DB upgrade. I'll be the first one to admit that my example is slightly contrived, but you really never know, do you? Zooming back out, I don't see what we gain by taking the risks involved in changing the behavior of the timestamp. What are the cons of simply making those two columns be of type REAL?
+True, but then we'd have to round off existing timestamps as a part of the DB upgrade, meaning that we'll be (slightly) modifying user data.
+oh, i missed that. i think we'd have to do it for the sake of consistency between sqlite types and stored data
+but only have the reader do the round off of any old data when read
+hm, but the "incorrectness" of the db schema will remain - is it good?
+Well changing the column data type looks to be painful at best https://stackoverflow.com/questions/2083543/modify-a-columns-type-in-sqlite3 and comes on top of all the other issues with db upgrades that we know of.
+Hmmm, as the SO answer also tells us, changing the type is trivially easy from the DB browser
+
+but the generated SQL code does seem a bit scary (involves dropping the runs table), and could be easy to get wrong in an updater function. Let me investigate a bit. I guess we need a deeper (offline) discussion.
+Just for completeness, let me drop the relevant link from the SQLite docs here:
+https://www.sqlite.org/lang_altertable.html
+The reason for the complication is that there is no ALTER COLUMN in SQLite. See: https://www.sqlite.org/omitted.html
+It seems that the easiest way to get the schema upgrade in place is to create new timestamp columns with REAL type.

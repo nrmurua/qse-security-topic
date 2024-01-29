@@ -1,0 +1,36 @@
+Flattening a conditional circuit gives incorrect results. It looks like the issue is probably in how the conditionals are implemented:
+Manually adding an additional registers to a teleport circuit works:
+But composing and flattening gives wrong answer:
+Flattening the conditional circuit should implement the same circuit.
+From the drawer it looks liek the flattened circuit is handling conditions on the joint circuit wrong:
+Looks like conditions are triggering on creg values 01 and 10, but nothing on 11 which should trigger both conditional gates.
+Looking at the qobj that gets assembled from these circuits we can see the difference:
+Multi-register assembled qobj instructions:
+assemble(circ).experiments[0].instructions = 
+Flattened circuit assembled qobj instructions:
+You can see that in the second case the mask value is being set incorrectly to 0x7 = 0b111 in both case to the full 3-bit register rather than the the single bit values.
+Follow up building with a flat circuit this way looks to give correct result:
+assembled qobj
+However this circuit breaks the drawer:
+Stack trace:
+I believe this is an issue in QuantumCircuit.compose failing to map the condition correctly from the two single-bit cregs in the input circuit onto the one larger creg on the output circuit. Before #6018 , it wouldn't have been possible to map these conditions and I would've expected .compose to raise similar to how circuit_to_instruction(teleport_circuit()) currently raises: "Cannot convert condition in circuit with multiple classical registers to instruction".
+After #6018 , this should at least be possible for the case where gates are conditioned on a single Clbit. @TharrmashasthaPV , do you have an idea how this might look?
+The drawing error I believe is fixed by #6261 .
+I think that this trouble is not just with single-bit cregs. For instance take the following circuit
+This circuit outputs assemble(circ).experiments[0].instructions as
+This error seems to happen whenever a circuit qc containing a creg, say c, is composed to a circuit that contains a single creg whose size is larger than that of c.
+As for the conditioning on single Clbit, currently a type check is performed to see if the condition is on a ClassicalRegister or Clbit before the condition is mapped to the new_cregs. I guess that's why teleport.z(2).c_if(c0, 1) returns a circuit with an incorrect mapping while teleport.z(2).c_if(creg[0], 1) outputs a correct circuit.
+However, we could extend the type checking to also check if the conditioned register is of length 1 and then if the length was 1, then mapping of condition could proceed similar to that done for a Clbit condition. Something like
+in line 584 in the _map_condition() in DAGCircuit class should do the job I guess.
+The drawer issue is now fixed by #7285 (#6261 didn't appear to get us all the way when I tested it just now).
+For the rest: the conditions issue could now be solved by adding additional classical registers to the circuit after composition, that cover the specific bits we need - now that a bit is the fundamental data unit, and registers are just aliases to collections of bits, we can add what we need to make the condition work.  In practice, though, assemble won't be able to cope with the output of that (because QasmQobj can't represent it at all), so it's something we might want to add a flag for in compose.  We could have it throw an error by default if it detects a situation that can't be represented by single-bit conditions or non-overlapping classical registers, but add a flag which enables the behaviour to simply add aliasing classical registers whenever required to make all conditions work.
+Bumping this again because its still an issue (see Qiskit-Extensions/qiskit-experiments#943 for more details).
+The core issue seems to be if I have circuit1 with multiple registers and conditionals on them, and then i initialize circuit2 with a single flat classical register and compose circuit1 into it, the conditionals get expanded to conditionals of the full classical register of circuit2, but using only the bit value of the original register expanded with zeros across the other bits. What should happen is it should trigger regardless of values on the other bits, not just when they are zero.
+Eg to use the teleport example:
+Composing with a flat register
+gives
+Composing with an enlarged register
+gives
+I will prepare a fix for this for Terra 0.23.  There's other stuff in compose that's likely to cause issues as well, and I'll try and get it all in one thump.
+I've made #9206 that should fix this.  Just to note: the drawers don't handle overlapping registers correctly, so it may well still look like there's an issue, but if you inspect the objects to look in their conditions, registers and the bits in those conditions, you should find it's correct.
+I've checked that the Aer simulations at the top work as expected with them, but I can't make any promises about how well it'll serialise to actual backends - I'm not sure how well the aliasing register model will transport.

@@ -1,0 +1,32 @@
+There is a need to support unrolling to a broader set of gate basis (see #3086). Additionally, supporting multiple decompositions are growing (see #3067).
+Our unrolling mechanism should support the following situations:
+It would be nice to also support the following situations:
+In terms of synthesis you may also want to choose between different algorithms or input a custom one. Simple example for single qubit unitaries is you could synthesis to u3,  u1+x90, rx+ry or rx+rz gates.
+from @chriseclectic in #3146 (comment) :
+In terms of synthesis you may also want to choose between different algorithms or input a custom one.
+May I add it as optional? Or do you think is a "must to have"?
+Supporting multiple possible decomposition per gate might allow to signal the unroller on how to unroll each gate until the basis gate set is reached. The decompositions are sorted by preference. ie, in cx: [{h, cz}, {rxx}, {unitary}], cx will be decomposed as {h, cz} before trying {rxx}.
+Consider the coming examples using the following decomposition rules:
+cuasi-implementation:
+To implement this proposal:
+Problems:
+Footnotes:
+[1]  Since order of the gates and repetition can be ignored to the purpose of the problem, the examples are in terms of set. However, this does not implies that the possible implementation should.
+I think that moving away from Instruction.definition toward a library of equivalence is a step in the right direction.
+Opinions:
+Questions:
+unitary and synthesis: Do we have a good idea of the use cases where users want to use unitary gates? Currently, oneQ and twoQ unitaries will be synthesized by default via .definition so it can be somewhat confusing to think about what the expected output will be. I wonder if the use cases are narrow enough that we can ask users to specify explicitly when they want to send a given gate as a unitary.
+Variable-arity gates (e.g. global MS from Add global Molmer-Sorenson gate #3149): Some gates are defined over a variable number of q/cbits (even without broadcasting.) If a gate can have variable shape, how do we record its definition?
+@mtreinish raised a good question in #1435:
+If we build to a library of equivalent DAGs, how can we make sure that users or passes don't inadvertently modify them and alter their behavior in subsequent circuits?
+Equivalent gate decompositions should be unordered. Before knowing the circuit and target basis, It will be difficult to know how to choose a good order. This can be left either to the unroller to search for or user to specify.
+Would be fair to say that they should be ordered at unrolling-time? I think would be easier to have a "default" order that can be modified. But I'm also okey with having them without any priority and set that priority immediately before unrolling (I'm not sure how the API would look like)
+The decision to select one or preferentially order decompositions should live outside of the Gate class. This way we can avoid shared global state for cases where a user wants to unroll a circuit more than once, using different decomposition strategies.
+you mean transpile different circuits with different unrolling strategies? Like unrolling differently circuit1 and circuit2 in transpiler([circuit1, circuit2])?
+unitary and synthesis: Do we have a good idea of the use cases where users want to use unitary gates? Currently, oneQ and twoQ unitaries will be synthesized by default via .definition so it can be somewhat confusing to think about what the expected output will be. I wonder if the use cases are narrow enough that we can ask users to specify explicitly when they want to send a given gate as a unitary.
+Sure.. it could be. In general, unrolling should be "lazy" ie no call until that unroll is necessary.
+Variable-arity gates (e.g. global MS from #3149): Some gates are defined over a variable number of q/cbits (even without broadcasting.) If a gate can have variable shape, how do we record its definition?
+I think this is also solvable by having callables as decompositions, which is consistent with the synthesis situation. What do you think? I can modify the proposal to "decompositions is a list of callables that return a DAG".
+IMHO, gate mapping is an arbitrary directed graph: one may specify multiple decompositions per gate, and loops are allowed.
+The backend defines the set of physically implemented gates (or in case of a simulator, all of them), which then allows the graph to be transformed into a DAG via Breadth-first search (BFS) from the physical gates.
+This way we separate gate mappings from the physical basis set.

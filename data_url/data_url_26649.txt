@@ -1,0 +1,46 @@
+Recently installed Cp2k-8.1 on a HPC cluster.
+Firstly i built the cp2k on a AVX128 machine and compiled according to its AVX128 architecture.
+And sent my jobs to a bigger pool which has AVX512 supported CPUs. CP2K handed me a hint telling me
+*** HINT in environment.F:802 :: The compiler target flags (x86_avx) used ***
+*** to build this binary cannot exploit all extensions of this CPU model  ***
+*** (x86_avx512). Consider compiler target flags as part of FCFLAGS and   ***
+*** CFLAGS (ARCH file).                                                   ***
+After i saw it, i've started building CP2K from scratch with AVX512 compatibility on the AVX512 machine.
+Now it doesn't hand me down that hint and in the "GLOBAL" section of output file it says it is the right build for the CPU.
+But unexpectedly,
+AVX128 build running on an AVX512 machine,
+MD| CPU time per MD step [s]                                   0.614059 (avg.)
+AVX512 build running on an AVX512 machine
+MD| CPU time per MD step [s]                                   0.633807 (avg.)
+That's a %3.2 performance decrease in average. Is it somehow expected or might be a minor inconvience and should be neglected ?
+3% might be well within the measurement error. So, as a first step you should repeat the runs several times.
+The next step would be to compare the timing reports to figure out in with routine the time got lost.
+I repeated the same steps 5 times before i reported the issue.
+How can i compare the timing reports ?
+Note : Intel® Xeon® Gold 6148 CPUs were in use
+Just to clarify, there is no AVX128... This is SSE with 128 bits.
+Then, are you compiling the entire CP2K toolchain (including all libraries such as BLAS) or it is just CP2K?
+Just to clarify, there is no AVX128... This is SSE with 128 bits.
+Then, are you compiling the entire CP2K toolchain (including all libraries such as BLAS) or it is just CP2K?
+I'm sorry i might have done a mistake. I was using Intel® Xeon® Processor E5-2680 v3 which is an AVX2 supporting CPU and I was using AVX2_128 set on gromacs for the optimal performance.
+I've used the toolchain to install most of the external libraries(libxc, libxsmm and libint) and for the BLAS, LAPACK and SCALAPACK I'm using Intel MKL 2019 which was already installed.
+OK, at this point we can open a discussion on how AVX512 is implemented and if it is convenient... Maybe @hfp can give more advice...
+I assume you are using the Intel compiler?
+From my side, the first thing to understand is the code is really using AVX512. For that, you need to use tools such as VTune. I must say, your result is not a surprise... Indeed, there can be several reasons why AVX512 performance is slower, to name some:
+In general, wider vectors do not mean better performance... It really depends on what you are running...
+I assume you are using the Intel compiler?
+I've used gcc 10.2 but it was configured for "skylake-avx512"
+If you suggest i can also reinstall it with icc 2019 and mpiexec 2019.
+I guess the most practical way forward is to attach an input file that is supposed to reproduce the concern. I am happy to take a look and to check if there is anything suspicious incl. report on v7.1 vs v8.1 using Intel as well as GNU compilers.
+OK, at this point we can open a discussion on how AVX512 is implemented and if it is convenient... Maybe @hfp can give more advice...
+I assume you are using the Intel compiler?
+From my side, the first thing to understand is the code is really using AVX512. For that, you need to use tools such as VTune. I must say, your result is not a surprise... Indeed, there can be several reasons why AVX512 performance is slower, to name some:
+In general, wider vectors do not mean better performance... It really depends on what you are running...
+As a side-note, it is "really hard" to use ZMM registers to the full extent unless special flags are given (or if code is actually target specific in a static fashion wrt Intel Compiler). For Intel Compiler -qopt-zmm-usage=high forces to use ZMM regs to the full extent and for GNU, i.e., -mprefer-vector-width=512. Since most hotspots in CP2K are covered by specialized libraries, it is less important to use specific target flags. This may leave the impression, that ISA extensions are not important. However, libraries such as MKL or LIBXSMM actually dispatch at runtime (so code compiled as "AVX2" may still run AVX-512 code for respective libraries). As an additional note, LIBXSMM dispatches according to CPUID features and it is fully vendor-neutral. Anyhow, an AVX2/AVX512 comparison can be intriguing since instruction encode w/ EVEX prefix allows AVX2 instructions to use all 32 registers of AVX-512 (lower half). So, many comparisons like this "is our AVX2 vs AVX-512 comparison" can be flawed.
+Again, I am happy to take a look at an input that is supposed to reproduce the concern.
+Thanks @hfp for your help! Re-reading what I wrote, it seems I'm blaming the new ISA... Well, my point was that CP2K will not gain with AVX512 as is, but need careful analysis... I agree that libraries play the main role (MLK and Libxsmm for sure).
+@Biskuvi I would also suggest that you provide the commands used for the toolchain and the arch file for CP2K, aside from the CP2K input.
+./install_cp2k_toolchain.sh -j 8 --enable-cuda=yes --gpu-ver=V100 --with-gcc=install --with-openmpi=install --with-mkl=system --with-libxsmm=install --with-libsmm=no --with-scalapack=install --with-elpa=no --with-quip=no --with-sirius=no --with-gsl=no --with-plumed=no --with-libvdwxc=no --with-spglib=no --with-hdf5=no --with-spfft=no --with-cosma=no --with-libvori=no
+afterwards i realized i didnt need to install scalapack.
+arch_and_local.zip
+I'm closing this because it's most likely due to MKL.

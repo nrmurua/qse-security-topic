@@ -1,0 +1,30 @@
+The QCoDeS design allowes drivers to have sub-modules. Often times these are instrument channels and are fixed in number. But sub-modules need not be tied to physical instrument channels. In fact we sometimes encounter instruments with the ability to dynamically create and delete sub-modules. An example of this are measurement traces and windows on the Keysight N52xx precision network analyzers (PNA). Another instrument which can benifit from dynamic sub-moduling is the Keysight M8020 digital pattern generator, whereby each pattern can be defined in its own sub-module.
+We therefore propose the following enhancement to the InstrumentChannel class in QCoDeS:
+Additionally, we propose to enhance the ChannelList class by adding an add method which will create a new sub-module of the same type. An example of this is likewise shown in the above link. The example file for the N52xx PNA in my branch is also a good resource to understand this
+Since a similar design will benefit other instruments as well, I propose to make dynamic sub-moduling available generally
+I like the general idea of this.
+PR(s) with a qcodes-wide applicable implementation is more than welcome :)
+@sohailc, I think this is a great suggestion - a dangerous one however.
+I am speaking of experience, since I ran into a similar problem:
+For the parametric sequencer I am dynamically creating and deleting parameters according to the waveform that is generated.
+Here the difficulty is that the user is likely to create a channel do something with it, delete it, create a different one and maybe eventually create the first one again. So far so good. But if you happen to keep any reference around, it will not automatically be deleted and when creating the same channel again the user might think the original reference would still be usable.
+This is not a blocking problem, but we should keep at the back of our heads that this problem is present, and make an architecture that minimizes the occurrence of such a situation.
+Hi guys, thanks a lot for your comments!
+@astafan8
+Yes, we will need to be careful how we would rename that. I would say make stub subclasses with old names and deprecation warnings.
+To specify the create/discover/delete in more detail, lets consider the example of the Keysight N52xx network analyzers (PNA). These instruments have windows, traces, measurements and something called "channels" which are not channels in the traditional sense, but rather grouping of measurements (very confusing!)
+For each of these objects:
+We have a unique indentifier, for example a number or a name.
+We have a catalog SCPI command which will give us a list of these object already defined on the instruments. For example, SYST:WIND:CAT? will give me an identifier list of all windows defined on the instrument. The new InstrumentModule class will have a class method load_from_instrument which will call the catalog command, get the list of unique identifiers and in a loop call the __init__ method of the class, returning a list of sub-module Instances.
+We can create new instances of these objects on the instrument with a SCPI command. For instance, we create a new window with DISP:WINDow<N> ON where N is a unique indentifier number for a window. Each sub-class of the InstrumentModule class shall have a _create method. In the case of a PNA window, we will write the mentioned SCPI string when the _create method is called.
+Similarly, each dynamic submodule has a SCPI command to delete it from the instrument. Again, for the window this is DISP:WINDow<N> OFF
+To create a new sub-module, an InstrumentModule subclass will have a class method which will give us the next available unique indentifier. In code this could look like
+We are splitting up the generator of the unique id so we can implement specific ones for subclasses; not all unique id's are numbers, they can also be names.
+The new modules list class will have an add method which will call next_id to create a new instance of a sub module.
+@Dominik-Vogel
+Yes, I have run into simular issues as well. The way I propose to solve this is that the submodule class will have an _exists_on_instrument attribute. When instantiating a submodule class, this attribute will be False. When we call the create method of the submodule to create an instance on the instrument, it will become True. When calling the delete method it will become False again. The write and ask methods of the submodule class will first check if the a representation exists on the instrument before sending SCPI strings. An error is raised if  _exists_on_instrument == False
+I have tried this with the N52xx class and it seems to be working well. What do you think?
+I will make a PR over the weekend to implement all of this. This will faciliate the discussion.
+@sohailc Thanks for the elaborate description! It looks reasonable. My only wish would be to not put all of these features into InstrumentModule class. Instead, let's have some complexity layers (at least 2) where there is a class for just "stupid, most probably, static module", and a different class for "dynamic modules" where all of that add/discover/next_id complications are needed.
+(cannot resist on commenting on implementation details: perhaps make id_generator a private attribute ;) )
+@astafan8 @Dominik-Vogel Can we have a look at PR #1353 . Its still work in progress, but it gives a good idea what I am working on.

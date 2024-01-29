@@ -1,0 +1,25 @@
+Hello,
+I'm a student using OpenFermion for a project, and I'm having a problem with openfermion.circuits.trotterize_exp_qubop_to_qasm. I was trying to use it to trotterize the UCCSD operator, but it was working strangely.
+I saw that it uses trotter_operator_grouping to decompose the operators, then it calls pauli_exp_to_qasm to trotterize each operator.
+And I don't understant something regarding the Z rotation performed on the last qubit of 'qids' in pauli_exp_to_qasm.
+Why is the angle (term_coeff * evolution_time), rather than double that? Wouldn't the goal be applying e^(-i * term_coeff * evolution_time * Z) through Rz(2 * term_coeff * evolution_time)? Am I missing something?
+Thanks in advance!
+Hi @MafaldaRA ,  I'm assuming the Rz evolution you are talking about is the ladder-of-cnot way of implementing a multi qubit term.  I think your question ultimately comes down to the convention on the Rz rotation so it mayor may not be a bug. Could you maybe use your code to implement a simple test comparing the output of a matrix exponential of the full 2^n x 2^n Pauli operator and the circuit to check?  If this code is wrong then we should update to have 2 * coeffs like you have noted.
+@ncrubin sure.
+For example, if I do:
+The resulting circuit is:
+Then I get the corresponding unitary matrix by using CIRQ's unitary() method on the circuit, and compare it with the exponentiated matrix:
+But if I add a 0.5 factor to the Pauli string on the calculations, the resulting unitary turns out to be equivalent to the circuit one.
+So that it seems like there the trotterized circuit is halving the coefficient.
+Awesome. Thank you for doing that.  Indeed it looks like an issue on the Trotter step implementation. One thing to note, if you want to check if two unitaries are equivalent up to phases you can do abs(trace(U1.conj().T @ U2)), taking the norm of the inner product of the unitaries.  This should be equal to the size of your hilbert space.  If it isn't then you know the unitaries aren't the same even up to phases.  In the past Cirq wouldn't respect global phase for some gates so this is a safer check.
+I have a feeling that this is an issue with the definition of 'Rz' - some people would say 'Rz(theta)=exp(1j * Z * theta)', some people would say 'Rz=exp(-1j * Z * theta / 2)'. Cirq uses the latter, whereas I think this code uses the former (I think the original implementation of this code predates cirq by a year or so, it's pretty old lol.)
+Thanks for spotting the error. What this code should do these days is spit out a cirq.Circuit. I think there might be some things that do this in openfermion.circuits.trotter even - I think simulate_trotter might be along the lines of what you're looking for? Not sure if this has this type of decomposition though - it might just use low rank and other methods.
+Probably what we need to do is look into improving the visibility / useability of these other algorithms and depreciate the one we're discussing here.
+@ncrubin I had no idea about that problem, thanks for the tip!
+@obriente I noticed that simulate_trotter gives a direct implementation for CIRQ. But it uses other algorithms that I don't think are suitable for what I want. I checked the article about the low rank algorithm for instance (arxiv:1808.02625) and I saw that it relies on the eight-fold symmetry of the Hamiltonian.
+I wanted to trotterize the UCCSD operator. I noticed that the article mentions that the algorithm can be adapted to make use of its four-fold mixed symmetry and antisymmetry, but I honestly don't know much about that. And afterwards I would want to trotterize the individual excitation operators, so that it would break down anyway.
+I ended up creating my own function because other than this one, I didn't find any that would implement what I needed. Having something to the style of this one return a CIRQ circuit would be nice I think.
+Thanks for the help!
+Yes, this would be good to implement - been difficult to find the time to do this though, as this more standard Trotterization isn't so state-of-the-art anymore. You can definitely use a low rank factorization for UCCSD, but it's a bit more complicated to get your head around, and the operator isn't exactly the same as you implement doing it term-by-term.
+Cheers,
+Tom.

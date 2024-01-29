@@ -1,0 +1,19 @@
+As of now, in their workflow, if someone wants an electron, say task_2 to wait for another electron task_1 to finish before starting it, they have to use covalent.wait() function to do that. It seems that it will more intuitive if they could just do task_2.wait_for() directly instead.
+Considering ct.wait() already indirectly uses the Electron.wait_for function, we should switch the recommended pattern to using that directly in the cases one task depends on other task(s).
+Acceptance Criteria:
+The definition of wait is as follows:
+The child argument in wait() function however can take other objects that are not electrons as well.
+And the check for if active_lattice and not active_lattice.post_processing: also checks (maybe not deliberately) if wait_for can indeed be called i.e. if the underlying child is indeed an electron.
+Particularly, if the child is a tuple and the check if active_lattice and not active_lattice.post_processing: fails, we return child i.e. the tuple which was passed to us as it is.
+If we subsume wait within Electron.wait_for --> this means that we assume child will always be an electron since only electrons can have wait_for.
+Then, converting some of the calls such as the one below:
+will result in errors such as 'tuple' object has no attribute 'wait_for'
+In retrospect, what I am trying to say is that --
+If we do allow child to be anything other than an electron, then we do need a wrapper function since wait_for won't be available otherwise.
+The role of that wrapper function is being served by wait() currently.
+So I am not sure what's the best way to achieve this. Since we will need a wrapper anyway.
+PS -- all this can be seen by running the test: tests/covalent_tests/workflow/electron_test.py::test_wait_for_post_processing
+To elaborate on @madhur-tandon 's point:
+Electron.wait_for was actually the initial proposed UX; however that would break the ability to execute a workflow directly in Python, without Covalent. Users may wish to compare results with and without Covalent for benchmarking -- which we do in the MNIST tutorial, for instance -- or debugging their workflows.  In fact, every workflow will contain one or more ct.wait() statements automatically added by Covalent.
+We actually have functional tests that compare results when a workflow is run directly in Python or dispatched through Covalent.
+Here was the issue that introduced ct.wait().

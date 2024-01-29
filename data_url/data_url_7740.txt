@@ -1,0 +1,17 @@
+Quick question: Is there an option for GPU acceleration with torch when running optimizations (TNOptimizer)? How much speedup can be expected with, say a pro GPU, like Nvidia A100? Thanks in advance
+You should be able to specify TNOptimizer(..., device='cuda'), or if you want to handle at a higher level maybe:
+The speedups can be very good for tensor network computations, but it depends a lot essentially on how linear algebra intense the loss function is, and how large the tensors are:
+jax generally achieves the best performance on GPU, but it takes super-linear time to compile the computational graph, so is sadly often unfeasible.
+So does this mean that, if I have a huge tensor network of small SU(4) tensors (say, the ladder structure), the performance might be worse?
+Its the size of tensors throughout the computation that matters - in general even if you start with lots of small tensors there will be some big intermediate contractions that dominate things, in which case you will get savings.
+You can also jit compile torch code, which you would expect to be most beneficial when there are many small operations, but its all a bit hard to predict performance wise - worth just to do a few tests e.g. on colab if you don't have gpu access. And profile things!
+I see, thanks! A related question: is there an optimization method that performs significantly better (or specifically designed) for torch? Also, is it true that torch only supports real numbers (so that you can't really use it for the 'circ.apply_gate' setting?
+I see, thanks! A related question: is there an optimization method that performs significantly better (or specifically designed) for torch?
+The optimizer (which defaults to scipy) is completely decoupled from the gradient calculation (the bit done with torch etc), so not really. Currently its always performed on the cpu for two reasons:
+If you had some TN model with a lot of time spent in the optimizer rather than gradient calc then one could think about implementing some optimizers (e.g. the adam method would be very easy to change) that don't map back to numpy arrays, in which optimizer and autodiff_backend would no longer be completely decoupled.
+Also, is it true that torch only supports real numbers (so that you can't really use it for the 'circ.apply_gate' setting?
+I don't think its true anymore, recent versions support autodiffing complex numbers through many operations including contraction I believe. See docs the section here, but note its marked as a 'beta' feature and so subject to breaking changes.
+Cool. I've been playing with large tensor networks and GPU does seem to help a lot.  However, Sometimes I ran into this error: 'maximum supported dimension for an ndarray is 32, found 34'. It seems to be an internal limitation to numpy -- is there a way to fix it/get around of it?
+If you're dealing with exact contraction then the answer is probably sliced conctraction, as provided by cotengra. Something like:
+This is all pretty newly developed functionality and thus not tightly integrated or well documented yet I'm afraid.
+Thanks for the help!

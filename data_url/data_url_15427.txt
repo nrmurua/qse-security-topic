@@ -1,0 +1,41 @@
+When choosing a TwoLocal or RealAmplitude or EfficientSU2 gate with entanglement=full on n-qubits (for VQE ansatz),
+then we get a circuit with a CX sub-circuit that contains n*(n-1)/2 CX gates.
+However, we can re-write this circuit with only n-1 CX gates with a linear connectivity (see a code example below).
+outputs:
+It will be good to update either NLocal or TwoLocal to consider this specific enhancement,
+as it seems that this is used in many applications.
+It seems that LinearFunctionsSynthesis transpiler pass actually does this optimization (see a code example below),
+but it is better to do it directly when generating the circuits, and not wait for the transpiler to discover such an elementary improvement.
+Another reason is that for other options entanglement='linear' or 'circular' or 'sca', this transpiler pass actually increases the number of CX gates.
+outpust:
+Maybe we can keep the old behavior for reproducibility and education purposes under another name like "full_explicit" or something like that. Also we should check for which types on entangling gates this holds so we can add a switch at the NLocal base class to handle "full" entanglement optimally.
+In my opinion, any education should actually contain the information that a full entanglement ansatz with cx gates is equivalent to the one described here
+Yeah it should definitely be explained in the docstring, but maybe some users want to keep the precise old circuit so we might want to keep some way of reconstructing it 😄
+Yeah it should definitely be explained in the docstring, but maybe some users want to keep the precise old circuit so we might want to keep some way of reconstructing it 😄
+Is this needed for backward compatibility? or is there another reason to keep an equivalent circuit which is inefficient?
+Not backward compatibility per se, since we would change what happens with the mode "full". But I think users should be able to reproduce the exact same old behavior, at least for the beginning. Especially because the circuit library is a toolbox that users can use to build structured circuits for their needs 😄
+We could also include a code snippet that shows how to create the "full" entanglement from before in the docstring instead of keeping the option on the circuit.
+After a brief discussion with @ShellyGarion: even though the current PR only optimizes entanglement="full" with CX-gates, there could be more optimization opportunities considering the variety of different entanglement strategies ("full", "linear", "circular", "sca", "pairwise") and different entanglement layers: https://github.com/Qiskit/qiskit-terra/blob/81abc384e4d9a655775e9b794227dab35a3042d4/qiskit/circuit/library/n_local/two_local.py#L242-L269
+Instead of having the options "full" and "full_explicit", or maybe "full" and "full_optimized", would it make sense to have a new option "optimize_when_possible" defaulted to True (better name is needed), or else we risk ending up with "sca_explicit", "pairwise_explicit", and so on?
+@Cryoris , what do you think?
+Yeah a new option sounds good! In the end I still think it would probably still be more elegant to have a transpiler pass do all this work, but if it is more efficient this way then I'm good 👍🏻
+I think that we need to decide on the API first (before making too many changes in the documentation, tests etc.).
+Note that if we add a new parameter, say optimized_synthesis, to the NLocal class then we have to add it to all the classes that inherit from NLocal and may use this parameter: TwoLocal, RealAmplitudes, EfficientSU2 etc.
+Currently, I don't see immediate optimizations in other use-cases. This optimization is so trivial, so it does not make sense to make the transpiler "discover" it (as the transpiler make many optimizations, and may miss this one).
+There may be other optimizations for certain coupling maps and then it makes sense to include them in the transpiler passes.
+I think that the name "full" for such an entanglement may be misleading (an explanation for choosing these methods is mentioned here: #8219).
+If we print the linear matrix mat corresponding to the linear sub-circuit qc given above (using print (np.array(mat, dtype=int)) ) we get the matrix:
+implying that the linear function is given by:
+(x_0,x_1,x_2,x_3,x_4) --> (x_0,x_0 + x_1,x_1 + x_2,x_2 + x_3,x_3 + x_4)
+Hence, qubit 0 is only affected by qubit 0, qubit 1 is only affected by qubits 0 & 1, and generally qubit i is only affected by qubits 0,...,i-1 (even after many iterations).
+If one would like that every qubit will affect every qubit (after several iterations) then it's better to choose a different ansatz (a circular or sca ansatz should be OK).
+Here are the polynomials corresponding to the other methods:
+linear: (x_0,x_1,x_2,x_3,x_4) --> (x_0,x_0 + x_1,x_0 + x_1 + x_2,x_0 + x_1 + x_2 + x_3,x_0 + x_1 + x_2 + x_3 + x_4)
+circular: (x_0,x_1,x_2,x_3,x_4) --> (x_0 + x_4,x_0 + x_1 + x_4,x_0 + x_1 + x_2 + x_4,x_0 + x_1 + x_2 + x_3 + x_4,x_0 + x_1 + x_2 + x_3)
+sca is a permutation of circular.
+Yeah it seems these names were chosen by how they visually look like on the circuit, not by their effect. But at the moment I think these names are mostly just an identifier, without any rigour behind them. If you other suggestions I think we can change them 🙂
+We have agreed upon the following API:
+the new method will be called reverse_linear
+the previous method will be called full (as it originally was)
+the documentation will say that for a TwoLocal circuit, if entanglement_blocks='cx' then full and reverse_linear actually provide the same circuit
+for RealAmplitudes and EfficientSU2 circuits, where always entanglement_blocks='cx', the default value for entanglement will be changed from full to reverse_linear

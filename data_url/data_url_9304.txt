@@ -1,0 +1,48 @@
+Describe the bug
+Cannot install and use Bloqade.jl with a clean Julia 1.9 installation.
+To Reproduce
+Expected behavior
+All packages precompiled successfully.
+Screenshots
+
+Version Info
+Additional context
+This bug also happens on Windows 11 with Julia 1.9.2 and 1.9.3.
+Hi @mrs504aa ,thanks for bringing this to our attention! This has been an issue we've been seeing across the board and seems to come from Measurements.jl. The quickest way to fix this is to clone Measurements.jl and then dev it into your environment. You'll have to edit ext/MeasurementsJunoExt.jl to fix this line of code (line 32):
+You just have to turn it into the following:
+I'll file a bug report on the Measurements.jl side of things to have this corrected.
+Here's the bug report
+Thanks. I tried your solution and successfully fixed the problem about Measurements.jl.
+But still, there is one more problem I believe which is caused by Bloqade.jl itself or OrdinaryDiffEq.jl.
+I checked source code of BloqadeODE and OrdinaryDiffEq.jl and found that in BloqadeODE/src/integrator_init.jl when constructing DEOptions, something called progress_id::Symbol is missing, which is required in OrdinaryDiffEq/src/integrators/type.jl.
+Corresponding changelog
+#SciML/OrdinaryDiffEq.jl@5a66c02
+I hope this information helps.
+Thank you for your debugging work!
+From what I've found if you bump the version of OrdinaryDiffEq to 6.57 (down one minor version), this issue seems to go away.
+Okay I see, you were relying on an internal function. Usually not a good idea 😅 . I can add a downstream test so you could be notified earlier, though note that DEOptions is an undocumented internal. We do have plans to surface a global options type but as of right now that is not the case.
+what's the status of this issue? I'm running into it atm.
+Hi @aarontrowbridge I'd just follow the advice I gave earlier and bump OrdinaryDiffEq down to 6.57.
+I plan on restricting the version in the package compat until we either move away from the reliance on the internal function or find a way to stably support the higher versions of OrdinaryDiffEq.
+Out of curiosity, what's requiring the direct construction of the DEOptions object? I don't know of any other usage of OrdinaryDiffEq that's doing that, and the docs don't mention or require it, so I'm a bit confused how this is coming up.
+I think @Roger-luo has a better idea of why?
+I left some comments when I added this (I don't remember why myself after all this long)
+https://github.com/QuEraComputing/Bloqade.jl/blob/master/lib/BloqadeODE/src/integrator_init.jl#L1
+so IIRC, I had a gripe on slack about this function back in the day and decided to go ahead and insert some custom logic into the initialization. But the refactor never proceeded since then.
+This is quite odd 😅. I'd be happy to have an issue opened about anything to improve in init, but I don't quite get the logic here.
+The purpose of alias_u0 is to use u0 as the preallocated state member, so this modification doesn't seem necessary.
+That could be made into an option.
+We'd be happy to make these modifications so that you don't need to try and keep this function 1-1 with what's in the library.
+I don't remember the exact reason, but it's likely something try and fail and work... We are not pursuing extreme performance anymore so this could be removed and use the default ones.
+That could be made into an option.
+I think I chatted with Yingbo about this a while ago, none of us had the bandwidth working on refactoring that init function, which is why I went for the quick dirty solution for the time being. So if someone can help getting rid of this that would be great!
+Hello, I am facing similar problems when doing a clean installation of Bloqade as of today. Here is the report:
+Describe the bug
+Cannot install and use Bloqade.jl with in  a new  Julia environment
+Operating system: Windows 10
+Julia:  Version 1.9.3
+Bloqade v0.1.24
+To reproduce
+I  have not tried fixing Measurements.jl or downgrading OrdinaryDiffEq as I am not sure this could the root of the problem.
+Hi @rgarcia-moodys. I met the same problem this morning. I solved this problem by bumping SimpleNonlinearSolve down to v0.1.23. But I don't know what is wrong.
+It seems that v0.2.1 has fixed these issues and this package works on julia 1.10.

@@ -1,0 +1,12 @@
+When optimising the circuit below using optimization_level=2 or optimization_level=3 with target gate set basis_gates=['cx', 'u3'], the result is not equivalent to the input.
+Input circuit
+Output circuit:
+The following code outputs "Circuits are not equivalent".
+The code should output Circuits are equivalent.
+This only applies to gate sets including the u3 gate. Compiling to e.g. ['cx', 'rz', 'sx', 'x'] does not have this problem.
+Sorry for the slow reply - I suspect that this is the same issue that #10618 is fixing.  Sasha (@alexanderivrii), could you check, and mark your PR as closing this issue if so?
+@jakelishman, you are correct, #10618 does indeed fix this!
+At first I did not understand why, since neither CZ(0, 1) nor CZ(1, 2) commutes with H(1), but here is the longer story.
+First, BasisTranslator replaces each CZ(a, b) by H(b) CX(a, b) H(b) (and to be pedantic, it's actually U3(pi/2, 0, \pi) rather than H), leading to the circuit H(2) H(1) CX(0, 1) H(1) H(1) CX(1, 2) H(1) H(1) CX(0, 1) H(1) H(2). Note the two pairs of consecutive H-gates in the middle (in each pair one H-gate comes from basis translation and the other H has already been there from the start).
+Second, Optimize1qGatesDecomposition combines each pair of consecutive H-gates into "an almost identity" gate (because of the round-off errors it's not exactly identity and is represented by some U3 gate which is very close to identity).
+But now we almost have the buggy example from #10618. For all practical purposes the "almost identity" gates commute with any other gates, leading to incorrect detection of pairwise commuting gates and hence incorrect cancellations.

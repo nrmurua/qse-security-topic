@@ -1,0 +1,46 @@
+The tag on https://anaconda.org/m-labs/artiq-dev were changed to obsolete, which breaks conda/artiq-dev.yaml
+In release-4: conda/artiq-dev.yaml only has the main and dev channels, which anaconda.org/m-labs/artiq-dev no longer has.  This file is what I was using to create my conda environment during artiq install.  Of course I can get around this, but it seems like since release-4 is the current release branch, it is not obsolete, and should be kept functional by restoring the dev label.
+Developing ARTIQ via conda has a lot of problems and is indeed obsolete. If you really want to do that, then add the obsolete channel.
+But you can use the ARTIQ-5 development environment (e.g. shell-dev.nix) to compile ARTIQ-4; which is still pretty compatible and should work without major problems. Or you can compile and install the various dependencies (rustc etc.) manually from source.
+This file is what I was using to create my conda environment during artiq install.
+And if you are only using (not developing) ARTIQ, you should not use this file.
+As I mentioned I can (and have by modifying the channels) gotten around this , but I think it is still an issue.  I am modifying release-4 in a fork to suit the needs of our experiment while still retaining the stability of the static release.  I don't know if this counts as "developing" or not, but it is the use case for several labs here at UMD, and I imagine others elsewhere.  As for nix, I have previously tried and failed to install following the instructions in the 5.0 beta documentation, but that seems like an separate issue.  The 4.0 documentation does not mention nix at all, and this issue is about making sure the release version (including documentation) is usable until 5.0 is stable.
+This does count as developing; and many labs use original ARTIQ with Kasli crates.
+If you want to continue using conda, can you send a patch? Is it just adding the obsolete to the the list of channels in artiq-dev.yaml?
+What didn't work with nix?
+There is a small problem that the MAJOR_VERSION file does not exist in release-4.  Once I add that, shell-dev.nix can proceed (I am running the one in the nix-scripts/artiq-fast directory, the documentation says nix-scripts/artiq but that doesn't exist), but then runs into an error regarding asyncserial:
+Collecting asyncserial (from artiq==0+unknown) Could not find a version that satisfies the requirement asyncserial (from artiq==0+unknown) (from versions: ) No matching distribution found for asyncserial (from artiq==0+unknown) builder for '/nix/store/n06qp24zkw2bi3xg6hrr0vynm3ij3yjg-python3.7-artiq-4.6346.48f068cd.beta.drv' failed with exit code 1 cannot build derivation '/nix/store/4l8kchlivgmibgbiz7rnfk1n2ix02scm-python3-3.7.4-env.drv': 1 dependencies couldn't be built error: build of '/nix/store/4l8kchlivgmibgbiz7rnfk1n2ix02scm-python3-3.7.4-env.drv' failed
+I couldn't figure out how to get around this error.
+Actually it turns out just adding the obsolete channel isn't enough.  I had thought that it was, because that worked on a quick test on my Windows system.  But on my Ubuntu system where I actually have Vivado installed and do the building of the bit files, that change is insufficient.  On Ubunutu I still run into a ton of unsolvable version errors.  It seems like maybe more was changed than just the 'dev'->'obsolete' tag?
+So, as is I currently have no working solution for creating an environment with dev tools on release-4.
+If I run conda env create -f artiq-dev.yaml with no changes (i.e. without the obsolete channel) (Ubuntu):
+And if I add '  - m-labs/label/obsolete' (Ubuntu):
+Just add the dependency:
+Writing up a patch that detects the ARTIQ version number and adds the asyncserial dependency on -4 and not on later versions is left as an exercise to you, as well as one that fixes the Python 3.7 issues in the controllers (see the new controller versions that were split into separate repositories and contain the fixes). You can also skip tests with doCheck = false; in the .nix file above.
+Where did
+go?
+I don't have the time to revamp our (Oxford) CI system today, so I'd like to just work around this to get a build done, but adding the obsolete tag to the search path isn't enough.
+(Worked around by serving a previously cached copy on a local channel, but it feels like that transition could have been made in a less painful way.)
+@dnadlinger is it possible to make that cached copy available to us?  It would be helpful.
+Actually, said package isn't recent enough to build master anymore – BlindTransfer was since moved. I've attached the packages, though, in case you are building an older version.
+old_migen_misoc_conda.zip
+Edit: The BlindTransfer reverts cleanly for now, so I'm using that a kludge to continue working until someone in our group finds time to rewrite our Buildbot stack/another solution becomes available.
+If you really want to keep using conda for development, maybe rebuilding the latest migen/misoc versions with conda build is simple enough and will provide a clean solution. The recipes are still there, e.g. https://github.com/m-labs/migen/tree/master/conda
+BTW any of you can also use the M-Labs build/CI infrastructure for a small fee, and then we'll maintain your packages with your patches. You could automatically get e.g. firmware binary builds with the latest ARTIQ version, including in conda format (conda for using ARTIQ remains supported, as there is currently no option that sucks less and supports Windows).
+The UMD Euriqa team is still planning to use Conda to build our customizations on top of ARTIQ 4, because we are not comfortable using pre-release software in a production environment. Per the ARTIQ 4 Manual, developing and compiling on Conda is the only supported method. If ARTIQ 4 compilation is not supported in the Release version, that is a major issue for us. @sbourdeauducq Functionality should not be wantonly broken in a FROZEN release version in favor of an unproven/unreleased system, especially not without updating documentation.
+Followed instructions (#1346 (comment)) to add obsolete channel, and that didn't work. Failure cause is non-obvious based on output text (maybe misoc/migen per #1346 (comment))
+Output from building clean conda env today:
+@drewrisinger For your "production environment" I'd be a lot more worried about conda bugs, non-reproducibility, and other conda design issues than what you are complaining about. The new build environment may be "pre-release" as you say, but it's a lot more solid than anything that was based on conda before.
+Failure cause is non-obvious based on output text
+Yes, there are reasons not to use conda; among them is its broken dependency resolution algorithm.
+Functionality should not be wantonly broken in a FROZEN release
+Another one is that nothing is really frozen with conda since other people can upload things to anaconda.org that result in different package versions being installed beyond our control, or even complete installation failures due to the above-mentioned broken dependency solver. This happened with Qt for example.
+maybe misoc/migen
+Have you tried my above suggestion of rebuilding them?
+@dnadlinger I wasn't able to resolve my version conflicts with the files you posted, but thank you for providing them.
+@sbourdeauducq just implementing the asyncserial and doCheck=false changes you suggested above wasn't enough, as it still failed a check on compiling, but when I updated the artiq source to take your recent (last day) changes to release-4, now I have a complete working toolchain for ARTIQ 4.0 using nix.  Thanks!
+Thank you for your help getting us up and running again.  I do still think the release-4 should be a stable and complete working environment until there is a release-5.  My personal opinion is that the build tools for 4.0 were frozen as conda by the release-4 documentation.  Perhaps this is a difference of viewpoint as to whether or not the dev tools are part of a standard ARTIQ ecosystem.
+now I have a complete working toolchain for ARTIQ 4.0 using nix. Thanks!
+Good!
+Thank you for your help getting us up and running again. I do still think the release-4 should be a stable and complete working environment until there is a release-5. My personal opinion is that the build tools for 4.0 were frozen as conda by the release-4 documentation.
+It is still possible to use conda for release-4 development, but it takes some work (such as working around the above issues), and the result will be mediocre in the end. I'm ok with merging patches and uploading things to anaconda.org if someone does the work of writing the patches and verifying that things work; but maintaining conda is like a frustrating game of whack-a-mole. I believe that the new nix system will provide a better experience for everyone, and I'm happy to maintain it properly and consider it a part of the ARTIQ ecosystem (whereas conda is substandard and constantly annoys me). Can be rolled out with builds and CI to release-4 as well, though so far there have been few changes in that branch and the release-5 should be right around the corner, so it's rather moot.

@@ -1,0 +1,27 @@
+Running test case xTB/regtest-4/H2O-xtb-tc2-1.inp
+(and QS/regtest-dm-ls-scf-3/H2O-dftb-tc2-1.inp and more)
+an argument aliasing of matrix_x in dm_ls_scf_methods.F:1074
+CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_x, matrix_s_sqrt_inv, &
+0.0_dp, matrix_x, filter_eps=threshold)
+provokes later in dbcsr_mm.F:932
+matrix_c = dbcsr_type()
+an assignment to matrix_c that affects INTENT(IN) dummy argument matrix_a
+Should be fixed by commit 8db5d09
+This PR #1048 should solve the issue in the XAS_TDP code. In general, this seems to be quite frequent in CP2K. I can try and fix it everywhere, but it might take some time. Should I take care of it @juerghutter ?
+Maybe this is not a bug but a feature? AFAIK, dbcsr_multiply creates copies of its input matrices before writing to the result matrix. So, aliasing shouldn't lead to any wrong results.
+Nevertheless, if we really want to ban this pattern then we should add a check to DBCSR.
+I tend to agree. I personally quite like being able to overwrite the output matrix, this allows me carry around (and think about) less temporary matrices.
+As long as there is an INTENT(IN) this is a bug.
+If you want to have overwriting as a feature, you need to make sure that
+I want to keep this clean and secure. Maybe even add an internal test that matrices are not aliased.
+If you want to avoid dummy matrices, you can write a wrapper function for special cases.
+I believe that #1048 now fixes all occurrences of bas aliasing in dbcsr multiplication. I do think that adding an additional test in dbcsr_multiply might be a good idea though, just to prevent that from happening again.
+AFAIK, dbcsr_multiply creates copies of its input matrices before writing to the result matrix. So, aliasing shouldn't lead to any wrong results.
+I have not looked at the referred code (and probably I misunderstand the context), but removing aliases upfront (call side) would this allow to remove such copies in DBCSR? It sounds a bit awkward creating copies of input matrices.
+In most cases, you have something like the situation below, where P <- SPS, with the two intermediate steps being P <- SP followed by P <- PS, so using an explicit temporary matrix is rather natural and does not require copies of the input matrices.
+
+It does however feel awkward in the following case, where Rmat is elevated to a certain power within a loop. Here I do not see how to escape copying the input matrix.
+
+I do not know whether DBCSR always copies input matrices though. If it is the case, then fixing the above code leads to copying input matrices twice, which is of course not great.
+@abussy thank you for the insight!  ( I believe this can be turned into an issue if DBCSR creates deep copies for inputs in all cases. )
+Refresher: the code is now free of those argument aliasings. The question remains as to whether DBCSR should explicitely check for that though.

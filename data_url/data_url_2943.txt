@@ -1,0 +1,30 @@
+I think we should consider removing the Operation class and storing the qubits a Gate applies to directly in the gate instance. One problem with Operation is that we lose type information about the gate inside it, for example we made Operation support raising to a power for convenience, but this actually only works if the gate it contains is an extensible gate, so you might get a TypeError at runtime and mypy can't help. We also lose information about the roles of different qubits on a multi-qubit gate. For example, if we have CNOT.on(q0, q1), which of those is the target and which the control? If the CNOT gate constructor itself takes qubits as arguments we could do CNOT(control=q0, target=q1) and any code that comes across a CNOT gate will be able to see these qubit roles directly.
+One thing we would lose by doing this is the ability to generically "remap" operations to different qubits, for example if an optimizer needs to move gates around. But we could add an abstract method on Gate to do this sort of generic remapping that would construct a new instance on different qubits to enable support for this.
+Another thing I discussed with @Strilanc is that if gates are always applied to qubits, then there might be confusion about what the matrix for a known-matrix gate means. But I think having gates applied to qubits helps even here. If you ask a gate for its matrix, you can also ask it for the "basis" and it can give its list of qubits which (along with a tensor product convention) tells how to interpret the matrix. If you try to multiply matrices for two gates, that only makes sense if they have the same basis. Also, you could ask the qubit for its matrix in a different basis, so for example if I have gate = CNOT(control=q2, target=q5) I could ask for gate.matrix(basis=[q0, q1, q2, q3, q4, q5, q6, q7]).
+One other thing I'll note is that the Gate/Operation split is not reflected in the protos; there the messages like ExpW contain the qubits they apply to as well as the other parameters. So unifying Gate and Operation in cirq would reduce some impedance mismatch with converting to/from protos (we might want to rename the Operation proto to Gate though).
+I know this would be a large change but I think it would simplify things for users. Thoughts?
+I was initially skeptical of this, but the more I think about it the more promising it is. I kept coming up with examples of "won't X be awkward?" and then realizing it was either fine or better. For example, the single-qubit folding code multiplies a bunch of gates together... but it gets those gates by stripping the same qubit off of a bunch operations, then putting the qubit back in for the final operation. It's simpler to just drop the strip-and-reinsert.
+I think the main drawback is that it will end up making code that wants to just deal with Gate as a conceptual unit very awkward because then you are always creating dummy qubits to hang around.  For example Solovay-Kitaev compilers really don't want to have to create such qubits when they work with their gates.
+I think we could easily solve the CNOT problem with a simple gate feature that adds
+from(qubits)
+to(qubits)
+that need to be chained to produce an on(from_qubits, to_qubits).
+@dabacon, one thing I left out of the issue description but that I've had in my mind is that the qubits arguments on gate constructors would always have default values that are just abstract qubits. This would make gates no harder to construct than they are now, but still gain the other advantages outlined above. But even in the case of something like solovay kitaev, it seems like you'd probably be transforming existing gates (e.g. synthesizing a rotation that is currently specified as applying to a particular qubit), so you'd just reuse their qubits instead of creating your own.
+I think if people find themselves passing in "abstract qubits", that's a point against only having Operations.
+One thing is that having Gate and Qubits that they operate on be separate it allows for more "single responsibility" reasoning about Gate and gate features (and similarly Operation has the single responsibility to take the gate and have it act on particular qubits).
+I wonder if there is something we can do to fix the two problems you both describe:
+a) the strip a qubit(s) off, then mangle gates and add it back on
+b) change the qubits the operation acts on
+without having to pull qubits into a common class?  These are sort of dualing cases.
+For a) we could easily use some functional foo on operation
+def decompose(gate_fn)
+which takes a function that takes the gate as input and returns a list of gates.  The function itself returns the list of ops.  I need to think about this as I think how this plays with composite gates and gate sets might be interesting
+For b) a simple
+def move(*qubits)
+would allow you to move operations around.  OK I really want to call this requbit.
+@Strilanc good to close
+Second part is done but Operation still exists.
+
+@Strilanc Considered done?
+I consider this to be closed. We need Operation (unitary with specified qubits) because it is the fundamental thing circuits use, and we need Gate (unitary with unspecified qubits) because it's such as a common concept.
+(nit nit operation is more than just unitary, gate is more a factory than a keeper of unitary)

@@ -1,0 +1,55 @@
+On a fresh Conda / Artiq installation the dashboard fails with the error:
+This can be reproduced on a clean Win7 32 bit VM with the following steps:
+The package listing of this installation is here
+Downgrading icu from 57.1 to 56.1 (as per #566) does not fix this.
+I have also seen this issue on Win7 64 bit.
+Do you have a previous conda environment around where this was working? If yes, please provide that conda list.
+Also, you have a bunch of packages installed both as conda packages and through pip/setuptools. This is likely to cause (potentially unrelated) problems.
+@jordens all of the packages in that environment were installed by running 'conda create -n artiq-main artiq-kc705-nist_clock'.
+I made a clean VM, installed conda, added the M-Labs main channel, then installed the Artiq package, so I am confident about this.
+Please try conda install qt5=5.5.1=2 pyqt5=5.5.1=py35_0 in the non-working environment and paste the output.
+Weird that you see all the pip packages. I haven't seen that before but I can reproduce it.
+No joy - here is the output:
+conda list here
+And now with conda install icu=56.1?
+I am at a loss why it doesn't install qt5=5.5.1=2 right away.
+It also seems to ignore that icu dependency in qt5=5.5.1=2.
+Oops - I attached the wrong conda list last post. This is the list after the last 'conda install'
+As per this list icu is at 56.1, and 'conda install icu=56.1' gives 'All requested packages are already installed.' as expected
+@jordens any ideas on how to fix this? This is now holding us up. This issue does not seem specific to me: I have been unable to get the dashboard working on 3 Win7 machines so far, and I am aware of at least one new Artiq user that is now blocked by this.
+@cjbe Not right now. I'd have to debug this on windows.
+There are the packages (pyqt, qt, icu, but start with pyqt as the top level package of that hierarchy) for qt 5.6 in standard anaconda. You can upgrade to the after installing artiq. Last I checked they work fine.
+@whitequark could you help?
+@cjbe if the standard Anaconda Qt5 packages work (please test on Linux and Windows), could you send a patch for ARTIQ that makes it use them?
+(i.e. do #261)
+I tried installing 2.2 and had the same error with the dll file. I installed icu=56.1 and tried opening the dashboard but got this error instead,
+My conda list is,
+@sbourdeauducq using the Anaconda default pyqt package (currently at 5.6.0) fixes this problem on Windows, and does not break anything on Linux, so I will submit a PR).
+@r-srinivas this is #508 / #506 appearing again when trying to connect to ::1 - this is because the money-patch is keyed to python 3.5.2, but Anaconda are now distributing 3.5.3. The money-patch still works on 3.5.3, so I will submit a PR for this.
+needs backport to release-2
+@jordens could you cherry-pick this on to release-2?
+@jordens the only thing pulling in m-labs/pyqt5 now is quamash: the recipe is fixed, but the conda package at m-labs/main has not been rebuilt with this new recipe (current build is 2016-12-01) - could you trigger a rebuild?
+@cjbe Things are rarely simple. The rebuild fails (http://buildbot.m-labs.hk/builders/conda-lin64/builds/286). Also what to do about the documentation?
+@sbourdeauducq I see - thanks for fixing that build. There now seems to be a working quamash (0.5.5-py_2) in m-labs/dev, but m-labs/main still has 0.5.5-py_1. Is it possible to update the main as well?
+@sbourdeauducq the documentation relating to 3f556a3 / #361 ? I have not been able to reproduce this on Ubuntu - perhaps @r-srinivas may be able to reproduce?
+Is it possible to update the main as well?
+Not for now because this may break 2.2 on Linux. Better make a 2.3 release with the new Qt dependencies and test it. But the release-2 branch also no longer builds on buildbot; for some reason the artiq-board builder installs the wrong version of artiq-dev and therefore migen/misoc, which causes compatibility issues. Can you figure out why?
+@sbourdeauducq the documentation relating to 3f556a3 / #361 ?
+Yes.
+@sbourdeauducq the buildbot installing artiq-dev=3.0 for the release-2 build seems to be due to a bug in conda-build. Using conda-build=1.19.2 (as on the buildbot) I can reproduce the problem. Using the latest conda-build version (2.1.5) the release-2 build works fine.
+Is it possible to update the conda-build on the buildbot?
+@cjbe A warm welcome to the wonderful world of conda (and Python packaging in general). The build now fails because conda says it would put the package in /var/lib/buildbot/slaves/debian-stretch-amd64-1/miniconda/conda-bld/noarch, but puts it into /var/lib/buildbot/slaves/debian-stretch-amd64-1/miniconda/conda-bld/linux-64 instead. I do not know if there are other consequences to this cool new problem.
+Worked around that, but now the windows unittests broke. http://buildbot.m-labs.hk/builders/artiq-win64-test/builds/431/steps/python_unittest/logs/stdio
+There is a reason we didn't touch conda-build before...
+And in addition to that, the conda garbage now leaves some folders around and later trips on them.
+http://buildbot.m-labs.hk/builders/artiq-board/builds/450/steps/conda_build/logs/stdio
+This problem is also new:
+http://buildbot.m-labs.hk/builders/artiq/builds/1379/steps/conda_create/logs/stdio
+Is the problem still present with the 2.x packages currently in the dev anaconda channel, or do they install and run just fine?
+Using the nist_clock 2.2 package in dev on Win7 this problem is fixed!
+(Apart from the monkey patch for #506 not working)
+OK, thanks
+Installing the most recent version of artiq 2.2 on the dev channel on Windows works for me now, apart from the command line tools failing with the error 'failed to create process' - the master & dashboard have to be run using python -m artiq.frontend.xxx.
+I think that error is conan-io/conan#298.
+Deeper down, more like pypa/setuptools#398 i.e. buildbot might need updating.
+@webstersc Thanks for the report, but please create a new issue for new problems.

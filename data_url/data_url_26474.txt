@@ -1,0 +1,54 @@
+This used to run but now always fails. I have restarted from scratch and it happens again. The files needed to quickly reproduce are too large to attach. Here they are in the link:
+https://www.dropbox.com/s/myf0ridn5ata9jj/4H.tar.gz?dl=0
+Thank you for your attention. Happy New Year!
+Ron Cohen
+I have this same problem with
+Intel(R) Fortran Intel(R) 64 Compiler for applications running on Intel(R) 64, Version 19.1.1.217 Build 20200306
+and with
+oneapi
+I recompiled with -check pointers and it gives an error:
+forrtl: severe (408): fort: (7): Attempt to use pointer LB_GLOBAL when it is not associated with a target
+Image              PC                Routine            Line        Source
+cp2k.psmp          000000000D5CF68F  Unknown               Unknown  Unknown
+cp2k.psmp          0000000003FFF2DE  realspace_grid_ty         524  realspace_grid_types.F
+cp2k.psmp          00000000015CCB5F  qs_linres_current         890  qs_linres_current.F
+cp2k.psmp          00000000015C6F18  qs_linres_current         419  qs_linres_current.F
+cp2k.psmp          000000000175F9A4  qs_linres_module_         509  qs_linres_module.F
+cp2k.psmp          0000000001761001  qs_linres_module_         260  qs_linres_module.F
+cp2k.psmp          00000000022E38A8  qs_energy_utils_m         153  qs_energy_utils.F
+cp2k.psmp          0000000001BA1565  qs_energy_mp_qs_e         136  qs_energy.F
+cp2k.psmp          0000000001941C8A  force_env_methods         259  force_env_methods.F
+cp2k.psmp          0000000000ACE61D  integrator_mp_ref        1658  integrator.F
+cp2k.psmp          0000000000AAD687  velocity_verlet_c          91  velocity_verlet_control.F
+cp2k.psmp          000000000094810B  md_run_mp_qs_mol_         480  md_run.F
+cp2k.psmp          0000000000946947  md_run_mp_qs_mol_         149  md_run.F
+cp2k.psmp          00000000006EF171  cp2k_runs_mp_cp2k         364  cp2k_runs.F
+cp2k.psmp          00000000006EDC2C  cp2k_runs_mp_run_         997  cp2k_runs.F
+cp2k.psmp          00000000006EB97A  MAIN__                    379  cp2k.F
+cp2k.psmp          00000000006EA722  Unknown               Unknown  Unknown
+libc-2.17.so       00002AFBF5CB1555  __libc_start_main     Unknown  Unknown
+cp2k.psmp          00000000006EA629  Unknown               Unknown  Unknown
+which is at
+SUBROUTINE rs_grid_create(rs, desc)
+when I print the refcount it shows:
+DESC%refcount           0
+at this place when it dies.
+Ron
+Please excuse the slow answer. Thank you for your report? Can you reproduce this error also with a smaller system or a reduced setup? This might help to pin down the actual culprit. I will have a look at it tomorrow.
+If I make the following changes the TMS example runs. (Bold just for tracing)
+Note I also have to make this change for anything to run!
+HOWEVER, THIS IS NOT SATISFACTORY AS THE ref_COUNT KEEPS GOING UP AND FINALLY FAILS IN CLOSING WITH
+___                                                                       *
+/   \                                                                      *
+[ABORT]                                                                     *
+___/        mp_world_finalize: assert failed:  leaking communicators      *
+|                                                                        *
+O/|
+/| |                                                                        *
+/ \                                           mpiwrap/message_passing.F:920 *
+Ron
+TMS2.tar.gz
+Did you use Intel in all cases?
+Your whole update is not portable as it targets the Intel compiler only. But I will check it on GCC.
+I can reproduce the issue with GCC locally.
+I have meanwhile narrowed it down to #2382 . I am currently bisecting to find the erroneous commit.

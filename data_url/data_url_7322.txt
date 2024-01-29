@@ -1,0 +1,29 @@
+I noticed that there is currently no function to simulate many quantum trajectories at once, and the documentation seems to show an example of only ten, in the Jaynes-Cummings example.
+Is there such a feature in the pipeline?
+And meanwhile, what would be the recommended safe way to handle 100 or 1000 trajectories for someone new to Julia? A plain serial for (is this actually serial, because sometimes you hear claims that it is still as fast as what would be 'vectorized' in MATLAB?) or something like @threads for or @distributed for ?
+That's correct. Note that the choice of Ntrajectories=10 is somewhat arbitrary and kept low to actually show the difference to the master equation solution. Using Ntrajectories=1000 the entire loop over mcwf still runs in ~1s on my laptop.
+I've been thinking about how to get parallelization some time ago, but never got around to actually doing it. You could simply use a keyword that sets @threads for a given number of trajectories. Alternatively (and probably a better approach) you could wrap the whole thing in an EnsembleProblem internally (see https://diffeq.sciml.ai/latest/features/ensemble/), which simply lets you choose the way of parallelization.
+For now you can easily do simple multi-threading on the for loop like so (I'm using the Jaynes-Cummings example):
+Note that I'm storing all state vectors here, which can easily get large for larger systems, so it might not be that smart to actually do that. Also, don't forget to set the JULIA_NUM_THREADS environment variable (see https://docs.julialang.org/en/v1/manual/multi-threading/).
+is this actually serial, because sometimes you hear claims that it is still as fast as what would be 'vectorized' in MATLAB?
+It's serial. The claim is valid for small loops where the operation inside the loop is fast (so not mcwf). Since Julia is compiled, the loops is optimized, whereas in MATLAB this is not the case. So fast for loops in Julia are comparable in speed to 'vectorized' MATLAB.
+Thank you for your answer.
+The thing that I'm actually interested in is simulating larger lattices of qubits (possibly on a cluster at some point), so then computing time can become more critical. For simple toy problems, the computing time is obviously not so important.
+Let me ask you straight away a few other issues/questions that I'm facing...
+Yes, CollectiveSpins.jl is rather narrow in application and quite specifically tailored towards spin-1/2 particles that dipole-dipole interact.
+You can also have a look at some code that @Z-Denis had written a few years ago.
+He worked a lot on doing tons of trajectories. I think that code isn't very well documented but it should do what you ask with a simple interface.
+https://github.com/Z-Denis/ParallelMCWF.jl
+Yes indeed, that seems to be what I was looking for
+Aha, this is way simpler than I thought it was. I wasn't aware of the 'embed' function.
+Also, each individual 'SpinBasis(1//2)' is intrinsically identical, without carrying an implicit label? That's handy, I thought b had to be constructed through something like
+also the ^ being overloaded to tensor products  looks handy
+You can also have a look at some code that @Z-Denis had written a few years ago.
+He worked a lot on doing tons of trajectories. I think that code isn't very well documented but it should do what you ask with a simple interface.
+https://github.com/Z-Denis/ParallelMCWF.jl
+Thanks a lot! Even though it seems to be restricted to discrete jump processes at the moment, this looks really handy.
+ParallelMCWF.jl is outdated and won't build. I originally wrote it as I needed to handle so many trajectories that I could not keep them all in RAM and had to concurrently write them to disk. Also, I wanted to display some progress bar.
+If you don't need to do the above, the solution provided by @david-pl is optimal and can be nicely combined with ProgressMeter.jl, now that it is thread-safe, to allow you to monitor your trajectories. You can do a something very similar with @distributed and pmap, if multiprocessing suits you best.
+ParallelMCWF.jl is outdated and won't build. I originally wrote it as I needed to handle so many trajectories that I could not keep them all in RAM and had to concurrently write them to disk. Also, I wanted to display some progress bar.
+If you don't need to do the above, the solution provided by @david-pl is optimal and can be nicely combined with ProgressMeter.jl, now that it is thread-safe, to allow you to monitor your trajectories. You can do a something very similar with @distributed and pmap, if multiprocessing suits you best.
+aha thanks for the update

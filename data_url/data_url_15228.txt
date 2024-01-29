@@ -1,0 +1,28 @@
+transpilation at optimization_level=3 does not (significantly) perform better in terra 0.22.2 than 0.21.1 despite improvements in sabre algorithm.
+both in terra 0.22.2 and 0.21.1 run:
+Acc to level 3 preset , there should be 20 swap_trials performed for each iteration of transpile. So, the performance should be improved by these 20 iterations. Instead, there is no visible difference, but doing 20 iterations of transpile manually in qiskit 0.21.1 performs much better (will take about 60mins on a 4core-CPU):
+combining all in the plot shows that manually pre-transpiling in the older qiskit version performs much better
+
+there might be a minimization step missing, or a mixup of max_iterations  and swap_trials in
+https://github.com/Qiskit/qiskit-terra/blob/90b158c7e02432db957762e58c4c2ed75d89a1ca/qiskit/transpiler/preset_passmanagers/level3.py#L140
+This isn't a fair comparison, which is likely where the difference is coming in.  swap_trials modifies how many different attempts SabreSwap makes each time it's called, but when you rerun transpile, you get different randomisation for the initial layout chosen in SabreLayout (which isn't subject to repeats), before SabreSwap even runs for the first time.  The final output of the transpilation is more susceptible to changes in that layout, but right now we're not doing multiple attempts of that component (only the internal routing done within SabreLayout).
+I would expect to see a similar improvement for your circuit if you tried the same repeated transpile on 0.22 as you did on 0.21, for the same reason.
+I think the point is that the parallel swap trials should be picking the lowest swap count circuit, when it is clear that it is currently not.  The goal was to eliminate (to 1st order) the need  for users to have to do this themselves now that the swap mapper is much faster
+We're not finding a lower swap count and then throwing it away. The trick is that a full transpile runs the entire layout pass with new seeds, whereas we're just reseeding the internal routing passes used within the layout pass. It was much easier to get that to run in parallel than repeating the entire layout pass lots of times, because it happens in Rust space, not Python space.
+We are looking to revise the defaults, and re-running the whole layout is something we're interested in, for sure. I'm just saying that this is a bug report suggesting there's an actual mistake in SabreLayout, and I don't think that's the case - what's happened here was by design.
+Ok, then it is a bit of a misunderstanding then.  We will just go back to telling people to transpile multiple times again for best results.  I think this can probably be closed since this is currently expected behavior.
+We can leave it open to track - this is something we want to improve on.
+Thanks for clarifying. More of a feature request that you already have in mind then
+I pushed up #9116 to do multiple seed trials for the combination of layout and routing here. I still need to tune the PR and characterize the performance (both in quality and runtime). But if you'd like to give that a try and see how it works for your use case that would be useful feedback while it's still under review/being developed.
+Playing a bit locally with the bv example you were using, for the bernstein vazirani circuit the output quality is definitely primarily a function of the layout. I did a nested sweep to 250 trials of both layout and routing trials with #9116 applied. The script is below (which will only work if you do pip install git+https://github.com/mtreinish/qiskit-core@sabre-layout-rust and have a rust compiler available).
+which yielded this result:
+bv.csv
+The swap count and depth decrease only as we increase the number of layout trials. But I think this is something that doesn't hold true for all circuits. Like I know with qft we can get improved output quality when running with just higher swap trials
+This is interesting.  Let me play with the notebooks that I have looking at some of the other circuits.
+One thing of interest is 5Q tests on Quito (Fake version).  It seems that I consistently get a larger cx gate count then a year ago where the max was ~85 or so: https://quantum-enablement.org/posts/2021/2021-10-31-best_swap_mapper_qiskit.html#efficient-su2-full
+Now I consistently get >100 (on the branch above) using:
+E.g.
+I need to decouple the notebook from Tket before running everything, but what is given here is the first thing I tried
+Hmm, yeah I was seeing bad performance with that branch in other benchmarks too: #9116 (comment) I'm still not super confident with it which is why it's [WIP] still, I probably broke something or am doing something else wrong in the PR.
+At least running the EfficientSU2 example on main and 0.22.2 returns 68 for all the circuits.
+I think that I fixed the issues in #9116 that was causing poor results before. The output of running the EfficientSU2 compilation with the PR applied is now [72, 68, 68, 68, 68, 72, 68, 68, 68, 68, 72, 68, 68, 72, 68, 68, 72, 72, 68, 68] (the behavior with the BV circuits remains unchanged).

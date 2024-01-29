@@ -1,0 +1,47 @@
+ Issue by ahusain
+Saturday Mar 26, 2016 at 00:07 GMT
+Originally opened as https://github.com/msr-quarc/Liquid/issues/18
+I created an Identity matrix get to force qubits to be entangled, but it interacts very strangely with the built in gates. I am struggling to figure out why, because I can't take a look inside any of the built-gates.
+I defined the identity gate as
+I started with a 2 qubit ket set to [Zero, One], and then applied the identity gate to it. It entangles fine and shows the entangled state (0, 1, 0, 0). Then I act X on the gate to get (0, 0, 0, 1), again no problems, it flips the first qubit properly. But when I act with X once more, I get (0, 0, 1, 0)!
+What is the reason for this behavior? Is it because I explicitly defined the matrix in Id? Here is the code I ran using the Id gate.
+Repeating this using the CNOT gate or some other entangling gate doesn't give the same problem, so it must have to do with the way I defined the gate.
+ Comment by dbwz8
+Sunday Mar 27, 2016 at 04:21 GMT
+This is an excellent question. Now I get to explain in more detail what the simulator is doing.
+Let's start with a complete example that others can cut and paste into Main.fs:
+It's basically the same code you supplied with some extra comments and a little harness to run each gate
+and dump the results out.
+Let's walk through __UserSample() line by line. First we create the state vector with 2 qubits both in
+state |1>. These qubits are un-entangled and LIQUi|> knows to keep them separated to save on memory and execution overhead. I'm going to add a line that you don't have to make the example more understandable (later we'll remove the line). This is the ket.Single() line. This tells LIQUi|> to stop being efficient and combine all the qubits into a single Ket vector.
+apply just runs the requested gate and dumps some output.
+First we do apply I which is a noop so we can show the starting state vector:
+You'll see that the only non-zero entry in the state vector is 0x03 (addresses are in hex) with magnitude 1.
+This means that we have two qubits in state |11> which is what we created (see the comments above for more detail).
+From there on, you can see the effect of each gate (Id is a noop, X keeps flipping us from state 0x03 to
+0x01 and back:
+Finally, I added a Hadmard to show the difference a little superposition makes:
+Now we're in 0x01 and 0x03 with equal magnitude (sqrt(2)/2).
+So as long as you read the address in the state vector from high to low as the qubits from left to right,
+it all makes sense. Now let's get rid of the ket.Single() call:
+Now we see that the Ket has been placed in two KetParts. This is because we know that the two qubits start out unentangled. In addition, each KetPart is normalized to 1, so they each are in state 0x01 or |1> with a magnitude of 1.
+If we now flip the first qubit, we still know they're unentangled:
+So, KetPart[0] flips to state 0x00 is magnitude 1 (|0>) and the KetPart[1] is untouched.
+Now you call your 2 qubit Identity gate. Even though you and I know that it doesn't entangle anything, LIQUi|> only knows that you touched 2 qubits with a unitary... so it has to pull the KetParts together:
+From here on, everything looks the same as the previous run since we now have a single KetPart that represents the whole Ket. If you ever want to see your whole state vector as a single vector, just do the ket.Single() before dumping it out.
+ Comment by ahusain
+Sunday Mar 27, 2016 at 12:26 GMT
+Thanks Dave!
+So using the hex addresses the states look like they all do exactly what I'd expect. In my code I would check the qubits by using ket.ToString(). Doing it this way, the state vectors seem to contradict the hex addresses (unless I am reading them incorrectly...which I probably am). For example:
+Starting with both qubits in state One after forcing entanglement with Id, we have
+But then by applying X qs, I get the following
+While on the other hand if I put in X [qs.[1]] instead I get
+The hex address works fine as you mentioned, but the state string seems to work differently that I expected and depends on how you apply the gate. Could you elaborate?
+ Comment by dbwz8
+Sunday Mar 27, 2016 at 14:49 GMT
+There's a subtle point here (that I used to miss myself all the team (even though I wrote it ;)). Take a look at the first line of each output that says Qubits (High to Low):. This is the order in which to read the qubits from left to right. LIQUi|> shuffles them all the time to be efficient in it's computations. In the second output, you got 0,0,1,0 but the qubits where in "1 0" order. So you have to view hex state 0x02 as being 0x01 (flipping the qubits back to "0 1" order. I know, this can be confusing as hell. One way around this is to use the ket.Single() call to not only create a single state vector, but also sort the qubits back to "left to right" ordering. However, this is inefficient for simulation if you're going to be doing larger state vectors.
+A better choice might be to output a "fake measurement" for each qubit by doing a prob1 call. Here's a re-write of the apply function that does just that:
+This is cheap to do (just makes believe it does a measurement) and does not perturb the system in any way. Here's what the result looks like:
+ Comment by ahusain
+Monday Mar 28, 2016 at 01:32 GMT
+That cleared it up, thanks again Dave.

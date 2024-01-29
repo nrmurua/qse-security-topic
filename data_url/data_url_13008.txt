@@ -1,0 +1,196 @@
+Hey there,
+I'm working to update our bqskit <> mitiq tutorial to bqskit 1.0, but I'm having some difficulties.
+The summary is that I'm hitting the following error:
+File ~/checkouts/readthedocs.org/user_builds/mitiq/envs/1557/lib/python3.10/site-packages/bqskit/ext/cirq/translate.py:13, in cirq_to_bqskit(cc)
+11 def cirq_to_bqskit(cc: cirq.Circuit) -> Circuit:
+12     """Convert Cirq's Circuit cc to a BQSKit Circuit."""
+---> 13     circuit = OPENQASM2Language().decode(cirq.qasm(cc))
+14     return circuit
+File ~/checkouts/readthedocs.org/user_builds/mitiq/envs/1557/lib/python3.10/site-packages/bqskit/ir/lang/qasm2/qasm2.py:36, in OPENQASM2Language.decode(self, source)
+34 """Parse source into a circuit."""
+35 tree = parse(source)
+---> 36 visitor = OPENQASMVisitor()
+37 visitor.visit_topdown(tree)
+38 return visitor.get_circuit()
+File ~/checkouts/readthedocs.org/user_builds/mitiq/envs/1557/lib/python3.10/site-packages/bqskit/ir/lang/qasm2/visitor.py:167, in OPENQASMVisitor.init(self)
+165 self.custom_gate_defs: dict[str, CustomGateDef] = {}
+166 self.measurements: dict[int, tuple[str, int]] = {}
+--> 167 self.fill_gate_defs()
+File ~/checkouts/readthedocs.org/user_builds/mitiq/envs/1557/lib/python3.10/site-packages/bqskit/ir/lang/qasm2/visitor.py:242, in OPENQASMVisitor.fill_gate_defs(self)
+240 self.gate_defs['z'] = GateDef('z', 0, 1, ZGate())
+241 self.gate_defs['zz'] = GateDef('zz', 0, 2, ZZGate())
+--> 242 self.gate_defs['sxdg'] = GateDef('sxdg', 0, 1, DaggerGate(SXGate()))
+File ~/checkouts/readthedocs.org/user_builds/mitiq/envs/1557/lib/python3.10/site-packages/bqskit/ir/gates/composed/daggergate.py:49, in DaggerGate.init(self, gate)
+47 # If input is a constant gate, we can cache the unitary.
+48 if self.num_params == 0:
+---> 49     self.utry = gate.get_unitary().dagger
+File ~/checkouts/readthedocs.org/user_builds/mitiq/envs/1557/lib/python3.10/site-packages/bqskit/qis/unitary/unitarymatrix.py:151, in UnitaryMatrix.dagger(self)
+148 @property
+149 def dagger(self) -> UnitaryMatrix:
+150     """The conjugate transpose of the unitary."""
+--> 151     return self.conj().T
+File ~/checkouts/readthedocs.org/user_builds/mitiq/envs/1557/lib/python3.10/site-packages/bqskit/qis/unitary/unitarymatrix.py:163, in UnitaryMatrix.conj(self)
+161 def conj(self) -> UnitaryMatrix:
+162     """Return the complex conjugate unitary matrix."""
+--> 163     return UnitaryMatrix(self._utry.conj(), self.radixes, False)
+File ~/checkouts/readthedocs.org/user_builds/mitiq/envs/1557/lib/python3.10/site-packages/bqskit/qis/unitary/unitary.py:48, in Unitary.radixes(self)
+45 @property
+46 def radixes(self) -> tuple[int, ...]:
+47     """The number of orthogonal states for each qudit."""
+---> 48     return getattr(self, '_radixes')
+AttributeError: 'UnitaryMatrix' object has no attribute '_radixes'
+
+
+The output can also be seen here which is generated from the PR updating the notebook. Strangely the code works on my non-M1 mac machine, and a coworkers, but not on ReadTheDocs for some reason despite my best attempts to mimic the environment. I've also tested the notebook on a linux machine, but it failed with RuntimeError: Failed to start dask scheduler which I cannot seem to fix to test further.
+Wondering if you've come across anything like this before, and if you have any sense of how we might provide as I'm stumped!
+Some more info (no solution unfortunately):
+The notebook also works on my machine (Ubuntu + python 3.10). No errors.
+The output of !pip freeze is almost identical to the output printed in the failing notebook in RTD.
+The error doesn't depend on the input circuit. The problem on RTD comes from the instruction self.gate_defs['sxdg'] = GateDef('sxdg', 0, 1, DaggerGate(SXGate())) that is always executed by bsqkit when initializing an OPENQASMVisitor object even if there are no sxdg gates in the circuit. So, it's not easy to avoid it.
+The output of !pip freeze is almost identical to the output printed in the failing notebook in RTD.
+What is the version of bqskitrs reported by !pip freeze in both cases?
+bqskit==1.0.2 and bqskitrs==0.2.3
+Thanks for the bug report. A lot happens at import time in BQSKit, which does create a few issues when building documentation. To avoid these issues, we have added documentation checks in a few places. See here for an example. I just added a few more checks in the 1.0.3 dev branch. Can you check if your problem still exists in that branch?
+A further update
+My local notebook with bqskit==1.0.2 worked well, but after adding the following cell:
+I got the same error as in readthedocs. Docs environment variables seem to be the problem indeed!
+The 1.0.3 dev branch seems to work locally even when setting os.environ['READTHEDOCS'] = '1'  (this is good!), but I get the same error in a later part of the notebook. When converting back to Cirq with bqskit_to_cirq.
+This is the full error message:
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/compiler/compile.py:320, in compile(input, model, optimization_level, max_synthesis_size, synthesis_epsilon, error_threshold, error_sim_size, compiler, *compiler_args, **compiler_kwargs)
+314     raise TypeError(
+315         'Expected Compiler object for compiler parameter'
+316         f', got {type(compiler)}.',
+317     )
+319 # Perform the compilation
+--> 320 out = compiler.compile(task)
+322 # Log error if necessary
+323 if error_threshold is not None:
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/compiler/compiler.py:142, in Compiler.compile(self, task)
+140 _logger.info('Compiling task: %s' % task.task_id)
+141 self.submit(task)
+--> 142 result = self.result(task)
+143 return result
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/compiler/compiler.py:130, in Compiler.result(self, task)
+128 def result(self, task: CompilationTask) -> Circuit:
+129     """Block until the CompilationTask is finished, return its result."""
+--> 130     circ = self.tasks[task.task_id].result()[0]
+131     return circ
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/distributed/client.py:277, in Future.result(self, timeout)
+275 if self.status == "error":
+276     typ, exc, tb = result
+--> 277     raise exc.with_traceback(tb)
+278 elif self.status == "cancelled":
+279     raise result
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/compiler/executor.py:37, in run()
+35 """Execute the task."""
+36 for pass_obj in self.passes:
+---> 37     pass_obj.run(self.circuit, self.data)
+38 self.done = True
+39 return self.circuit, self.data
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/passes/control/ifthenelse.py:94, in run()
+92     _logger.debug('True branch taken.')
+93     for branch_pass in self.on_true:
+---> 94         branch_pass.run(circuit, data)
+96 elif self.on_false is not None:
+97     _logger.debug('False branch taken.')
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/passes/control/foreach.py:189, in run()
+183     batched_block_datas = [
+184         block_datas[i:i + self.batch_size]
+185         for i in range(0, len(blocks), self.batch_size)
+186     ]
+188 # Do the work
+--> 189 results = self.execute(
+190     data,
+191     _sub_do_work,
+192     [self.loop_body] * len(batched_subcircuits),
+193     batched_subcircuits,
+194     batched_block_datas,
+195 )
+197 # Unpack results
+198 completed_subcircuits, completed_block_datas = [], []
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/compiler/basepass.py:234, in execute()
+232 else:
+233     for subargs in zip(*args):
+--> 234         results.append(fn(*subargs, **kwargs))
+235 return results
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/passes/control/foreach.py:271, in _sub_do_work()
+268     old_utry = subcircuit.get_unitary()
+270 for loop_pass in loop_body:
+--> 271     loop_pass.run(subcircuit, subdata)
+273 if subdata['calculate_error_bound']:
+274     new_utry = subcircuit.get_unitary()
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/passes/control/foreach.py:189, in run()
+183     batched_block_datas = [
+184         block_datas[i:i + self.batch_size]
+185         for i in range(0, len(blocks), self.batch_size)
+186     ]
+188 # Do the work
+--> 189 results = self.execute(
+190     data,
+191     _sub_do_work,
+192     [self.loop_body] * len(batched_subcircuits),
+193     batched_subcircuits,
+194     batched_block_datas,
+195 )
+197 # Unpack results
+198 completed_subcircuits, completed_block_datas = [], []
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/compiler/basepass.py:234, in execute()
+232 else:
+233     for subargs in zip(*args):
+--> 234         results.append(fn(*subargs, **kwargs))
+235 return results
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/passes/control/foreach.py:271, in _sub_do_work()
+268     old_utry = subcircuit.get_unitary()
+270 for loop_pass in loop_body:
+--> 271     loop_pass.run(subcircuit, subdata)
+273 if subdata['calculate_error_bound']:
+274     new_utry = subcircuit.get_unitary()
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/passes/util/fill.py:31, in run()
+29 """Perform the pass's operation, see :class:BasePass for more."""
+30 _logger.debug('Completing circuit with single-qudit gates.')
+---> 31 target = self.get_target(circuit, data)
+33 complete_circuit = Circuit(circuit.num_qudits, circuit.radixes)
+35 if target.num_qudits == 1:
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/compiler/basepass.py:179, in get_target()
+176     return circuit.get_unitary()
+178 if 'target_unitary' not in data:
+--> 179     data['target_unitary'] = circuit.get_unitary()
+181 if not isinstance(data['target_unitary'], UnitaryMatrix):
+182     _logger.warning('Expected target_unitary to be a unitary.')
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/ir/circuit.py:2537, in get_unitary()
+2535         param_index += op.num_params
+2536     else:
+-> 2537         utry.apply_right(op.get_unitary(), op.location)
+2539 return utry.get_unitary()
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/qis/unitary/unitarybuilder.py:139, in apply_right()
+135     raise TypeError('Invalid location.')
+137 location = CircuitLocation(location)
+--> 139 if len(location) != utry.num_qudits:
+140     raise ValueError('Unitary and location size mismatch.')
+142 for utry_radix, bldr_radix_idx in zip(utry.radixes, location):
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/qis/unitary/unitary.py:43, in num_qudits()
+40 if hasattr(self, '_num_qudits'):
+41     return self._num_qudits
+---> 43 return len(self.radixes)
+File ~/anaconda3/envs/py3104/lib/python3.10/site-packages/bqskit/qis/unitary/unitary.py:48, in radixes()
+45 @Property
+46 def radixes(self) -> tuple[int, ...]:
+47     """The number of orthogonal states for each qudit."""
+---> 48     return getattr(self, '_radixes')
+AttributeError: 'UnitaryMatrix' object has no attribute '_radixes'
+Are you trying to execute a notebook containing bqskit while building your documentation? The way things are set up right now, I would recommend against this since the documentation checks divert the execution flow into some dummy states. This is essential for our documentation pipeline and could potentially lead to invalid results.
+We need to do this while building documentation because we spoof many of our imported packages and execute some code at import time. If you are not spoofing packages, you may be able to override/mock the building_docs check in bqskit.utils.docs and be fine.
+Are you trying to execute a notebook containing bqskit while building your documentation?
+Yes, as part of our documentation we have notebooks that are built and tested as part of CI. Right now, the bqskit <> mitiq example is pre-executed, but in porting the example to bqskit 1.0, we'd like to align it with all of our other examples which are tested as part of our dev/CI process. I think this is a pretty standard process.
+If you are not spoofing packages, you may be able to override/mock the building_docs check in bqskit.utils.docs and be fine.
+We don't spoof any packages. In order to do this, would we need to operate a modified fork of bqskit?
+I think this is a pretty standard process.
+Yeah, definitely. We should address this properly. I just added an environment variable that overrides this check when set: BQSKIT_DOC_CHECK_OVERRIDE. Try setting this environment variable in your CI pipeline and rebuilding with the new push to the 1.0.3 dev branch.
+Looks like we're still seeing the AttributeError: 'UnitaryMatrix' object has no attribute '_radixes' error.
+I can recreate the error locally using @andreamari's added cell. However, if I also set the BQSKIT_DOC_CHECK_OVERRIDE variable, the error goes away:
+I see that you set the variable here; can you confirm that the following asserts pass?
+Thanks for the suggestion, Ed. That helped me figure out that the previous method of setting the env var wasn't getting picked up on RTD. I've figured it out now and it seems to be working! Woohoo!
+Any idea when 1.0.3 will be released?
+Awesome!
+Any idea when 1.0.3 will be released?
+Today. I will close this issue, but if you have any other issues feel free to re-open or make a new one.

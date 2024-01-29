@@ -1,0 +1,55 @@
+Hi there,
+Sorry to contact you once again in less than 24 hours 😅
+Here is my new issue: I have a discrepancy when I take the exponential of an operator between the QO.jl and the QuTiP results (and I know that the latter should be correct). Here is an example:
+(where qutip=test_op_2.full() ) gives me: 0.0 + 1.3734502948891406e12im (for a Hilbert space dimension of 200 and higher it is, worse is the error)
+May I ask you if I am making an error somewhere ? Or is this a known bug in QO.jl .
+Thank you in advance,
+Ivan.
+Hi,
+This is not a bug, you are just considering huge numbers, such that the floating point rounding errors become large. If you leave the dimensions the same but try making your numbers smaller, e.g. with
+your check will give something of the order of 1e-13.
+Yes I agree with you about your example, but, I'm sorry, it doesn't solve the issue. My operator is still valid and the physics I obtain using it in the QuTiP toolbox is correct whereas QO.jl gives me incoherent results.
+If I understand you correctly using the QO.jl  exp(...) function, I have to make sure that the norm of the number in the exponential is basically less than 1 (or something like this). But assume the operator
+According to you this is a valid operator but if I apply it to a state which is displaced far away from the origin, this would produce a wrong/unphysical result.
+Very sorry to be picky but I think the problem is deeper than your simple answer about rounding errors. And even this, I am not very sure about. I am not an expert of Julia, but I guess rounding errors should not be more problematic in this programming language than in Python, otherwise what's the advantage of using Julia ?
+My operator is still valid and the physics I obtain using it in the QuTiP toolbox is correct whereas QO.jl gives me incoherent results.
+Could you share some code showing the wrong physics in QO.jl? There are some differences in how displacements are defined in QO.jl vs QuTiP, but it's difficult to tell where exactly the differences lie without seeing the full example.
+If I understand you correctly using the QO.jl exp(...) function, I have to make sure that the norm of the number in the exponential is basically less than 1 (or something like this)
+No, that's not what I meant. It doesn't have to be less than 1, but when you multiply by 5im the resulting operator (after the exponential) has entries on the order of 1e26, which is huge.
+I am not an expert of Julia, but I guess rounding errors should not be more problematic in this programming language than in Python, otherwise what's the advantage of using Julia ?
+I agree, floating point rounding errors should be the same, however, there are other subtle differences. For example, QuTiP uses sparse matrices, even when you compute .expm() of the operator, whereas in Julia the exp function only works on dense arrays. Now, I'm not too sure about this myself, but this probably means that QuTiP uses a different algorithm to compute the matrix exponential. Small differences at the level of rounding errors could occur then, which become huge in your example.
+Hi David,
+I spotted the inconsistency by trying to implement some results from this paper.
+Then I calculated the Wigner function using the respective functions in each library and the results are the following:
+
+You can see that except the vertical line at q=0 all the rest is kind of different between the two toolboxes. Analytically I expect something like in the right figure. Moreover the latter is exactly the one from Fig. 2b of the paper. The three cycle state (i.e. three preparation cycles) using Qo.jl is even worse.
+I spotted that the problem does not come from the Wigner distribution, nor from the initial squeezed vacuum state, but really from the exponential operators. I think it should be a small error in the exp(...) function of QO.jl but I did not dig into it.
+P.S.: to reproduce you shall set r=-1.89963 and the values of the parameters [u_k, v_k, w_k] are for the first cycle [0, -0.22155673136318949, -3.5449077018110318] and for the second [0.045, 1.7724538509055159, 0.44311346272637897] which are taken from the paper.
+With the parameters you provided I don't see a notable difference in the exponential operators (only checked briefly though). What makes you so sure it's the exponential and not something else? It's difficult to tell from your code though. Could you provide a more concise, but fully working version? Preferably the smallest bit of code necessary that still produces a difference between the toolboxes.
+Okay if you want a simpler code, you can look at my displacement_gate function above, then calculate the difference:
+This will give you 28.255166032144835 + 0.0im, with this we come back to my first comment.
+Ah I should have caught this from your code right away: you have to be careful when comparing the .data fields of operators on composite Hilbert spaces between QuTiP and QO.jl. Since Julia uses column-major order in arrays, it's useful to invert the order of the kronecker product in Julia for better performance of things such as ptrace. So really a ⊗ b = kron(b, a) in QO.jl.
+Changing your code to
+gives a distance of 1.48e-11 which is fine.
+Note, that the order is changed everywhere though, so the Physics should be consistent. There is still an error in there somewhere, but it's not the operator exponential.
+Nice, that solve the problem about the distance 👌 Thank you very much ! :)
+Now, however, I have the problem that I cannot apply this operator to a state
+sqvac = fockstate(b_fock, 0) ⊗ spindown(b_spin). Is there another trick ? Should I initialize in a different way ?
+You shouldn't be able to apply this operator to that state since they are defined on different bases. You need to choose the order of the sub-bases and stick to it, so either use fockstate(b_fock, 0) ⊗ spindown(b_spin) with your original code or use spindown(b_spin) ⊗ fockstate(b_fock, 0) together with e.g. displacement_gate_ordered.  Since this is just an arbitrary basis change, the Physics should be the same in both cases.
+So unless you manipulate the .data field somewhere in the script, this will actually not solve your problem, i.e. the plots will still be different. We still need to figure out the error there.
+Okay so if I understand you correctly, my original code is correct but the problem (the difference in the plots) doesn't come from a problem in exp(...) function of QO.jl, right ?
+Yes. The problem has to be hidden at some other point in your code.
+I found something interesting:
+Now for comparing I am flattening the matrix, taking the real part (element wise) and sorting the array from the smallest to the highest value. Ultimately all the elements should be the same ! This is how it looks like in each case:
+The disentangling_gate, displacement_gate and sqvac=Sq*vac ⊗ spindown(b_spin) give all (individually) an error of the order 1e-11 or lower when I compare them using the same distance as before, namely:
+But if I calculate the error for the state:
+I obtain an error of 0.12115349906970488. So I am still a bit confused about this :/ Moreover, the if I compare the states:
+their error is again 1e-11. Sorry to still bother you with this.
+If I use dense arrays in python instead of sparse ones, like this:
+then I get a similar error when comparing your state to state_full. Can you confirm this? If so, I really don't think it's a Python vs Julia issue, but rather something about sparse vs dense matrix exponentials. Not sure what exactly is going on, though.
+I confirm that the error is the same in Python and Julia when we compare state and state_full (also when I compare Sq and Sq_full). So I agree with you ! The problem/difference should come from the exponential of dense matricies.
+Alright then, I'm closing this since it's not really an issue in QO.jl.
+Okay David, just to come back to this issue. I found the error, my error, I assumed that spindown(b_spin) is the eigenvector of sigmaz(b_spin) associated to the eigenvalue +1 whereas in QO.jl it is actually associated to -1 ! I did that assumption because QuTiP state qt.basis(2,0) is associated to +1.
+So at the end it is just matter of conventions and not of sparse/dense matrix exponential! Thanks for your help anyway.
+All the best ;)
+Ivan.

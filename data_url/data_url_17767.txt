@@ -1,0 +1,50 @@
+When running test_qobj_to_circuits_mutiple we're seeing occasional sporadic failures, like:
+https://travis-ci.org/Qiskit/qiskit-terra/jobs/451515130#L2711
+It looks like something is getting out of order and that's causing the tests to fail because the lists don't match 100%. We're seeing this mostly in CI, although I was able to reproduce after running tox -epy37 -- --until-failure (you can replace 'py37' with the version of python you have installed locally and it will work the same) which ran the tests in a loop until it encountered the failure.  I've attached the subunit file from the failed run for reference too: failure.subunit.gz
+This leads me to believe there is some non-deterministic behavior in the test or function itself. Or there is a cross interaction with another test in the suite (which by switching to running in parallel in #737 would trigger).
+It's not a 100% failure so either run the tests in the loop until it fails, or look at one of the referenced CI failures.
+The test passes 100% of the time
+Figure out what is causing the failure and address it
+Yea saw this as well
+I am going to close this as I pretty sure the pr I just put in also fixes this (#1284) but let's open it if we see it again.
+Basically, the circuit changed the order of the qubits.
+I think I saw this again in my PR #1285.  It failed, I restarted, it passed.
+I can't reproduce it again. But I think the error was that a classical register was written before a quantum register. This might be possible, since @jaygambetta's PR #1284 ordered qregs and cregs, but not total registers.
+This test is stupid, it checks against a hardcoded QASM string. So the ground truth is something like:
+and something like this fails:
+this is possible as there is no order between classical and quantum
+I see three possible ways.
+It just failed on me (https://travis-ci.org/Qiskit/qiskit-terra/jobs/456920806)  and it seems that the classical bits are the wrong order
+I am confused by this and will look into it more. In fact, the second seems more correct.
+fwiw, when I added the test as part of #877 just comparing the qasm like that was done just to be fast and simple. Doing what @jaygambetta suggests in his 3rd option (either as an __eq__ on the circuit object or externally in the test) does seem like a much better way to compare the input circuit and the circuit created from the qasm in the qobj are the same.
+That being said it feels like something weird is going on here because the circuit.qasm() function should be deterministic in it's behavior. It just loops over circuit.qregs() prints the qasm for each, then cregs, and then instructions: https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/_quantumcircuit.py#L314-L326 The internal order of those lists should remain the same for all the operations performed in the test.
+Hmm, I've been unable to reproduce this locally. I've been running the test_wrapper module in a loop (with tox -epy37 -- test_wrapper --until-failure) and it's run > 4420 times so far without failing. I'll keep it running in the background, but when I tried that earlier (when I filed the issue) it was happening much faster.
+yeah locally it does not work for me. I also ran it with pr #1296 1000 times with a loop and that has never failed
+@mtreinish how can i make the print statements in that pr into a log that we add to master and caputure the output when it fails.
+as we discussed in person the qasm is getting loaded into the circuit incorrect on some operating systems.
+See https://travis-ci.org/Qiskit/qiskit-terra/jobs/457711918
+1: Captured pythonlogging:
+1: ~~~~~~~~~~~~~~~~~~~~~~~
+1:     b'Using credentials from qconfig'
+1:     b'Using credentials from environment variables'
+1:     b"[['q8', 0], ['q8', 1], ['q9', 0], ['q9', 1]]"
+1:     b'OPENQASM 2.0;'
+1:     b'include "qelib1.inc";'
+1:     b'qreg q8[2];'
+1:     b'qreg q9[2];'
+1:     b'creg c10[2];'
+1:     b'creg c9[2];'
+1:     b'measure q8[1] -> c9[1];'
+1:     b'measure q9[0] -> c10[0];'
+1:     b'measure q9[1] -> c10[1];'
+1:     b'u3(3.14159265358979,0,3.14159265358979) q8[0];'
+1:     b'measure q8[0] -> c9[0];'
+1:     b''
+1:     b"[['c9', 2], ['c10', 2]]"
+1:     b"QobjItem(clbits=[3], memory=[3], name='measure', qubits=[3])"
+1:     b"QobjItem(clbits=[2], memory=[2], name='measure', qubits=[2])"
+1:     b"QobjItem(clbits=[1], memory=[1], name='measure', qubits=[1])"
+1:     b"QobjItem(name='u3', params=[3.141592653589793, 0.0, 3.141592653589793], qubits=[0], texparams=['\\pi', '0', '\\pi'])"
+1:     b"QobjItem(clbits=[0], memory=[0], name='measure', qubits=[0])"
+1:     b'status = JobStatus.RUNNING (0 seconds)'
+1:     b''

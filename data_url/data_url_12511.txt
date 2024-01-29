@@ -1,0 +1,20 @@
+Platform: GCP N2 CPU, 48 vCPUs, 384 GB memory
+Package Versions:
+tensorflow == 2.3.1
+tensorflow_quantum == 0.4.0
+cirq == 0.9.1
+Issue:
+When using tensorflow quantum state layer for final state simulation, if the resulting size of the final state arrays exceed 2**31 there will be an overflow error.
+The error message is:
+2020-11-27 14:24:49.630097: F tensorflow/core/grappler/optimizers/constant_folding.cc:1683] Non-OK-status: TensorShapeUtils::MakeShape(shp, &new_dims) status: Invalid argument: Dimension -2147483648 must be >= -1
+The above code runs when n_circuits = 2^11 - 1
+For simulating the final states of 2^11 circuits of 20 qubits, the expected size of the final states array will be (2^20)*(2^11) = 2^31.  I believe it is due to an overflow error for a signed integer that holds the final output dimension.
+Hi @AlkaidCheng , thanks for raising this issue.
+You are right! This is caused by pip TensorFlow's underlying C++ Tensor classes using 32 bit integers for their size. You can see here in this snippet too:
+This isn't something that we intend to fix and I would suggest that you try and decrease your batch size (n_circuits) and use multiple calls to the state_layer to keep intermediate sizes down. More concretely you could split your x into strides of size k and then make multiple calls for each subsection of x.
+For example if I wanted to compute a kernel matrix between state vectors, but I couldn't store all the state vectors in memory at once, I could do something like:
+This strided approach to keeping intermediate memory sizes down becomes more and more important as qubit numbers go up, suppose you wanted to compute this kernel for 28 qubit circuits with 2**11 states that'd be over 4TB of RAM without striding, still far too big for a TensorFlow Tensor :). We actually used this and some other tricks in here for the quantum kernel methods.
+It's also worth mentioning that all TFQ ops that do not rely on outputting large tf.Tensors can still very readily go over 20 qubits. If you changed this op to a sample op or expectation op you wouldn't need to worry about these sorts of things and could go well into 30+ qubits since the number of outputs you need to store in the final tf.Tensor that the op produces is much smaller.
+Going to close this for now since this isn't an issue we plan on fixing.
+Hope this information can help.
+Michael

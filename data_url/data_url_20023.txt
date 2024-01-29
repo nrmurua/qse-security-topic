@@ -1,0 +1,42 @@
+Hello,
+I'm trying to compile liboqs as a static library with Visual Studio 2022 for x86 without ninja.
+Within the build folder I executed the following cmake command:
+cmake .. -A Win32 -DCMAKE_BUILD_TYPE=Release -DOQS_BUILD_ONLY_LIB=ON
+After this I used the following commands:
+msbuild ALL_BUILD.vcxproj
+and
+msbuild INSTALL.vcxproj
+The build and installation process finish successfully and I have the built library and header files within the C:\Program Files (x86)\liboqs directory.
+I noticed that within the generated CMake Visual Studio project files, the default configuration is Debug and not Release.
+If I compile it manually by opening the generated ALL_BUILD.vcxproj and setting the configuration to Release, it will compile using the Release configuration. The same will not happen by using msbuild commands.
+Another issue that I have is that by using the compiled library by the method which I said above I'm getting the following linking errors when I try to compile a simple test project (example_kem.c):
+All of the mentioned unresolved symbols are coming from oqs.lib.
+Compiling the same project with x64 configuration with the x64 static library works without issues.
+Thanks for the bug report. However, I'm not sure there's someone on the team who still has experience with and access to a pure "x86" (32bit, if I'm not mistaken?) Windows environment to reproduce/fix....
+Yes, by x86 I meant 32bit Windows library and overall Visual Studio project settings.
+The x86 executables can run without any issues on both 32bit and 64bit Windows OS.
+Same goes with building such binaries/libraries within Visual Studio, just select a different configuration within the project configuration manager. The regular Visual Studio installation already includes everything needed for this.
+As for the linker errors, I believe that some part of the code included in the library uses x64 platform specific intrinsics (https://docs.microsoft.com/en-us/cpp/intrinsics/x64-amd64-intrinsics-list?view=msvc-170), from the intrin.h file, possibly for better performance. I don't have much experience with this, but I think that by replacing these intrinsics with (multiple) x86 based ones by using a macro switch, that will check the project architecture, might fix this issue. How ever, this has to be done carefully, so the instructions are executed with the same effect, of course.
+by replacing these intrinsics with (multiple) x86 based ones by using a macro switch, that will check the project architecture, might fix this issue
+Sounds like you have more of an idea how to resolve it than I do :-/ We'd be glad to receive a PR from you!
+My bad, I didn't notice that this library is only available for x86-64, ARM32v7, or ARM64v8 (https://github.com/open-quantum-safe/liboqs/blob/main/CONFIGURE.md#oqs_dist_build) and not for x86.
+This might be a possible contradiction with the documentation from the website (https://openquantumsafe.org/liboqs/ in section Overview -> Multi-platform). This is why I originally thought this to be possible.
+liboqs contains enough reference code that should work on x86. Did you try OQS_DIST_BUILD=Off, OQS_OPT_TARGET=generic? If that works, it should be possible to easily patch the CPU detection code in CMake a tiny bit to disable the non-portable code on x86.
+I think with #1554 we can close this
+I think with #1554 we can close this
+I very nearly agreed -- but then checked the latest CI, so a question to @res0nance : Am I right assuming that the title of the job ("windows-x86") is misleading (as it really is running on (and should be reading) windows-amd64)? If so, I am somewhat surprised that the CI run time of the two "sibling" "windows-x86" jobs is nearly identical: Shouldn't the one running x86 (as one would assume reading the toolchain file) be much slower (as presumably emulating 32bit x86 on github CI's x64 machines) than the one running on "real" amd64/x64? Where in the logs can one find "proof" that this is really running/compiling/testing on a 32-bit x86 machine? Or is #1554 only really activating "Win32" Windows APIs without actually compiling for & running on x86 hardware? Or are Windows toolchains able to generate & execute x86 code so efficiently for/on x64 hardware?
+I think with #1554 we can close this
+I very nearly agreed -- but then checked the latest CI, so a question to @res0nance : Am I right assuming that the title of the job ("windows-x86") is misleading (as it really is running on (and should be reading) windows-amd64)? If so, I am somewhat surprised that the CI run time of the two "sibling" "windows-x86" jobs is nearly identical: Shouldn't the one running x86 (as one would assume reading the toolchain file) be much slower (as presumably emulating 32bit x86 on github CI's x64 machines) than the one running on "real" amd64/x64?
+It is misleading, The intention was x86 family since it does both x86 and x86_64 but I didn't know how best to express that.
+Perhaps the reason x64 and x86 are so similar on windows is because we do not use the AVX2 optimized codepaths on Windows.
+Where in the logs can one find "proof" that this is really running/compiling/testing on a 32-bit x86 machine? Or is #1554 only really activating "Win32" Windows APIs without actually compiling for & running on x86 hardware? Or are Windows toolchains able to generate & execute x86 code so efficiently for/on x64 hardware?
+In the Generate Project section:
+x64 would use
+x86 would use:
+Windows ships with separate compilers based on arch.
+Bonus round ARM64
+And yes it seems that for x86 family of architectures windows seems to be able to cross compile them pretty easily. In terms of test execution however I don't have that great an answer here.
+EDIT:
+I tested release mode and it seems that in release mode x64 does in fact execute faster than x86 builds. So it seems like unoptimized code is the real reason for the slowness
+@res0nance Thanks very much for the explanations. This all makes sense. So I agree we can close.
+@pqprogrammer please feel free to re-open if your problem persists with the new "main" branch (and the Windows toolchain chainges #1554 merged)

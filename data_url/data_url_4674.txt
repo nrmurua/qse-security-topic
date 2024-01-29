@@ -1,0 +1,41 @@
+Our parametrized gates should work if we pass a tf.Variable for theta instead of a constant float value. We should add a test for this and also check if automatic differentiation works properly.
+I spent a lot of time on this today (more than what I anticipated). There are some issues with backpropagation when using tf.einsum with complex numbers. I managed to reproduce the error outside QIBO with the following simple script:
+Running this gives loss=-0.6536436208636119 (correct) and grad=0 (wrong). It is easy to find analytically that the loss should be cos(2t) and hence the gradient is -2sin(2t).
+Switching from einsum to matmul (just doing s = tf.matmul(u, s)) gives the same loss but grad=1.5136049906158566 which indeed agrees with -2sin(2t).
+From this example it seems to me that there is something wrong with einsum from the Tensorflow side. Note that the "ab,bc->ac" einsum should be equivalent to matmul anyway but this does not seem to be the case here.
+@scarrazza, you have already tried the tf.GradientTape() for the gradient descent optimization of the VQE. I recall that you said that this optimization method did not work very well (but I am not sure). Note that this might explain why, as the gradient that is calculated automatically is not the correct one.
+Well spotted, I think this refers to tensorflow/tensorflow#37307, and indeed, the vqe was probably failing due to that bug.
+I was thinking of ways to convert our current einsum implementation to the more basic tf.matmul operation. This is generally possible as einsum is just a convenient wrapper for matmul + reshapes and transpositions.
+Although I have not implemented this on QIBO, I wrote a simple script that applies a series of random one and two-qubit matrices to a state using either einsum or matmul. The einsum approach is equivalent to current QIBO, while in the matmul approach the state is saved as a (2^N,) vector. In order to apply the 2x2 or 4x4 gate the state has to be reshaped and transposed to the appropriate (2, 2^{N-1}) or (4, 2^{N-2}) shape. Then the gate is applied via tf.matmul(gate, state) and the result is transposed and reshaped back to the original (2^N,) shape.
+This matmul approach is ~3x faster than einsum on CPU however it is slightly slower than einsum on GPU. Since we are mostly interested on GPU we probably want to keep our current code, unless we manage to write a matmul implementation that is at least as fast as einsum. If we stay with einsum, unfortunatelly this issue cannot be closed until the bug is fixed from Tensorflow. From the issue, it is not clear if and when is going to happen.
+How much slower your matmul approach is slower in GPU?
+How much slower your matmul approach is slower in GPU?
+For this all random (gates & state) benchmark I am doing einsum is ~1.5 - 2 times faster on GPU and ~2-3 times slower on CPU. For example, for 24 qubits:
+CPU (my notebook):
+Einsum: 120sec
+Matmul: 46sec
+GPU (V100 - 6 times deeper circuit than CPU):
+Einsum: 0.909sec
+Matmul: 1.214sec
+Ok, not worth using matmul on GPU...
+@scarrazza, following our discussion, I created a matmul branch with my matmul implementation in which backpropagation seems to work (added some relevant tests). I will try the VQE tomorrow, but you can run your tests as well. The controlled_by feature is not implemented but I can add this if we decide to go with this approach. For now it is not needed for the VQE tests anyway.
+I also ran the supremacy-like circuit benchmark and these are the results
+CPU:
+
+GPU (5x deeper circuit):
+
+As said above, matmul is definitely better than einsum on CPU for the relevant number of qubits (>15). On GPU, it seems that the compiled matmul is pretty good, however the eager version is much slower up to 20 qubits which may be a problem for some applications (note that the compile measures the second run, so we will still have a slowdown in the first run).
+Regarding the technicalities of this implementation, the idea is in lines 67-75 of tensorflow/gates.py. To give a simple example, assume that we have  qubits and we apply a two qubit gate (4x4 matrix) to qubits 2 and 5. The proceess is the following:
+Perhaps with more thinking it might be possible to get rid of some reshapes or transpositions.
+Thanks for the tests. I did a quick look at the vqe test and it works slightly better (but absolutely not competitive with the BFGS).
+The performance difference may be explained by this: https://stackoverflow.com/a/43104527 Namely, the einsum has different backends depending on the size of the objects, thus the performance form small circuits is better than matmul.
+I think that given the compiled matmul approach is still faster and equivalent to the compiled einsum, my suggestion is to create and merge PR with the matmul approach instead of einsum, meanwhile we monitor the status of tensorflow/tensorflow#37307 (as soon as tf fixes this issue we can revert the merge).
+The performance difference may be explained by this: https://stackoverflow.com/a/43104527 Namely, the einsum has different backends depending on the size of the objects, thus the performance form small circuits is better than matmul.
+I am not sure if we are referring to the same comment, but from the accepted answer I understand that matmul is preferred for small matrices. In our case we see the opposite: eg for 7 qubits the matrices are fairly small, eg. (4, 4) x (4, 32), but einsum is much faster, probably because of the reshape/transpose overhead in the matmul implementation.
+... my suggestion is to create and merge PR with the matmul approach instead of einsum, meanwhile we monitor the status of tensorflow/tensorflow#37307 (as soon as tf fixes this issue we can revert the merge).
+Sure, I will try to add controlled_by in the matmul implementation (should not be very hard) and re-enable the related tests, which are currently skipped. When everything passes I will open a PR for this.
+My only concern is the performance drop on Eager for 10-20 qubits. The good news are that in this region times are usually relatively low. It is not a big deal if something that takes 0.5sec with einsum takes 2sec with matmul if in the more time consuming region (>20 qubits) the performance is similar. On the other had, some of our short-term applications (Sergi's circuits) may be at the 15-20 region so it might not be a good idea to slow this down.
+There are a few optimizations I can think of to eliminate some reshapes, eg. we don't have to reshape back to the full vector after every gate if we just keep track of the last shape and start from that one when applying the next gate. This may be a bit tricky to implement and I am not sure what will be the gain.
+Another approach is to keep both implementations in, with matmul as primary and fall back to einsum if one uses eager mode with less than 20 qubits and no gradients. This will result to longer code but will save the performance drop (at least approximately, as the above plots are for a very specific circuit and may not generalize to everything).
+Ok, maybe the less complex solution could be to define a custom def einsum which uses matmul and can be switched on/off from the config.py. I believe that the matmul approach is still not mandatory in our applications thus having a simple switcher should be acceptable until they fix the tf.einsum.
+The discussion here has been implemented in #45 .

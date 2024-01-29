@@ -1,0 +1,31 @@
+On armv7hf architecture 0.7.1 and later tests hang more than hour than time out. There are such processes in ps output:
+I am unable to see backtraces yet, because our build system does not allow gdb to work properly there (becasue of reead-only /proc, which I'm requested admins to change later and I will report results).
+ps. Raw output is like this:
+Hangs there.
+pps. BTW, there is no GCC warnings when compiling on this arch,
+I'm able to view backtraces:
+After minute I press ^C
+After several minutes ^C again::
+Another ^C:
+So it seems to be looping in PQCLEAN_FALCON512_CLEAN_keygen.
+It seems to be looping in for (;;) loop with many continue statements in PQCLEAN_FALCON512_CLEAN_keygen. I briefly tried to step it over in gdb in case there is some obvious error but do not recognize anything suspicious.
+In case it's useful there is the full build log: armh-build-log.txt (1.2MB).
+Previous compilation used GCC-12. I tried to compile with Clang 12, 13, and 14 — it does not hang after compiled with Clang.
+Thanks for the various tests. In CI we test armv7hf via cross compilation using gcc (arm-linux-gnueabihf-gcc (Debian 8.3.0-2) 8.3.0) and falcon passes, so maybe it's even an issue with the compiler version? Could you re-test in your harness using an older gcc?
+Could you re-test in your harness using an older gcc?
+I will try it later.
+Currently I found that it's compilation of src/sig/falcon/pqclean_falcon-512_clean/keygen.c affects it will hang Falcon-512 or not. Also I found that optimization options affect result too — it does not hang with -O0 and -O3 and hangs with -O1 and -O2), and finally I found if I pass -fno-ipa-modref -fno-ipa-pure-const`` (to disable some optimizations) to -O1/-O2` it stops to hang too.
+Results of running test_sig Falcon-512 when liboqs compiled 'by default' (without additional options to compiler):
+So it's GCC-12 issue related to optimization.
+if I pass -fno-ipa-modref -fno-ipa-pure-const`` (to disable some optimizations) to -O1/-O2` it stops to hang too
+Thank you very much for this thorough analysis, @vt-alt ; so I guess it's safe to state there's a bug with that particular optimization with gcc-12... Worthwhile reporting it to gcc maintainers (sorry to state I don't know whether that version is in active maintenance even)?
+They usually will need reproducer for an effective bug report, but here we don't even know what was went wrong except some complicated tests hang. So if we report like this, I fear. it will be never resolved bug. And to investigate more will require too much time it seems.
+I will try to add something like -O3 to our ARM32 build and see.
+I will try to add something like -O3 to our ARM32 (which we call "armh") build and see.
+JFYI. Adding -O3 (to -DCMAKE_C_FLAGS=) didn't work because there is more occurrences of -O2 in final FLAGS string and it gets overridden, but adding specific -fno-ipa-modref -fno-ipa-pure-const worked OK. So I will leave it like this for our build.
+With that change 0.7.2-rc2 built and tested good in all our architectures (aarch64, armh, i586, ppc64le, x86_64).
+adding specific -fno-ipa-modref -fno-ipa-pure-const worked OK
+Any objections/drawbacks for liboqs adding these flags to all ARM gcc builds to avoid others falling into this trap again? @dstebila ?
+adding specific -fno-ipa-modref -fno-ipa-pure-const worked OK
+Any objections/drawbacks for liboqs adding these flags to all ARM gcc builds to avoid others falling into this trap again? @dstebila ?
+I don't know enough to have an opinion, but if you guys are fine with it, then go ahead.

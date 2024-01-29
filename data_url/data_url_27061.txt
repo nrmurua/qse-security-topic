@@ -1,0 +1,49 @@
+DFT gradients between cuda/cudampi and serial/mpi versions are significantly different for some molecules. For example, the following differences are observed for morphine B3LYP/6-31G test case.
+Serial/MPI version:
+39X    -3.1557002410     0.0103348688
+39Y    -2.6446002020     0.0002881292
+39Z     0.6672000509    -0.0120197547
+40X    -3.8483002939     0.0091268736
+40Y     1.0686000816     0.0105647101
+40Z     1.1031000842    -0.0082148827
+CUDA/CUDAMPI version:
+39X    -3.1557002410     0.1090530496
+39Y    -2.6446002020     0.0338787728
+39Z     0.6672000509    -0.2400229409
+40X    -3.8483002939     0.0763664437
+40Y     1.0686000816     0.2128912033
+40Z     1.1031000842    -0.1546795715
+This is possibly coming from the host code computing grid weight derivatives.
+@Madu Is this still relevant? I just executed grad_daspi_meoh_b3lyp_6-31g.in with quick.cuda and mpirun -np 16 quick.MPI and I get gradients and point charge gradients that differ by less than 1e-6. Please close this issue if you have no further concerns.
+Probably we have fixed this with recent improvements. Can you please confirm with this input?
+Still a problem. Gradients are spectacularly different between CPU MPI and CUDA serial versions. I noticed the CUDA code takes less iterations to converge. 34 vs 51. You can reduce DENSERMS from 1e-8 to 1e-6 to get pretty similar (differing between CUDA/MPI) version but within 18 / 16 cycles.
+This is what I got for gradinets
+@agoetz Thanks. I will investigate this tomorrow. Have to check HF vs B3LYP first. My wild guess is ssweder device kernel.
+@agoetz The problem is that we are using 1.0e-10 as threshold here: https://github.com/merzlab/QUICK/blob/master/src/gradient.f90#L947, and 1.0e-9 in CUDA code. When we set this value to 1.0e-10 in CUDA code, we get correct gradients for Morphine B3LYP/6-31G example that agrees well with serial version and reference code.
+Energy:
+Grad:
+The problem is that we are using 1.0e-10 as threshold here: https://github.com/merzlab/QUICK/blob/master/src/gradient.f90#L947, and 1.0e-9 in CUDA code. When we set this value to 1.0e-10 in CUDA code, we get correct gradients for Morphine B3LYP/6-31G example that agrees well with serial version and reference code.
+I am confused. I thought difference was between serial and MPI:
+(serial = cuda) /= (MPI = cuda.MPI)
+DFT gradients between cuda/cudampi and serial/mpi versions are significantly different for some molecules. For example, the following differences are observed for morphine B3LYP/6-31G test case.
+Serial/MPI version:
+39X -3.1557002410 0.0103348688
+39Y -2.6446002020 0.0002881292
+39Z 0.6672000509 -0.0120197547
+40X -3.8483002939 0.0091268736
+40Y 1.0686000816 0.0105647101
+40Z 1.1031000842 -0.0082148827
+CUDA/CUDAMPI version:
+39X -3.1557002410 0.1090530496
+39Y -2.6446002020 0.0338787728
+39Z 0.6672000509 -0.2400229409
+40X -3.8483002939 0.0763664437
+40Y 1.0686000816 0.2128912033
+40Z 1.1031000842 -0.1546795715
+The original issue is between cpu and CUDA versions. Checking serial vs mpi now.
+@agoetz Yes, that cutoff was the problem.
+OK, great that you found it! How come that the cutoff is different?
+@agoetz Sometime ago I noticed an occasional weird behavior happening in XC gradients but couldn't figure out what's going on. So I set the DMCutoff in CUDA code to 1.0e-9: https://github.com/merzlab/QUICK/blob/master/src/cuda/gpu.cu#L416 and everything looked good. What I didn't realize was that in the serial code its actually set to 1.0e-10 not e-9. So when I revisited this problem today, I was curious why I cannot pass the value of DMCutoff from f90 to C side correctly. After looking out for extraterrestrial reasons, I finally checked the C function call in the f90 code: https://github.com/merzlab/QUICK/blob/master/src/gradient.f90#L646. Its a stupid parameter leak and the bloody compiler never complained!!!
+Hm. So in the end it was not a serial/MPI error. Any idea why this does not pose a problem for other tests?
+I think it depends on the shape of the molecule and the basis set we choose. If there are many gird points with densities eliminated by 10-9 cutoff but retains with 10-10, this can happen, right? So I think this example was an extreme case.
+Yes that makes sense. Thanks Madu.

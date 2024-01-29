@@ -1,0 +1,59 @@
+The file transforms/_bksf_test.py contains the following test:
+The line
+depends on the Jordan-Wigner routine for InteractionOperators, which is incorrect, as pointed out in #281 . Indeed, if we change this line to use the standard Jordan-Wigner,
+then the test fails. At the end, evensector_H has value 2 instead of 8. This is the same reason that my PR #286 cannot pass Travis.
+The routines get_fermion_operator and jordan_wigner applied to FermionOperators are both well-tested and have simple source code so I have high confidence in them.
+I was hoping somebody more familiar with the BKSF code could help us figure out what is going on here. Perhaps @kanavsetia?
+Thanks @kevinsung  for bringing this to my notice. I will take a look and update soon.
+Thanks @kanavsetia - this issue needs to be resolved before we can merge one of our open PRs that fixes a rather dangerous bug. So this very high priority.
+Hi Ryan,
+I could not spend time with the code today. I will try to spend time on the code tomorrow and will surely update by evening.
+My initial thoughts are: BKSF uses the same iteration routine as in Jordan-Wigner to go through the terms in the Hamiltonian. And if the eigenspectrum are different for the for the get_fermion_operator() and the iop, then the iteration routine must be missing terms or making some sort of mistake. I will try to spend more time with the code tomorrow and update soon.
+Line 106 in current jordan-wigner and line 111 in BKSF, I think, was written for the case where the number of unique indices are 2. This case is double counting or sometimes completely missing the case when the number of unique indices are 3.
+An easy fix is to just go over all the cases where number of unique indices are 3 and divide the coefficient by 2. I added following code for the 3 unique indices in BKSF
+and the following for Jordan wigner:
+This fixes both Jordan-Wigner and BKSF and all the tests are passing on my end(even with jordan_wigner(get_fermion_operator(iop))). It is 2 am here, so, I am not going to write the code where we skip one of the cc for 3 unique indices. I will try to do that sometime soon. Or if someone else wants to do that, that'll be awesome!
+@kanavsetia I think you're right that the bug is in the part of the loop that reads
+I found this part hard to understand. In my PR #286 I replaced the entire iteration procedure with a new one that is also faster. I'm going to try to use my iteration procedure to fix the BKSF code, so you're off the hook for now!
+Ok nevermind @kanavsetia my attempt led to some error messages that I'm unwilling to debug. Specifically, in line 365,
+operator has the value (-1, 'X'), and -1 is not a valid index.
+I think it would be nice if we used a better looping structure but that's not necessary. I'm fine with just fixing the bug with whatever way you suggest.
+In case you're interested, I replaced the body of bravyi_kitaev_fast_interaction_op with the following code:
+I thought that would work but it gave me the error I mentioned above.
+Hi Kevin,
+I will try to look at the new code and the error that you got. But, I think the earlier code should also work fine with the modification.
+Also, @kevinsung, will you add the three unique indices case to the BKSF code in #286 PR, or should I do a separate PR for that?
+And if I am not wrong, you may be missing a case with two unique indices in your code too. Is your code passing all the tests?
+qubit_operator += (coefficient * two_body(edge_matrix_indices, p, q, p, q))
+In addition to this, I think you need another term
+qubit_operator += (coefficient * two_body(edge_matrix_indices, p, q, q, p))
+Let me know, if I missed something.
+If p and q are different from each other, then p^ q^ p q = - p^ q^ q p. So in the code right before that, I subtracted that coefficient, as in the second line of
+The way I wrote my loop, p and q are guaranteed to be different.
+Okay, I will go ahead and try to add your fix to #286 so that can be merged. You mean simply add the lines you mentioned, right:
+'elif len(set([p, q, r, s])) == 3:
+transformed_term = two_body(edge_matrix_indices,p, q, r, s)
+transformed_term *= coefficient/2.
+qubit_operator += transformed_term
+continue'
+and the following for Jordan wigner:
+'elif len(set([p, q, r, s])) == 3:
+transformed_term = jordan_wigner_two_body(p, q, r, s)
+transformed_term *= coefficient/2.
+qubit_operator += transformed_term
+continue'
+@kanavsetia I'm sorry but I don't completely understand your fix. Would you mind providing your source code for what the body of bravyi_kitaev_fast_interaction_op should be? Is that the only function that needs to be changed?
+oh, that makes sense!
+And just this is required:
+It goes right after the four unique indices case and before the last 'elif'.
+and I am assuming you are updating the Jordan-Wigner code to the new one that you wrote. So, you don't need the other block.
+Ok I see. I made that change and it passed.
+@kanavsetia With your fix, my PR passed Travis, and therefore can be merged. Thanks for all your help! Do you think there are still problems with the indexing in the BKSF code? In that case, we should leave this issue open. It is not nearly as urgent anymore though.
+You're very welcome, Kevin. Besides, it was my job to address all the questions related to BKSF, anyway.
+I doubt, there's an issue with indexing. @TariniHardikar (correct me if I am wrong) has been using the code for different iop's and and I don't think she has ever encountered the indexing issue.
+With your new code, iteration over the indices is being done little differently. It is not immediately clear to me, how this is causing the error you encountered. The only thing, I can think of right now is that the code might require one or two more small changes, if we are moving to iteration routine that you wrote.
+Also, I think, we can stick with the current iteration routine in BKSF. This way, it'll also be a nice consistency check between the two iteration routines too. If one of them breaks, we'll know, just like this very issue.
+I think we've established here that the old indexing scheme in the function bravyi_kitaev_fast_interaction_op was incorrect because it skipped some two-body interactions with three unique indices. That indexing was copied straight from jordan_wigner_interaction_op, which my PR #286 fixes, and that's what was causing the discrepancy.
+It looks to me like that was the only place in the BKSF code which used that indexing scheme. Is that true? In that case I think we can close this issue.
+Yeah, I agree with what you just described. I second that we can close this issue.
+Great. I just want to mention that the iteration routine that I proposed (and used in #286) is about 4x faster because it uses itertools.combinations instead of looping over all permutations. If you or @TariniHardikar ever want to speed up the BKSF routine that should be a simple optimization to make.

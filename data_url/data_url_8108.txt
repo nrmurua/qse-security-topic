@@ -1,0 +1,33 @@
+In qutip-tensoflow, we aim to include TensorFlow's autodifferentiation with Qobj. However, this will require the following code to work:
+I used numpy ndarray instead of a tf.Tensor or tf.Variable for simplicity and so that the example is reproducible.
+Currently this example raises:
+"TypeError: incompatible dimensions [[2], [2]] and [[1], [1]]"
+as __mul__(self, other) defaults to __matmul__(self, other) when other is not an instance of numbers.Number.
+If instead we do:
+The error raised is:
+"TypeError: unsupported operand type(s) for *: 'numpy.ndarray' and 'Qobj'"
+This error is different because __rmul__ checks first for other being an instance of numbers.Number and if not, it raises NotImplementedError. It does not check whether Qobj(other) works. I would say this is undesired and that __rmul__ should try first converting other into Qobj and not assume that other is already Qobj.
+Describe the solution you'd like
+I would like to suggest either:
+changing the behaviour of matmul dispatcher so that (1,1) shaped data is multiplied element wise by default. However this, although not terrible, it breaks conceptually what matmul is, as a (1,1) x (2,2) matrix multiplication can not happen.
+Allow mul dispatcher to have as input a Data object. In this way we would raise an error when the Data for mul dispatcher is not of shape (1,1) and perform an elementwise multiplication when it is. I am not sure how difficult it is to code this.
+Create mul_elementwise dispatcher to have as input two Data objects and perform elementwise multiplication.
+Another change that I would like to suggest is to add a check in __rmul__ to see if other can be represented as a Qobj.
+These two changes should probably go in a different PR.
+Edit: added third option
+I'm not sure about any of these options:
+Could we just reach Data objects to be multiplied by a scalar so that the Tensorflow backend can accept multiplication by a tf.Tensor and either raise an error if it's a not a 1x1 tensor or perform the scalar multiplication if it is? It feels like this is a quirk of Tensorflow that scalars are represented by 1x1 matrices, so it would be nice if the tensorflow backend could handle that quirk itself.
+Thanks for the useful feedback, both here and in PR #1611 ! From the discussion in PR #1611 it seems that the second option with the modifications proposed by Jake in this issue seems to be the most sensible approach. Hence, if there are no objections, I will open a PR (which I will probably do tomorrow) where I implement the following changes (adapted from Simon's comment in PR #1611):
+Qobj.__mul__(self, other) 
+Qobj.__rmul__(self, other) :
+Dispatch to data.mul (other will never be a Qobj): Notice that in this way both left and right multiplication will behave in the same way. This would also "solve" the inconsistency PR Fixed __rmul__ to be consistent with __mul__ behaviour. #1611 was trying to solve but this time data.mul will handle it and will raise NotImplemented whenever required.
+mul_dense and mul_csr:
+There are a few things I would like to discuss before opening a PR:
+will now behave consistently ("fixes" PR #1611). Is this acceptable? I would say yes given that we are doing a major version change. However, it may be a good idea to start raising a deprecation warning in QuTiP 4 if these changes go forward.
+This all looks very sensible to me.
+I'm happy with qobj * matrix and matrix * qobj both being disallowed (though I also wouldn't mind allowing Numpy to broadcast the multiplication treating Qobj as a scalar).
+The thin wrappers around add_csr and add_dense (and add_csr_dense_dense, etc, if they exist), only need to be done when they're passed to the dispatcher - the functions themselves should remain as they are, so they can conveniently be called with C semantics without needing to cast up to a Python object and back down again.
+data.add(left, right, scale) done at arbitrary precision with no tidying up should be identical to data.add(left, data.mul(right, scale)) (the operation is called "fused multiply-add"), so yeah, add should agree with mul.  Good catch!
+@AGaliciaMartinez The plan looks good to me too.
+Should these specialisations behave in the same way allowing arbitrary python objects as "scale" and raise NotImplemented when required
+I think this is a great idea -- let's make it so.

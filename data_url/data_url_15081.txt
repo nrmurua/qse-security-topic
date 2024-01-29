@@ -1,0 +1,14 @@
+When transpiling a circuit with a custom gate with a calibration, the gate direction pass does not check the circuit calibrations for the gate. It only checks the target and looks at a special-cased gates.
+Running this code produces:
+Transpilation should run without error. It should leave the circuit unmodified.
+In gate_direction.py, right before/after the target is checked in _run_target, the circuit's calibrations should be checked for the gate and no exception should be raised if the calibration is there.
+Additionally, there may be an additional bug here because the error message is confusingly about flipping the gate direction when the calibration has the right direction present. A "gate not found" type of message would be more appropriate. I wonder if there are other ways to trigger the "flipping the gate" message where the issue is that the gate was not found at all.
+This issue was first noticed in the qiskit-dynamics PR for the DynamicsBackend tutorial. In most cases, we are working only with gates already in the Target so this issue does not come up.
+Probably we could copy added calibrations to target in the running pass manager, which might be easiest fix. Alternatively, we could update every pass to check calibration -- so far calibration was ignored in many places and we needed to manually update basis gates to respect added calibration.
+Target must be copied through serialization so mutating the target per circuit doesn't trigger race condition.
+https://github.com/Qiskit/qiskit-terra/blob/2ce129a14279a746d309f00e311b930ddbfe633c/qiskit/transpiler/passmanager.py#L264-L266
+I've made #9786 to address the bulk of this issue.  For the error messages:
+Adding the calibration to the target for the running pass manager is an interesting idea - I think if we can do that without huge overhead in copying Target instances for large backends, that might very well be the best path forwards long term.  There's a tension to consider between Target being a fixed object per backend, and calibrations being a per-circuit thing, even though I suspect it's quite likely that several will want to be re-used by people; perhaps it's worth considering in the Target API whether we should expose public methods for easily adding all calibrations into a new Target object to make those paths easier, so users won't need to be paying the copy penalties every time (assuming we do Naoki's suggestion).
+I think in the shorter term, just adding a manual check in this pass is better; there's way more places within the transpiler we'd need to disentangle from calibration-specific code to do things better, so maybe best to do that separately.  The small change is also backportable.
+I've also made #9787 to address the error-message concerns of this issue.
+Yes, that sounds reasonable. PR also looks good to me. Thanks Jake.

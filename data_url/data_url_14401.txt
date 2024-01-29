@@ -1,0 +1,17 @@
+It looks like the optimizations in #6896 can sometimes cause problems with convergence. @albertzhu01 found several cases that triggered this problem, although there seems to be some environment-dependence that makes it hard to reproduce across machines - the resulting almost-identity-matrix up to 1.E-16 scale deviations can cause error in lapack geev.
+Any thoughts @jakelishman ?
+---- from qiskit-experiments issue  Qiskit-Extensions/qiskit-experiments#846 (comment)_
+The following test case reliably reproduces the error:
+Output:
+Originally posted by @albertzhu01 in Qiskit-Extensions/qiskit-experiments#846 (comment)
+A crude hack is: trap the exception and check if the code returned (info) satisfies info>0. If so, add normally distributed random numbers with standard deviation 1e-20 to the matrix and try to compute the eigenvalues again. That hack works in this case.
+It could be that it's not just that the matrix is almost the identity. The degeneracy in the eigenvalues, or the diagonal, is necessary to cause the error... in this case at least. Changing one of the diagonal entries so that it ends in 9 rather than 8 is enough to see success.
+In this case, multiplying the matrix by $\sqrt{-1}$ also avoids the error.
+A crude hack is: trap the exception and check if the code returned (info) satisfies info>0. If so, add normally distributed random numbers with standard deviation 1e-20 to the matrix and try to compute the eigenvalues again. That hack works in this case.
+The changes in #6896 were intended to avoid the randomized algorithm in TwoQubitWeylDecomposition, which after a lot of battle-hardening seems finally 🤞 immune to such pathologies. I guess rather than trapping the error and  ad-hoc randomizing, I'd rather trap the error and fall back to the TwoQubitWeylDecomposition alogorithm. Although having two paths like this worries me, and if the general eigensolver is unreliable maybe its better to simply use the TwoQubitWeylDecomposition algorithm everywhere unless the performance hit is substantial.
+I think the use of randomization is quite different. And pretty small in terms of code and complexity. But, I understand that introducing another piece of randomness might result in a series of tweaks as failing cases trickle in under general use.
+If there are understandable characteristics of offending matrices, we could make some kind of test suite in order to be more confident (if not perfectly) that a solution will work. I suppose a small subset of these would go in the big test suite.
+EDIT:  There already is something like this
+The terra testsuite exercises a bunch of the pathological cases. It would be interesting to see if the testsuite passes on your setup. Something like python -m unittest test.python.quantum_info.test_synthesis -cb should run the relevant pieces
+Apropos environment-specific features: The example above succeeds when using MKL (on my machine). I'm not 100% sure because I used Julia (I didnt look up yet how to use mkl with scipy.linalg).  But, it looks like python and julia are calling the same lapack routines. Furthermore, with openblas, Julia fails with the same error as numpy.
+It's definitely a function of the environment beyond just the specific blas implementation. On my linux system I do not encounter any failures with openblas, but on my m1 mac also using openblas it does reliably fail.

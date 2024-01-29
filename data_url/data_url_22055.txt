@@ -1,0 +1,45 @@
+Using phaser example as pulled from github. While running scope shows correct waveform for SAWG0. Stop running with CTRL-C. Scope shows full-scale noise for SAWG0. This is reproducible after resetting the KC705.
+artiq_run does not implement controlled termination of experiments. You need to use the full artiq_master setup and graceful termination for that.
+I understand that that users-who-care should implement graceful termination. All the same this schizophrenic behavior shouldn't be possible. Full-scale noise may be hazardous in some applications especially given how common it is in physics labs to use wide-band amplifiers to drive sensitive loads. For example, it's not uncommon to operate resonant devices with high gain away near to resonance including piezos and resonant EOMs (gives faster response). As another example, the lab adjacent to mine safely uses easy-to-damage amplifiers in a pulsed fashion at many-times the acceptable CW gain. AFACT this mode of operation is "safe" because their AWG doesn't  produce long-duration broadband noise.
+Given the target market for Sinara I think its worth having a discussion about this. What's happening in the example when artiq_run terminates that produces the noise I see?
+artiq_run does not implement controlled termination of experiments. You need to use the full artiq_master setup and graceful termination for that.
+OK. This is good to know. Please update manual to reflect this aspect of artiq_run.
+http://m-labs.hk/artiq/manual-master/utilities.html?highlight=artiq_run#local-running-tool
+Graceful termination is not a safety feature for your hardware constraints. That would be completely mismatched. The number and severity of hardware constraints is irrelevant. Forbidden parameter ranges are arbitrarily complex. You have to take care of them yourself, in software, in gateware, or in hardware.
+This behavior is well defined and documented.
+https://m-labs.hk/artiq/manual-master/core_drivers_reference.html#artiq.coredevice.spline.Spline.smooth
+For first order and third order interpolation (linear and cubic) the interpolator needs to be stopped explicitly at the stop time (e.g. by setting spline coefficient data or starting a new smooth() interpolation).
+If you don't they just continue interpolating. And since there is nothing that stops them they just keep overflowing. The "schizophrenia" must be elsewhere.
+Please file a separate issue about artiq_run. We'll see whether this can be implemented sensibly. I am a bit doubtful about documenting all the things a tool does not do. If you feel that artiq_run is not up to "the task" we might just remove it since it's not the standard governor for experiment execution.
+Is there any use for the overflows, or would it make sense to detect them, report an error, and kill the output (in gateware)?
+For the phase and frequency interpolators overflows are natural and intuitive. For the amplitude/offset, they would be expensive to detect and report.
+You have to take care of them yourself, in software, in gateware, or in hardware.
+Suppressing crazy output due to overflow seems to be covered by SAWG Extensions I "configurable, saturating output limiters." Obviously there's room for interpretation.
+For the amplitude/offset, they would be expensive to detect and report.
+To the extent that this can be handled in gateware that's the preferred route. Seems like adding one more bit to each  gain/amplitude and detecting when it flips might work. Can you break it down for detection independently of reporting?
+For the phase and frequency interpolators overflows are natural and intuitive.
+They are for the first accumulator (that drives the CORDIC), but are they for the next ones (that drive another accumulator)?
+That property holds for all orders. Once the interpolators start wrapping really fast then there will be aliasing but that's generally present in visible in other circumstances as well.
+The configurable saturating output limiters are unaffected by this. They also work as specified and constrain the output amplitude. They have no way to discriminate against signals originating from an interpolator that somone forgot to stop. "Crazy" actions will always lead to "crazy" outputs.
+Maybe you want to play with the AD9154 power limiting features?
+They have no way to discriminate against signals originating from an
+interpolator that somone forgot to stop.
+OK. I understand this perspective.
+It looks like the phenomenon I observe is related to seamless-handover. I get unanticipated consequences that make me unhappy. It may be desirable to insulate novice ARTIQ users from these consequences.
+A simple solution for artiq_run could be trapping SIGINT and calling artiq.coredevice.core.Core.reset() before returning to the command line. In the present Issue context this ensures that the SAWG FIFOs are emptied before the interpolators run away. And it's consistent with  asynchronous use of artiq_run. The  rtio-reset behavior could be disabled with a command line option.
+Paralleling the artiq_run behavior, the scheduler might well call artiq.coredevice.core.Core.reset() when an experiment is not gracefully ended. For example, clicking Delete in ARTIQ Dashboard. AFACT this would take place at or near artiq.master.scheduler.RunPool.delete().
+A simple solution for artiq_run could be trapping SIGINT
+Signals have concurrency and portability issues that make this not so "simple".
+And note that the vast majority of programs that use signals are broken in some way, including Python itself.
+And note that the vast majority of programs that use signals are broken in
+some way, including Python itself.
+OK. How about trapping keyboard input for artiq_run? "hit any key (other than CTRL-C) to end"
+Core.reset() does not reset the interpolators
+Current action of Core.reset() is clear RTIO FIFOs, release RTIO PHY reset, and set the time cursor at the current value of the hardware RTIO counter plus a margin of 125000 machine units. Current action of SAWG.reset() includes clearing the spline interpolators and accumulators. Seems to me like Core.reset() should trigger SAWG.reset().
+Doing roughly what you propose would still leave enough time for the interpolators to overflow many times between the time the experiment is evicted and the interpolators being stopped.
+OK. Here's a proposal that attempts to address this.
+Currently Sawg.reset() writes seven times to the SAWG RTIO configuration channel. Suppose Sawg.reset_all is a new RTIO event for the configuration channel that actuates new gateware called reset_all_gw that 1) simultaneously resets all the SAWG accumulators and interpolators and 2)  blocks SAWG from receiving new events for 125000 mu.
+Let t_r be the latency for adding a single event to the SAWG configuration RTIO channel plus propagation time to the SAWG device. As a starting point for thinking about this assume slack > t_r. That is, the SAWG FIFO contains several user-defined events and SAWG output for duration t_r is "safe". Modify Core.reset() to add reset_all to the SAWG configuration FIFOs with a time-stamp that is asap, pause, then proceed with existing Core.reset() stuff (eg clearing RTIO FIFOS).
+If slack < t_r and RTIO underflow is imminent and uncontrolled accumulator wrapping /may/ occur. This is addressed if SAWG gateware automatically triggers reset_all_gw upon RTIO underflow.
+No. Core.reset() should not trigger SAWG.reset() or any other reset_all().
+Blanking DACs on interpolator overflow is #822

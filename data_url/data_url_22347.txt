@@ -1,0 +1,63 @@
+I am running an artiq_master and an artiq_ctlmgr on one machine, using the default arguments.
+I have a controller I want to run on the same machine.
+With a controller device_db entry with "host"="localhost" or "host"="10.255.6.32" (the IPv4 address of the machine) the controller manager does not start the controller. It only starts it when "host"="::1".
+I would have expected all synonyms for localhost to have worked.
+What's the error message?
+#253
+There is no error message (or any message) in the log, the controller just is not started. The controller starts fine if one manually executes the "command" key.
+It looks like the host filter in the controller manager filters out all but "::1"
+artiq_ctlmgr --bind localhost --bind 10.255.6.32
+I don't really see why we do all this verbose, clumsy, and inadequate explicit IP binding and handling though.
+The gist is that a given artiq_ctlmgr finds its controllers that way. But there should be a better way. I would default to binding everywhere and then identify the relevant controllers by adding an appropriate tag to their definitions, i.e. then do artiq_ctlmgr --group stuff_on_machine_a.
+And the habit of using (as defaults, in the docs, and in examples) IPs instead of names is not a good one. We should try to do better here.
+artiq_ctlmgr --bind localhost --bind 10.255.6.32
+This won't do anything:
+@cjbe host=localhost should have worked, but host=10.255.6.32 is not supposed to. What is the output of the host localhost command on your machine?
+But
+And
+Doesn't https://tools.ietf.org/html/rfc6761 say that localhost should map to a loopback address?
+@cjbe try this
+plus replacing ::1 with localhost as the default value of --server options of frontend programs.
+Pass. I just checked host localhost on a selection of Linux (Ubuntu) machines in the lab, including a fresh install of Ubuntu 16.04, and got identical responses, so it is not quirk of my installation.
+@sbourdeauducq that patch works
+OK. But then I suppose it won't work if someone uses the loopback addresses. I prefer to keep the current binding to the loopback addresses, as the default should not be to expose insecure servers on network-visible addresses.
+The proper solution to seamlessly support non-standard network settings like yours is to implement better/higher-level authentication on all ARTIQ connections, and always bind on all addresses.
+By the way: considering how lousy inter-process communication APIs are in 2016, many programs use TCP/IP localhost communications for this purpose. IPython is a notable offender. With such network settings, does running IPython on your machine open network-visible and potentially exploitable ports on 172.17.164.45?
+No it does not.
+Where does it bind then? 127.0.0.1?
+Binding to everything is a very sane default. It is not a security risk because a) there are firewalls nowadays, b) the service is insecure even if you only bind to a loopback interface. The hassle with combining and specifying multiple address families and addresses, loopback here and there is much bigger than deferring it all to the tools that are in place to deal with this anyway. In this case security is only an illusion. And that is worse than no security.
+And for your confusion re "localhost": there is a massive difference between libc lookups (what python uses) and dns (host and nslookup).
+I disagree; I regularly run ARTIQ services while being on untrusted wireless networks. In this case, binding to localhost does prevent connections from the wireless network.
+It's about a sane default. Not what you can't and can not do. Get your iptables going.
+We should make it so that this gets out of the way of the user by default. If you specify a bind option, it should only bind to that host, if there are not bind options, bind to all.
+Get your iptables going.
+This is a lot more complicated than the bind options in artiq.
+If that is too complicated for you there are always things like ufw. That's definitely less complicated than what we have here.
+And whether the mess with the bind options here is actually less complicated than iptables is questionable.
+How is that a mess? ARTIQ binds to 127.0.0.1 and ::1 plus any other IP you give it. That's pretty simple.
+It's a mess by amount of code that had to be written and number of issues that were generated.
+It's also a mess because you now have to track IPs. Unnecessarily.
+It's a mess by amount of code that had to be written and number of issues that were generated.
+All solved now.
+It's also a mess because you now have to track IPs.
+You have to track IPs no matter what, unless ARTIQ implements a better form of authentication, in which case you have to configure it.
+Binding to "127.0.0.1 and ::1 plus any other IP you give it" is also not simple because asking the user to even understand that phrase is unreasonable.
+You should never have to track IPs in ARTIQ. Use hostnames.
+And "All solved now" are famous last words. Let's not claim that this code is bug-free.
+Binding to "127.0.0.1 and ::1 plus any other IP you give it" is also not simple because asking the user to even understand that phrase is unreasonable.
+What is worse when users don't understand IP configurations and just use the defaults? Seemingly working system with major security issues, or ARTIQ components reproducibly not connecting?
+If you dislike IP address specifications so much, we can bind to loopback by default, and have a single --enable-network option that binds to all. If users have more complex network filtering requirements then they can use iptables and friends.
+Though this won't even fix the original issue (unless --enable-network is used), as its root cause is a weird and arguably broken network configuration where localhost resolves to a non-loopback address.
+your confusion re "localhost": there is a massive difference between libc lookups (what python uses) and dns (host and nslookup).
+#465 (comment)
+Pretty sure that host localhost and nslookup localhost is irrelevant here as it is overridden by /etc/hosts. If there is the usual localhost line in /etc/hosts that will hit first. In other words: I would still think that "localhost resolves to a loopback address" irrespective of what DNS says.
+Yes. I dislike specifying IPs because it is guaranteed to be broken by renumbering and the value is decidedly non-idiomatic and opaque.
+Ok. If there are really overruling security concerns against defaulting to wildcard binding, then I'd definitely recommend it as an explicit option "to get out of the user's way".
+Binding to "127.0.0.1 and ::1 plus any other IP you give it" is also not simple because asking the user to even understand that phrase is unreasonable.
+But asking the user to configure iptables is, in contrast, reasonable?
+If you look at what you have in practice, there is already a firewall configuration that does exactly do this. Nobody is demanding the direct use of iptables. There are excellent higher level tools like ufw or even graphical interfaces.
+In practice, at least at NIST, you have to deal with your firewall already. iptables is a non-issue.
+Pretty sure that host localhost and nslookup localhost is irrelevant here as it is overridden by /etc/hosts.
+There is definitely something fishy with the resolution of localhost on the Oxford machines, otherwise my patch above would have done nothing.
+Hoping to demystify our network setup, I've just run a small script I wrote a couple of years ago on one of our machines (the current master, incidentally). It calls getaddrinfo with various relevant parameters and prints the entries returned:
+The output should be fairly self-explanatory (check the source for details), but to point out the obvious, the host:port strings used are printed at the beginning of each line, followed by the flags (AI_PASSIVE or just 0). Nothing seems out of the ordinary, compared to the table in my blog post from four years ago. Only the full host name resolves to the LAN IP, which is reasonable.

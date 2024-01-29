@@ -1,0 +1,19 @@
+I'm working on the definition of a custom class MyStatevector which inherits from qiskit.quantum_info.Statevector and implements some further functionalities. The problem is that some of the Statevector methods (e.g. staticmethod, classmethod, but not only) always return a Statevector instance, no matter what type the original caller was.
+In general, I don't think this is the desirable and expected behaviour since, as soon as I call one of these methods on a MyStatevector instance, Qiskit silently "converts" it back to a Statevector, preventing me from further using my custom object.
+As an example, let's consider the Statevector.conjugate method, implemented in qiskit.quantum_info as follows:
+This is the definition of my custom class:
+The following code raises an error:
+AttributeError: 'Statevector' object has no attribute 'mymethod'
+The code should run with no errors and print the string 'mymethod'.
+The type of conj is always expected to be the same of the caller psi.
+In this simple case, it should be enough to fix the definition of Statevector.conjugate as follows:
+For static/class methods, fixing this could require a bit of work, but I think it could be very useful as well.
+In simple cases like this, it is possible to update, but I'm not super keen on opening the can of worms that is implicitly making Statevector subclass-cooperative.  Classes need to be specifically designed to be safe for subclasses, and that's not really part of Statevector's API.  What sort of use-cases did you have in mind?
+Some of the problems that might well arise:
+Those aren't necessarily unsolvable issues, I'm just mentioning them as reasons as to why I'm very nervous about trying to move towards a subclassable Statevector.
+(For what it's worth, we actually do subclass Statevector ourselves in Aer, but that's really intended for a limited set of functionality.)
+Ok yes, thank you for the answer. Now I understand the sort of issues that can arise from making Statevector subclassable.
+What I'm trying to do is to extend the Statevector, DensityMatrix, and Operator classes (defined in the quantum_info module) in order to make them work with "symbolic" sympy matrices (instead of numpy arrays). I started trying to inherit from the corresponding Qiskit class but I still need to figure out whether this is the best approach or not.
+Introducing symbolic calculation with matrices is a whole other can of worms as well.  Honestly, if you're having a play with that sort of thing, I'd probably try building them up as completely separate objects first, and only then maybe start to think about how interop might work - ergonomic and performant (well, as much as can be expected with symbols) can be tricky in their own right.
+It's quite difficult to correctly manage the multiple-dispatch needed to allow things like binary methods (e.g. Statevector.__add__ or Operator.whatever(self, statevector)) to work well when each of the operands could have different types.  I don't think there's any scope in Qiskit for merging something like that into Terra core - it'd just be too complex for us, given that the core feature of Terra is QuantumCircuit and the transpiler, and stuff built on top of those.  If we were starting from scratch, qiskit.quantum_info might even be a completely separate package.
+Thanks again for your help! I'm having a try to make something like SymbStatevector(pqc) or SymbOperator(pqc) possible working with sympy and Qiskit (pqc here is a parameterized QuantumCircuit object) --> #4751. As you suggested, I started by defining my own classes without any interop but sticking to Qiskit interface as much as possible.

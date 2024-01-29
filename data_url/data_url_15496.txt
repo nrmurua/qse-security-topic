@@ -1,0 +1,12 @@
+SabreSwap can re-order measurement operations (and probably classically conditioned gates) that write to the same classical bits.  This affects optimisation level 3 by default, since it uses sabre to route if nothing else is provided.
+I am 95% sure this is the cause of the failures we're seeing in the randomised test suite currently.
+Given a circuit:
+which has a drawing
+Clearly the output of the circuit should always be 0, because qubit 1 is never altered, and is measured second.
+If we transpile it with a special coupling map that essentially only has one valid routing for the default decomposition of ccx, the orders of the measurements get flipped, which Aer confirms:
+This produces, for example:
+but the second dictionary should be the same as the first.
+(It's too long to draw transpiled here, but if you do it locally, you can see the measurements are swapped.)
+Sabre should take into account the topological ordering of measurements (and other clbits).  In the above examples, the counts should both be {'0': 1024} (which they are for any other routing method).
+In both SabreSwap._successors and ._is_resolved, only the quantum bits are accounted for.  My very very rough intuition for what's going on makes it feel like it should account for all successors, not just qubits.
+I think you're correct here. The other routing passes work over the dag in topological order directly (well typically they either use dag.layers() or dag.serial_layers() which the first step is to do a topological sort and iterate over that) which will respect classical wire edges in the dag. Since sabre does the layer generation as it iterates over the dag we should be looking at successor nodes over both quantum and classical wires to ensure we get the correct ordering.

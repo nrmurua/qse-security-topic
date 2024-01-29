@@ -1,0 +1,13 @@
+ERROR: Stabilizer::State::invalid instruction 'fusion'. for a simple innocent circuit.
+This works fine for n<=19 (expectation value is 0). Starting from n=20, execution fails with the error that's in the issue's title.
+Work always
+Related to the line:
+I guess that for now disabling fusion optimization will do the job
+Note that problems occur also for the MPS simulator starting from 20 qubits. For the MPS simulator, there is no error (for n>=20), only strange behavior and incorrect results.
+It looks like there are a couple of bugs tucked in here: The first is this "fusion" op should actually be a "unitary" op. The need for a separate fusion operation was removed a while ago and for all purposes this instruction is an arbitrary "unitary" gate.
+The second one is that PR #579 enabled fusion automatically when number of qubits was >20, but fusion should only be happening if the output gates are in the supported gate-set so this looks like a bug in the case of the stabilizer simulation which doesn't support arbitrary unitary instructions. As you say you can get around this for now by explicitly disabling fusion.
+The third is a bug in the MPS simulator. The MPS simulator says it supports unitary instructions, but after looking at the code it only supports one and 2 qubit unitaries and just ignores the instruction if its larger than that which would be why you are seeing incorrect results.
+There is an additional aspect with regard to the MPS simulator. It is much slower for arbitrary unitaries. If the fusion optimization replaces standard gates by unitary matrices, then this is not a good heuristic for the MPS simulator, even if it fully and correctly support these matrices.
+but fusion should only be happening if the output gates are in the supported gate-set so this looks like a bug in the case of the stabilizer simulation which doesn't support arbitrary unitary instructions
+This seems to be a good candidate for a test.
+This is also a problem for extended stabilizer simulator. The tutorial on that one does not run currently. There should be tests to catch these kinds of regressions.

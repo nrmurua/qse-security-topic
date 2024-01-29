@@ -1,0 +1,31 @@
+@sbourdeauducq @jordens @whitequark @dleibrandt @r-srinivas @dtcallcock I'm posting this here to provide a central place for discussions regarding how one might use direct memory access (DMA) to program pulse sequences that for whatever reason are undesirable to implement in the typical way (processor calculating and pushing timestamps to RTIO core one by one).
+For long pulse sequences where the average time between RTIO output events is less than the time it takes for the processor to compute and push timestamps (roughly 1 us each), the slack will be steadily reduced and will eventually cause an RTIO underflow.  The solution to this is to calculate timestamps farther in advance.  The simplest way to do this is to make sufficiently deep FIFOs for the relevant channels, and then set the initial slack sufficiently large (e.g. using a single long delay) to enable the processor to calculate and push all the timestamps with enough slack remaining at the end.
+This method may not be desirable in some cases (e.g. where experimental duty cycle is important), so another solution would be to precompute RTIO timestamps on the PC, load them in to RAM on the core device, and have the processor call for the timestamps to be pushed directly from RAM to the output FIFOs at the appropriate time.
+There are numerous technical/implementation questions to be discussed.  I list a few below, some with suggested answers and some without.
+Yea. You are describing the design that has been thrown around for a few years now.
+DMA().play() would be blocking. Otherwise, interlocking access seems problematic.
+Since the DMA'ed events, and thus the full list of all channels to which RTIO events will be sent by DMA, would necessarily be known at compile time, would it be possible to have DMA().play() be blocking only if a processor instruction is reached that requests read/write from one of the channels involved in the DMA?  In this way, the processor could continue to put RTIO events onto other channels' FIFOs while the DMA is occurring (or perform other processing tasks, such as counting pulses from different channels or calculating a Bayesian update of some sort), which will help preserve slack, especially if the DMA'ed sequence contains a very large number of very short pulses (such that the spec given above for DMA bandwidth is not enough to keep the slack from reducing).
+Since the DMA'ed events, and thus the full list of all channels to which RTIO events will be sent by DMA, would necessarily be known at compile time
+Not necessarily.
+OK, but the full list of channels for both dma0 and dma1 are known, even though they may be different.    For example:
+If ttl4 is involved in dma0, but not in dma1, it should be possible at compile time to know that the processor should block on the dma0.play() but not on dma1.play().
+If another channel, ttl7, is involved in both dma0 and dma1, then the code below would block on dma0, but would allow the ttl4 pulse to be issued while dma1 occurs but then block until dma1 completes before issuing the ttl7 pulse.
+If ttl4 is involved in dma0, but not in dma1, it should be possible at compile time to know that the processor should block on the dma0.play() but not on dma1.play().
+Yes, we could add the list of touched RTIO channels into function signatures, much like there is iodelay in the compiler-assisted interleaving.
+and it should do that with "true" parallelism. But trying to hack concurrent DMA and CPU RTIO access into this right now before having CPU concurrency seems misguided to me.
+Not RTIOOverflow but the behavior on RTIO FIFO full.
+Good points here @jordens.  Seems like the subtleties on this are pretty problematic in the version discussed above.
+One variant: how about allowing the CPU to perform RTIO reads, but not writes, during the DMA, as well as any operations not involving the RTIO core (calculations, RPCs, etc)?  This would enable one to profitably use the DMA download time for tasks like count() on the data from the previous iteration of an experiment, for example, or computing Bayesian updates to parameters.  I am thinking here more about something like a clock experiment, where overall duty cycle is important and being able to make use of as much of the time as possible for performing calculations on the soft CPU would be very useful.
+As a variant, one could block on any RTIO commands (read or write) but allow all other types of CPU operations  to proceed during the DMA.
+Funded by Oxford.
+Awesome!  Will the specification be posted somewhere?
+Sure. Currently the specification is the (virtual/perceived) consensus of this issue plus a bunch of details from IRC. It'll probably also change a bit when we take a step back and see DRTIO in its full glory and have a clear perspective how to hook DMA to it.
+Do you have specific questions?
+No specific questions, just wanted to know if there would be a public place where the current "vision" is maintained.
+Yeah. That's something we want to do.
+https://github.com/m-labs/artiq/wiki/DMA
+Basic gateware written, works in functional simulation.
+Has a timeline been posted for the completion of this?
+Work on this will begin as soon as the network stack fiasco is resolved, and it shouldn't take long to get the basic functionality working (~week at most) unless there is another series of obscure bugs.
+It would be helpful to have a development checklist for keeping track of what the steps are and how things are progressing. Based on wiki.
+There was another series of obscure bugs, that are now dealt with. Only #700 remains.

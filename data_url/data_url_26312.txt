@@ -1,0 +1,45 @@
+Hi,
+I am trying to build cp2k on a RHEL8 cluster. I first tried installing with the ./install_cp2k_toolchain script, but the script failed multiple times for many different reasons. Moving on, I attempted the cmake installation. It kept failing, as it could not find 'dbcsr' as a git submodule. I tried cloning the git repo instead of working with the .tar.bz2 release, but still hit major roadblocks building dbcsr. Finally, I resorted to using spack. Although every dependency builds and installs, dbcsr continues to break. Here is the error that I am getting with spack:
+This is the full build log: spack-build-out.txt. Any help would be greatly appreciated.
+Cheers,
+Walid
+Interesting. Version 2023.2 fails to build. Version 2023.1 built from the first try.
+@hfp This issue seems to be related to LibXSMM. Was there a change in that direction from CP2K 2023.1 to 2023.2?
+@fstein93 @hfp any updates on whether the spack install for latest release is now working?
+Honestly speaking, I am not familiar with Spack, so I have no idea. From inspecting the build scripts, there were only minor adjustments to the code. There is another issue related to Spack+Libxsmm but with a different error message (spack/spack#38584). Another difference is the compiler version which is barely tested by us as we employ later releases for testing (GCC 11+).
+@oschuett Do you have any idea? Is there a dashboard test employing Spack?
+I'm not very familiar with Spack. And unfortunately we don't have a Dashboard test for Spack yet. We should though, just like we have one for Fedora. As for the problem at hand, maybe @mtaillefumier or @RMeli can help?
+Hi @walidabualafia, I use Spack to build CP2K (with build_system=cmake) and I don't recall seeing the issue you report. Which version/commit of Spack are you using?
+The latest version 2023.2 does build for us with the following specs: alps-spack-stacks/recipes/cp2k/a100/environments.yaml (see below for more information).
+I usually use Spack's develop so things can break from time to time, and the information below might be no longer fully up-to-date.
+Locally I use the following Spack environment: my-spack/envs/local/cp2k/spack.yaml.
+To build CP2K with build_system=cmake you need to add this Spack repo, which pretends intel-mkl and intel-oneapi-mkl do not provide fftw-api@3 (needs to be fixed, but allows to concretize the environment with fftw): my-spack/repos/cp2k.
+I haven't tested it, but you could get away with not needing to add the repo above if you use build_system=makefile.
+Usually, however, I install all the dependencies with Spack, and then build CP2K manually with CMake (useful for development, I haven't really benchmarked the Spack environment).
+Thanks for chiming in @RMeli!
+To build CP2K with build_system=cmake you need to add this Spack repo, which pretends intel-mkl and intel-oneapi-mkl do not provide fftw-api@3 (needs to be fixed, but allows to concretize the environment with fftw):
+Is this difficult to fix? Could one then install all cp2k dependencies via Spack without using your repo?
+This would make for a great Dashboard test, wouldn't it?
+We have everything for building cp2k containers with spack. If you want we could include them in the cp2k repo and then adding a test to the dashboard becomes probably easier.
+If you want we could include them in the cp2k repo and then adding a test to the dashboard becomes probably easier.
+Yes, this would be great.
+Perfect. Then i will prepare a PR with the necessary files.
+Could one then install all cp2k dependencies via Spack without using your repo?
+This should already be possible when using build_system=makefile or when intel-mkl/intel-oneapi-mkl are not used (I haven't tested it though). The problem needing my repo appears only with build_system=cmake and ^intel-mkl or ^intel-oneapi-mkl.
+Is this difficult to fix?
+Spack will introduce a way to select which virtual dependencies are provided by a package (see spack/spack#35322), which will provide a simple solution ^[virtuals=blas,lapack,scalapack] intel-mkl. This will allow to concretize an environment with both fftw and intel-mkl.
+A possible workaround for @walidabualafia's issue (which I haven't seen before) would be to build DBCSR with smm=blas.
+I tried to turn the new Dockerfile.gcc_spack it into a Dashboard test, but had unfortunately not much success.
+Maybe someone more familiar with Spack could take a look? Ultimately, I'd like to have something like this:
+hi @oschuett, I am actually simplifying things a lot. I can get a pr fixing all these issues open in 30 minutes or so.
+I also simplified the part of the python script generating the docker files. I would appreciate if you can review the changes in details. Let me open the PR.
+voila #3075
+I tried to turn the new Dockerfile.gcc_spack it into a Dashboard test, but had unfortunately not much success.
+Maybe someone more familiar with Spack could take a look? Ultimately, I'd like to have something like this:
+actually you do not need to install all dependencies separately. I would even suggest against it. All cp2k dependencies will be build according to the specifications you give.
+For instance the command
+spack install cp2k@master build_system=cmake +libint +libxc +sirius +spla +elpa smm=libxsmm +cuda cuda_arch=sm70 ^intel-oneapi-mkl+cluster ^openmpi ^dbcsr+cuda+mpi+openmp cuda_arch=sm_70
+will install all needed dependencies that you require. You do not need to install all of them independently. The docker file splits the build in two steps to avoid rebuilding dependencies all the time when you test the docker file itself.
+Now if you run
+spack install cp2k@master build_system=cmake +libint +libxc +sirius +spla +elpa smm=libxsmm ^intel-oneapi-mkl+cluster ^openmpi ^dbcsr+cuda+mpi+openmp
+spack will only compile the dependencies that are affected by cuda not all of them.

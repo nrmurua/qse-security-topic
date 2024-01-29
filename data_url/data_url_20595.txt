@@ -1,0 +1,26 @@
+Hi,
+I am working on a PoC application, where we want to overwrite the keygen method calls so that, when an OQS Signature keygen method is called through EVP_PKEY_keygen(), our method, registered in pmeth->keygen, will be invoked.
+I was looking for a way to overwrite the ctx->pmeth->keygen  value before passed to int EVP_PKEY_keygen(EVP_PKEY_CTX *ctx, EVP_PKEY **ppkey) method.
+I can achieve the above behaviour with RSA through ENGINE. It was a relatively easy setup, but I wasn't able to replicate it with OQS signatures, e.g. Dilithium. Existing code within oqs-engine project (not supported anymore) can do this but I couldn't get it to run with the latest version of OQS-OpenSSL.
+I read about, oqs-engine not being supported under OQS-OpenSSL anymore and it was advised to use Providers with the OpenSSL3.0 instead, but for our PoC, I need to work with the engine on OpenSSL 1.1.1 and OQS.
+Is it possible to achieve the behaviour described above through ENGINE for OQS signatures?
+Any help/lead is appreciated.
+Regards.
+Our PoC will be invoking our engine registered methods when apps/openssl is used as given below
+apps/openssl genpkey -algorithm dilithium2 -engine our_engine
+Thanks for your interest to use OQS for your project and the description of your problem. Unfortunately, I'm not entirely sure I understand what you try to do:  Do you simply want to execute some "custom code" when keygen with a QSC algorithm is invoked? If so, why don't you do this before EVP_keygen is called? Or do you want to register a callback that is regularly called during (long-running) keygen operations? Or do you want to completely replace the algorithm-specific QSC keygen code with your own code? Probably not, as that would destroy the functionality of the system...
+So, if you could describe the goal of your project, maybe we can come up with a solution. In the worst case, you could fork this project and change the code here. Alternatively, what about you provide maintenance to https://github.com/open-quantum-safe/oqs-engine (which I personally unfortunately have no experience with) if this code basically allows you to do what you want?
+Thanks for your reply, as a short reply to your question, I do want to replace the existing keygen() with my callback, the actual key generation will be deferred to another application. I was planning to keep apps/openssl UI the same so that, users do not need to change their existing code and consume the OQS generated keys as usual.
+I sort of achieved this with RSA case. Below is a segment from my RSA engine code, when openssl genpkey -algorithm rsa -engine our_rsa_engine is executed, with below registration, our_generate_multi_prime_key() method is called
+I was hoping to register my callbacks for OQS sig keys, dilithium2 was my first trial, similar to the RSA case above, so that when openssl genpkey -algorithm dilithium2 -engine our_oqs_engine is executed, our registered callback was to be invoked.
+I started working with oqs-engine (project was abandoned on Apr 2020) but couldnt get it to work with latest version of the OQS-OpenSSL fork. Its test_oqse runs fine linking against its own tagged/older OQS. However the test code makes explicit call with engine generated ctx
+It is fine for the test to do so and it is stepping into engine registered keygen() method. I was hoping to achieve the same, that the engine generated ctx which contains the overwritten method for pmeth->keygen, will be passed down to EVP_PKEY_keygen() when -engine our_engine param is present. This would have been perfect and I wouldn't need to modify apps/openssl, to replicate the behaviour of the oqse_test code.
+If there is no way to pass down a ctx object to EVP_PKEY_keygen() when engine is present, then the only option left is to fork and modify apps/openssl, as you have suggested.
+Regards.
+Thanks for the additional background. I understand more, but not yet this:
+couldnt get it to work with latest version of the OQS-OpenSSL fork
+Why do you try this? Isn't the whole point of oqs-engine to work with a stock (non-OQS) OpenSSL? Sorry for the possibly stupid question, but I try to understand whether your problem originates with (upstream) OpenSSL (possible), oqs-engine (probable) or liboqs (unlikely). It should not have to do with oqs-openssl, right?
+The aim to use latest OQS-OpenSSL fork is to benefit from the ongoing development around quantum crypto algorithms.
+After talking to you, I managed to run the oqse-engine with apps/openssl (haven't tried it up until now) as to check if the oqse-engine is being utilised when used as below
+and it didn't call the method registered in the oqs-engine. I think oqs-engine is not designed or meant to work as above. Their test code was working because it is making explicit call with the ctx object from engine. I think they designed it so that an external application can make calls to OQS utilising the OpenSSL engine structure. At least this is my limited understanding.
+I don't think there is a problem with any of the components, oqs-engine, OQS-OpenSSL or vanilla OpenSSL. Its just my expectation to get things running through engine as I did with RSA. Sorry, I might have wasted your time alongside who ever is watching this thread/issue.

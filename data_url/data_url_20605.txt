@@ -1,0 +1,100 @@
+Hello Everybody. I am trying to use the new algorithms in our wrapper library (LibPKI) that builds on top of OpenSSL. One thing I am having difficulties is to understand how to properly use the signing functions.
+Specifically, I am trying to implement a generic signing function for DER encoded data (PKI_X509_sign(der (data), md (digest algor), evp_pkey) -> signature), and although the same functions work with RSA or ECDSA, they fail when I try with falcon, dilithium, or sphincs+.
+Here's the first code I tried:
+I also tried the DigestSign version:
+The error seems to be related to the digest used ("md"). Specifically, if the md is not NULL, the EVP_SignFinal()/EVP_DigestSignFinal() fail with the following error trace:
+I know I am doing something wrong here, but I am not sure what...
+To probe a bit further, I forced the use of a specific hashing algorithm - since the error was related to that, somehow: md = EVP_sha512(). If I do that, I get a success return code but the signature in the data is all zeroes.
+Just to be very precise, when I use the standard apps/ tools (i.e., openssl req -new ...) I am able to generate things correctly.
+Anybody experiencing similar issues and/or know what I might be doing wrong?
+Thanks for taking a closer look at this functionality (well, for actually using it :). When building this functionality we (actually, I) never considered library use of this code: If I recall correctly you encounter a limitation intentionally built into the code, namely that it only uses it's own SHA512 digest and not an externally provided one: 
+First of all - let me THANK YOU and the WHOLE TEAM for this project. I think it is a very important project for the future of our security: being able to work with these new algorithms (even if for testing) it is paramount to get engineers acquainted with the technology and start understanding the deployment paradigm that fit your use-case and industry!
+My use-case is quite simple in this case - I just want to be able to sign some already-encoded data (e.g., the tbs structure of a certificate or a csr) :D I am not trying to use the CMS interface but by using the more generic EVP_ one.
+It was a bit difficult trying to understand the crypto/ec logic - and I was wondering why the functions in the ec/ directory were called :D I know that because of the way OpenSSL is structured (I have been using/contributing since the times of SSLEay), it is a bit difficult to properly set the X509_ALGOR in the structure independently from the signing (since the decoupling of hash algos from the signing one in the library) but that is what we are trying to do to be able to have "swappable" (as much as possible) crypto libraries implementations.
+Specifically, because of the original attempt at LibPKI to provide a high-level abstraction on top of crypto libraries, we implemented a mechanism that we use to pass the data to be signed already DER encoded to the specific library to generate a signature.
+For that, we have the PKI_X509_sign(data, data_len, pkey) that dispatches the call to the different "drivers" (i.e., openssl-software, openssl-engine, pkcs11, etc.) via a callback architecture associated with the hsm structure (internal to LibPKI) that is used. In the callback, I use the code I posted here to sign anything ... CRLs, Certificates, OCSP Responses... anything.
+What would be the right way to use the library for that?
+I say this because while checking the link for the oqs_int_update() I see the ones before pkey_oqs_sign_init() and pkey_oqs_sign() being empty but returning (1) (OK) - I think that might be an issue as they are used as the callback functions for the method. I also see, instead, the '*ctx' versions to actually contain working code... and I am wondering, was this because of lack of time or there are issues in implementing the first set of calls?
+Since the usual openssl's apps code work, I hoped the code work simply work too :D But I guess there are specific patterns we need to adopt at this time (we do appreciate the difficulties and we hope to be able to help as much as we can, but we also need to get some signatures working first :D ).
+I will try to look into the init code and see if I can re-use some of those techniques, however it would be useful to try to document these limitations (my current resources in terms of time are very limited so our contributions might take quite sometime).
+Any suggestion for how to solve the DigestSign/Sign issue?
+Thanks for the additional background.
+I am not trying to use the CMS interface but by using the more generic EVP_ one.
+Well, then we may have a problem: The OQSSIG algs on oqs_meth.c have been explicitly created to support CMS; Fully supporting EVP APIs never was a goal (as you may tell from us somewhat (ab)using the "EC" code base to "sneak in" QSC).
+what we are trying to do to be able to have "swappable" (as much as possible) crypto libraries implementations.
+That rings a big bell: We're working in the oqsprovider subproject on a way to cleanly make OQS algs accessible via the OSSL3.0 provider concept (EVP and all) such as to not "tweak" base OpenSSL internals as in our OQS-OpenSSL111 fork.
+Any suggestion for how to solve the DigestSign/Sign issue?
+I'm sorry but I don't understand which issue you mean exactly? For example, I'm at a loss as to where/how pkey in your code has been created. But again, a generic EVP-OQS API has not been our goal and things may or may not work depending on what is tried.
+I was just trying to understand if there was an alternative I could use - the PKEY is created as usual (either key gen or load from a file) - there are just missing callbacks that, if implemented, I think should do the trick.
+For that, I created a separate oqs/ and a composite/ directories where to implement the EVP_PKEY_METHOD and EVP_PKEY_ASN1_METHOD - so far it seems it works ok and opens the path of patching standard (pre3.0) OpenSSL distros a bit easier in the future (there might be quite some work there to decouple all the includes).
+For the composite approach, I am thinking that by using a specific OID (instead of one OID for each combination) we can make things a bit easier for the developer and we do not have to come up with every possible combination (it might be that we add two different OIDs instead of just one to implement the latest updates for composite and compositeOR for easier implementations of the verify() for crypto libraries when multi-keys are used). This simplifies the use of composite for the specific needs of the ecosystem (e.g., the use of RSA2048 for backward compatibility) and allows for more than 2 keys to be combined (e.g., RSA, ECDSA, and Falcon).
+Have you thought about using this approach (a composite EVP_PKEY_METHOD instead of composite_alg1_alg2)? Would you be interested in contributions back if and when we have good results or are you focusing on 3.0 support only at this point?
+Thanks again for the amazing work!
+by using a specific OID (instead of one OID for each combination) we can make things a bit easier for the developer
+I'm not sure I understand: Are you proposing one OID for any algorithm combination? Wouldn't this permit creation of X.509 data (and files) that become completely unintelligible (different files with the same OID containing completely different key types)?
+allows for more than 2 keys to be combined
+I'm not sure what benefit this would bring. At least for KEMs this would probably also go beyond https://tools.ietf.org/html/draft-ietf-tls-hybrid-design-00.
+or are you focusing on 3.0 support only at this point
+Definitely no; the OSSL111 fork has more functionality compared to the OSSL3 provider at this time. Also OSSL111 is the only widely deployed variant.
+For the OIDs - using one OID makes the generation and handling of the "composite" container quite easy from the development point of view. For the unintelligibly, I do not share your view. The "primary" OID will be the composite one and the different components offer the rest of the structure for the key where each elements in the SEQUENCE of subjectPublicKeyInfo has its own OIDs and parameters.
+I am still behind in the KEMs use-case as in our environment we are still looking at older legacy protocols like DOCSIS 3.1 where we have not many choices for KEX. DOCSIS 4.0 supports it, but we have not worked on that use-case yet (which might be easier as we use CMS to carry the authentication signatures, but D4.0 devices will not hit the market before a couple of years at least).
+When we'll have something that works we'll try to contribute back - the composite method could be an alternative way not having to make the choices for the ecosystems at the crypto layer, but allow people to experiment and combine algorithms as needed in their environments (as you can tell we are not concerned with the WebPKI as there are many people looking in that direction, we are focusing on providing tools for... well, everybody else that are being a little left behind by the internet community at the moment - especially in the device space).
+Back to the technical discussion, when both the combined and combinedOr OIDs are implemented, the two can be used to differentiate (from a crypto-library perspective) how to validate a signature (i.e., if to require all signatures to validate or just the first) and how to perform encryption with multi-key certificates: a very cool property that solves many practical issues and enables targeted algorithm revocation.
+For example, if I want to create a multi-key with Falcon and RSA, I can use "combined" as the algorithm and use the ctrl interface to add the different key components that can be stored in a STACK_OF(EVP_KEY). I can also combine existing keys - that is a property that is desirable when you want to add, in your existing RSA certificates (especially for CAs) new keypairs in a forward-looking fashion, without loosing the identities that were already established and trusted for many years.
+In the current approach where all parameters are fixed by the OID (e.g., falconXXX and RSAXXX, not just falcon and RSA where I can use different level of security or key sizes), it quite difficult to have custom key structures (i.e., sequences of arbitrary keys) that are not already built into the library (i.e., 3 keys instead of 2 keys) and makes the source code grow considerably in size and complexity to make sure you capture all the OIDs.
+Maybe looking at single OIDs could yield easier-to-use APIs that provide better control over the structure of your certificate's keys... ?
+There's been some discussion on the IETF LAMPS mailing list about how to represent composite signatures in X.509, including an Internet Draft by Mike Ounsworth.  We haven't fully adopted this yet but probably will -- I'm currently talking with Mike about some of these issues.
+Yes - that is exactly our work (I was the original proponent and Mike is my co-author). Mike (and Datatrust) introduced the option of having individual OIDs, however that seemed impractical to me and quite restrictive when it comes to provide PKI architects with flexible tools.
+We had an interim meeting with LAMPS chairs, Mike and few other folks to present the new results that really make multi-key environment viable and easy to leverage also for encryption.
+The implementation tests I am doing together with looking at the code generated by others (e.g., this project) seems to confirm my initial usability fears from a developer's point of view (i.e. the many-OIDs approach), something, I am sure, you had to deal with yourself. The number of these OIDs tend to explode and does allow the ecosystem owners to make their own choices when they are different from what the specific crypto-library decided to support, which is not a good thing to do at this point when we need to experiment (and creates interoperability issues).
+About the last results I mentioned at the top, we already added the distinct AND/OR logic (i.e., combined, combinedOr) in the draft, however the new algorithm revocation that is based on key structure (i.e., revoking the use of RSA alone but allowing it when combined with falcon) are not in there yet, but I hope to have the time to add them soon. The revocation support, specifically, is very important for us to be able to test crypto-libraries validation behavior with algorithm deprecation at the CA level (if it is at the RootCA level, it is ecosystem-wide level) via simple OCSP and CRLs extensions.
+But before we can deploy the next set of results, I think we need an easier way to manage the multi-key crypto so we can experiment without having to re-compile the crypto libraries when we opt for a different algorithm combination.
+The "primary" OID will be the composite one and the different components offer the rest of the structure for the key where each elements in the SEQUENCE of subjectPublicKeyInfo has its own OIDs and parameters.
+OK, then I get it: One OID to announce a "composite" structure and then all piece parts following with their own ids (OIDs?). Without the latter I wouldn't have understood how to parse composite sigs. Thanks @dstebila for the pointer to https://datatracker.ietf.org/doc/html/draft-ounsworth-pq-composite-sigs-04
+Yes - that is exactly our work (I was the original proponent and Mike is my co-author). Mike (and Datatrust) introduced the option of having individual OIDs, however that seemed impractical to me and quite restrictive when it comes to provide PKI architects with flexible tools.
+Sorry for not realizing that, Massimiliano.
+Hello, I am struggling with signing too.
+I hope it is OK that I ask in the issue of opencrypto.
+How I have to use openssl to sign like in default openssl?
+I used:
+apps/openssl dgst -sign sign_rsa.pem -out sign_rsa some.txt
+That worked properly, but:
+apps/openssl dgst -sign sign_dil2.pem -out sign_dil2 some.txt
+resulted in:
+Error Signing Data
+(sign_dil2.pem was created without an error by: apps/openssl genpkey -algorithm dilithium2 -out sig_dil2.pem)
+I hope you can clarify my issue.
+Thanks.
+Thanks for reporting this, @crispySafe . As already stated above, our focus was on getting cms to work, not all other openssl commands related to signing (incl. dgst).
+Before debugging/looking more deeply into what it would require to also make this command work, could you please comment on where/how you need this (and why cms doesn't work for you)? Thanks in advance for this background.
+Thanks @baentsch for your reply and working on this project to merge OQS into openssl.
+My issue was just for convenience with the usage for signing only. The usage of cms works for me too, but it is an overhead.
+My interest was to generate a OQS signing key, use it for signing, and verify the signed file in an easy way.
+The open issue from @opencrypto brought the possibility to report my related one.
+This week-end I managed to make some progress on the last of the two issues (Composite Crypto implementation). Specifically, I created new pair of ASN1 and PKEY methods for the Composite that seem to work pretty well. Lots of work to be done, but by using the keygen functions to actually generate the combined key (from already generated/loaded/otherwise-provided keys) I can have combined key of any type - RSA + EC + Falcon, for example. Of course there are many different ways to implement it - this is just a first try - but it seems to work correctly (took me a while figuring out the STACK_OF -> SEQUENCE conversion... if only the ASN1 subsystem was better documented.. :D I think there was one function ASN1_seq_pack() but it was removed since.. probably 1.0.x ... so needed to re-invent the wheel...
+It is just a first test, but if you'd like to take a look and/or the GIT is available here:
+all the needed patches are in the config-n-patch/ directory - most noticeably it adds the oqs/ directory in crypto/ (removes the use of the crypto/ec/ directory - nothing else) and implements the Composite in the crypto/composite directory.
+After the Composite is finalized - we will work on the EVP_PKEY signing interface - since that seems to be the trick to provide generalized support. I will definitely need a lot of help on this as I am not experienced with the new algorithms and implementations already.
+We hope to be able to contribute back the signature part, but I am not sure when it is going to be completed...
+I guess if there is no further follow up, we can close this issue.. ? Unless @crispySafe would like to add more comments... ?
+if only the ASN1 subsystem was better documented.. :D
+I second that: Stumbling on this again and again trying to create a proper OpenSSL(3) oqs-provider.
+we will work on the EVP_PKEY signing interface - since that seems to be the trick to provide generalized support.
+Also fully agreed with this assessment.
+We hope to be able to contribute back the signature part
+Very much looking forward to that: Thanks in advance!
+I guess if there is no further follow up, we can close this issue.. ? Unless @crispySafe would like to add more comments... ?
+I am fine. Thanks a lot - all of you working on that project.
+We hope to be able to contribute back the signature part
+Very much looking forward to that: Thanks in advance!
+Me too!
+@dstebila Would it be sensible to keep this issue open as indeed signing presently only works using CMS, not via the generic EVP APIs? Time permitting, one (e.g., me :) could look into this -- unless of course the above-mentioned PR arrives quick which promises a more complete/generic integration (and would thus resolve this issue).
+Sorry, I wasn't following the discussion fully. I'll reopen it and tag as future work.
+if only the ASN1 subsystem was better documented.. :D
+I second that: Stumbling on this again and again trying to create a proper OpenSSL(3) oqs-provider.
+I Made some progress on the ASN1 front - maybe it can help you as well. Specifically, I think I got a good mechanism for encoding sequences without having to add an ASN1 primitive wrappers and keep the code quite simple - the trick seems to be building a stack of ASN1_ITEM(s), each of which hold an ASN1_STRING with the V_ASN1_SEQUENCE type (this detail is very important for not adding extra basic-types 'containers').
+By doing that it is possible to correctly encode sequences for keys and signatures (work-in-progress example: https://github.com/opencrypto/libpki-oqs-test/blob/9c07ee4d108d67a785007cd769187b1329b43e7d/config-n-patch/ossl-patch/crypto/composite/composite_ameth.c#L620).
+we will work on the EVP_PKEY signing interface - since that seems to be the trick to provide generalized support.
+Also fully agreed with this assessment.
+For this, I do not have progress, yet. However, one thing that works pretty well for the composite crypto part is to generate the keys individually, use the ctrl interface to add them to the context and then use the keygen() to finalize the EVP_PKEY structure (no real key gen there, but I find it more usable to "combine" existing keys rather than generating them all at once via a single call (add lots of complexity in the code and it limits the "ease-of-use", especially when considering CLI-based tools).
+It is not much, but I hope this helps ...

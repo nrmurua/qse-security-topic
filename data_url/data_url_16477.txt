@@ -1,0 +1,19 @@
+If a register size is changed using the register "size" attribute and the size is smaller than the original, the system is left in an inconsistent state as there may be instructions using one of the bits past the bit index.  If the size is larger, a new bit is not added so errors occur if one attempts to use the "new" bit.  As well, any system or application code using registers or bits as keys to a map becomes inconsistent because the hash changes.
+reg = QuantumRegister(2)
+reg.size = 3
+qc  = QuantumCircuit(reg)
+qc.h(2)      # fails because the bit was not added: list index out of range
+reg = QuantumRegister(3)
+qc = QuantumCircuit(reg)
+qc.h(2)
+reg.size=2
+print(qc)     # fails because qubit is not available: qubit 2 not found
+Register size should be read-only.
+Register size should be made read-only because changing it changes the hash values for the register and its bits, prohibiting their use as keys for structures such as sets and maps, which would be invalidated as soon as the size changes.  Probably the 'name' attribute should also be made read-only as changing that also changes the hash and potentially invalidates keyed structures.
+Hey! Can I give this issue a try?
+@Arijit02 thanks for your interest. There are a few open questions to address here first.
+@Cryoris Does aqua use resizable registers? The current implementation definitely has problems, but at least shrinking registers would appear to have worked in some cases.
+As long as the register is not used in any structure that relies on the hash the current code works fine.  But if you're building a complex circuit where you want to put registers into a map (dict), for example, changing size or name invalidates that structure.  Shrinking registers will still cause this.
+I would suggest that either registers need to read-only, or we document that they cannot safely be put into hash-dependent structures.  My preference would be to make them read-only as the other choice seems a little silly.
+It's not clear, but it seems doubtful that there is a useful hash not dependent on the register size and name because if you're using a map (dict), you likely want "equal" registers to hash the the same place, and equality is defined as a function of name and number of bits.  So the current hash seems to be the right one.
+BTW this holds for Q/Cbits as well because their hashes are a function of their containing register's hashes.

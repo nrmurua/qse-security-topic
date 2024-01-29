@@ -1,0 +1,26 @@
+Hi all! This issue is a continuation of my post in the slack channel (with @taalexander );
+OQ3 is an MLIR and its ideology states that it aims to also represent the physical circuits level (e.g., physical qubits, timings).
+I'm currently writing a compiler from OQ3 to our open-source pulse-level language QUA and encountered some problems in the target-dependent phase.
+In the OQ3 paper, there's an example of a target-dependent compilation flow, and in the 3rd phase ("Physical qubit mapping and routing", page 45) one expects only physical qubits references (and no virtual qubits).
+How should the mapping handle arrays of qubits (mainly due to dynamic dereference), e.g.,:
+Some possible options include:
+What do you think about this?
+Thanks, Dor 😃
+The implication here is that the QPU control logic has the ability to evaluate the qs[c], qs[c+flag] and c += 2-flag expressions, and maintain the logical/physical qubit mapping. This example may be able to be statically compiled as a DAG, where each branch (flag == 0 and flag == 1) can be computed beforehand, but that would lead prohibitively large programs (>2^(100+1) operations in this example) and then only if the program halts in all cases.
+IMO, this is where OpenQASM needs to be able to be a system-level programming language with clear boundaries between classical and quantum elements; should OpenQASM be executable on the controller, or should it be transpiled/compiled to a natively executable format (binary, Python script, etc.)?
+@jheckey I think you are addressing a problem that might arise once we solve this one. The issue at hand is that the language allows the construction of a technology-independent OQ3 program that we can't translate to a technology-dependent one. So, if we cannot lower it, why is it allowed?
+We can solve this problem by either choosing not to allow such programs and calling it a day or allowing them, which requires creating a way of lowering them. Now, if we decide on the latter, we need to deal with the question of whether today's QPU control logic technology can execute this program or not. (It seems not to be the case.)
+At the risk of oversimplification, I think the points you brought have a simple answer. If you are compiling OpenQASM to one particular hardware architecture, then it's your compiler's job to know if the QPU control logic supports this or not.
+Ultimately, I think the answer of whether a lowered version of this program is valid OQ3 program boils down to answering the question: "Should an execution environment (i.e., current technology limitations) dictate what is possible to express using OQ3 (or what is valid OQ3)?" If yes, we need to define which technology dictates what is valid OQ3.
+TLDR: We need to decide whether this is dynamic dereferencing of physical qubits is valid OQ3 not supported by all (if any this time) QPUs, or if this is invalid OQ3. Either way, a compiler will need to deal with it. It is all a question of which phase.
+@jheckey I think you are addressing a problem that might arise once we solve this one. The issue at hand is that the language allows the construction of a technology-independent OQ3 program that we can't translate to a technology-dependent one. So, if we cannot lower it, why is it allowed?
+exactly.
+This problem also arises in simple cases, for example:
+The h-gate will be lowered to 100 h-gate calls instead of maybe a real time for loop over an array of physical qubits with dynamic dereferencing. Moreover, our (Quantum Machines) control system and pulse level language allow for dynamic dereferencing, so we don't have an exponential-blowup like you mentioned.
+One could dismiss this example and say that program length is not important, but I disagree. Even still, the functionality problem in my original post still exists.
+I agree with both of you, and I tried to get to N+1 as a way of resolving N, but missed a few steps and edited too much out.
+The part that I edited out of my first response was that certain QPUs will require interacted qubits to be adjacent. So, assuming the original example runs to when c is 99 the swap operations to execute the cnot may have made the qs indexes numerically inconsistent from their expected values based on the symbolic reference.
+Now, with that out of the way, my votes:
+OK. So in the surface code quantum memory example ("examples/scqec.qasm"):
+Should the function be unfolded in compile time to O(d**2) instructions instead?
+The problem is that even if we say that "if the HW supports dynamical dereferencing then they could support this", OQ3 is not expressive enough to represent this example with only physical qubits (with dynamical dereferencing).

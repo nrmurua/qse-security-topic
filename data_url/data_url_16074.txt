@@ -1,0 +1,14 @@
+Under transpile, unroller seems to fail to convert U3 gate to the new basis set ['id', 'rz', 'sx', 'x', 'cx', 'reset'] used on commercial devices, and gives error:
+QiskitError: "Error decomposing node u3: 'NoneType' object has no attribute 'data'"
+Unclear to me if bug of intended. Perhaps very closely related to #5840
+
+Results in
+QiskitError: "Error decomposing node u3: 'NoneType' object has no attribute 'data'"
+
+I would imagine that the single qubit basis gates are universal and the U3 would be unrolled onto them, but perhaps that's wrong?
+I wonder if the EquivalenceLibrary might be useful here to substitute all U3 gates in a circuit with their 𝑈3(𝜃,𝜙,𝜆)=𝑅𝑍(𝜙)𝑅𝑋(−𝜋/2)𝑅𝑍(𝜃)𝑅𝑋(𝜋/2)𝑅𝑍(𝜆) decomposition? Perhaps along the lines of https://github.com/Qiskit/qiskit-terra/blob/54c8870623e28cb3f9f4eb92828fb8fd5f9dde49/test/python/transpiler/test_unroll_custom_definitions.py
+Seems to be solved with transpile(qc, backend, optimization_level=0), but not sure which pass is responsible
+See: #5886 (comment) where I went into more detail on this when someone opened a similar issue before (which was also a duplicate of #5840). The unroller pass doesn't work with an arbitrary universal basis it just descends through the definitions of the gate and in the case of u3 is defined in terms of u: https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/circuit/library/standard_gates/u3.py#L94 which won't find a match in the new ibmq basis. You want to use the BasisTranslator pass (which is the default in all the preset passmanagers do now) to do the conversion which uses the equivalence library as you pointed to.
+If you change your example above but swap the Unroller pass for the BasisTranslator you get:
+The other option you can use is the unitary synthesis pass for basis translation: https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/transpiler/preset_passmanagers/level1.py#L154-L160 which involves a few more steps but should also work.
+Thank you, @mtreinish ! I think that solves it

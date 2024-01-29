@@ -1,0 +1,41 @@
+By "asynchronous RTIO error" I mean those errors that are not the immediate result of a command: input FIFO overflows, and output busy errors.
+The current design has some problems:
+I would like to report those errors into the core device log instead. Maybe the kernel should also be aborted when those errors occur. With DRTIO, those errors would be reported over the aux packet channel.
+Input overflows do not strictly need to follow the same design pattern, as 1. we do not care if an overflow has occured if we are not looking at the input data 2. we need to do a DRTIO round-trip for inputs anyway 3. they are not necessarily the result of a programming error (unlike busy errors) and the kernel may be able to recover from them gracefully. Even though having the same design is more consistent and simpler, I think the current behavior should be kept.
+@jordens @dhslichter @cjbe any comments?
+How do you get the error status to the core device log without polling? Or do you mean there would be polling on the AUX channel and that would "eventually" get the error status to the core device? Then the gateware would independently submit that to the log and/or abort the current kernel?
+Otherwise LGTM.
+I haven't thought of this implementation detail yet, I guess aux polling for errors is the simplest thing to do.
+By "asynchronous RTIO error"  mean those errors that are not the immediate result of a command
+Another example of this type of error: DRTIO data corrupted in transit (checksum error).
+I would like to report those errors into the core device log instead.
+Maybe the kernel should also be aborted when those errors occur.
+Recording to device log with RTIO time stamp is desired. Aborting kernel may leave experiment in a poorly defined state. Rather, let the user check for and handle errors gracefully as is done for TerminationRequested.
+we do not care if an overflow has occured if we are not looking at the input data
+If the input data isn't needed then the user shouldn't be logging it in the first place. Better to report all FIFO overflows.
+in DRTIO, we don't want to poll outputs for busy status to avoid delays due to RTT latency.
+Why is there a need for polling? Couldn't DRTIO FIFOs and PHYs by default asynchronously report errors using the aux packet channel?
+we need to do a DRTIO round-trip for inputs anyway
+Is there a reason to require round-trip? I can think of cases where it may be advantageous for DRTIO input to be streamed back to master without round-trip delay. Like the fire-and-forget RPC.
+Recording to device log with RTIO time stamp is desired. Aborting kernel may leave experiment in a poorly defined state. Rather, let the user check for and handle errors gracefully as is done for TerminationRequested.
+RTIO busy is a deterministic, and rather serious, programming error. And I doubt users will want to check for this status.
+If the input data isn't needed then the user shouldn't be logging it in the first place. Better to report all FIFO overflows.
+That's an independent problem; if you want to report e.g. kernels exiting with events in input FIFOs, that should be done consistently and not only when that FIFO has overflown.
+in DRTIO, we don't want to poll outputs for busy status to avoid delays due to RTT latency.
+Why is there a need for polling? Couldn't DRTIO FIFOs and PHYs by default asynchronously report errors using the aux packet channel?
+Please think this through. With the current API, when does the kernel CPU need to know that an error has occured?
+we need to do a DRTIO round-trip for inputs anyway
+Is there a reason to require round-trip? I can think of cases where it may be advantageous for DRTIO input to be streamed back to master without round-trip delay. Like the fire-and-forget RPC.
+There are many reasons; unsolicited data from satellite to master poses problems with switches, then if several inputs have events at the same time in a satellite, which one should be sent first down the link, what should be done if the downlink is already busy with output FIFO space polling, where do we store all the events, etc.
+Though if you are waiting for a trigger, with the current input design it's a one-way packet when the trigger arrives. Anyway, this is off-topic here.
+RTIO busy is a deterministic, and rather serious, programming error. And I doubt users will want to check for this status.
+If the ion trap is working with a long chain of ions, asynchronous kernel termination could cause ion loss. Hooks should be in place so we can do clean up.
+With the current API, when does the kernel CPU need to know that an error has occured?
+OK. I believe what you're getting at is that the Core CPU timeline is generally well advanced relative to the RTIO clock. Ultimately the Core CPU needs to know that the error occurred. You observe that "RTIO busy is a deterministic, and rather serious, programming error." So if a bad error occurred in the recent past we want to permit the above clean up steps.
+That's an independent problem; if you want to report e.g. kernels exiting with events in input FIFOs, that should be done consistently and not only when that FIFO has overflown.
+I'm not worried about FIFOs being full when kernels exit -- that's something a user should check if they care. Rather, I'm concerned that experimental signals (or statistics) could be skewed if data is dropped silently due to FIFO overflows.
+If the ion trap is working with a long chain of ions, asynchronous kernel termination could cause ion loss. Hooks should be in place so we can do clean up.
+Isn't the idle kernel sufficient? Also, it would be a kernel termination, the control would return to the host and you could load another kernel (with the usual delays).
+Rather, I'm concerned that experimental signals (or statistics) could be skewed if data is dropped silently due to FIFO overflows.
+I have never proposed any design that would drop data silently due to an overflow.
+Collision made asynchronous as per mailing list discussion.

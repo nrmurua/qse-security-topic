@@ -1,0 +1,30 @@
+@valkostadinov commented on Fri Feb 04 2022
+The UI needs a database that keeps track of dispatches globally on a user's machine.
+Although the dispatcher saves results in the results_dir, that directory can change across dispatches, esp. if it's relative to the cwd of where the dispatch is being run. So there's no single place to get a listing of all dispatches. As a stopgap measure, results are currently stored by the UI client in the browser's localStorage. This means that if the UI is not open while a dispatch occurs, the dispatch will be missed and cannot be viewed at a later time. So we need a database.
+At minimum, per dispatch we need to save:
+No need to store the full result in the database as it's already being saved to disk. The dispatcher could store this after each dispatch in a light-weight local database like SQLite for example.
+@cjao commented on Thu Feb 10 2022
+Some preliminary questions:
+@valkostadinov commented on Thu Feb 10 2022
+How will UI interact with the db? Does covalent_ui/app.py hold the main business logic of list and retrieving results?
+Yes, the UI server (covalent_ui/app.py) will query the database for a list of dispatched jobs. It could query the db directly or through a wrapper class to abstract db interactions, like DispatchesDb, with saveDispatch, listDispatches methods for example.
+Should the db store any other info besides what you mentioned above?
+No, that's all we need for now, plus maybe a start_time or last_updated. Eventually, we could end up storing more result data or even the whole result instead of saving it to disk. For now though, I plan on using the db only for getting a listing of dispatch ids and the corresponding results_dirs so I can load them from the file system.
+Would app.submit() and app.cancel() in covalent_dispatcher/_service/ be the right place to record the new dispatches in the db?
+Not an expert on the dispatcher code but that sounds right. Perhaps after the very first save() of the result would be even better, somewhere inside run_dispatcher I'm guessing.
+Would $XDG_CACHE_HOME/covalent be a good place to store the sqlite db? Should this be user configurable?
+Good question. I'm not sure. Perhaps @wjcunningham7 or @kessler-frost  can answer this better.
+@kessler-frost commented on Thu Feb 10 2022
+I think we're going to have this discussion again once we will implement the parallelization stuff. The Queue component which will be introduced will handle the sqlite db and record new dispatches. So, the main logic for that will also be there. That said, I think it'd be an appropriate location if we save it in _DEFAULT_CONFIG["sdk"]["log_dir"] (get this config using the get_config function). That way covalent purge will also take care of resetting the dispatches, etc.
+Also, since in order to tackle this issue you'll pretty much be implementing the functionality of Queue component, I suggest we wait and plan a little bit more. @wjcunningham7 I hope this is not a priority right now?
+Edit: Simple db creation can still be done.
+@cjao commented on Fri Feb 11 2022
+Thanks @kessler-frost . For now I propose to:
+@wjcunningham7 commented on Thu Feb 10 2022
+I'd recommend putting it in a new variable config[user_interface][workflow_database]
+@cjao commented on Mon Feb 14 2022
+One concern I have is what happens if the database is deleted for some reason? It would be quite hard to recreate it in that case.
+@kessler-frost commented on Mon Feb 14 2022
+It's fine if its gets deleted since we can't control what files are deleted on the user's local machine. So, I'd say if the db is not found at the target location, then we should create a new one.
+From today's meeting, let's store the results object too. This will allow the UI to be constructed entirely from the db.
+related to #147

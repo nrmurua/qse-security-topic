@@ -1,0 +1,23 @@
+Hello!
+I tried to compile cp2k 7.1/8.1 from source via install_cp2k_toolchain, with gnu gcc 9.3,  mkl library and open-mpi 4.0.5, on Ubuntu 20.4. All the dependencies seemed to install correctly and the  ssmp, psmp version also successfully compiled.
+When I run the "make test" command, ssmp version passed all the tests, but psmp version returned lots of errors.
+It seems that the psmp version cannot be paralleled correctly. When mpirank > 1, it returned errors. So I tried to use another version of open-mpi(4.1.1), but it gave the same error.
+During compilation, a warning like "USE mpi ! compiler errors mean mpi installation and fortran compiler mismatch: see INSTALL (-D__HAS_NO_MPI_MOD)" occurred. I have checked the gcc and gfortran version, but found nothing weired.
+The test error log is attached below, How can I solve this problem? Thanks a lot!
+Ming WANG
+error_summary.log
+hi @thuwangming - I don't know the source of your issue but if you look at the stacktrace of where the error occurred, it seems to be here:
+
+pdsyevd is a scalapack routine.
+I'm not sure how it works with MKL - does it ship its own scalapack version? If yes, perhaps one needs to use the same MPI library as the one used there?
+Hello @ltalirz , my arch file for psmp is attached, I found nothing abnormal.
+local.psmp.txt
+Hi @thuwangming , looking at the MKL link line advisor I can only select the Intel MPI or MPICH2 as MPI libraries, not OpenMPI.
+Are you sure the MKL is compatible with OpenMPI?
+also: -D__MKL is missing in DFLAGS, see https://github.com/cp2k/cp2k/blob/master/arch/CRAY-XC40_gnu-mkl.psmp for a working arch file.
+Hi @ltalirz @dev-zero , I followed the instructions given by MKL link advisor using static linking which supports open-mpi, and add -D__MKL DFLAGS, but the tests still failed.
+the mkl link flag is as follows:
+${MKLROOT}/lib/intel64/libmkl_scalapack_lp64.a -Wl,--start-group ${MKLROOT}/lib/intel64/libmkl_gf_lp64.a ${MKLROOT}/lib/intel64/libmkl_intel_thread.a ${MKLROOT}/lib/intel64/libmkl_core.a ${MKLROOT}/lib/intel64/libmkl_blacs_openmpi_lp64.a -Wl,--end-group -liomp5 -lpthread -lm -ldl
+You have to link the sequential version of the MKL. MKL advisor:
+@thuwangming what @alazzaro said, plus make sure that you do a clean build after changing the DFLAGS: run make -j VERSION=... ARCH=... realclean once before rebuilding.
+It seems this issue got resolved by using the correct MKL linker line.

@@ -1,0 +1,62 @@
+Using 3.2 py_1+gita4337944, kc705, nist_qc2 gateware, Windows 7 64bit
+The symptoms are the same as #877, but since it doesn't happen by itself anymore, I'm making this a new issue.
+It happened every few 10min while I was running various experiments. I thought I had it narrowed down to running the following experiment (first thing after resetting the FPGA and starting the master+dashboard):
+This triggered the issue after ~0.5...10min on a few consecutive tries, until it suddenly stopped happening, so there must be another parameter involved.
+I'm attaching the corelog for the crash caused by the above experiment, in the hope that you can give me a hint what to look for in order to reproduce it reliably.
+uart_corelog.txt
+Unfortunately there is no backtrace so there's not much I can do.
+Ran the experiment for 15 minutes with master and artiq_run, no crash.
+I've fixed the backtraces in d58393a (master) and aa64b8a (release-3), can you please reproduce again with a newer firmware? You can decode the backtrace with addr2line if you feed the addresses and runtime.elf to it.
+@sbourdeauducq I think we need to cut another 3.x release... Not sure how backtraces fell through the cracks here.
+Below is the backtrace for one instance of it crashing. Since I wasn't sure what causes it and was working on something else, I just let one of our experiments run in a loop - it's far from minimal, I'm afraid. If you need me to test something simpler, please let me know.
+No, this is enough. Actually, the crash has nothing to do with your experiment. Do you have an idle kernel set up?
+No (we usually do, but I didn't set it up this time).
+Do you still have the orignial backtrace (with addresses)? Looks like you didn't pass the -i option and the inlined frames are skipped.
+Oh, sorry. Here's the original:
+Can you please rerun it with -i?
+That... makes no sense. The only way to interpret that backtrace is that a packet arrived, passed the length verification in smoltcp::Ipv4Packet::new_checked, and subsequently failed the exact same length check it in smoltcp::Ipv4Packet::payload().
+Ah, it fails a different length check.
+@jonaskeller How problematic is this bug for you? Should we do a 3.4 release soon with the fix?
+Thanks for fixing this.
+At the moment, I'm still setting up the system, but I hope to integrate it into the experiment around next week. At that point, this bug would become quite problematic, since it occurs at a rate >1/h.
+OK, we will cut 3.4 next Monday.
+Great, thanks!
+Your package is built now, do you confirm the issue is resolved?
+I'm writing from home - will check tomorrow and let you know.
+I'm afraid I just checked with 3.3+3.gb92b00a1 (can't test with 3.4 yet due to #915) and still saw a panic after <1h, with a pretty similar looking backtrace:
+@sbourdeauducq: i'm fine removing this behaviour. (IIRC it was a request from you at some point).
+@jonaskeller via e-mail:
+Also, it seems worth mentioning that enabling the net_trace option
+dramatically increases the rate of panics. In all my attempts, it took
+less than a minute between FPGA reset and panic. Due to the risk of
+this being a separate bug, I've disabled the option for this capture,
+which is why it took about 20 minutes.
+This identifies the bug as gateware bug with virtual certainty; every IP packet undergoes the same processing regardless of the net_trace option, and increasing load on the core device triggering the race condition more often is exactly what I would expect.
+Just out of curiosity: Does that still mean that it takes a corrupted packet to trigger it? And if so, have you been able to reproduce it with the latest capture / found a culprit?
+As for your suggestion to check whether it persists in 4.0.dev: conda refuses to install anything beyond 4.0.dev-py_206+git70130847 because it can't satisfy the openocd 0.10.0 4 dependence. Is it worth trying with that one or should I look into getting that openocd version?
+Just out of curiosity: Does that still mean that it takes a corrupted packet to trigger it? And if so, have you been able to reproduce it with the latest capture / found a culprit?
+There are no corrupted packets in your logs as far as I can tell. It looks like the bug where smoltcp could be crashed by a corrupted packet was completely independent and you never triggered it; it was pure chance that the code path triggering that bug and the backtrace you've collected intersected. At least, that's my current understanding, I may still be wrong.
+Is it worth trying with that one or should I look into getting that openocd version?
+No, you need the very last commit on master.
+So what's the quickest way to fulfill the openocd version requirement? I.e. do I need to build it myself or is there a way around that?
+I'm actually not sure why you're hitting that error--are you flashing on Windows perchance?
+Yes, it's on windows (not my choice...). Looks to me like the win64 and linux64 packages for openocd are the same version in the conda repository, though.
+Still, if moving to linux fixes the problem, I'll go find a linux machine next week and retry.
+Try it on windows again with the latest artiq (07a31f8 or newer) - I just fixed some openocd conda issues.
+@jonaskeller How are things (flashing and panic) with a recent artiq-4 package from master? If everything works I'll backport the changes to release-3 and make a new release.
+Conda still defaults to 4.0.dev-py_206+git70130847 for the artiq-kc705-nist_qc2 package. If I try to force either py_553+git07a31f8d or py_582+gitf060d6e1, it complains about not being able to fulfill the openocd 0.10.0 4 dependency.
+Sorry, I had missed the openocd 4 dependency in one place. Does it work with the lastest master now?
+Installation of the packages works now (I'm using 4.0.dev-py_583+giteed64a6d), but I can't flash the core device.
+I wasn't sure how to pass what was formerly the -m parameter, so I tried both -V nist_qc2, and -d "C:\Anaconda3\envs\artiqdev\Lib\site-packages\artiq\binaries\kc705-nist_qc2". An update to the documentation would be helpful here.
+In either case, I get the same error, which looks like these paths could do with some escape characters:
+An update to the documentation would be helpful here.
+It's in the release notes already, though the options are called by their long names (--...) there. -d should not be required.
+Oh, ok - I missed that, sorry.
+So this means that one of my attempts already used the right command. Still, there seems to be a problem with the path to this other bitstream file.
+Can you try with 3.4-py_4+gitcb605cf0?
+I don't have time at the moment to look into building it myself, so I'd rather wait for your bot for now. Once I have a compiled version, I'll give it a try.
+As I mentioned to you on IRC there are binaries. https://anaconda.org/m-labs/artiq-kc705-nist_qc2/files
+So far, it's looking good. I left it idle for 6h and didn't see it crash, then set net_trace to 1 and left an experiment running in a loop to stress the core device. It's been running in that mode for over 2h now, which is a lot considering that I never saw it survive for more than a minute before. I'll leave it running over the weekend and let you know Monday how it went.
+After running all weekend, it seemed fine when I got here this morning. So, in any case, this is a major improvement. I can't yet tell whether it's entirely solved, however: Since then, I've seen two instances of the coredevice not responding anymore until I manually reset the FPGA, but didn't catch any panic entries in the UART log (as described here m-labs/misoc#66 , flterm needs to be manually restarted every few hours). I'll keep watching and will try to determine whether it's the same issue or not.
+I've been continuously monitoring since the last post and haven't seen a single coredevice panic. Occasionally (~2 times a day), connections are refused for a brief period of time, and that might have been what I described above (just being too impatient and hitting reset before it resolved itself). These are quite different symptoms though, so it seems very likely that the original issue has been fixed. If the other one keeps occurring, I'll open a new issue with a more detailed description.
+OK, thanks for your testing and patience!

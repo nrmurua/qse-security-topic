@@ -1,0 +1,25 @@
+created a virtual environment by conda with python3.9.7 installed
+build qiskit-aer from source with cmake options like:
+cmake -DSKBUILD=TRUE -DCMAKE_BUILD_TYPE=Debug
+It's wired that controller_wrappers.pyd and test_python_to_cpp.pyd can be produced but pulse_utils can not for it require python39_d.lib.
+I checked CMakeLists.txt twice, did not figure out any difference among these targets.
+Besides, import controller_wrappers from python will return DLL load failed
+Will cause
+LINK : fatal error LNK1104: cannot open file “python39_d.lib” [xxxxxx\qiskit-aer\build\src\open_pulse\pulse_utils.vcxproj]
+By the way, build under linux all is OK
+Aer is a Python package with a C++ backing, so we usually wrap the build with scikit-build; there are a few extra cmake options we set in setup.py if running on Windows.  Does the build succeed with pip install -e . here?
+Aer is a Python package with a C++ backing, so we usually wrap the build with scikit-build; there are a few extra cmake options we set in setup.py if running on Windows. Does the build succeed with pip install -e . here?
+I tried using python setup.py build and find out the answer:
+for import error:
+controller_wrappers.pyd depends on libopenblas.dll, which should be placed at dynamic library search path.
+In Windows, controller_wrappers linked with openblas of Aer, under src/third-party/win32 or win64
+In Linux, I used openblas lib in standard system lib path
+Solution: add the lib path to system enviroment PATH or just copy dll to pyd directory
+for compile error:
+I enabled CMAKE_VERBOSE_MAKEFILE to see what compiler and linker command done.
+But disappointed, no clue found.
+I guess may source code of pulse_utils include python header and under CMAKE_BUILD_TYPE=Debug, it must link python debug version lib.
+I will keep tracing the error
+We vendor OpenBLAS with Aer; the CMake build should unpack the libraries and link them in without you needing to modify your path.  Please make sure you have installed all the compiler dependencies, which are in the instructions in the Getting Started guide.  It is unusual to need to call setup.py build manually.  Generally you would use bdist_wheel if using setup.py directly at all, but even that is not recommended - it is preferred to use pip install -e . for an in-place build and install, or pip install build; python -m build --wheel . to build only.
+Looking further, in your original post, you are attempting to do the CMake build manually, and then you are then going into the Aer source, and attempting to import only a subcomponent of Aer.  This is highly unlikely to work out-of-the-box; you should use the full scikit-build procedure by following the installation instructions linked before, and then you need to import the complete Aer package with import qiskit.providers.aer in Python, not attempt to navigate part way into the tree and import a submodule as if it were a top-level package.
+I'll close this for now, because I think the problems were likely to do with some missing steps in the installation.  Feel free to re-open this, or open a new issue if you find other problems with the build.

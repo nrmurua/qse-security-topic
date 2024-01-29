@@ -1,0 +1,98 @@
+Dear Qutip admin,
+Currently, I am using mesolve in qutip. I would like to get the final_state from the mesolve without evaluating any expectation operator (e_ops). I realize that the default feature of qutip is that if I input e_ops to be an empty matrix and set final_state_store = True, qutip will automatically store the state at all time which will slow down the simulation.
+As for now, I would like to have mesolve to store only the final_state without storing the states at all time. May I kindly ask for your help to add this feature to mesolve? Is it possible also to add a feature where I can evaluate the expectation operator at the final time only without having to evaluate it at all time?
+@IamSeti please explain the feature request clearly.
+If you only need the final state and you don't need any intermediate times, your tlist should only have two elements in it.  So
+should give the correct result.  If you want to integrated for a long time, you might get errors about the integration not converging.  If so, you will need to increase the nsteps solver option, such as
+Dear Qutip admin,
+Thank you for your fast reply.  Unfortunately, my hamiltonian is a time-dependent function which is nonanalytic. So I need to use a large number of tgrid (on the order of 1000000 grid size) for my hamiltonian. Is there a way that you can add a feature to mesolve so that it can store only the final_state without storing the states at all time even for the case where my tlist has a large grid size. Or is there a way for mesolve to evaluate the expectation operator at the final time only without having to evaluate it at all time?
+Your help will be well appreciated.
+Hi IamSeti,
+In that case, you can create your Hamiltonian or Liouvillian as a QobjEvo yourself before calling mesolve which allows you to use a different tlist for system creation and mesolve.
+This way, mesolve will save only the first and last states or expect, while the system will use grid_times.
+Dear Qutip admin,
+Thank you for your fast reply. I tried the above method. However, it doesn't work. It gives me an error message saying that "Time list does not match". Here is one sample on how I applied it
+import qutip
+import numpy as np
+options = qutip.Options()
+options.nsteps = 100000
+hamiltonian = qutip.sigmax()
+args = {'omega':1000}
+timelist = np.linspace(0, 1, 1000)
+omegatlist = np.cos(args['omega']*timelist)
+H = qutip.QobjEvo([qutip.sigmax(),[qutip.sigmax(),omegatlist]], tlist=1000)
+state = qutip.basis(2, 0).proj()
+times = np.linspace(0, 1, 2)
+qutip.mesolve(H,state,times,[],qutip.sigmax(),args=args,options=options)
+Although in the above, I used an analytic function for my Hamiltonian, actually my real Hamiltonian is a time-dependent non-analytic function which has to be represented by an array. Your comment on how to solve the problem associated with the above code will be much appreciated.
+actually my real Hamiltonian is a time-dependent non-analytic function which has to be represented by an array
+@IamSeti May I ask if your Hamiltonian can be written in the following form sum a_i(t)*H_i with a few different constant H_i, i.e. the time-dependence can be represented by a complex coefficient; Or is your Hamiltonian completely non-analytic and time-dependent?
+H = qutip.QobjEvo([qutip.sigmax(),[qutip.sigmax(),omegatlist]], tlist=1000)
+tlist needs to be an NumPy array with np.float64 dtype, not a number
+Dear qutip admin,
+Thank you for your swift reply. I followed your advice in changing the array type to np.float64. The code can be run but it gave an incorrect answer. This can be seen by comparing the code written with QobjEvo (first code below) with the code written without QobjEvo (which is what it is supposed to do).  For both cases, I compare the expectation value at the end of the simulation which is at time t = 1.
+#First code:
+import qutip
+import numpy as np
+options = qutip.Options()
+options.nsteps = 100000
+args = {'omega':1000}
+time_grid = 1000
+timelist = np.linspace(0, 1, time_grid)
+omegatlist = np.cos(args['omega']*timelist)
+H = qutip.QobjEvo([qutip.sigmax(),omegatlist], tlist= np.array(np.linspace(0, 1, time_grid), dtype=np.float64))
+state = qutip.basis(2, 0).proj()
+times = np.linspace(0, 1, 2)
+result = qutip.mesolve(H,state,times,[],qutip.sigmaz(),args=args,options=options)
+print(result.expect[0][1])
+#Second code:
+import qutip
+import numpy as np
+options = qutip.Options()
+options.nsteps = 100000
+args = {'omega':1000}
+time_grid = 1000
+tlist = np.linspace(0, 1, time_grid)
+omegatlist = np.cos(args['omega']*tlist)
+H = [qutip.sigmax(),omegatlist]
+state = qutip.basis(2, 0).proj()
+times = tlist
+result = qutip.mesolve(H,state,times,[],qutip.sigmaz(),args=args,options=options)
+print(result.expect[0][999])
+The first code gives a value of 0.9999989185418086 and the second one returns a value of 0.9999989289570258. So, the two results are not exactly the same. For the above analytic Hamiltonian, the result seems to differ by a small decimal number. However for the non-analytic Hamiltonian that I am actually using, the result can differ by six orders of magnitude. May I know why there is a difference in the results obtained from the two methods above? Is it because when QobjEvo is used, the mesolve routine actually does not sample enough time grid points when it evolves the Hamiltonian (i.e., it does not sample all the time_grid points which is time_grid = 1000 as provided above)? If so, may you kindly tell me how to rectify this problem?
+As per my original question, I would like the first code to give the same the expectation value of the operator at the final time as is in the second code but without having to evaluate the expectation value of the operator at all time.
+Any help on my issue above will be well appreciated. Thank you very much
+in that extreme example you gave I guess you are just seeing numerical error from the ODE solver which is sensitive to some small difference in how the Liouvillian is being constructed, if you decrease the tolerances in options the difference diminishes, I guess with something like,
+options.atol=1e-15
+options.rtol=1e-15
+also, just fyi, when you send an array for the time-dependence mesolve() uses some cubic-spline fitting to ''fill in the gaps'' when needed.
+Dear nwlamber,
+Thank you for your reply. Yes, for that smooth analytic Hamiltonian, it seems that decreasing the atol and etol to 1e-15 will make the difference between the two results smaller but it is not true for the non-analytic Hamiltonian that I am actually using. Even though with atol and rtol being set to 1e-15, the mesolve result obtained by using the non-analytic Hamiltonian that I want to simulate has a six orders of magnitude difference between the first and second method.
+Is there any way to make the mesolve work correctly without having it to evaluate the expectation value at all time and only evaluate the expectation value at the final time?
+There is one pitfall I know but I'm not sure if that is the reason here:
+Is your Hamiltonian mostly 0 in the time duration? QuTiP solves dynamically change the step size, if there are a lot of zeros, it may skip the non-zero part accidentally (see #1265). You will detect it by adding a small constant H (magntitude~10^-6) on top of your Hamiltonian (if this H does not affect your true dynamic significantly).
+If that's not your case, we may need more information to actually identify the problem.
+No, my Hamiltonian does not have a lot of zeros but it has fast oscillating term cos (omega(t)*t) where omega(t) is a non-analytic term and is a very large number compared to the 1/final time. So, to get the correct result, I have to use a large number of time_grid. I suspect the method of using QobjEvo that was suggested above only use two time steps (initial and final time) in  evolving the Hamiltonian as the seed and interpolate the Hamiltonian at the time between the initial and final time using some interpolation function. This will not give the correct result since my Hamiltonian has fast oscillating terms which requires a lot of time steps to be given as an input for mesolve. This is why the method of using QobjEvo gives different answer than if I use my initial time grid (which is time grid = 1000000) in the mesolve.
+Since I am using a very large time grid in mesolve, my program ran very slowly. I would like to speed up my simulation by having mesolve to evaluate the expectation value of the operator only at the final time and not at all time steps. My question is very simple: Is there a way that I can still use a very large time grid in evolving my Hamiltonian using mesolve but have the mesolve evaluating the expectation value of the operator ONLY at the final time? If not, is it possible to add this feature in qutip?
+Thank you.
+I suspect the method of using QobjEvo that was suggested above only use two time steps (initial and final time) in evolving the Hamiltonian as the seed and interpolate the Hamiltonian at the time between the initial and final time using some interpolation function.
+This is not the case.  The answer to your question is to use QobjEvo as suggested.  For example, here is a simple example using a fast-oscillating array function in a QobjEvo and a much shorter tlist in mesolve.  You may need to set the solver options nsteps, atol and rtol to suitable values, as I have done here.
+You can see that I was able to do a successful integration with only 2 times in mesolve, but many in a fast-oscillating Hamiltonian.  Clearly the bad_times version (which only has the start and end points so misses all the fast oscillation behaviour) is completely different to the other two versions.
+We should somehow highlight more in the documentation that:
+From what I experienced, quite some people don't know this. And it slows down their code a lot.
+Dear Jakelishman and BoxiLi,
+Thanks a lot for your reply. I still get incorrect results from using QobjEvo for my Hamiltonian and then use only the initial and final time in the mesolve. I am still working on how to solve this problem. Will update you with the results.
+@BoxiLi
+do you really mean this:
+tlist in QobjEvo and in mesolve do not have to be the same. The first one determines only which point to save the state or calculate the expectation value.
+From the example shown above it would seem that the tlist passed directly to mesolve determines times at which the expectation values are calculated, regardless of what kind of tlist the QobjEvo knows about (see the two_times result in the code above). Unless I'm missing something you seem to be saying the opposite?
+@petergthatsme Oh, my mistake, it is otherways around.  Edited my comment above. Thanks!
+Hi Jakelishman and BoxiLi,
+The QobjEvo works. Thanks a lot for your help.
+Dear qutip admin,
+If I wrote the Hamiltonian in terms of analytic function (Hanalytic and Hanayticevo as shown below), I got different answers from using the discretized Hamiltonian obtained by providing the list of Hamiltonian values at discrete times (the variable H) as used previously. May I know how to rectify this problem? Below is the code.
+You've changed the function to be incredibly quickly oscillating (cos(2pi * ~300 * t*t)) and tried to interpolate it (fast_xs) with far too few data points, so the interpolations are very heavily aliased.  The string form is defined analytically, which means the tlist argument is ignored, and QobjEvo can evaluate it to arbitrary precision, so those forms will be the most accurate.
+You have to consider what you're actually trying to do.  Try plotting fast_xs with more and more time values and you'll see that your interpolations are insufficient.  If I add more interpolation points to the list, the values mostly agree (although the function is so ludicrously fast that you need around 1,000,000 points to really be decent).
+Dear Jakelishman
+Thank you for your answer. I have changed omega to 1 and still they do not give the same results.
+Those do match.  The absolute error is ~3.5e-5, which is the same as the error made in interpolating this particular cosine function with 1000 points.  So again this comes down to considering the error inherent in making an interpolation, like I said in the previous comment.

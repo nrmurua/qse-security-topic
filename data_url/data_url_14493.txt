@@ -1,0 +1,37 @@
+I'm attempting to queue circuits to run on the devices that involve delays before the measurements. If I send a circuit with a delay then I may receive the error message:
+TranspilerError: "This circuit None may involve a delay instruction violating the pulse controller alignment. To adjust instructions to right timing, you should call one of scheduling passes first. This is usually done by calling transpiler with scheduling_method='alap'."
+If I try running qiskit.execute with the argument scheduling_method='alap' as suggested then I receive the same error. Furthermore if I try to pre-transpile the circuit with qiskit.transpile with the same scheduling method argument and try to execute the transpiled circuit I get the same error.
+IN
+OUT
+IN
+OUT
+IN
+OUT
+IN
+OUT
+IN
+OUT
+IN
+OUT
+I expect the execute functions to finish running in a few seconds and for the job to be queued up to run on the device.
+I noticed in the traceback that when the execute function transpiles a circuit to run on the device it doesn't seem to use the scheduling_method argument, see lines 292-303 of qiskit/execute_function.py in my installation
+I tried making this edit to my local installation
+and the code in the MWE above ran without errors, with my jobs getting queued and running with the expected results.
+I'm hesitant to make a pull request with this change in case this causes problems elsewhere but it definitely solves my problem.
++1, I've also encountered this error.
+Actually the following works for me with Qiskit Terra version 0.19.2
+I tried a bunch of combinations and this was the only one that worked.
+So this behavior is actually by design. The execute() function is not meant to expose every option of transpile() it's a higher level abstraction that is there primarily to provide a simpler experience for users that don't care about the internal operation of the transpiler and just want to take their circuits and run them on a backend. The options to the transpiler which are exposed via execute() are limited to just high level ones like optimization_level (there are options there which were added before we made this distinction clear which really should be deprecated and removed). If you're looking to control the scheduling of your circuits that's already a layer deeper than what execute() is intended for and calling transpile() directly is the intended path there.
+I don't think this behavior of exeucte() is something we are going to change (we used to try and have execute() proxy everything in transpile() and assemble() a long time ago but that didn't scale and is why we made the separation of concerns clearer. However, I think we can make this distinction clearer in the documentation. So I'll leave this issue open and we can close it with a docstring update to explain the purpose of execute better.
+@mtreinish How about raising an error for calls to execute with an unsupported transpile option, rather than ignoring it?
+The problem there is we pass through all kwargs as run options to backend.run(). Since all backends have a unique set of runtime options they offer we made the decision a long time ago to pass kwargs to the backend.run() (or assemble() before BackendV1) and warn if an option is passed in the backend doesn't support but not ignore it: https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/execute_function.py#L386-L396 (with the old pre-backendv1 approach no warning would be emitted the unsupported options were silently ignored by the backend).
+In this case, scheduling_method is a correct parameter to execute, it's just gated behind passing schedule_circuit=True, and it's never passed to transpile, it's just used in the separate function schedule (a few lines below your change).  If you pass schedule_circuit=True as well, I think your example should work.
+@yaelbh: it's a bit tricky to handle this, because execute collects up all its unknown keyword arguments to pass them to backend.run.
+According to @mtreinish and @jakelishman's explanations, I'd expect the backend to warn about an unknown run option.
+Ah I missed that, but it's bit weird because of the overloaded terminology. the schedule_circuit flag is to indicate that the circuit should be lowered to a pulse schedule prior to executing it. The scheduling_method arg there is for the schedule() not the transpile() call before it. These options actually predate the scheduler in the transpiler for scheduling gates. I feel like we should deprecate the support in execute() to schedule a circuit to a pulse schedule prior to calling run.
+@mtreinish
+If you're looking to control the scheduling of your circuits that's already a layer deeper than what execute() is intended for and calling transpile() directly is the intended path there.
+In my example I attempted this method and got the same error. The transpiler outputs a circuit with (presumably) the correct extra delay to realign measurement but running that circuit leads to the same problem. I'm not sure why this is the case because it seems like the misalignment problem should be solved by pre-transpiling.
+When you manually transpile something, are you then passing it to execute or to your backend.run?  After manual transpilation, you should do the latter, otherwise execute will re-transpile the circuit which will most likely invalidate its scheduling.  You should hopefully be able to do backend.run(transpiled_circuit, shots=10_000) without issue, which is the expected path for people who want finer-grained control over the transpilation process.
+@yaelbh: that's a fair point.  At the moment, it looks like there should be a notice emitted by execute, but it's as a log message at level INFO, which isn't super visible.  Any incorrect options that actually get passed to a backend should be reported by the backend (in this case the qiskit-ibm ones).  In this case, scheduling_method was interpreted as a correct but inert option for execute so it wouldn't have triggered any logging or warnings.
+@jakelishman that makes a good deal of sense, thanks.

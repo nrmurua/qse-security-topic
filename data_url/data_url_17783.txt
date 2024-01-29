@@ -1,0 +1,17 @@
+The matplotlib circuit drawer returns a NoneType rather than the PIL.Image as stated in the docstring for circuit_drawer and matplotlib_circuit_drawer.  Thus, you can do nothing with the output.  For example, it would be nice to grab the output and use it in a matplotlib subplots or the like and group circuits in a single figure.
+Hmm, when I tested it for writing the doc it was definitely an PIL Image object, it also works with the interactive kwarg which calls show() on that object to open it in a new window. So something odd must be going on, let me check the code
+Well, that explains it: https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/tools/visualization/_matplotlib.py#L361-L375
+If you're running in ipython it returns None, otherwise it renders the image to a file and uses that to create a PIL Image object.
+Sigh, every time I think we've got the behavior well defined for the circuit drawer there is another edge case hidden in the code...
+Why are we not returning a matplotlib object instead of saving the figure and then reopening it as an image?
+Honestly, I don't know, when I started working on the project everything was already a PIL image object. I assume it's done that way for consistency with the latex drawer which obviously can't return a matplotlib object.
+Ok.  I would have thought that having a matplotlib fig or ax instance returned would be one of the selling points of that method.  I could do all sorts of things with it (annotate, combine, etc...).
+Oh I definitely agree. We can change it (it's not like we're returning a consistent type with the text drawer anyway) to return the fig. If we do that I'm not exactly sure the best way to signal that, we've not had the output kwarg in a release yet, and the only way to get a matplotlib circuit before was if the latex one failed. Maybe we don't need a deprecation warning and just clearly document the output type in the docstring. Thoughts?
+Maybe it would make sense to have a consistent type with all the drawers. Compose them is something that can be supported in all of them. Same with "dump to a file". If you call a method that is not supported for that particular drawer, an exception makes sense...
+Well I think the hunt for consistency is probably part of the problem here. We've got 3 different potential outputs (well 4 if you count latex_source) all of which behave differently and have different advantages and disadvantages. I'm not sure that wrapping 3 (4 if you count None as per this bug) different types (PIL Image, mpl figure, and str) in a class will make it easier to use. What does that provide us except for a consistent type? I feel like that will just make it more confusing as to what you're actually getting
+When @nkanazawa1989 and I originally implemented matplotlib_circuit_drawer, it returns nothing because we took into account the usecase of Jupyter notebook. @delapuente asked me to return PIL Image object to be consistent with latex_circuit_drawer. See the following PR for the details #579 (comment)
+I see that text_circuit_drawer does not return PIL image object. So, we can change the return type of matplotlib_circuit_drawer as well, right? What do you prefer?
+From the API perspective, it seems to me that we have two options:
+I'm more inclined for the second option :)
+This is blocking #1181. Remove the on hold tag when this issue gets resolved.
+After talking with @mtreinish, we decided that each output will return its own type. We might change this in the future if there are use cases that justify a common type.

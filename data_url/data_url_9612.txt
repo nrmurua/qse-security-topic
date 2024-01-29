@@ -1,0 +1,113 @@
+Sometimes, a default register layout in which the qubits can be as connected is all that's necessary. The idea here is to create another classmethod for the Register class (in pulser.register), in which the user creates a register with n_qubits that are maximally connected, while obeying the constraints of a given device.
+The call to this method should have the following signature:
+Bear in mind that, in 2D, the configuration that maximizes connectivity is that of a triangular lattice.
+Working on it ;). But I need your opinion on a few things.
+Should this method only generate 2D arrays ? This seems to be the only option if we are to use Register.triangular_lattice().
+Off topic: By the way, shouldn't we add 3D versions of Register.rectangle(), Register.square() and Register.triangular_lattice() ?
+Show we raise a ValueError if n_qubits is greater then Device.max_atom_num ?
+The given signature includes no rows count. Should it be forced to 2 ?
+The given signature includes no spacing parameter:
+The given signature includes no prefix parameter:
+Thanks !
+Hey @LaurentAjdnik , thanks for taking this on! See below my answers to your questions.
+Should this method only generate 2D arrays ? This seems to be the only option if we are to use Register.triangular_lattice().
+Off topic: By the way, shouldn't we add 3D versions of Register.rectangle(), Register.square() and Register.triangular_lattice() ?
+Yes, only 2D arrays. All Registers in Pulser are currently 2D only. At some point we might introduce 3D throughout but right now, it's 2D all the way.
+Show we raise a ValueError if n_qubits is greater then Device.max_atom_num ?
+Yes. I would say you should validate the register, after creating it, with the appropriate method in Device.
+The given signature includes no rows count. Should it be forced to 2 ?
+Why 2? I would say that an array with only 2 rows won't maximize connectivity.
+The given signature includes no spacing parameter:
+The given signature includes no prefix parameter:
+As with the other classmethods, both these parameters should be optional. Regarding the spacing, perhaps the default should be None in this case, so that it chooses the spacing to be the minimum interatomic distance for the given device. For the prefix, use the same as the other methods.
+Let me know if you have any other questions!
+Thanks for your feedback, @HGSilveri!
+Yes, only 2D arrays. [...] At some point we might introduce 3D throughout  [...]
+OK, 2D only for now then 🙂! I'll be glad to help when we introduce 3D.
+I would say you should validate the register
+I added tons of checks before the Register is indeed created.
+BTW, I feel like they're missing for existing methods in Register. For instance, we should check that: side > 0, rows > 0, atoms_per_row > 0, spacing > 0.0... and throw a ValueError otherwise.
+I'm stuck with something: Checking that device is an instance of Device results in circular imports (I want Register to import Device but Device already imports Register).
+My grip on the whole code is not sufficient and I couldn't solve that.
+Importing from within the function def might solve it but it's not PEP8-compliant.
+Why 2? I would say that an array with only 2 rows won't maximize connectivity.
+Just because it's the simplest idea I came up with 😁.
+Which general shape (based on a triangular lattice anyhow) would result in "maximum connectivity"?
+For instance, what would be the best layout for, let's say, 17 qubits? And that will be even more confusing in 3D 🤯!
+I wrote a first draft and the associated pytests. But the circular import problem and the shape thing keep me from pulling a request.
+I added tons of checks before the Register is indeed created.
+Didn't you use Device.validate_register()? In principle, all relevant checks are encapsulated there.
+BTW, I feel like they're missing for existing methods in Register. For instance, we should check that: side > 0, rows > 0, >atoms_per_row > 0, spacing > 0.0... and throw a ValueError otherwise.
+That's a valid point, even if it's just for the sake of having more complete error messages. Would you be up for doing that too? We can perhaps make it a separate issue.
+I'm stuck with something: Checking that device is an instance of Device results in circular imports (I want Register to import Device but Device already imports Register).
+My grip on the whole code is not sufficient and I couldn't solve that.
+Importing from within the function def might solve it but it's not PEP8-compliant.
+You're right about that, and it's not such an easy fix. I would rather not go against PEP8, so perhaps here the best course of action is to use duck typing (i.e. assume that the given device is a Device and access its attributes accordingly, looking out for exceptions in the process). What do you think?
+Which general shape (based on a triangular lattice anyhow) would result in "maximum connectivity"?
+For instance, what would be the best layout for, let's say, 17 qubits? And that will be even more confusing in 3D 🤯!
+Of this I am not sure, but I do know the metric to evaluate it: the best layout will be the one that has the most edges connecting atoms (naturally). This should always be your criterion when choosing where to remove or add qubits to a starting layout that you know is maximally connected.
+@LaurentAjdnik Regarding the circular imports, I remembered another option. Instead of from pulser.devices._device_datacls import Device just do import pulser and then, when you do the typecheck, do:
+Give it a shot, it might work.
+Which general shape (based on a triangular lattice anyhow) would result in "maximum connectivity"?
+For instance, what would be the best layout for, let's say, 17 qubits? And that will be even more confusing in 3D 🤯!
+Of this I am not sure, but I do know the metric to evaluate it: the best layout will be the one that has the most edges connecting atoms (naturally). This should always be your criterion when choosing where to remove or add qubits to a starting layout that you know is maximally connected.
+If I may step in on this issue. There are a few metrics to consider here. I can think of two important ones :
+One might consider the difference between bulk and boundary and try to minimize the number of atoms with different (fewer) neighbors, i.e. on the boundary. This is even more important considering that the pulses are not really uniform over the register and vary as a function (among others) of the distance to the center. The square and rectangle are bad because the don't respect the lattice symmetry, but I would also avoid the parallelogram because of that.
+One might want to consider the symmetries, in particular the C_6 rotational symmetry and the 3-sublattice symmetry of the triangular lattice.
+The TL;DR woud then be "the most symmetric register" on either a regular hexagon (that distinguishes the sublattice of the central site from the other two), or a cropped hexagon (that breaks the C_6 into a C_3 only), as in https://arxiv.org/abs/2012.12268
+(maybe leave it as an option?)
+@Louis-PaulHenry, but then what you're suggesting wouldn't allow for any number of qubits, right?
+Sure, there are sizes that don't allow for symmetry-preserving registers. I would fill the layers one after the other (one would have to determine the exact way/order of filling a given layer, as going just (anti-)clockwise would surely not do the trick).  For example, something similar to 0 -> n/3 -> 2n/3 -> n/6 -> 3n/6 -> 5n/6 -> 1 -> n/3 +1 -> 2n/3 +1 -> n/6 +1 ... (for a layer of n atoms, in the C_6 hexagonal case)
+I don't reaaly see any systemic way of doing it (similarly to how a prime number of atom is tricky to distribute on a rectangular lattice).
+Regarding the circular imports, I remembered another option. Instead of from pulser.devices._device_datacls import Device just do import pulser and then, when you do the typecheck, do:
+Give it a shot, it might work.
+Brilliant! Problem solved!
+Sure, there are sizes that don't allow for symmetry-preserving registers. I would fill the layers one after the other (one would have to determine the exact way/order of filling a given layer, as going just (anti-)clockwise would surely not do the trick). For example, something similar to 0 -> n/3 -> 2n/3 -> n/6 -> 3n/6 -> 5n/6 -> 1 -> n/3 +1 -> 2n/3 +1 -> n/6 +1 ... (for a layer of n atoms, in the C_6 hexagonal case)
+I don't reaaly see any systemic way of doing it (similarly to how a prime number of atom is tricky to distribute on a rectangular lattice).
+I've been spending quite some time on it and this is getting tricky...
+Let's consider wider and wider hexagons, built around a central atom.
+On each layer of rank r (with r >= 1), there are n = 6*r atoms.
+Full layers are easy to generate and problems arise when we reach an incomplete layer.
+We'll start by placing atoms (if any left) on vertices 1/3/5/2/4/6, which leads us to respect C3 (with 3 atoms) then C6 symmetry (with 6 atoms).
+Now, we are left with r-1 positions on each side to place extra atoms.
+We can work by groups of 6 positions: once the first one is determined, the next 5 can be found by rotating it around the center (2pi/3, 4pi/3, pi/3, 3pi/3=pi, 5pi/3). Which is pretty much what we did for the vertices.
+All we have left to do is to compute the starting position of each group.
+If no other constraint prevails and what we really just care about is rotational symmetry, I suggest we start the first "group of 6" with a position next to the first vertex. Then the second position, then the third, and so on...
+If we want something more balanced, with axial symmetries along the way, a fractal/recursive approach must be used. 🤯
+Didn't you use Device.validate_register()? In principle, all relevant checks are encapsulated there.
+I tend to check things before starting computations and instanciating objects. 😊
+Especially here where there is no reason to create a Register if something goes wrong beforehand.
+BTW, I feel like they're missing for existing methods in Register. For instance, we should check that: side > 0, rows > 0, >atoms_per_row > 0, spacing > 0.0... and throw a ValueError otherwise.
+That's a valid point, even if it's just for the sake of having more complete error messages. Would you be up for doing that too? We can perhaps make it a separate issue.
+Yup! 😉
+BTW, since we started talking about hexagons, what about a new Register.hexagon(cls, layers, spacing, prefix) class method ? It might even be used as part of the current issue.
+Just for the sake of it, here's a nice hexagon with 4 layers, generated through the brand new Register.hexagon() function: 😉
+
+@LaurentAjdnik your method for generating the layout seems good, I wouldn't complicate things further. I'll take the symmetry if you have it, but it's not a primary concern.
+Regarding the hexagon, it does make sense to add it and even use it here, so feel free to do so, the picture looks nice :)
+BTW @LaurentAjdnik:
+Just out of curiosity, are you coming here from Unitaryhack? In case you don't know what I'm talking about, you might want to check it out!
+I hadn't even heard about it! 😲
+I might give it a try.
+This issue would be an eligible contribution, you would just have to hold off on the PR until the competition starts, I think.
+Don't you worry, I'll need some more time anyway to add this "incomplete layers" thing and to test it all extensively. 😁
+It works ! But that was a brainkiller !
+Please note that the numbering of qubits adapts constantly so that, whatever the final pattern is, we stick to a "spiral" logic.
+1 extra atom, placed next to a vertex:
+
+3 extra atoms, placed next to specific vertices, so that C3 symmetry is achieved:
+
+6 extra atoms, C6 symmetry achieved:
+
+7 extra atoms, offsetting (atom # 20) from the very first extra atom:
+
+9 extra atoms, C3 symmetry achieved again:
+
+12 extra atoms, C6 symmetry achieved again:
+
+Almost done (before we switch back to a full layer):
+
+And so on, and so on...
+Looks great, nice job! I look forward to the PR, thanks for all the effort!
+BTW, this issue does not appear under Pulser on Unitaryhack Projects.
+It's okay, any issue goes. This one just doesn't have a bounty on it, but it still counts for the overall competition.

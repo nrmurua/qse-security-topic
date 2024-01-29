@@ -1,0 +1,89 @@
+The serwb clocking is needlessly complicated (too many clock domains) and precludes the use of Xilinx-recommended clocking schemes for the IOSERDES:
+https://www.xilinx.com/support/documentation/application_notes/xapp1324-design-selectio-component-primitives.pdf
+https://www.xilinx.com/support/answers/67885.html
+I suggest the following:
+Note: for speed grade 1 (which is what we have), on HR banks, the SERDES in less-insane (as opposed to "native") mode is spec'd to 1000Mbps only.
+What's the timeline for this? If the mem test now works, the SER WB is the main source of unreliability on Sayma from the ARTIQ side of things AFAICT. It would be great to have this working more robustly.
+@hartytp: i'll work on that on wednesday.
+@sbourdeauducq: i just want to check things with you before implementing:
+If so, should i keep specific serwb_serdes clock domains (ie serwb_serdes_4x/serwb_serdes) or should i use sys4x_clk/sys_clk?
+Use sys4x_clk/sys_clk - the Wishbone side is in the sys_clk domain and synchronous to the SERDES.
+What's the status of this? It's been a while since the SDRAM was fixed, and I'd love to have a version of Sayma I can actually use.
+@hartytp: yes sorry, i started working on that but need to test and commit.
+Here is what i did:
+https://github.com/enjoy-digital/artiq/commit/2e61649ba230aefd788dced5cce21bf1fcc2e5c4
+https://github.com/enjoy-digital/artiq/commit/3c02cc5f9eea901d6d58bef88b9e00b2b218ef42
+https://github.com/enjoy-digital/misoc/commit/4b460283d6ec2335436c71241e868a6bf42ece3a
+I was doing some tests with a simple design but crashed JTAG on sayma3 with CTRL-C...
+@sbourdeauducq: can you integrate it and test it?
+I was doing some tests with a simple design but crashed JTAG on sayma3 with CTRL-C...
+Doesn't @whitequark's usbreset.c work around this bug?
+@sbourdeauducq: i'm going to try, can you review the code to tell me if that's what you want?
+No, that's not what was described here: #967 (comment)
+We should not need a 25MHz clock, or any additional clock for that matter.
+What I was thinking was:
+Do we have a HP or HR bank?
+HR is limited to 1.00Gbps. If we have HP, maybe we can instead keep 1.25Gbps, replace that stupid Ultrascale IOSERDES with IODDR (from my experience with RGMII, that one component wasn't lousy with bugs and misfeatures, though there may be surprises at high speeds), and do 5:10 in fabric.
+Or even drop the special IOs completely and operate at a speed attainable by the registers (>500Mbps should still be attainable I believe, though the IODELAY range may then become an issue).
+I've implemented something and will test it tomorrow.
+I still have to do some debug, but i should not be that far from having something working using only sys/sys4x clock.
+It's working on a simple design (Nexys Video / SERWB overa HDMI cable and the two HDMI TX/RX ports / A master and a Slave in the same design). I'm doing more testing on that (P&R is only 30 seconds, so it's easier), cleaning up things, and i'll test/integrate in ARTIQ.
+Integrated and tested on ARTIQ. Scrambling is not enabled yet. I'll try to enable it next week. That would be good if @hartytp (or someone else) could do more testing and give me some feedback now that it's fresh in my mind.
+Great. Will look at that soon
+@enjoy-digital Thanks for doing that!
+I'll have a look at that now. Anything you want me to do beyond power cycling it a few times and looking for errors?
+@hartytp: yes you can do that. You also said you had spi issues with trying to debug hmc830. If that's something easy to reproduce, that would be interesting to test you still have issues.
+I never got to the point of having a proper test that reproducibly crashed the ser-WB as there were other more pressing issues at the time.
+I'll start using Sayma again and keep an eye out, it things are as bad as before I'll see it soon enough.
+ok fine, thanks.
+Here is as many repeats as I could be bothered with of: artiq_flash -t sayma start followed by openocd -f sayma_new.cfg -c "pld load 0 rtm.bit; exit" https://hastebin.com/soxibaweka.sql
+Thanks @enjoy-digital !
+@hartytp And does it go further (e.g talks to the HMC7043), or crash somewhere?
+@enjoy-digital Are you implementing all the tricks that were found to be necessary for the Ultrascale IO garbage to behave with SDRAM into serwb?
+@hartytp, @jbqubit: sorry, stupid question, but was the rtm gateware also regenerated? (i just want to be sure)
+Note that with old serwb, we were not able to run it a 1.25Gbps on all boards and reduced it to 625Mbps. It's now increased to 1Gbps, so it would be interesting to test on the others sayma as @sbourdeauducq is suggesting since IIRC it was not working correctly at 1.25Gbps.
+@sbourdeauducq: we should implement the tricks but i'll double check.
+@enjoy_digital yes I rebuilt everything from scratch. Bit if you're worried then feel free to send me binaries to load.
+What about adding a prbs check to verify the link/clocking?
+@hartytp: yes that's a good idea. I'll add a prbs check after initialization.
+Great, thanks!
+You should be able to go to 500Mbps, and keep the same clocks, by putting the SERDES into 4:1 mode.
+Speed for serwb is not very important, the priority is to get something to work at all and without intermittent or board-dependent bugs that waste the maximum amount of time.
+Though, the maximum range of IDELAY varies between 1.28ns and 7.68ns with PVT (not a typo, welcome to Ultrascale). So, anything below ~780Mbps has to deal with the IDELAY range being maxed out, otherwise we will stay in the above-mentioned bug hell. Maybe the OSERDES can be in 4:1 and the ISERDES in 1:8 and you switch to the other set of outputs when the IDELAY maxes out. Use EN_VTC, I don't trust the Ultrascale taps to be stable over any significant amount of time.
+I've reduced serwb speed to 500Mbps, it will maybe improve things.
+@hartytp:  I've added PRBS on my simple design, but if we want to add PRBS to serwb in ARTIQ i have to think a bit how things should sequenced, since we are not able to control the RTM when in PRBS mode.
+@jbqubit: your analysis is interesting, but i'm not sure to understand what's the difference between doing "artiq_flash -t sayma -f sayma.config storage start" and reloading the AMC, can you explain?
+By "reloading the AMC" I mean that I bypass the Flash by running this.
+I've reduced serwb speed to 500Mbps, it will maybe improve things.
+Not this way: the RX timing windows are still the same, you depend on the data being correct on an arbitrary hardcoded set of downsampled ISERDES bits. You require hardware capable of 1Gbps but use it at 500Mbps.
+Instead, you need to switch between two sets when the IDELAY maxes out.
+TX looks fine.
+have to think a bit how things should sequenced, since we are not able to control the RTM when in PRBS mode.
+Have the gateware send/receive exactly X megabytes of PRBS data (on an already established link) then go back to normal operation?
+Also I don't see how the scan algorithm can possibly work correctly right now, the delay range is less than 1 UI.
+I suggest keeping 1Gb unless there is a clear reason not to, handling the delay range limit without bug is not straightforward.
+@sbourdeauducq: ok, i reverted linerate, moved some things, added a line test after initialization.
+@jbqubit: i did some changes on RTM reset and added some debugs informations, can you do a test on your board?
+@enjoy-digital I'm building --without-sawg now and will test shortly.
+@jbqubit: thanks
+I built from master with --without-sawg. Using AMC+RTM. @enjoy-digital Looks like this was a step backward. memtest fails 10 of 10 times I tried on this board pair (AMC s/n -8).
+memtest passes on this same board (AMC s/n -8) for 20180413 build from master using --without-sawg. I checked again today with the 20180413 version and see that it works.
+Try with second AMC+RTM that's in the lab (AMC s/n -7). ... memtest and serwb passes but AD9154 init fails 6 of 6 times I tried.
+memtest passes on this same board (AMC s/n -7) for 20180413 build from master using --without-sawg.
+Please open two new issues for those two problems.
+[     0.003889s]  INFO(runtime): software version 4.0.dev+796.g5ca59467
+[     0.010157s]  INFO(runtime): gateware version 4.0.dev+838.gfe689ab4.dirty
+And address the version mismatch before reporting any issues. Keep amc bitstream, rtm bitstream, bootloader and runtime in sync at all times, otherwise you are wasting time.
+@jbqubit: thanks for testing. You are indeed using old software, serwb should output more informations.
+@sbourdeauducq You're right, I didn't roll back ARTIQ when trying to revert back to my archived build from 20180413. The tests with 838.gfe689ab4.dirty were with matching version of ARTIQ.
+I built from master last night with SAWG. Here's what I see on my two Sayma AMC+RTM setup. Now with software gateware version match.
+Running artiq_flash start several times in succession I see that the number of serwb errors is fixed at 209716.
+Joe do those bad mem test eyes go away when you unplug the RTM?
+Even though the men test passes on board 2 the eye scan looks like garbage so I'd not be surprised if it crashes pretty quickly.
+No errors on the HKG board
+Note: this is with Vivado 2018.1.
+@jbqubit, @sbourdeauducq: thanks for testing.
+For information, i still have issues when enabling scrambling on the HKG board (which is not the case with my artix7 test design). I'll investigate on that to try to understand and see if it could be related to @jbqubit issue. If we are not able to reproduce the issue with the HKG board, i'll need to have access to a board that is not working.
+Joe do those bad mem test eyes go away when you unplug the RTM?
+I sent 2 AMC and 3 RTM back to WUT yesterday so I can’t do this test. They should arrive on Monday.
+Clocking has been simplified. If you still have issues with serwb, please open specific ones.

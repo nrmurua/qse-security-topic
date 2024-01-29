@@ -1,0 +1,84 @@
+MacOS 10.15.7, Xcode-12.4 (probably not relevant here, but...).
+Initially, I could not run tests because the make-script could not load dynamic library. Problem with the upstream, unresolved.
+Changing the build to producing static library, the tests can run - but some are skipped with this message:
+What's this "dynamic engine feature"? How do I enable it - just by removing no-shared from the ./Configuration ... command?
+And why the README tells to build this fork with no-shared? Is this restriction still valid?
+What's this "dynamic engine feature"? How do I enable it - just by removing no-shared from the ./Configuration ... command?
+This is an OpenSSL question. I'd suggest using google for that. One of the first hits looks interesting: https://www.openssl.org/blog/blog/2015/10/08/engine-building-lesson-1-a-minimum-useless-engine/
+And why the README tells to build this fork with no-shared? Is this restriction still valid?
+The README gives you examples. It does not mandate using no-shared. Indeed everything builds just fine shared, e.g., as part of the curl build
+This is an OpenSSL question. I'd suggest using google for that.
+Yes. Possibly because I never built OpenSSL with no-shared, everything engine-related just worked for me. All the efforts were confined to the engine code itself.
+One of the first hits looks interesting: https://www.openssl.org/blog/blog/2015/10/08/engine-building-lesson-1-a-minimum-useless-engine/
+Yes, it's a good one - I started from it some 4 or 5 years ago. Then I proceeded to https://github.com/engine-corner/Lesson-2-A-digest, which used to work wonderfully, but does not work since OpenSSL_1.1.1 (incompatible, requires old API). It used to have an RSA engine example too, but it's disappeared now (even less compatible with 1.1.1 than the Digest example, and completely out of sync with 3.0).
+The README gives you examples. It does not mandate using no-shared. Indeed everything builds just fine shared
+May I then suggest that no-shared is removed from the examples?
+It is deceiving, because the reader would naturally believe that if the author explicitly set an attribute, it's there for a reason.
+even less compatible with 1.1.1 than the Digest example, and completely out of sync with 3.0
+Yes -- for all I know the engine concept is no longer really supported and replaced by the provider concept.
+May I then suggest that no-shared is removed from the examples?
+It is deceiving, because the reader would naturally believe that if the author explicitly set an attribute, it's there for a reason.
+Re-reading the current text starting with
+The steps below have been confirmed to work
+had me personally conclude something else: These steps are known to work OK but there surely are others (simply not documented). Particularly a shared lib build does add further complications (LD_LIBRARY_PATH etc.) that one can consider "advanced" and hence not necessary to get into in a "Quickstart" section.
+But then again, we could surely add something explicit like "All commands below are just examples and might also be used and work differently as per the respective packages' documentations."
+had me personally conclude something else: These steps are known to work OK but there surely are others (simply not documented).
+Our conclusions differed here.
+[from a previous post] Indeed everything builds just fine shared
+Since it's a fairly fundamental build difference - since you don't want removing no-shared from the example (despite "everything building just fine" that way), would you mind adding the exact above quote to the README?
+Particularly a shared lib build does add further complications (LD_LIBRARY_PATH etc.)
+I hear you. Still...
+But then again, we could surely add something explicit like "All commands below are just examples and might also be used and work differently as per the respective packages' documentations."
+That would help, regardless of whether you agree with the above suggestions.
+That would help, regardless of whether you agree with the above suggestions.
+The text above is part of #280
+BTW (this probably relates to the previous issue - I'll move it elsewhere if you request), can you explain this:
+Clearly, DYLD_LIBRARY_PATH env var is set, and equally clearly, perl script invoked by make test does not see it.
+???????
+Hmm -- I don't see anything OQS-specific. How (different) does this test run when executed identically in a shared-build standard OpenSSL1.1.1?
+@baentsch I think you're right: openssl#13413
+Wow -- this is a long-standing issue. It seems (the need (in testing) for) additional, dependent (shared) libraries (on all platforms) never truly emerged. We also only primarily test on Unix -- and have openssl make test pass for shared libs here.
+But if I read your statement made in openssl#13413 (comment)
+unless I copy it to $HOME/src/openssl source root
+right, you have a workaround for OSX testing -- and "in real life" this suggestion openssl#13413 (comment) indeed is how we have everything running just fine:
+you can just at an rpath using -Wl,-rpath,$path
+So, what about closing this issue here and let/maybe help resolve openssl#13413 as and when time permits given you found a workaround?
+In any case, thanks for your diligence: As and when we add (CI) testing of OQS-OpenSSL using the OpenSSL test scripts for OSX we could apply your workaround. As we did not see the need for running make test cross platform until now -- could you let us know whether you found new issues adding those tests (probably applying the workaround) that would make it prudent for us to add this to our CI matrix?
+BTW, while writing this, the following sequence allowed me just now to "manually" pass make test in OQS-OpenSSL1_1_1 on Linux:
+Does this fail on OSX? And pass with a prepended ln -s oqs/lib/liboqs.so .?
+Closing with additional warning text (#280)
+Your example
+I don't think I fully understand what the above script is doing:
+I prefer to keep the two separate (and in different dirs), as I expect other apps to use liboqs, so I would have a problem with (1). Also, (2) seems to install first, and test later - doesn't seem a good way to me. Also, the problem was loading liboqs.dylib - I don't see why/how your example would install liboqs.dylib to INSTALLDIR.
+So, if my liboqs binaries go to /opt/local, I should use
+Correct?
+it seems to install liboqs binaries into the source dir of oqs-openssl?
+Yes, for local build-and-test (possible with LD_LIBRARY_PATH -- we also don't like test-after-install: Reversing that would just be another workaround). During oqs-openssl install the liboqs-shared libs then (also) get copied to INSTALLDIR(/lib) as do the freshly built openssl+crypto libs.
+I don't see why/how your example would install liboqs.dylib to INSTALLDIR.
+That's the point: During (Linux) install, this precisely happens. I now wonder why this doesn't happen on OSX... In general, I'd suggest installing liboqs.dylib into the same dir where the openssl+crypto.dylibs wind up after install: Is that INSTALLDIR or INSTALLDIR/lib? I'm guessing without a Mac at my disposal :-(
+I don't see why/how your example would install liboqs.dylib to INSTALLDIR.
+That's the point: During (Linux) install, this precisely happens. I now wonder why this doesn't happen on OSX...
+I think it does not happen on OSX because liboqs.dylib is not a part of the generated OpenSSL (nor oqs-openssl) binaries, therefore it is not copied.
+A "dumb" approach for the install script would be to just "sudo cp *.dylib $INSTALLDIR/lib/", in which case liboqs.dylib would "magically" appear at the destination. But I'm pretty certain OpenSSL (and, therefore, oqs-openssl) does not use such approach.
+An expected way would be something like "sudo cp libssl.1.1.1.dylib $INSTALLDIR/lib/ && sudo cp libcrypto.1.1.1.dylib $INSTALLDIR/lib/", in which case any extraneous library that happens to be in the source dir, does not get copied. I'm pretty sure that's what's happening on MacOSX.
+In general, I'd suggest installing liboqs.dylib into the same dir where the openssl+crypto.dylibs wind up after install
+Oh, but I do! In my case, liboqs is built first, and installed into $INSRALLDIR/lib (aka /opt/local/lib). Then oqs-openssl is configured and built. And once installed, it works just fine. But tests fail to load liboqs.dylib thanks to the convoluted make test sequence of scripts.
+I will need to test your workaround with passing LDFLAGS="-Wl,-rpath -Wl,${INSTALLDIR}/lib" to the oqs-openssl ./Configure command. It seems promising.
+A "dumb" approach for the install script would be [...] But I'm pretty certain OpenSSL (and, therefore, oqs-openssl) does not use such approach.
+Well, well; now I'm sad: I now remember looking at this: I did change the unix install procedures in oqs-openssl using just this approach: 
+On the positive side, we see the shortcoming at first glance: This only copies .so files -- easily explaining why this doesn't happen/work for OSX. Sorry, my mistake/oversight. I am of course now wondering why stuff did work at all running shared libs on OSX... Maybe all liboqs symbols get "baked in" to libssl/libcrypto? Would you want to give it a try getting this right also for OSX?
+Maybe all liboqs symbols get "baked in" to libssl/libcrypto?
+I'm pretty certain the answer is "no they are not".
+Would you want to give it a try getting this right also for OSX?
+Sure. But I think the right way is not assuming that liboqs is built as a part of oqs-openssl. Thus, my first test would be that rpath workaround.
+OK. My answer was something like this:
+OK - so the script above does proper shared oqs-openssl testing on OSX?! Cool.
+So may I invite you to contribute via PR this code to fix 
+?
+may I invite you to contribute via PR this code to fix
+Sorry, it looks like I can't fork this repo, because I already forked the "main" OpenSSL.
+It looks like my fix is comprised of these three parts (assuming LIBOQS and OQS-OPENSSL source trees have been cloned already):
+This allows "smooth" make all and make test.
+Can I also suggest that you change Xcode-11.9 to Xcode-12.4 or whatever's the closest to 12.4?
+In the config.yml I did not see where the arguments to ./config or ./Configure are provided. LDFLAGS should become a part of those, IMHO.
+Reopening to address the suggestions above.

@@ -1,0 +1,38 @@
+Summarize the task
+The Json serialization was not designed to be compact or fast. Benchmarks for json serialization, added in #5957, show that it takes O(seconds) to serialize a (1000 qubit, 100 moment) circuit containing one and two qubit gates. We want this number to be O(milliseconds). To make this happen, see whether:
+The current json serialization framework is described in https://quantumai.google/cirq/dev/serialization
+Part of: #6097
+I'd like to work on this one
+I'd like to work on this issue
+As I first step, I will benchmark orjson in as simple as possible way to see if we can consider staying within JSON model.
+orjson is considered most performant (and it is also well grounded) library for python json serialisation, hence the choice.
+After very initial investigation, orjson seems like agood place to start. My goal is to have < 150 ms for 1000 qubit, 100 moment performance check. I'll prepare draft PR as a starting point for discussion.
+Important note is that orjson serialize to bytes and not string
+A quick result from very simple introduction of orjson can be seen below. From profiling (picture below) we can see that now _json_dict_with_cirq_type_ becomes a bottleneck. Further improvements will require more work/re-design. As I said before, I'll prepare draft PR next.
+Comparing from before the change:
+This gives us bit less than order of magnitude of speed up.
+Screenshot from pycharm profiling:
+
+How did you use orjson  to replace the json.Encoder usage in CirqEncoder? In this case (non-primitive data types), is orjson faster because it has a faster dataclass encoding?
+@rht, @tanujkhattar - as stated before I prepared draft PR - #6115.
+Copying the initial description for your convince
+Given my limited expirence with cirq roadmap and high-level design choices I cannot make clear recommendation whether points 2 and 3 are no go.
+I suppose point 1 and 2 make sense if the serialized JSON needs to be human readable. But there is already the ASCII string representation of the circuit, which is more readable than a well-formatted JSON string.
+@rht, those are very valid points. I observed another thing that might be worth taking into consideration. If we omit ContextualSerialization (I simply commented it out) then we get massive performance improvement. This already put us in the ~150 ms world for 1000 qubits, 100 circuit (context)
+If I understand corectly, ContextualSerialization makes resulting JSON smaller and easier to read. Given the @rht's point about secondary importance of readability, omitting ContextualSerialization makes sense. If not, then probably more performant redesign makes sense. Of course if anyone sees more promising avenues I am happy to listen and collaborate.
+See below for test with orjson while skipping ContextualSerialization :
+#6115 is ready to be reviewed. I believe resulting performance meets the requirements.
+Cc: @rht @tanujkhattar
+The Json serialization was not designed to be compact or fast.
+This is true. The JSON format was designed to be ultra extensible so one could dump any Cirq object (as well as most python objects) to disk in a forwards- and backwards- compatible way. I'm wondering what changed and what the actual requirement is that needs high performance, general serialization.
+It was always my intention (or idea) that more specific serialization contexts would have a more specific format that could be made performant. For example: if you were sending big circuits around you'd probably want a nice circuit format. Indeed, the cirq_google quantum engine code uses protobufs to send circuits. QASM is another format designed for circuit interchange.
+My ask is: what is the use case that higher performance would enable and is there a different tack than trying to speed up JSON (which is not super performant in the best case).
+Here's the issue from the last time this came up: #3438
+some of the approaches might still be relevant. I particularly like the ones where we have a high performance binary format for circuits that can be used standalone or composed as values inside a JSON document.
+The JSON serialization is the only method that has been documented in https://quantumai.google/cirq/build/interop. The page additionally describes importing from QASM 2, but not exporting to it (and AFAIK exporting to QASM is doable, but not yet documented).
+Given that the PR is already prepared, I'd like to highlight the fact that there is limited downside for migrating to orjson. The downsides are (the one that I am aware of):
+PR gives current serialization capability a significant speedup and it is not conflicting with approach mentioned by @mpharrigan
+I particularly like the ones where we have a high performance binary format for circuits that can be used standalone or composed as values inside a JSON document.
+PR #6115 might not resolve the issue completely, but still be reasonable to merge.
+Of course - I am biased due to limited long-term vision knowledge and being author of the changes.
+With new issues coming up around this (#6315) , I'd like to take it up (on low priority)

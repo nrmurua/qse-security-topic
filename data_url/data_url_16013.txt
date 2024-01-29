@@ -1,0 +1,22 @@
+On the linux 3.9 ci job there have been several jobs recently that fail due to a job timeout after 1 hour. For example:
+https://dev.azure.com/qiskit-ci/qiskit-terra/_build/results?buildId=26619&view=logs&jobId=53f3e6ef-9cd2-51f8-4c23-ef405deeeb83&j=53f3e6ef-9cd2-51f8-4c23-ef405deeeb83&t=f9e6fb36-fdac-5369-6649-12f2d7a63b5d
+Looking through the logs there, partway through the job test runner {1} stops reporting test status early on in the job. It is only partway through the test.python.algorithms.test_vqe.TestVQE test class when it stops reporting test status. This means one of the test methods it has yet to run in the class have likely gotten stuck for some reason and the job just hits the 1 hr timeout and exits.
+Run unit tests in the linux 3.9 ci environment.
+Test finish, either success or failure.
+Figure out the root cause and fix.
+I updated the description because it's not just in test_vqe looking at second timeout log:
+https://dev.azure.com/qiskit-ci/qiskit-terra/_build/results?buildId=26590&view=logs&j=53f3e6ef-9cd2-51f8-4c23-ef405deeeb83&t=f9e6fb36-fdac-5369-6649-12f2d7a63b5d
+one working isn't getting stuck in test_vqe like in the first link
+Well now I'm not sure, here is a third log: https://dev.azure.com/qiskit-ci/qiskit-terra/_build/results?buildId=26564&view=logs&j=53f3e6ef-9cd2-51f8-4c23-ef405deeeb83&t=f9e6fb36-fdac-5369-6649-12f2d7a63b5d and this one is getting stuck in test_vqe too. So out of 3 timeouts 2 are getting stuck in test_vqe and the other one it's not clear where
+Another instance of this just occurred on: https://dev.azure.com/qiskit-ci/qiskit-terra/_build/results?buildId=26721&view=logs&j=53f3e6ef-9cd2-51f8-4c23-ef405deeeb83&t=f9e6fb36-fdac-5369-6649-12f2d7a63b5d&l=499
+which was on a stable branch PR: #6217
+It also looks like it got stuck in test_vqe too. My thinking is this might have been caused by a requirements tree change or some other system change and something is hanging now on python 3.9.
+I've been facing hanging test runs locally too. I think I've isolated this locally to:
+test.python.opflow.test_gradients.TestGradients.test_circuit_sampler2_2_param_shift. It looks like the test is sitting idle waiting for something and never finishing.
+Just updating the name of this issue to reflect the underlying thing that's going wrong. It's not actually hanging unit tests anymore since #6524 we disabled multiprocessing by default on python 3.9
+@mtreinish I see that Qiskit just released support for python 3.10:
+https://qiskit.org/documentation/release_notes.html#terra-0-19-2
+Does this issue also apply to python 3.10?
+So far python 3.10 doesn't seem to be effected by this issue. Looking at the code: https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/tools/parallel.py#L69-L70 we should be running things in multiple processes with 3.10 and I haven't seen any of the weird timeouts during testing in CI or locally (although I'm still defaulting to py3.9 mostly locally because of muscle memory and less typing). Given the nature of the bug (occasional hanging during the internal pickle deserialization as part of launching a new child process) I can't say definitively 100% that it doesn't apply to 3.10, but I think we should be safe from it.
+In doing debugging the test hangs we've been hitting in #7658, I came across an issue on upstream Python around this: https://bugs.python.org/issue40379 based on that and related issues it seems like the issue here is caused by fragility in how the "fork" start method is implemented in cPython. We likely hit this in Python 3.9 because of changes made to the ProcessPoolExecutor causing the hang to be reliably triggered (similar to what pypy experienced in https://foss.heptapod.net/pypy/pypy/-/issues/3650 ). The only way I was able to solve this issue locally was to change the start method to spawn. But, this has user facing implications which is why we've disabled multiprocessing by default on macOS (py>=3.8) and Windows.
+I'm also thinking if we go a layer deeper in parallel_map and use raw Process instead of the higher level ProcessPoolExecutor and simplify the I/O and launch the child processes all up front we might be able avoid needing spawn. But I haven't tried this yet

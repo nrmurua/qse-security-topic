@@ -1,0 +1,131 @@
+Dear CP2K developers,
+I have used CP2K 5.1 and 6.1 for PBE0-TC-LRC calculations in the past.
+I have found that my Bandgap values are consistent in versions 5.1 and 6.1 in our local cluster and other cluster too.
+I did calculations with the versions 6.1 and 7.1 with Cuda in Piz Daint, and I have found that the Bandgaps different and the HF energies (and total energies) are now different
+There is no difference using a restart wfn file or optimizing the SCF cycle from the beginning.
+This is one example but I have noticed in different systems of periodic calcuations.
+5.1 and 6.1 no cuda
+(1)
+Overlap energy of the core charge distribution:               0.00007052589464
+Self energy of the core charge distribution:              -4822.08795661199383
+Core Hamiltonian energy:                                   1456.10019696034419
+Hartree energy:                                            1951.78336227053728
+Exchange-correlation energy:                               -433.84963055662922
+Hartree-Fock Exchange energy:                              -127.87395151550244
+Dispersion energy:                                           -0.46932014114032
+Total energy  ENERGY| Total FORCE_EVAL ( QS ) energy (a.u.):            -1976.397228950271256
+HOMO - LUMO gap [eV] :    2.910486
+6.1 and 7.1 with cuda
+(2)
+Overlap energy of the core charge distribution:               0.00007052589464
+Self energy of the core charge distribution:              -4822.08795661199383
+Core Hamiltonian energy:                                   1456.47181019598679
+Hartree energy:                                            1951.50352600623592
+Exchange-correlation energy:                               -438.90435624956706
+Hartree-Fock Exchange energy:                              -121.46009108451653
+Dispersion energy:                                           -0.46932014114033
+Total energy ENERGY| Total FORCE_EVAL ( QS ) energy (a.u.):            -1974.946317359100703
+HOMO - LUMO gap [eV] :    2.747721
+best,
+Andres Ortega
+LSMO EPFL
+Is it possible to disable the GPU in the gpu-version of cp2k?
+I.e. can Andres test the result on piz daint with the GPU disabled?
+@AndresOrtegaGuerrero it might be useful if you attach the input file and the submission script
+Why was this issue closed? I can have a look at it, it would be helpful if you could provide an input file.
+Sorry, I closed since I thought maybe it was more appropriate to have it in the cp2k google group.  I did calculations with piz daint-mc and with the only cpu version i could reproduce my results, I will include the files
+The input files are in the cp2k group, here, https://groups.google.com/forum/#!topic/cp2k/3tzHhrAaTEw
+I have run some more tests and these point to a problem with ADMM.
+With the following inputs the result is correct:
+pbe0.zip
+I can confirm that this bug is indeed related to DBCSR & GPU since I could not reproduce this with any other configuration of CP2K (I disabled GPU for all other libraries).
+So this probably needs some insight of somebody who worked on the GPU part of the code, or who knows how to find GPU-related bugs.
+Performing the cauchy purification in the admm_mo_calc_rho_aux routine "fixes" the issue for the other purification methods, e.g. even if ADMM_PURIFICATION_METHOD MO_DIAG is set, the energy is correct with OMP_NUM_THREADS > 1.
+This is obviously not a solution, but maybe someone knows why this routine "corrects" the energy.
+I assume purify_dm_cauchy implements eq. 26 from the paper. But I was refering to the implementation, why purify_dm_cauchy "rectifies" the bug.
+Purification projects the wave-function onto the subspace that fulfills the Pauli principle. Hence, if the bug affects only a few MO coefficients, then purification will indeed return the system close to its correct state.
+I think, the best way to make progress on this issue would be to bisect the git history and find the commit in CP2K or DBCSR that introduced the bug.
+The bug exists back to version 4.1. I did not yet manage to compile older versions, I can really appreciate the work you put into the tool chain.
+The bug exists back to version 4.1.
+Wow! I haven't followed the whole thread - is already clear which exact conditions make the issue appear (even without knowing the cause yet)?
+If yes, it might be worth opening a new thread in the mailing list to inform people about which versions and which calculations are potentially affected.
+I remember similar cases from the past (like the bug in the D3 dispersion coefficient implementation), where it would have been useful to know which calculations were potentially affected. I.e. an official place to look for disclosures like this, a bit like a CVE system for CP2K.
+One could start very lightweight - just by making a post to the mailing list with a marker in the subject (like "[ADVISORY]") and describing which versions / calculations are affected.
+This alone would already allow to search for that marker in the mailing list to check for any recently reported issues.
+Perhaps other codes have already established procedures for something like this from which one can learn (I'm not aware of any).
+Wow! I haven't followed the whole thread - is already clear which exact conditions make the issue appear (even without knowing the cause yet)?
+No, the exact conditions are not clear. As far as I know the HF energy is wrong if:
+Version 2.6 is also affected. Could the bug have been present from the beginning?
+How can I compile 2.1, which gcc/nvcc versions are supported?
+How can I compile 2.1, which gcc/nvcc versions are supported?
+I don't think you have to go that far. Today's CUDA support only arrived with CP2K 2.5 after a major refactoring of DBCSR in early 2013.
+cuda and OMP_NUM_THREADS > 1 (ssmp is enough, no mpi needed)
+I actually went through other systems and I noticed that OMP_NUM_THREADS = 1, also causes problems. Even then I couldn't reproduce the results from the CPU version.
+Sorry to jump in the discussion, but I'm not sure there is a need to trace the error up the root...
+From the summary of the bug, I think the picture is clear: there is something wrong with the GPU version of DBCSR, which is specific for this test. Assuming a single thread and rank, the problem should be possible to find (I hope) by doing a one-to-one comparison with the CPU version of the code. I have opened a bug in DBCSR (see cp2k/dbcsr#379).
+I don't think you have to go that far. Today's CUDA support only arrived with CP2K 2.5 after a major refactoring of DBCSR in early 2013.
+Sorry to jump in the discussion, but I'm not sure there is a need to trace the error up the root...
+The bug exists in CP2K 2.5, so it seems it was present from the beginning of CUDA-DBCSR.
+I actually went through other systems and I noticed that OMP_NUM_THREADS = 1, also causes problems. Even then I couldn't reproduce the results from the CPU version.
+Interesting, I have not noticed that. But then, I rarely use a non-cuda version.
+This is all really strange. AFAIK, ADMM does nothing special with DBCSR. So, why doesn't the problem show up in other places and why wasn't it noticed all those years?
+@ducryf, do you maybe link in another CUDA enabled library, e.g. libsci_acc or COSMA?
+@oschuett In one of the messages above, @pseewald wrote the following:
+I can confirm that this bug is indeed related to DBCSR & GPU since I could not reproduce this with any other configuration of CP2K (I disabled GPU for all other libraries).
+We need to go for a comparative long debugging session...
+@oschuett, the problem is independent of COSMA as I use it for the trunk, but not for older versions. I do not link against libsci_acc so that is not the source either.
+@alazzaro, that is probably the way to go but I have zero experience debugging such code.
+I was wondering if anybody is currently working on this issue?
+In my opinion it's the only true blocker for the v8.1 release.
+I was wondering if anybody is currently working on this issue?
+@alazzaro did the comparative debugging, but there was no clear result as of yet. Hence I guess help is very welcome!
+In my opinion it's the only true blocker for the v8.1 release.
+While you are certainly entitled to your opinion, a single bug is likely the wrong place to discuss this, but you are welcome to do it so on the original post for the v8.1 release planning.
+@ducryf, you wrote that this also occurs without MPI. Could you please post the input files for reproducing this on a single node.
+@oschuett I have attached the input. It is the smallest atomic configuration where I could find the issue.
+hf_omp.zip
+@ducryf, thanks a lot for the input file! Since the problem occurs already during the first SCF cycle, I shortened it a bit.
+I managed to narrow it down to this call to cp_dbcsr_plus_fm_fm_t. Within that routine this call to dbcsr_multiply returns wrong results when run with Cuda and more than one thread. The reason it only fails with Cuda is that densification is disabled then.
+I guess, the intermediate DBCSR matrices created in cp_dbcsr_plus_fm_fm_t are somehow invalid and densification remedies them.
+So, to stop the bleeding we could just always enable densification. However, the dense blocks will then be handled by cublas, which is currently broken too (#911).
+Wait, densification cannot be enabled for CUDA by default (it was never enabled) because in some cases it is slower.
+So, enabled densification is not an option here. Need to debug the problem... I can give it a look in the next days.
+Yes, we disabled densification on Cuda because we didn't have kernels for large blocks and the FLOPs would remain on the CPU. This proved to be slower than sending the small blocks to the GPU.
+So, enabled densification is not an option here.
+Yes, there would be a performance hit. Still, we shouldn't dismiss it as a viable workaround in case the root cause can't be fixed in time for the release.
+Need to debug the problem... I can give it a look in the next days.
+Great, thanks!
+@AndresOrtegaGuerrero and @ducryf
+I might have a fix in DBCSR for your bug (see cp2k/dbcsr#404 ).
+Basically, the bug affects GPU runs with more than 1 thread.
+Could you test with the CP2K master and switching dbcsr to use the develop branch?
+cd exts/dbcsr
+git checkout develop && git pull
+and then compile CP2K.
+cuda and OMP_NUM_THREADS > 1 (ssmp is enough, no mpi needed)
+I actually went through other systems and I noticed that OMP_NUM_THREADS = 1, also causes problems. Even then I couldn't reproduce the results from the CPU version.
+@AndresOrtegaGuerrero
+I've just noticed this comment, do you have an input file to test it? This seems another problem, unrelated to threads...
+@alazzaro and @oschuett
+I've run a quick test and the code seems to work fine. Thanks for tracking and fixing the issue!
+cuda and OMP_NUM_THREADS > 1 (ssmp is enough, no mpi needed)
+I actually went through other systems and I noticed that OMP_NUM_THREADS = 1, also causes problems. Even then I couldn't reproduce the results from the CPU version.
+@AndresOrtegaGuerrero
+I've just noticed this comment, do you have an input file to test it? This seems another problem, unrelated to threads...
+I think this file can work as a test,
+input1.txt
+input2.txt
+That's a rather expensive test case. Anyway, the current trunk of cp2k seems to do fine. After the first 14 iterations i get:
+GPU + MPI + 2 threads
+14 OT DIIS     0.15E+00   72.8     0.00066900     -2144.3235812548 -7.25E-01
+MPI + 2 threads
+14 OT DIIS     0.15E+00   20.5     0.00066900     -2144.3235811961 -7.25E-01
+@alazzaro @AndresOrtegaGuerrero
+The energy difference after convergence is well below the accuracy of the SCF.
+4 GPU + 16 MPI ranks + 3 threads
+ENERGY| Total FORCE_EVAL ( QS ) energy [a.u.]:            -2147.448621977433504
+64 MPI ranks + 2 threads
+ENERGY| Total FORCE_EVAL ( QS ) energy (a.u.):            -2147.448621975482638
+Thanks @ducryf !
+At this point, I will consider the problem fixed and close the issue.
+Please @AndresOrtegaGuerrero reopen it otherwise.

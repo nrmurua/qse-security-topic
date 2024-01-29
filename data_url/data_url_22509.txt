@@ -1,0 +1,14 @@
+Using the current host and gateware (nist_qc2) on a KC705, the following code underflows when tPulse < 36us. This seems suprisingly slow compared to the example in the manual. Is this a regression in the new compiler?
+It needs to do soft-float arithmetics if you call it that way.
+If you convert to machine units, you can go down to 3 µs on pipistrello and probably 2 µs on kc705.
+Aha! Casting like this the following sequence is on the edge of underflow with t=seconds_to_mu(940*ns). Hence a total loop time of 1.04us.
+This would make a nice FAQ entry.
+And it is a bit surprising to me that it does soft-fp in every iteration of the loop. @whitequark shouldn't llvm be able to figure out that it can move a large part of the calculation of the timestamp outside of the loop?
+@jordens Remember when I said LLVM's default pass pipeline is a poor fit for ARTIQ? Well, this is why. Try dumping LLVM and then running something like... opt -sroa -inline -licm -gvn -instcombine -dce. There's a world of difference, and in much more than just hoisting FP out of the loop.
+Reopening since this is still slow.
+It's floating point. This will always be "too slow".
+@jordens Actually, no. LLVM ought to inline all of the functions in this experiment and hoist the entire calculation except for one addition out of the loop. But it doesn't currently.
+Oh, and once it does that, it should lower all floating point operations to integers, since RTIO timeline is in machine units, so it doesn't even have to stay floating point.
+Still. Here the bug is with the user. It could have been kept benign here as you describe. But no LLVM optimization will prevent all floating point emulation. In many cases the user needs to be aware that floating point can become expensive and. There is floating point in many more places than just the timeline.
+The optimizations that should have happened here would benefit vast amounts of code, and the reason they are not currently engaged (chiefly lack of inlining) are even more troubling. So regardless of whether code like this should be written, this particular snippet is ought to be optimized well, if only as a representative sample.
+With latest compiler this doesn't underflow with tPulse as low as 310ns, and there is no more low-hanging fruit.

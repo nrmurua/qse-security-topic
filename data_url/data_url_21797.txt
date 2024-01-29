@@ -1,0 +1,43 @@
+Running this loop never shows a STPL failure if there wasn't one in the first iteration:
+Running this, on the other hand, ends with a STPL failure:
+So, it seems that something in the PRBS test upsets the DAC or the JESD core.
+@enjoy-digital Have you checked that the JESD core exits PRBS mode cleanly?
+This loop also ends with a STPL failure, so it seems the problem would be in the JESD core and not the DAC:
+This also causes STPL failure eventually, though it takes a lot of iterations.
+Note: dac_cfg_retry toggles jesd_enable.
+@sbourdeauducq: that's probably better to restart the jesd after a prbs test indeed. (spi reset and jesd core reset as you are doing).
+(Re)starting the JESD still causes some STPL errors as demonstrated here: #1127 (comment) so this is not even a workaround.
+Why is it "probably better" to "restart" the JESD?
+This loop also doesn't cause a STPL error, so it does seem like there are some issues with the "enable" and "prbs" controls of the JESD core:
+(compare with #1127 (comment): I essentially stop touching the "enable" control of the JESD core)
+I'm not saying it's a workaround. I just don't know how the DAC is exiting the PRBS mode, so don't know if STPL is supposed to work after that.  On the JESD core, exiting the PRBS mode should be clean, since it does not really impact the core itself, we are just injecting prbs datas when PRBS is enabled and then get back to JESD core datas when disabled. I only see this that can impact the JESD core behaviour: https://github.com/m-labs/jesd204b/blob/master/jesd204b/core.py#L87.
+Now if can also not be related at all to PRBS, but simply that STPL test fails and means that JESD init is failing. Can you try remosinb PRBS test from the init sequence to see?
+There was no PRBS when I did this: #1127 (comment) - and it still caused the STPL problem.
+Then this is not related to PRBS. Next step is then to see if when STPL error is reported, DAC is outputing valid data or not.
+It is more frequent after PRBS. I suspect there are two bugs here.
+Then regarding #1127 (comment), please do STPL test before PRBS (but not logical since we want to check the lower layers first), or add a reset after the PRBS test.
+Again, that won't solve all problems: DAC init (when it involves jesd_enable) + STPL alone already breaks (but more infrequently) - #1127 (comment)
+Also it would be good to understand what is actually going on instead of doing voodoo programming.
+Where is is voodoo programming in saying?:
+With 2): if output is not corrupted, then this is probably related to the STPL test itself. If also corrupted, then related to the JESD initialization itself.
+This is fine, but I have issues with that:
+please do STPL test before PRBS (but not logical since we want to check the lower layers first), or add a reset after the PRBS test.
+that's probably better to restart the jesd after a prbs test indeed.
+I'm saying that i don't know if the DAC can work correctly after a PRBS test without reset, so if you want to avoid a reset, then we need to be sure what can be expected from the DAC. (but from my understanding since the DAC will detect the JESD stream is missing when PRBS is sent, i expect it to require another link establishment to get back to JESD data).
+@enjoy-digital I see no clock domain crossing structure (e.g. MultiReg) between the CSRs enable, ready, prbs_config, and stpl_enable which are in the sys domain, and their corresponding signals in JESD204BCoreTX which are in the jesd domain. Or am I missing out something?
+The way it's coded, JESD204BCoreTX expects these signals in sys clk domain:
+We could maybe resynchronized to sys clk the jsync used in the restart equations, but for the point you are refering, it seems fine.
+ready is resynchronizer with a Multireg in JESD204BCoreTX.
+Resynchronized into the jesd domain, so, that doesn't work.
+prbs_config when used for restart is not resynchronized, but resynchronized when passed to the transmitter.
+It is a multi-bit signal. Can it be synchronized with a simple MultiReg?
+We could maybe resynchronized to sys clk the jsync used in the restart equations
+"Maybe"? Is it optional?
+Resynchronized into the jesd domain, so, that doesn't work.
+And then it is used for restart, so it can break this signal too.
+OK, thanks for the review. (i wouldn't have catched this without a second pair or eyes)
+I fixed ready and jsync. BusSynchronizer for prbs_config is not mandatory since temporary mismatch will only cause the wrong prbs to be transmitted for the duration of the mismatch, but if you think it's better, we can change.
+Still present but with lower frequency - saw 2 in 87 reboots.
+Fixed by 7327160
+Thanks @HarryMakes
+Thanks @HarryMakes!!!!

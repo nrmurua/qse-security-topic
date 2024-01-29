@@ -1,0 +1,10 @@
+Simple repro: in TEST(GradientStrategiesTester, checkDeuteronVQE) (GradientStrategiesTester.cpp) set {{"shots", 1024}} when initializing qpp.
+This will hit xacc::error added in 156d56a
+Root cause: the observed circuits (constructed by the gradient strategy impl) contain a base circuit for identity term with no Measure. Hence, no measurement shots data is added.
+Need to investigate if this is a bug in the gradient strategy (e.g., should filter identity term) or we could simply remove xacc::error in the above commit.
+e.g., some accelerators may throw if sending circuits with no measure.
+This is indeed a problem with gradient strategy. Sending base circuit w/o measurement (identity term) will cause problems for aer and potentially ibm as well.
+e.g., https://github.com/eclipse/xacc/blob/master/quantum/plugins/ibm/aer/accelerator/aer_accelerator.cpp#L196: this will crash since the counts field is not present.
+In VQE, we explicitly handle this (removing non-observing circuits): https://github.com/eclipse/xacc/blob/master/quantum/plugins/algorithms/vqe/vqe.cpp#L135
+but not in the gradient strategies.
+Hence, the proper fix is to address this bug in the gradient strategy.

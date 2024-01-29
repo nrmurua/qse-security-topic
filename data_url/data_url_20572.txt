@@ -1,0 +1,102 @@
+Hi,
+I am testing the performance of mutual connection using OpenSSL 1.1.1n on Ubuntu 18.04. Here is my OS information:
+Linux version 5.4.0-109-generic (buildd@ubuntu) (gcc version 7.5.0 (Ubuntu 7.5.0-3ubuntu1~18.04)) #123~18.04.1-Ubuntu SMP Fri Apr 8 09:48:52 UTC 2022
+The certificate chain of a test group is created in this way:
+In a test group, both server and client will be signed by the same signature algorithm.
+Here is some of my test result:
+p521_dilithium5
+1475 connections in 20.49s; 71.99 connections/user sec, bytes read 0
+1475 connections in 31 real seconds, 0 bytes read per connection
+p521
+1170 connections in 14.99s; 78.05 connections/user sec, bytes read 0
+1170 connections in 31 real seconds, 0 bytes read per connection
+The result is not as my expectation. In theory, the total connection times of p521_dilithium5 should be less than p521 since p521 has a better performance than p521_dilithium5. Another point is that the user seconds spent should be less than 15s because the server and the client are doing a similar thing during the connection. But here p521_dilithium5 spends 20.49s on the client-side.
+To be more convinced I reproduce the test on an AWS VM. Here is the VM information:
+Linux version 5.4.0-1071-aws (buildd@lcy02-amd64-020) (gcc version 7.5.0 (Ubuntu 7.5.0-3ubuntu1~18.04)) #76~18.04.1-Ubuntu SMP Mon Mar 28 17:49:57 UTC 2022
+p521_dilithium5
+1106 connections in 12.92s; 85.60 connections/user sec, bytes read 0
+1106 connections in 31 real seconds, 0 bytes read per connection
+p521
+1246 connections in 13.16s; 94.68 connections/user sec, bytes read 0
+1246 connections in 31 real seconds, 0 bytes read per connection
+Here the result seems to be much more reasonable.
+Now I am not sure does this problem happens only on my ubuntu system or is it a general problem? I only have one computer with the Ubuntu system so could anyone please help me to reproduce the test on your ubuntu system?
+Here is my test file: testFile.zip
+To run the shell file, you may need to run chmod777 start_server and chmod777 start_test first
+To start the server, run:
+./start_server ALGO PROT e.g. ./start_server prime521v1 4433
+Then start the test:
+./start_test ALGO PROT e.g. ./start_test prime521v1 4433
+Thanks a lot if anyone would like to help me!
+Somewhat strange, indeed. However, your test file does not contain the plain p521 components, so I can't reproduce exactly using your setup. Please also share information about your local ubuntu box: How many cores does it have? What is it doing during the test? Please share the output of speed_sig Dilithium5 on both platforms. Are you certain to use the same OpenSSL versions in both setups?
+Hi Baentsch, thanks for your reply.
+your test file does not contain the plain p521 components
+I am not very clear about what 'plain p521 components' are. If you mean the commands used to set up the p521 certificate, I added it into the zip file here testFile.zip. The file ecdsa is to used to set up p521 certificate. Run ./ecdsa secp521r1; The file environment_generator is to used to set up p521_dilithium5 certificate. Run ./environment_generator p521_dilithium5.
+Please also share information about your local ubuntu box
+Sorry again I am not sure what a ubuntu box is. Would you please explain more for this question?
+Please share the output of speed_sig Dilithium5 on both platforms. Are you certain to use the same OpenSSL versions in both setups?
+openssl speed dilithium5 result on my laptop:
+on AWS VM:
+The OpenSSL version on both sides is:
+OpenSSL 1.1.1n  15 Mar 2022, Open Quantum Safe 2022-03 dev
+I am not very clear about what 'plain p521 components' are.
+Your initial test ZIP only contained p256 components, not p521; your most recent ZIP contains the right "plain" (non-QSC) material, thanks.
+Sorry again I am not sure what a ubuntu box is. Would you please explain more for this question?
+Sorry for my slang: I meant your local computer (laptop) running ubuntu.
+Please share the output of speed_sig Dilithium5 on both platforms.
+With this I do not refer to openssl speed but to the liboqs test program speed_sig: It also displays information about the platform that can help discover discrepancies. This executable should be built when you compile liboqs.
+Now, after running your test setup I found similar results that you did (more hybrid connections than p521-only connections). But I also found many more connection establishments when running a stock/system openssl with the p521-only setup: To me this might indicate a non-optimal/optimized default build of oqs-openssl. This can explain a lot... Maybe you want to verify this also on your machine (run once with standard openssl, once with oqs-openssl). We'd then need to determine whether there are configuration switches we didn't properly use or whether p521 performance in a recent openssl dropped.... Maybe worth investigating: Test performance of p521 in openssl 1.1.1n and 1.1.1 (default on my laptop)...
+Thanks for your clarify.
+How many cores does it have? What is it doing during the test?
+Here is my CPU information:
+
+During the testing I set the working frequency of every core to be 2.2GHZ and they indeed working in this frequency.
+What is it doing during the test? Please share the output of speed_sig Dilithium5 on both platforms
+On my laptop:
+
+On AWS VM:
+
+Maybe you want to verify this also on your machine (run once with standard openssl, once with oqs-openssl)
+I would like to verify this on my laptop. However, after installing the OpenSSL 1.1.1n I couldn't find my original OpenSSL 1.1.1 . Do you have any ways to find it? Another question is that does the p521 on OpenSSL 1.1.1n of VM works normally? If it does then I consider to move the project project to VM since it seems to be more reasonable and accurate.
+During the testing I set the working frequency of every core to be 2.2GHZ and they indeed working in this frequency.
+Good. Do you know which frequency the VMs are working at?
+Do you have any ways to find it?
+What about the usual find command? Or did you really install oqs-openssl instead of the standard openssl (i.e., did you not set --prefix when configuring oqs-openssl and then run make install)?
+Another question is that does the p521 on OpenSSL 1.1.1n of VM works normally?
+I do not understand this question. Are you saying the openssl on the VMs is also not accessible any more? I'd then suggest to set up an empty VM and do a baseline openssl test first (and use --prefix to avoid installing oqs-openssl in a standard system location).
+Do you know which frequency the VMs are working at?
+The VM has one core and it is working in 2.4GHZ
+did you not set --prefix when configuring oqs-openssl and then run make install
+I follow the instruction on oqs-openssl GitHub and I just found the original 1.1.1 version. My test result is the same as you, the p521 connection times on OpenSSL 1.1.1 is indeed much more than it on OpenSSL 1.1.1n (nearly twice).
+Another question is that does the p521 on OpenSSL 1.1.1n of VM works normally?
+Sorry for the misleading words. What I want to ask is that: SInce p521_dilithium5 and p521 seem to work well in VM, does it means the performance of p521 on VM's OpenSSL 1.1.1n does not drop? However, I just test it on VM and I get a similar result as my laptop. Testing p521 on OpenSSL 1.1.1 is nearly twice faster than testing it on 1.1.1n.
+You mentioned that the performance drop may be due to many reasons and you are working on it so I just leave it alone now. I still have another question:
+Why the performance of p521_dilithium5 is better than the performance of p521 on laptop ubuntu, but it reverses when testing on VM ubuntu?
+Why the performance of p521_dilithium5 is better than the performance of p521 on laptop ubuntu, but it reverses when testing on VM ubuntu?
+I do not understand this either right now.
+Why the performance of p521_dilithium5 is better than the performance of p521 on laptop ubuntu, but it reverses when testing on VM ubuntu?
+What I mean here is: on my computer, p521_dilithium5(1475 connections) has more connections than p521(1170 connections). However, on VM, p521_dilithium5(1106 connections) has fewer connections than p521(1246). I wonder why my computer ubuntu behaves differently compare to VM ubuntu? Sorry again for my bad expression.
+Yes, sorry, I understood your statement -- I meant to say that I (also) do not understand why a hybrid algorithm can be doing more connections than the constituent, classic-only variant on a local machine (also on mine). The VM behaviour is as expected. With the same compiler and OS -- surprising, indeed. Did you already try whether this also happens for other algorithm combinations?
+Did you already try whether this also happens for other algorithm combinations?
+Yeah, I tried all levels of dilithium and falcon. So far dilithium5 and dilithium3 have this problem. Others are ok.
+Others are ok.
+Very weird. What if RSA is the classic alg instead of EC/p521?
+What if RSA is the classic alg instead of EC/p521?
+I just tested it. dilithium2 and dilithium2-AES with RSA3072 also connect more than pure RSA3072.
+Also, I forget to mention that dilithium5-AES and dilithium3-AES also have this problem when the classic alg is ECDSA
+Now it seems that all dilithium algo have this problem but falcon do not have.
+Another weird thing is VM seems always run fewer user seconds than my local ubuntu. For example:
+rsa3072_falcon on VM:
+2018 connections in 10.79s; 187.03 connections/user sec, bytes read 0
+2018 connections in 31 real seconds, 0 bytes read per connection
+rsa3072_falcon on local:
+3283 connections in 15.22s; 215.70 connections/user sec, bytes read 0
+3283 connections in 31 real seconds, 0 bytes read per connection
+In theory the user seconds spent on the user side should be less than 15s. Here again, VM behaves as expected but local ubuntu behave differently.
+Hi baentsch, after some experiments and discussion with my professor we thought that the problem should be multiple cores of the CPU. I created a VM on my own computer yesterday and I assign two cores to that VM, the test result is similar to my own ubuntu test result. Then I realized that on AWS, the VM is only assigned one core.
+I think the test on my own ubuntu maybe goes in this way:
+The server will run on one core and the client will run on another core. That is the reason why the user second for the client in a 30 seconds test could be nearly 20 seconds (in theory it should be less than 15s).
+While in AWS VM, both server and client need to run in the same core so the user seconds for both of them is less than 15s
+While in AWS VM, both server and client need to run in the same core so the user seconds for both of them is less than 15s
+If the VM you use indeed only had 1 core, this is logical. What still somewhat surprises me is that there is parallel processing going on in the handshake execution: I assumed so far it's a lock-step process where one side has to wait for the other to complete. The tests show that this clearly is not the case, though. But this is no OQS-specific issue but a general openssl implementation property. What remains a big question is why more hybrid connections can be established when comparing with the classical algorithm only: The former requires more computing, so should be slower.
+Closing issue. Feel free to follow up if more investigation required.

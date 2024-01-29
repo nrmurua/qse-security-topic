@@ -1,0 +1,21 @@
+I noticed that the action of a superoperator could be extremely slow in QuTiP depending on how it is called. This came up when I was writing some code which loops over repeatedly and calculates spre(Q)*vec. I understand that this is probably a subtle point which the user might overlook but using np.dot(spre(Q).full(), rho) take ns while the more readable spre(Q)*vec takes us.
+In most cases, we get away with this since we always pack the elements in spre into a sparse Liouvillian and invoke cy_ode_rhs but if there was some way to modify the .__mul__ method of superoperators to use np.dot, it might be helpful to get up to 1000x speed improvement. This comes of use when the RHS is calculated on the fly by the action of these superoperators (eg., the Heom method). The comparisons are below. I pre-compute all the operators and vectors before running %timeit and these are the timing for the matrix-vector multiplication only.
+@nwlambert @ajgpitch Should we do something about this or mention it somewhere if it is important?
+The code to reproduce this:
+But your making sparse matrices dense.
+Yes, there are some cases where the dense operation is much faster. But there will be others (larger H space) where the sparse routine is faster. And it's not really fair to compare when you don't include the preops in the timeit.
+It's difficult, but not impossible, for us to tell in the code which situation we are in when make a superop vector multiplication. If we add lots of checks in, then this will slow things too.
+I think this is similar to #818
+If we are going to address this, that is use dense matrix algebra for small systems, then we need to do it comprehensively. As is outlined in #437. I don't think we should make small changes in individual functions, this could make a big mess.
+I am putting a proposal together for a funding application. I have included work to something like #437. Maybe I will have time before also.
+You could maybe do something in your HEOM work where you have a dense_oper attribute, in which case you use numpy dense operations. I do this in the control modules, where typically the Hamiltonians are small. You can quickly run out of memory though, as the L gets very big, esp for k >> 1. I tried some tests on this when I was working on it last year.
+Hi, thank you very much for the quick responses and linking the other issues.
+But your making sparse matrices dense.
+Yes, I agree. But I was trying to just work out a simple problem which looks like
+`dp[n]/dt = spre(Q)*p[n-1] + spost(Q)*p[n+1]
+where p is a list of flattened density matrices. I understand that a better version of this would be to completely flatten p and write the RHS as a large L as Alex points out and then use cy_ode_rhs.
+But here is the issue, in the HEOM case, building L runs out of memory if we consider a large size for the set of auxiliary density matrices p. As such, I cannot completely build the L for the cases I am looking into.
+The approach that I was trying to take was to keep building the p's as we integrate. In this case, each RHS computation is a small dense matrix-vector computation and I can choose to keep or discard it depending on the max value of its elements. This gives the flexibility to truncate how many auxiliary density matrices I keep.
+The motivation is that in some papers on the Heom method, there is a dynamic filtering of the auxiliary matrices and it has been shown that with just a few 100s of auxiliary matrices, you can get a reasonable result. But the way we have the code in QuTiP now pre-computes the L and gets stuck due to memory limitations.
+@agpitch Thanks for the suggestions. I am trying to make the HEOM work without building the L. Perhaps I will still run into memory issues if I try to initialize the full set of p but if the dynamic filtering approach works out, then I can escape the memory problem by only building a few of the p's and deciding to append them or not based on some conditions.
+Closing for same reason as #437.

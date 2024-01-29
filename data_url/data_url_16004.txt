@@ -1,0 +1,36 @@
+marginal_counts ordering does not obey a standard convention when returning its output.  For example, consider the counts:
+using indices = [0,1,2,3,4] give the identity mapping, suggesting that the 0th index in the indices list maps the input counts bit to the least significant bit in the new marginal counts, the next least significant is set by the 1st index value etc.  However, this does not hold true in general.  Namely indices = [0,1,2,4,3] does not follow the prescribed convention and returns:
+whereas one would expect the following:
+i.e. the output bits are in the order q3q4q2q1q0
+I believe it is due to the line: https://github.com/Qiskit/qiskit-terra/blob/40ffd2b07c03e220a174b2bfd0bf8c23aa021c5f/qiskit/result/utils.py#L111
+that implicitly reorders any permutation of indices.  This is mentioned no where in the docs, and is confusing
+I would expect the order of indices given to have a one to one mapping to those in the output.
+@nonhermitian marginal_counts has, from inception (0.11.0), treated the indices as a set, even though it's entered as a list. In addition to the fact they get sorted, there is also this line,
+https://github.com/Qiskit/qiskit-terra/blob/3cf63baa3582d6cd5bcbeb976659dde3236f9007/qiskit/result/utils.py#L70-L72
+which is what's being triggered in your case.
+I think the docs for indices could be clearer about that, but the intent for indices is not to be entered as an ordered mapping but as a set of which indices to use to produce the marginal_counts.
+Yeah, I am not disputing that is the way it has been. More that it doesn't make much sense to do an implicit conversion like this, where the ordering specified by the user is ignored. However, It is easy enough to write ones own marginal counts function so I am also fine if this gets close as expected behavior.
+Yes the fact that indices is a list is confusing, because this function just marginalizes. It does not reorder any bits. So in reality this should have been a set from the beginning, not a list.
+The other thing I noticed was that the docstring is confusing a bit. It says:
+Marginalize counts from an experiment over some indices of interest.
+Args:
+indices (list(int) or None): The bit positions of interest
+to marginalize over. If None (default), do not marginalize at all.
+The bold parts to me indicate that the indices you give are the ones ignored (tossed out), but in reality those are the indices that are kept. This wording should be fixed too.
+HI, Can I pick this issue? if yes please assign it to me, I would love to work on.
+Hi @AshwinKul28 sure go for it! Assigning to you 😄
+@AshwinKul28 @javabster Can i take this issue over?
+@AshwinKul28 are you still working on this? If not please let us know so I can assign to @mattwright99 😄
+Hi @mattwright99 it looks like @AshwinKul28 is MIA so I've reassigned to you, let us know if you have any questions 😄
+@javabster Sounds good, thanks!
+@nonhermitian I just wanted to double check before I start working on this issue but it seems that the fix here is essentially clearifying some documentation and setting the expected type to be a set instead of a list. Is that right?
+That is the fix that @ajavadia suggested yes.
+@nonhermitian I found a new bug when calling marginal_counts with the default parameter indices=None:
+This won't be a difficult fix so can I just include it in the PR for this ticket?
+I think the best way to fix this would be to just return the result input at the very start of the function if indices=None becasue this funciton would have no effect. Thoughts?
+I arrived here after spending an embarrassing amount of time trying to figure out why my code using marginal_counts wasn't working as expected. Like @nonhermitian, I had assumed that it would respect the ordering I passed in indices, especially since the documentation still indicates that it expects a list, not a set, for that argument.
+Regarding the notion that the current behavior is acceptable since one can write one's own marginal_counts function if one wants a different functionality, maybe it's worth elaborating a little bit more on how I arrived here. I was overhauling and expanding on some code written by someone else, and as part of that effort, I discovered that they'd effectively written their own marginal_counts function. I said to myself "this is silly -- Qiskit provides this function, so I'll simplify things by using that." I missed the subtle difference in behavior between the two, and because I considered this simplification to be a trivial change amidst a much larger re-working of code, it took me quite a while to get to the bottom of the problem.
+To me this illustrates the danger in encouraging users to write functions that are substantially the same as ones provided by Qiskit but with a "minor" twist. It is nicer to just make the built-in functions work the way users want, especially when doing so is trivial and would not require any significant breaking changes. In particular, if there is a concern that folks out there are really passing in unsorted lists to indices and relying on the use of sorted() in that line to achieve their desired behavior of marginalizing without reordering, then an additional optional argument could be added to allow users to specify whether to reorder or not, and it could default to the current behavior. The presence of this optional argument in the documentation would also help highlight the fact that the default behavior may be surprising to some users.
+If no one objects, I would be happy to take a stab at writing the code I proposed in the previous paragraph.
+Yeah this sounds good to me @dtmcclure
+@dtmcclure I hope you don't mind, but I just pushed up #8026 to do this, I was looking at speeding up the function generally anyway and it was easy to do fix this at the same time. For backwards compatibility reasons I opted to make the version that respects the index order a separate function because changing that in place would be a breaking api change that could disrupt existing users (it breaks the ignis measurement mitigation tests). We can look at deprecating and removing the old function after the new one is included in released (per the deprecation policy).

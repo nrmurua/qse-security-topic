@@ -1,0 +1,17 @@
+Are there new strategies to improve on the simulation of layers of single-qubit gates?
+Here is a piece of fortran code with a different strategy to direct matrix rotation.
+Idea: Precompute which element mix. Then, for a gate you do a single loop.
+There is a need to update the state. The rotation needs an auxiliary vector, tmpsi, which is
+casted back onto the vector psi after each gate. There are two options
+Option 2) is better.
+For n=24, t_1=2.23s, t_2=1.56s
+Sorry for my fortran background.
+Some operations may be much easier and fast in python.
+Thank you for the proposals. In the current implementations used in Qibo we do not have access to such low-level manipulation of the state (like looping over the state vector components). This is handled by the Tensorflow operators (tf.einsum and tf.matmul), but I would say that the current approach used for applying general gates is very close to strategy A. Starting with PRs #72 and #79 that were merged today, we plan to write some custom operators in C++ in order to increase performance particularly on CPU. This will allow us to implement the gate application strategy at a lower level and we are currently discussing how this will work (I opened issue #80 about this).
+Some other comments about the code:
+The binary matrix can be generated using a single line in Python
+list(itertools.product([0, 1], repeat=nqubits))
+however this is very inefficient as nqubits grows (casting it to Tensorflow already takes 15sec just for 25 qubits). This probably means that all indexing should be done at C++ level. Another approach is to treat the state as a rank-nqubits tensor of shape (2, 2, 2, ...) which is what Cirq does, however this has other issues as Tensorflow cannot index tensors of very high rank.
+I think a general rotation can be applied using a copy of half (instead of full) state. We only need to copy the 0-subspace of the target qubit, the 1-subspace can be updated in place. This is the approach I described in Custom operators for applying gates #80.
+Strategy B may be a good optimization for the case of variational circuits / gate layers. This will definitely come after we optimize the single gate application but since variational circuits are of interest, we may want to consider adding a layer Gate that applies the same rotation (with different angles) at many qubits and optimize this specifically.
+Closing given that #90 has been merged.

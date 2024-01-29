@@ -1,0 +1,30 @@
+The metrics.dnorm function uses the cvxpy library to calculate the diamond norm. Twice now it has caused many test failures out of the blue #484 and #872.
+It would seem like the developers do not prioritise maintaining a conda package. As this is our recommended platform, then it is a risk having this cvxpy dependence.
+Perhaps there is a method using scipy that we could employ?
+@cgranade perhaps could provide some context?
+This seems closed by #880?
+I think that we don't currently have a method for calculating the diamond norm. I am assuming that we would like to maintain one. We could either try again with cvxpy, or try find another method.
+A recent Python package using QuTiP as a dependency, qptomographer, addresses the diamond norm distance. See: https://qptomographer.readthedocs.io/en/latest/figures_of_merit/#the-diamond-norm-distance. Also, ArXiv:1808.00358.
+Our diamond norm calculation in QPtomographer is written in C++ in the file QPtomographer/cxx/diamond_norm_scs.h (see QPtomographer/test/test_diamond_norm.cxx for an example usage) and uses the C interface of the SCS solver. The way it stands, it also depends on Eigen C++ header library, but it should be easy to remove this dependency as it is only used to specify the input matrices. Other minor dependencies are easily removed.
+I'm not sure what underlying mechanism you use in QuTiP, but it should be relatively straightforward to reformat the whole class into a C implementation with only SCS as a dependency. Unfortunately the python scs package does not install C headers, so that dependency might turn out to be something to worry about. Perhaps SCS itself can be integrated in the QuTiP source?
+I'd be happy if our code is useful for you, and let me know if you'd like any clarifications about our implementation.
+Thank you for the explanation @phfaist. I don't know the answer unfortunately. There are upcoming developments in quantum tomography with QuTiP, including recently added notebooks, that warrant looking into this library integration further.
+Besides this, regarding cvxpy, the package is now actively maintained also on conda forge https://anaconda.org/cvxgrp/cvxpy/files?page=1, we could add a check in the test failures to the to-do list...
+Bumping this because I'm working on test_metrics.py and came across it.
+With cvxpy and cvxopt from conda-forge, I can run all the dnorm tests, but as before (see #874, #880, #881) they fail too much of the time.  By my rough tests, failure only occurs with any regularity when using cvxpy with operator inputs (not supers) of dimension 3 (not 2).  I also find that using dnorm(A, B) with A and B drawn from rand_unitary_haar has a failure rate of 0.004(1), whereas drawing from rand_unitary instead has a failure rate about 3 times higher of 0.012(2).  I'm sure if you have more (i.e. > 0) knowledge of the Haar measure than I do, that presumably gives you more information on what makes it likely for the optimisation to fail.
+Also, using dnorm(A) (i.e. taking B to be 0) produced no failures in 4000 tests of the same function.
+Since each dnorm test is repeated 10 times and there's only one offending test, that's a current failure rate of about 4%.  The offending test actually isn't even testing what it's supposed to test - it supposedly tests that special cases that are handled by QuTiP agree with the optimisations done by cvxpy, except that the offender isn't a handled special case.  I'll remove that for now.
+I will also convert dnorm tests to quietly xfail if the optimisation fails, but cause a suite failure if they cause a proper AssertionError.
+Since we have a new major version in the future, we do have the option to issue a FutureWarning and remove dnorm if we want to do so, but if so, we should get the warning out as soon as possible.  It's probably worth mentioning that by-and-large, it seems like dnorm does actually work in most cases.
+This has been the final straw. We have tried to keep dnorm supported. - @ajgpitch
+Suspect Alex has some thoughts on this.
+Thanks @jakelishman. Pinging @vprusso just in case he experienced any of this with toqito.
+By the way, I think that renaming dnorm to diamond_norm would be more pythonic, with a deprecation warning.
+Out of curiosity, are you using the default solver for cvxpy? If so, for a failing case, I would wonder if the failure would persist under other SDP solvers.
+Another question I have is what the properties are of the random matrices that fail. Perhaps there are some consistent properties amongst those matrices that cause the failure.
+I also agree with @nathanshammah about renaming from dnorm to diamond_norm, as I favor the latter.
+I was unable to find any common properties of failing elements other than what I mentioned, unfortunately.
+We're apparently using the cvxopt solver, which isn't the default.  The failure rate can be improved a lot (~30x fewer or so?) by setting kktsolver='robust', which takes about 2x longer, and still isn't perfect.
+As to renaming, we already have Qobj.norm(type) - should it not become Qobj.norm(type='diamond') if we were going for a rename?
+I am happy with what @jakelishman has done with the tests. I think this is sufficient for now. I agree with @nathanshammah suggestion that we can raise the failing cases with cvxopt maintainers and see what options they suggest (or a fix maybe). So I think this issue can be closed.
+I like the diamond_norm and  Qobj.norm(type='diamond'). I suggest we have both and deprecate dnorm.

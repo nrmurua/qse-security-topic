@@ -1,0 +1,25 @@
+artiq_sinara_tester underflows in setup_mirny().
+I found the following implementations to remove the RTIO underflow:
+Can be reproduced in ARTIQ 7.7663.51d2861e with iIdentical hardware spec.
+Here are some log from artiq_coreanalyzer -p after running artiq_sinara_tester.
+It might be useful to map the data to the corresponding transactions that was queued into the FIFO.
+And here is a snippet of my device_db.py.
+what's the real problem here? Does the print() RPC just take too long to return on my system? (testing Urukuls or Samplers works)
+Given that there is a self.core.break_realtime invocation, I don't think the print in test_mirnies matters at all.
+I put some prints here to reduce formatting time loss.
+It seems that now_mu() > get_rtio_counter_mu(), but it might not be large enough. If I am not mistaken, the following output event (see previous comment):
+is the first event in adf5356.init(), and it cannot even queue in.
+(Needless to say it definitely should still cause RTIO underflow)
+One source of large time loss can be found in adf5356.sync().
+Which gives the following output.
+A quick subtraction would see that adf5356.f_pfd() took ~100000 machine unit.
+Another source that takes a lot of time is the calculation of PLL, also in adf5356.sync().
+Which gives the output:
+That would be another >100000 machine unit.
+We only get 125000 from core.break_realtime(). If the whole adf5356.init() method is not intended to work without manually adding delay() in experiment scripts, then we should modify artiq_sinara_tester.py as you suggested. Otherwise, we probably should modify the delays inside adf5356.sync().
+In my opinion this is what should be done:
+Thanks for looking into this.
+If the whole adf5356.init() method is not intended to work without manually adding delay() in experiment scripts, then we should modify artiq_sinara_tester.py as you suggested.
+The experiment below has no extra delays and doesn't underflow. What's the difference to artiq_sinara_tester?
+mirny.cpld.init() gives a very large delay (1 ms) at the end.
+

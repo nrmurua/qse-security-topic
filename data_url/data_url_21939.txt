@@ -1,0 +1,23 @@
+Current master, kasli, opticlock.
+Why does raising and catching a plain exception in the kernel take 11 ms? Can we do something about that? It makes exceptions mostly useless as a tool.
+Exceptions are for exceptional control flow, not for arbitrary nonlocal jumps. As implemented, that is using the C++ zero-cost exception handling, the common case (normal control flow) is zero overhead, and more importantly, LLVM can optimize normal control flow without any regard to the exceptional control flow.
+It makes exceptions mostly useless as a tool.
+I'm pretty sure exceptions as they are, are reporting exceptional conditions just fine.
+Why does raising and catching a plain exception in the kernel take 11 ms?
+The kernel CPU code does not have an allocator. Because of that, libunwind is reparsing DWARF .eh_frame tables every time instead of caching the parsed representation as it would normally do.
+Can we do something about that?
+We could enable caching in libunwind. To avoid the first exception raise taking an exceptional amount of time, the caches will likely have to be prepopulated on kernel startup, so startup latency will become higher. I'm not sure offhand how much of those 11ms is stack walking and how much is DWARF parsing.
+We could also go back to setjmp/longjmp, as in @sbourdeauducq's original implementation. This will severely restrict all optimizations, since LLVM is really bad at handling longjmp. I think there are also a few cases where it's outright unsound, e.g. PR27190.
+We could avoid exposing exceptions to LLVM entirely, and instead convert all our code to continuation passing style on the ARTIQ side. This will make exceptional and normal control flow equally fast, but getting good backtraces will be significantly harder. It also goes off the beaten path in LLVM because of pervasive use of tail calls, which often, although not necessarily, pessimizes the resulting code.
+Ack. It makes the usecase of reacting to exceptions with the usual speed (µs) impossible. I think it also means that any cleanup or rescue action (be it within the experiment or the idle kernel) is already 11 ms late before e.g. it can even start to try saving the ion by turning on cooling lasers. That's probably my biggest worry.
+I think it also means that any cleanup or rescue action (be it within the experiment or the idle kernel) is already 11 ms late before e.g. it can even start to try saving the ion by turning on cooling lasers. That's probably my biggest worry.
+Indeed, I haven't considered that when designing the current system. What we could do fairly easily is allowing to register a callback that runs immediately after an exception is raised, but before it's bubbled up the stack or really processed in any way. That's not very Pythonic, but reacting to events in µs is also not very Pythonic, so I guess that cancels out.
+I think the right thing to do if you really need µs-scale exception handling is to go the CPS route, since it can be seen as the generalization of the callback technique I just proposed. But I'm very worried about the impact on backtraces. It's also a rather substantial change to the compiler.
+Well. For the idle kernel this is on top of loading, linking, and starting it. Maybe that's half the bottleneck.
+11 ms is still almost one and a half million cycles – DWARF does take some time to parse, variable-length integers and all, but that still seems like a lot?
+11 ms is still almost one and a half million cycles – DWARF does take some time to parse, variable-length integers and all, but that still seems like a lot?
+I'm not entirely sure where all this time is spent. A sampling profiler would help...
+@jordens Here's one interesting, if ... unusual... option: Windows SEH.
+https://reviews.llvm.org/project/view/54/
+Before we try that I think we should look into where those 11 ms are actually spent. Maybe there are lower hanging fruit.
+It's much faster on ARTIQ-7:

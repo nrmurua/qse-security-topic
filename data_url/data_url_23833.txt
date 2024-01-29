@@ -1,0 +1,75 @@
+@alexcjohnson I am using the #70 Inst Process branch with real instruments (#53).
+This works fine so far, all that talking works, but not async.
+I am using a super simple dmm, you can:
+The second approach is what i'm used to do for async stuff, Tell all instruments that I want information and then ask for it later.
+I add a parameter like this:
+I tried timing a few things here:
+apart from the negative delay warnings QCoDeS/Qcodes_loop#13 I now get flooded by additional Measurement timestamps(?)
+[16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement] [16:36:18.811 Measurement ERR] WARNING:root:negative delay -0.000027 sec [16:36:19.643 Measurement ERR] WARNING:root:negative delay -0.000024 sec [16:36:20.470 Measurement ERR] WARNING:root:negative delay -0.000027 sec
+@MerlinSmiles thanks for all the detail! Not sure what all those timestamps are from, looks like I'm printing an empty string somewhere, maybe a leftover debug statement? I'll poke around.
+@guenp @dbwz8 @giulioungaretti and I (in two separate conversations?) talked about this issue Thursday. What I had in mind was to make a non-blocking ask, that breaks up into a write, then periodic short-timeout read calls separated by a configurable sleep time. That way while the first instrument is sleeping (after its write call) it will release the interface, allowing the next instrument to write - assuming these instruments can all happily be put on separate servers (otherwise we need to multithread the servers, but that strikes me as dangerous).
+@MerlinSmiles your way has a nice advantage that it doesn't require the instruments being parallelized to live in separate servers, but it has the disadvantage that the user needs to explicitly describe how to make the measurement be async. Which isn't too big a deal right here, you just need to do something like:
+but once the parameters get more complicated (even doing simple things like converting from volts to conductance... that will probably involve making a new parameter) then it could become hard for users to manage - you don't want to have to know that g_left must be preceded by a1.init_volt. So I think we should try to figure out the non-blocking ask first.
+@alexcjohnson I am not sure, but I do think that read calls just are blocking the interface, that would mean you cannot just periodically read.
+And I am not so sure if this would be a good idea anyways, reading every 0.1ms would generate a lot of traffic on the bus, reading every 100ms adds up to a considerable amount of time, i dont like sleeps in loops :)
+For some instruments the blocking read is just fine, it will simply return a value from the instrument buffer, it cant get faster.
+Other instruments start their measurement upon the read which is causing the time consumption up there. But at least the instruments that come in my mind do have a trigger-measurement and a fetch command, that is the only thing which is needed for async acquisition.
+Trigger 10 instruments and then fetch them all. Some instruments might have a data-ready flag you can read, but I wouldn't rely on that as a general feature.
+Which brings up another point, Triggering, but I think that should be another issue, the trigger-measurement does not have to be GPIB it can be an external hardware trigger.
+@MerlinSmiles your way has a nice advantage that it doesn't require the instruments being parallelized to live in separate servers, but it has the disadvantage that the user needs to explicitly describe how to make the measurement be async. Which isn't too big a deal right here, you just need to do something like:
+I dont think that the user should think about async at all. The person who writes the instrument driver should. Especially when writing a loop, as you did above, as a user I don't want to think about which instrument can or cannot do this async stuff. That should happen behind the scenes.
+When I write a parameter, I want to write:
+and whenever i just want to read a value the backend shoud trigger and fetch right away, when i require multiple measurements the backend should trigger them all, then call all the read on non-async instruments, and finally fetch all the first data, upon fetching the slowest instrument will block the longest time, but I dont care because that measurement-point has to finish as a whole anyways.
+@alexcjohnson Maybe it would help if you would play around with the real instruments, and a real gpib bus to see what it can actually do? Especially in terms of multi-servers and if they then actually talk on one interface while another call is blocking...
+As a side-note, without opening a new issue, could you check out my Merlins-instrument-drivers branch and check the loops.py and the ip.py modifications I had to do to make the instruments work?
+I now tested this with 2 GPIB interfaces, one USB and one PCI, actually this does not give any speedup, I gave them two different server_names too.
+Maybe this is a really fundamental limitation of the visa lib?
+Oh interesting, so all visa commands block each other? But still, when we implement a non-blocking ask it should get around this problem no matter how it's implemented underneath. Yet another reason to consider moving away from visa when possible - per https://github.com/qdev-dk/Qcodes/pull/74#issuecomment-211116866
+And yes, I've been trying to get to the point where I can play around with some real instruments... this is becoming more urgent!
+Aparently yes, that is however a really bad thing in general for pyvisa / visa, wherever that problem is, there should be no reason for two different hardware interfaces to block eachother.
+Actually we should probably not use Visa for Serial or TCPIP connections at all then?
+I also tried the loop now with your suggestion of Task(initxxx) which works as expected. almost no extra delay.
+While it would be great to move away from visa we will always have instruments that wont allow for that.
+However, I just tried to use another instrument with sockets, it requires two open connections on different ports, one for stuff, and one for control... annoying
+According to the VISA spec, it takes just one synchronous call to block everything.
+It looks like in 1995 the protocol started supporting readAsync/writeAsync/viMoveAsync.
+And they have this too:
+All of this to say that doing async with visa shouldn’t be impossible.
+🍻
+Do you have a source on this?
+On Mon, Apr 18, 2016 at 11:44 AM, Giulio Ungaretti <notifications@github.com
+wrote:
+According to the VISA spec, it takes just one synchronous call to block
+everything.
+It looks like in 1995 the protocol started supporting
+readAsync/writeAsync/viMoveAsync.
+And they have this too:
+OBSERVATION 6.1.8
+The intent of PERMISSION 6.1.1 and RULE 6.1.9 is that an application can use the asynchronous operations transparently, even if the low-level driver used for a given VISA implementation supports only synchronous data transfers.
+All of this to say that doing async with visa shouldn’t be impossible.
+🍻
+—
+You are receiving this because you were mentioned.
+Reply to this email directly or view it on GitHub
+https://github.com/qdev-dk/Qcodes/issues/73#issuecomment-211300490
+@MerlinSmiles http://www.ivifoundation.org/docs/vpp43_2016-02-26.pdf
+where www.ivifoundation.org, is the entity maintaing the visa standard .
+@alexcjohnson as we just discussed, since this seems to work well with individual instrument processes, it would be great to have an option to have a new unused server name.
+i.e. server_name=True or something simple.
+@MerlinSmiles  just nip ticking, but, for somebody that did not have that discussion  your comment is a bit obscure 🍷 ! ❤️
+@giulioungaretti yeah, ok.
+So if one provides a different server_name for each instrument, it actually reads the data asynchronously, I tried this initially, but failed. Don't know what went wrong, but now it works.
+So to not have to thnink about individual server names, it would be nice to have unique servers autogenerated when needed.
+Furthermore @alexcjohnson the station.measure() should also use this system like the loop does. now it does not care about the servers.
+@MerlinSmiles should this issue be closed now  ?
+@MerlinSmiles  but issue here was that using the server thing (which was actually a single threaded process) did not really work async unless you passed the server name every time thus creating multiple process (one per instrument).
+Correct?
+@giulioungaretti The solution was to put everything on its own process, this has been removed so right now everything is happening sequentially, and wasting a lot of time, I guess the timing tests from my first post are still valid.
+@MerlinSmiles  wrong :D  Now there is the option to use threads, for async operations.
+Which requires thread safe instruments (which was the case before as well)  :D
+Ok wait i missed out on that, where is the issue / pr / description? Did you time it with the DMM's for example?
+Awesome :)
+@MerlinSmiles https://github.com/QCoDeS/Qcodes/blob/master/qcodes/loops.py#L633
+doh!
+Im pretty sure it solves this issue, will open a new one when something is not as expected
+awesome !

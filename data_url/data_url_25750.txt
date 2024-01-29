@@ -1,0 +1,21 @@
+A user should be able to assign an executor to a lattice and that should be used for those electrons which do not have an explicitly assigned executor.
+Edit: This seems to have resolved for other cases due to changes to the codebase but still remains an issue with sublattices.
+I was just bitten by this. Now that we're defaulting to the Dask executor, I want to avoid some of the known issues (such as this one and this one)  by making some workflows run locally. However, setting executor="local" at the lattice level doesn't always work. For instance, it doesn't seem to get propagated to sublattices.
+@cjao Can you link these issues maybe ?
+Related issue #699
+@kessler-frost is this resolved?
+@wjcunningham7  No, this has not been resolved afaik. Sublattices still don't respect the executor assignment. I'm changing the title for this.
+Executor inheritance actually seems broken in general, not just for sublattices. There are a few related issues:
+In the current implementation, an electron only inherits metadata from its enclosing lattice if the electron's metadata is already set to its default value.
+1a) The implementation doesn't work because the test self.get_metadata(k) is DEFAULT_METADATA_VALUES[k] is too strict. The is keyword tests if both sides are the same Python object, whereas we merely intend to test whether they represent the same value. For example (default executor is "local")
+(Debug statements added)
+The electron fails to inherit  awslambda from the lattice:
+1b) Even if the is were changed to ==, a different scenario would still be broken: even if the electron explicitly specifies the default executor, its executor would still be overridden by the Lattice's:
+Here, I've changed is to == in the test; the electron's "local" executor is incorrectly overridden by the Lattice's executor:
+Proposal: One way to fix both of these scenarios is to initialize all electron metadata to None by default and then, during build_graph(), copy the Lattice metadata only for those electron fields that aren't specified by the user. This change results in the expected behavior for all three of the following examples:
+Lattice-level metadata are currently populated with their default values in the lattice decorator.
+As above, we can set the Lattice-metadata's default values to None and replace any unset metadata fields with their values from DEFAULT_METADATA_VALUES  at the beginning of build_graph().
+When a sublattice is initially encountered during workflow execution, its unset metadata fields will be None since its graph has not yet been built. One can pass the parent lattice's metadata as an argument to the out-of-process call to _build_sublattice_graph(), and replace any unset sublattice metadata, something like
+discussion carried forward in #1284
+Proposal: One way to fix both of these scenarios is to initialize all electron metadata to None by default and then, during build_graph(), copy the Lattice metadata only for those electron fields that aren't specified by the user. This change results in the expected behavior for all three of the following examples:
+I like this proposed solution.

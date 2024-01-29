@@ -1,0 +1,50 @@
+Based on #809 , currently PW_CUDA doesn't set the GPU device. The workaround is to call dbcsr_init first.
+Thanks @oschuett for this fix!
+In this way, now we entirely use DBCSR via the API.
+On the SetDevice part, we can now build CP2K with GPU support, even if DBCSR has not.
+Now we have several macros to control the GPU part:
+I see that now you added:
+I can assume we to keep all parts independent. Therefore, I would propose to remove the general flag __ACC (useless for the time being). Is it OK?
+I've started the offload directory to house CP2K's accelerator infrastructure. This is also were I want to add the abstractions to support other vendors, e.g. ROC. So, offload is serving the same purpose as acc in DBCSR. I chose a new name to avoid confusion.
+The __OFFLOAD_CUDA macro is meant for internal use only. Users should continue to set the established __GRID_CUDA and __PW_CUDA flags.
+Therefore, I would propose to remove the general flag __ACC
+Yes, I agree. The __ACC flag is not needed anymore.
+OK, I will do a new PR to remove __ACC.
+@oschuett
+Is the call to set the device at 
+The grid GPU backend does not use OpenMP threads and I think pw does neither. In any case, it shouldn't matter because cudaSetDevice is always called before any other Cuda API. We no longer assume that the active device remains the same after calling into a 3rd party library.
+Correct, this is the way to go, thanks for the clarification...
+@oschuett
+Your current design of setting the device could give problems.
+I assume we don't want to change the device during the CP2K execution, and for sure we don't want to change in the middle of the execution. Currently, you have a set and a get function. You call the set at the beginning to set the variable. I see two possible problems:
+In principle, the ID is a singleton.
+We can avoid this problem by removing the set function and leave the get function as:
+The init part can be in the Fortran part, where we have access to the MPI functions.
+Does it make sense?
+The init part can be in the Fortran part, where we have access to the MPI functions.
+This means we'd have to call into Fortran from the C side. As a consequence building e.g. the grid_miniapp would require a Fortran compiler. I really would like to avoid that.
+you forget to call set, then you get a -1 with corresponding errors
+I'm not really worried about this because it will reliably trigger an abort. On the Fortran side there is a dedicated check and on the C side we'll get the error message from cudaSetDevice(). So, if there are still missing calls to offload_set_device_id() then we'll discover and fix them soon.
+you call set, do some memory initialization, and then call set again with a different ID
+That's a good point. I'll add an assert to offload_set_device_id that prevents this.
+Sorry, I was not clear in the first case. You don't need to call fortran from C, the checks are done in Fortran, somewhere in this function 
+You don't need to call fortran from C, the checks are done in Fortran, somewhere in this function
+Well, but that is just a wrapper. The actual implementation is in C and it's (mostly) used in C, e.g. here and here.
+The C part is fine, that part is self-consistent and it is up to you to call in the right order. What I don't like is the mix between the C and Fortran parts, where you have to call the Set in Fortran to make sure that the C Get works.
+So, my idea is to change the Fortran part to a single
+Then, internally the function does the set if the id (on the C side) is negative. In this way, the code of the assignment is within offload_device_id (once for all).
+Well, if you make myid optional then you are just fusing two functionalities into one function.
+I still think the current design is good. Yes, the offload library needs to be initialize before it can be used, but the same is true for dbcsr, pw, grid, periodic_table, sirius, and many others.
+What I don't like is the mix between the C and Fortran parts,
+Yes, the mix of languages is unfortunate, but we can't really avoid C when it comes to accelerators. I therefore expect that over time we'll convert all our low-level primitives to C, while the high-level code will remain in Fortran.
+OK, let me clarify more. My point was to have the setting part inside the Fortran Setting function. What I mean is that this code here:
+
+should not take any input value. It should set it internally and you cannot set it twice. In this way, you are sure that you always get the same setting.
+Then we can keep the two functions (set and get) and add an assert on the C side to make sure you don't set it twice.
+You can call the function set or init (maybe better).
+Oh, do you mean the mapping should be defined in a single place within the offload package? I can agree with that.
+Still, I'd like to have a separate routine for that e.g. offload_library_init() instead of making it a side-effect of the getter.
+Yes, that is what I mean, exactly, The current Setter gives the freedom that we don't want.
+The Getter is fine, what I'm suggesting now is to change the setter and rename it to init (well, you can keep the setter, but it has private to the module, it doesn't make sense to have it for CP2K).
+Sounds good. Your new mp_get_node_global_rank() is indeed the missing piece of the puzzle.
+Yes, let me do the change as part of my PR...

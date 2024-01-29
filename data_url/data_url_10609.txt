@@ -1,0 +1,48 @@
+Hi,
+I'm testing a problem necessary to decompose qubits.
+So its case should be tested continuously and repeatedly.
+By the way, after sampling about 100 continuous sampling,
+error was raised as following. Then, whenever a dwave sampler
+is instantiated, the error happens.
+RuntimeError                              Traceback (most recent call last)
+ in 
+1 DWaveSampler(endpoint='https://cloud.dwavesys.com/sapi'
+2                                                           , token='DEV-2d82722a40e192fb938da0012c507a9ae3277e31'
+----> 3                                                           , solver='DW_2000Q_2_1')
+~/anaconda3/envs/tf36/lib/python3.6/site-packages/dwave/system/samplers/dwave_sampler.py in init(self, **config)
+110             config['solver'] = config.pop('solver_features')
+111
+--> 112         self.client = Client.from_config(**config)
+113         self.solver = self.client.get_solver()
+114
+~/anaconda3/envs/tf36/lib/python3.6/site-packages/dwave/cloud/client.py in from_config(cls, config_file, profile, client, endpoint, token, solver, proxy, legacy_config_fallback, **kwargs)
+316
+317         _LOGGER.debug("Final config used for %s.Client(): %r", _client, config)
+--> 318         return _clients_client
+319
+320     def init(self, endpoint=None, token=None, solver=None, proxy=None,
+~/anaconda3/envs/tf36/lib/python3.6/site-packages/dwave/cloud/client.py in init(self, endpoint, token, solver, proxy, permissive_ssl, request_timeout, polling_timeout, connection_close, **kwargs)
+395             worker = threading.Thread(target=self._do_submit_problems)
+396             worker.daemon = True
+--> 397             worker.start()
+398             self._submission_workers.append(worker)
+399
+~/anaconda3/envs/tf36/lib/python3.6/threading.py in start(self)
+844             _limbo[self] = self
+845         try:
+--> 846             _start_new_thread(self._bootstrap, ())
+847         except Exception:
+848             with _active_limbo_lock:
+RuntimeError: can't start new thread
+How to solve this problem?
+If there is a limitation of continuous sampling, in a problem necessary to decompose many qubits, how to approach it?
+Regards,
+Inwoo Chung
+This is a known problem. See #91, #169.
+Most likely the solution (for now) is to instantiate a single DWaveSampler instance and use that for all sampling rather than re-creating it.
+I uploaded my quantum annealing test code about maximum cut via qubits decomposition.
+So you can test it. Below is the link.
+https://github.com/tonandr/dwave_qc/blob/master/src/space/max_cut.py
+Hi @tonandr, until we implement a singleton thread pool in the dwave-cloud-client, you can simply extract the instance of DWaveSampler (or EmbeddingComposite that wraps it) outside of your loop and/or function (as @arcondello said above). It's straightforward here because you use the same solver in both places (L579 and L867).
+Additional benefit of this global-sampler approach is you're saving on instantiation time (which can be significant since solvers' metadata (~1MiB) is downloaded on init/solver selection).
+Alternatively, you can manually close DWaveSampler's client/solver after use, as mentioned in #169.

@@ -1,0 +1,79 @@
+I frequently encounter some unknown API error when running my code on the qcs. Sometimes, the code will run to completion when I rerun it. Does anyone know what's wrong? The error log just recommend raising the issue on github.
+Traceback (most recent call last):
+File "/home/forest/miniconda3/lib/python3.7/site-packages/pyquil/api/_base_connection.py", line 72, in parse_error
+body = res.json()
+File "/home/forest/miniconda3/lib/python3.7/site-packages/requests/models.py", line 896, in json
+return complexjson.loads(self.text, **kwargs)
+File "/home/forest/miniconda3/lib/python3.7/json/init.py", line 348, in loads
+return _default_decoder.decode(s)
+File "/home/forest/miniconda3/lib/python3.7/json/decoder.py", line 337, in decode
+obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+File "/home/forest/miniconda3/lib/python3.7/json/decoder.py", line 355, in raw_decode
+raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+File "2q_pyquil_2sites_heisenberg.py", line 129, in 
+Pmu_expectation[Pmu] = pauli_measurement_microsoft(current_term,p,ro,shots,qc,qbits,ap_list)
+File "/home/forest/purification/helper.py", line 117, in pauli_measurement_microsoft
+probs = run_measure(name,p,qb,shot)
+File "/home/forest/purification/helper.py", line 36, in run_measure
+qc = get_qc(name)
+File "/home/forest/miniconda3/lib/python3.7/site-packages/pyquil/api/_error_reporting.py", line 238, in wrapper
+val = func(*args, **kwargs)
+File "/home/forest/miniconda3/lib/python3.7/site-packages/pyquil/api/_quantum_computer.py", line 646, in get_qc
+device = get_lattice(prefix)
+File "/home/forest/miniconda3/lib/python3.7/site-packages/pyquil/api/_devices.py", line 109, in get_lattice
+raw_lattice = _get_raw_lattice_data(lattice_name)
+File "/home/forest/miniconda3/lib/python3.7/site-packages/pyquil/api/_devices.py", line 133, in _get_raw_lattice_data
+res = get_json(session, f"{config.forest_url}/lattices/{lattice_name}")
+File "/home/forest/miniconda3/lib/python3.7/site-packages/pyquil/api/_base_connection.py", line 48, in get_json
+raise parse_error(res)
+File "/home/forest/miniconda3/lib/python3.7/site-packages/pyquil/api/_base_connection.py", line 74, in parse_error
+raise UnknownApiError(res.text)
+pyquil.api._errors.UnknownApiError: 
+The server has failed to return a proper response. Please describe the problem
+and copy the above message into a GitHub issue at:
+https://github.com/rigetti/pyquil/issues
+Hi, thanks for reporting this. The 502 error makes it hard to know what the "real" underlying error is.  Are you able to reproduce this easily? Could you provide some sample code that reproduces the error? If not, any additional info about how to reproduce would be helpful. Thanks!
+I encounter similar issues. I have my code and dependencies installed on Rigetti QMI. Generally, are you able to access my account there? I can set up a directory for an example to reproduce the error. Thanks!
+FYI: the error message is similar,
+File "/home/forest/miniconda3/lib/python3.7/site-packages/pyquil/api/_devices.py", line 147, in _get_raw_lattice_data
+res = get_json(session, f"{config.forest_url}/lattices/{lattice_name}")
+File "/home/forest/miniconda3/lib/python3.7/site-packages/pyquil/api/_base_connection.py", line 54, in get_json
+raise parse_error(res)
+File "/home/forest/miniconda3/lib/python3.7/site-packages/pyquil/api/_base_connection.py", line 81, in parse_error
+raise UnknownApiError(res.text)
+pyquil.api._errors.UnknownApiError: 
+The server has failed to return a proper response. Please describe the problem
+and copy the above message into a GitHub issue at:
+https://github.com/rigetti/pyquil/issues
+@yaoyongxin To be clear: you are seeing this error when using your QMI? And are you seeing it repeatedly?
+Yes. The error would occur at (seemingly random) different number of iterations though. (My code is solving some problem iteratively.)
+Based on the backtrace, it's failing to parse the json response when fetching the device lattice in get_qc.  It's possible the server is getting overloaded and occasionally returns a bad response. Are you calling get_qc in a loop?  Can you post a sample of your code here?
+Yes. get_qc is called.
+The whole package is quite involved, it will call qc to solve a problem multiple times. But this is the relevant part:
+....
+I got another kind of error when engaging the real device. I have to restart the job manually again.
+329, in native_quil_to_executable
+self._connect_qpu_compiler()
+File "/home/forest/miniconda3/lib/python3.7/site-packages/pyquil/api/_compiler.py", line 296, in _connect_qpu_compiler
+f"No QPU compiler server reachable at {self.qpu_compiler_client.endpoint}"
+pyquil.api._compiler.QPUCompilerNotRunning: No QPU compiler server reachable at tcp://bf02.qpu.production.qcs.rigetti.com:5555
+This sounds like a separate issue with engagement. Would you mind opening a new issue for this?
+Yes. get_qc is called.
+The whole package is quite involved, it will call qc to solve a problem multiple times. But this is the relevant part:
+....
+And this solve method is being called in a loop, is that right? As a workaround, would it be possible to move the get_qc call out of the loop, possibly calling qc.reset() as required to reset the state? Or is the QunatumComputer being modified in some way that you need a fresh instance each time?
+OK. Good point. I will try your suggestion. Thanks!
+I got another kind of error when engaging the real device. I have to restart the job manually again.
+329, in native_quil_to_executable
+self._connect_qpu_compiler()
+File "/home/forest/miniconda3/lib/python3.7/site-packages/pyquil/api/_compiler.py", line 296, in _connect_qpu_compiler
+f"No QPU compiler server reachable at {self.qpu_compiler_client.endpoint}"
+pyquil.api._compiler.QPUCompilerNotRunning: No QPU compiler server reachable at tcp://bf02.qpu.production.qcs.rigetti.com:5555
+This sounds like a separate issue with engagement. Would you mind opening a new issue for this?
+This has been addressed service-side - you won't see this error again.
+The issue, at least in my code, is solved by calling get_qc only one time, as suggested by @appleby. Thanks.
+Great! Thanks for letting us know @yaoyongxin. Closing this out.
+@AdrianTanTeckKeng if the issue is not resolved for you, feel free to reopen.

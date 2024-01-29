@@ -1,0 +1,46 @@
+Operations on general density matrices is would be useful. Are there any blockers that makes this infeasible?
+There is already a package for this purpose.
+QI:
+https://github.com/iitis/QuantumInformation.jl
+For porting Yao and QI:
+https://giggleliu.github.io/yao_port_qi.html
+So the standard way of doing this is exporting the density matrix from Yao, call the QI APIs. Tell us if you want more than this.
+we don't have density matrices backend yet. part of the goal of the new simulator backend https://github.com/QuantumBFS/BQCESubroutine.jl is to provide a density matrix & quantum channel emulation backend. But it's not there yet.
+So currently the best option is using QuantumInformation.jl, it contains most of the tools you need for studying density matrices and quantum channels I think.
+also it would be always better to provide some concrete use cases to motivate people.
+Thanks for the quick replies!
+I have a large circuit which contains intermediate measurements (in addition to ordinary gates), and an input density matrix (non-pure state), and I would like to calculate U \rho U^\dagger.
+I understand I can export density matrix to QuantumInformation.jl, but it doesn't seem possible to export circuits that include measurements.
+Please correct me if I'm missing something, but it appears that it is currently not possible to compute U \rho U^\dagger, with or without QuantumInformation.jl, for a mixed state and a U that contains measurements (and normal gates).
+@Roger-luo This is an on-going research so I can't divulge the details, but I hope we can all agree that mixed states are an essential part of quantum information theory, and there is a rich literature that involve dynamics of von Neumann entropy.
+I'm hoping to use Yao but I understand that this is a nontrivial feature which will take some time to implement, so I may need to switch to qutip which supports circuits acting on mixed state density matrices, and measurement circuit elements were recently added in qutip/qutip#1090 and  qutip/qutip#1274.
+It is easy to handle U \rho U^\dagger`  in Yao in a slightly hacky way:
+I haven't tested their performance, if you can tell us which works better in your application, that will be helpful. @seadra
+Thanks for the response. I actually saw about this in #257 and gave it a try already, but it doesn't work when U contains measurements.
+After changing U to chain([put(5, 2=>Rx(0.5)), Measure(5),put(5, 2=>Rx(0.5))]), the first method fails with the error:
+and the second one fails with
+(Once that somehow works, an additional potential issue would be that the measurement process should not generate two different random numbers for Umat and Umat'.)
+I understand I can export density matrix to QuantumInformation.jl, but it doesn't seem possible to export circuits that include measurements.
+True. What I can currently promise you is that this is part of the goal in the new simulation backend BQCESubroutine, since we are going to support hybrid programs in YaoLang soon. But it will take some time to develop since currently there are not many people working on this (basically just myself, and especially now quite a few things depends on Julia 1.6 which is not released yet. I'm not able to give a timeframe on this, unfortunately.
+It is easy to handle U \rho U^\dagger` in Yao in a slightly hacky way
+I feel sometimes it's actually easier to just call instruct! interface and feed the first argument a Matrix would be much simpler - what I'm implementing for density matrix backend is basically just using this. At lowest level we actually support the operation U * \rho which is the instruct!(\rho, U, loc) interface.
+Absolutely, I'll be looking forward to it ---and thanks a lot for developing Yao!
+I'll have switch to the master branch of qutip for my current project, but I like Julia and Yao, and I am looking forward to using them again in the future.
+Regarding the instruct! interface, if it is limited to matrices, wouldn't that make it impossible to implement measurement operations within circuits?
+@seadra Well, at the moment Yao probably can not handle your case. You need a more specialized package.
+Have you checked https://github.com/qojulia/QuantumOptics.jl ?
+In case some one want to make the extension, it is not that hard. It should be good to start from
+I will also think about it, thanks for the feedback.
+Thanks for the recommendation, I actually used QuantumOptics.jl before. It does support applying arbitrary operators on density matrices (which are themselves operators), but unfortunately it doesn't support measurements on density matrices or states, it only provides expect to calculate the expectation values (I just opened an issue for it on their issue tracker). Qutip fits the bill, however.
+Thanks again!
+Regarding the instruct! interface, if it is limited to matrices, wouldn't that make it impossible to implement measurement operations within circuits?
+IIUC, to simulate measurement (or measurement channel) on density matrix, will be just matrix multiplication + matrix summation? If it is written as Kraus operators? unless you want to do sampling, otherwise have a fast way to evaluate this special type of matrix multiplication is sufficient? Or you mean just project the density matrix? for projection, I think you can also express that as a matrix operator and do the same thing, for sampling you can also just sample one of the measurement operators in a POVM (if the measurement you want to do is a POVM).
+That'd be great! I was just thinking that the implementation of a measurement element in a circuit (like Measure(n, operator=M)) will require the generation of a random number as well as normalization of the output state, but maybe it's possible to bake these into the definitions of the matrix/operator representation. I'm not exactly sure but it looks like that's how QuantumInformation.jl implements it.
+@seadra yes that's just a projection then. Currently measure is also implement as a matrix operation actually it's just Z basis is a special case you can optimize on.
+The general case is still a matrix or more general Kraus operators
+YaoBlocks is a mainly a pure quantum circuit representation so sometimes in the case of density matrices it doesn't work well with quantum channels ( tho in your case it's sufficient)
+Indeed! The combination of unitary gates and measurements on density matrices would be sufficient in my case, and would go a long way in covering more general quantum simulations. I totally hear you on more generic quantum channels.
+So I gather once such a conversion of Measure to matrix is implemented in Yao, the code you posted above should also work eventually. And maybe even something like this work
+for a mixed state.
+So I gather once such a conversion of Measure to the matrix is implemented in Yao, the code you posted above should also work eventually. And maybe even something like this work
+Yes in principle if the corresponding instruct! is implemented for a density matrix register, this should work.

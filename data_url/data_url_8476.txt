@@ -1,0 +1,37 @@
+Installing qutip via the conda package and then importing it produces a crash for me:
+Let me know if you need further information on my setup in order to reproduce this
+This still happens if I also install matplotlib into the environment (without the "matplotlib not found" warning)
+It does work on other workstations, so it must be something platform specific. Any ideas on what I could do to debug this further?
+Installation via pip or from source seems to work. Oh, and I'm also pretty sure that the conda installation used to work on this machine (a few weeks ago)
+Well, it seems that it gets through the init file till it hits the import statements.  So one would likely have to start by importing the various modules by hand till something breaks, and then check from there.
+What are the difference s between machines where it works, and the one where it doesn't?
+Good question. I'm not sure what the relevant differences between the machines are. Both are Ubuntu workstations (one 14.04, the other 16.04). The versions of conda a different (4.0.5 vs 4.3.11, but I may not easily be able to upgrade). They both have quite different compilers installed.
+I stepped through the import statement with ipdb. The crash happens in the following location:
+When I continue to step into the last statement (line 406 in fastparse.py), I only see importlib internals, and the last output before it crashes  is
+Since it's the python from the conda package, I'm assuming that's because Continuum created the linux package on a Redhat system. GCC is identified like that on both of the workstations. But yeah, my guess would be that there is some shared library that's compiled in a way that's incompatible with the rest of the system. Is there any linux utility that would allow to determine which library is being accessed at the moment of the crash? Some invocation of ldd?
+So I did an update of my conda environment to the latest version and now also the installation via pip has a problem, producing an ImportError (but not a segfault!) in the same location:
+The verbose log file from the installation (pip install -v --no-cache-dir qutip) is here: pip_log.txt
+conda install libgcc seems to solve the problem for now. The conda-package still fails with a segfault.
+We ran into the "Illegal Instruction" problem too when using the conda qutip package (4.2.0-np113py36_2).  Building qutip from source within the same conda environment produced a working qutip.
+Details of the processor on which the failure was observed:
+model name	: Intel(R) Core(TM)2 Duo CPU     E8400  @ 3.00GHz
+flags		: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx lm constant_tsc arch_perfmon pebs bts rep_good nopl aperfmperf pni dtes64 monitor ds_cpl vmx smx est tm2 ssse3 cx16 xtpr pdcm sse4_1 xsave lahf_lm dtherm tpr_shadow vnmi flexpriority
+$ uname -a
+Linux plantain 3.16.0-4-amd64 #1 SMP Debian 3.16.43-2+deb8u2 (2017-06-26) x86_64 GNU/Linux
+I wonder if it has to do with the low level c++ code used in the sparse matrix operations.
+I am guessing that that us indeed the case, although it does appear that sse2 is there.  Conda may have to disable sse2 extensions.
+Verified working on my workstation (ubuntu 16.04, Xeon E5-2630).
+Hi, I am facing the same problem (Installion of qutip 4.2 with conda, python 3.6). What do you mean by disabeling the sse2 extensions?
+@AElton363  What OS are you trying on? and what version of conda?
+Installing from source is probably the way to go.
+Today I encountered the same problem when installing qutip 4.3.1 from conda-forge channel on Ubuntu 18.04. I have Anaconda 2018.12  with Python 3.7. Installing via pip in the system python didn't work either. The solution was in fact to install from source in anaconda which I did in the following manner:
+I am now also encountering this issue when installing qutip 4.3.1 on a docker image (built from Windows). qutip 4.3.0 works without problems. Minimal docker file where qutip fails to import:
+@thangleiter can you try with the dependencies (cython numpy scipy nose matplotlib)? What Python are you using and what OS?
+@thangleiter can you try with the dependencies (cython numpy scipy nose matplotlib)? What Python are you using and what OS?
+I am building (and running) the Docker image from Windows 10 1803 Education. The image itself is based on Alpine Linux (see https://github.com/ContinuumIO/docker-images/tree/master/miniconda3) and runs Python 3.7.1 (or lower, depending on the qutip version's requirements).
+Explicitly installing the dependencies also results in an Illegal Instruction. The dockerfile for reference:
+Edit: Some further investigation revealed that the crash also happens in the WSL Ubuntu shell with miniconda manually installed and Python 3.6 and 3.7. It doesn't crash with the same setup and Python 3.5, however.
+Edit 2: Installing via pip or from source works with Python 3.7 and  qutip 4.3.1, so the problem is definitely the conda package.
+@thangleiter try to put qutip last: conda install cython numpy scipy qutip. Also check now with 4.4.0 release.
+@thangleiter try to put qutip last: conda install cython numpy scipy qutip. Also check now with 4.4.0 release.
+Seems like it works with qutip 4.4.0 👍. The position in the conda install command doesn't seem to have any effect.

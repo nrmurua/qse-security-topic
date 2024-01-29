@@ -1,0 +1,17 @@
+This issue is proposed based on the discussion under #7283, especially the insight of @jakelishman.
+CUGate is the controlled version of UGate, a generic single-qubit rotation gate with 3 Euler angles. Most controlled gates have the same parameters as the base gate, but CUGate has an extra one: the global phase γ. To cope with this, CUGate uses a @property decorator to define a getter for the property params. This getter function creates a new array and returns it. It leads to problems that following operations may be applied to this newly created array instead of the real parameters of the CUGate object. For example, that happens in the function QuantumCircuit.assign_parameters, which is demonstrated in the following section.
+The failure of assign_parameters on CUGate leads to another problem. Currently, a line is missing below line 652 in qiskit/circuit/library/standard_gates/equivalence_library.py.
+If the add_equivalence function is added, the test test_equivalence_phase would report a TypeError exception. QuantumCircuit.assign_parameters is called during the test,
+The output is
+suggesting the assignment of CUGate is failed. Note that the parameters of the U3Gate have been assigned.
+The second circuit should be
+Maybe remove the γ parameter from CUGate. The global phase is a property of quantum circuits. It is not a property of other gates. Adding this parameter to CUGate makes it different from the general cases and requires special processing, e.g., here and here.
+We added the gamma parameter to the CUGate so that it represents a general 2 qubit gate, as discussed in #4106 🙂 Maybe another solution would be to just return the params stored in CUGate insted of going via the base gate which doesn't have the gamma parameter.
+Perhaps calling it "global" phase is a bit misleading here (it's the phase of the controlled gate), but yeah, the gamma parameter needs to stay for now.  The main issue is [again :(] that we don't have a contract for what Instruction.params should contain, and how it should behave with respect to mutability.  QuantumCircuit assumes that it's a "true" attribute, and tries to write to it as if it is guaranteed to be a list, but that's probably not something it can assume.
+The "bug" could either be that CUGate must return a list-like object that backs all its parameters (in which case we need to do what Julien said), or other places in Terra need to stop assuming that they can mutate the object.  They can write wholesale, perhaps (so they'll trigger the setter method), but they can't mutate.  This second form is more safe, but it likely has some performance implications, because we'd need to be reconstructing several lists/tuples each time.
+Yep agreed, after #7087 we can hopefully start introducing more structure and determine which gates share which properties (-> e.g. standard gates that have free parameters).
+@jakelishman Parameter binding to cu does not look working. Is it related to this issue?
+output
+Yeah, it's the same issue - assign_parameters / bind_parameter tries to mutate indices in the CUGate.params field, but the gate has a getter that produces a new list, not the actual array.  Julien at one point had a PR that added assign_parameter to Instruction instances so it could be overridden, but I don't know what happened to that.
+It stalled since it introduced a small performance hit 😅 --> #7487
+Thank you for the information!

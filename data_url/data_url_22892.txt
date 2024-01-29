@@ -1,0 +1,23 @@
+In a recent upgrade of my conda installation, my previous strategy for pyrpl notebook GUI integration crashed and burned due to changes in ipykernel.
+In principle, there is a "proper" solution using threading, but ipywidgets becomes unresponsive when there is a qt GUI event loop running:
+https://stackoverflow.com/questions/70436504/problem-with-event-loops-gui-qt5-and-ipywidgets-in-a-jupyter-notebook
+(which is always the case when using pyrpl, even if you do not use the gui...)
+How hard / feasible would it be to decouple the QT APP and GUI from PyRPL? Does this sound like a branch, or more like a fork to a new library?
+Not that I have the time or bandwidth right now, but the only thing that saved me was a conda rollback to a previous installation revision for my teaching lab the other day...I would love to see the QT GUI completely decoupled from the core RP interfacing code.
+Hi Gary, sorry to come back so late (and happy new year!)
+I read your question in stackoverflow.... I think what you are trying to do is to make the qt event loop the underlying loop of the  the asyncio framework... I believe we have precisly managed to do that in branch "python-3 only". The goal is to make this the "master branch" rather quickly as support for python 2.7 is not needed anymore.
+In particular, if you have a look at the file "async_utils.py", you will see that we are using the library "quamash" to set qt as the asyncio eventloop.... Let me know if this helps with the new notebook version...
+Hi Samuel,
+No problem on the delay, happy new year to you too!
+Indeed, I was trying the same thing myself, but the problem seems to be that the asynchronous events from my ipywidgets are not getting processed. It seems that interplay of ipywidget events and the qt gui loop is broken:
+https://gitlab.tudelft.nl/python-for-applied-physics/rp-squid-python-code/-/blob/master/Debugging%20broken%20widgets%20Dec%202021.ipynb
+You can see a short demo video here:
+https://tudelft.zoom.us/rec/play/CgFo2_JIS8qdNQm8mJRwheOygc_CsCRmv4mNq4TIcvAnzPqLTzkNE0u6w0BlUrI2ckkvrQRXUlu0d3A8.TKUOmocoDlhmEG5n?continueMode=true&_x_zm_rtaid=chuscAkeT1OVGF1NZcosQQ.1641226261305.d72721c18f45943ad7e889aae4e8f2f5&_x_zm_rhtaid=584
+I think I'll have to dig a bit into ipywidgets and maybe post a issue there. But indeed, if PyRPL had an option of not even creating a qt gui loop at all (it is redundant and even a bit confusing in my case in which I just instruct people to minimize the popup window and ignore it), then that would also solve my issue, since for some reason I don't understand, ipywidget events do propagate properly into the %gui asyncio loop.
+Cheers,
+Gary
+I found a solution after some digging:
+ipython/ipykernel#825
+so my code is all working again :) But still, longer term, I think it would be valuable to decouple the QT GUI completely from the core IO code.
+Great news and congrats for the perseverance, this looked not so trivial !
+Regarding the coupling of pyrpl to the Qt GUI, indeed, it's nice to have the core application entirely decoupled from the gui, which I think is (at least not far) from being the case right now. However, there are still some asynchronous stuffs happening in the core application. For instance, the data acquisition with the scope comes with a function scope.single_async() and a synchronous version single(), which will not return until the data is actually acquired... At the moment all this is handled with an event loop and the async framework of python 3, which makes the code relatively clear (in branch python3_only). Of course, since in many cases we use a QT GUI, we decided to set the qt event loop as the underlying loop of asyncio, but I guess this could be changed to a more standard event loop if the GUI is not needed. I guess this could be done with (hopefully not too much efforts) by mainly touching the file async_utils.py.

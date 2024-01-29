@@ -1,0 +1,101 @@
+(from sinara-hw/sinara#47)
+fewer registers (merge address and data)
+We can merge address and write enable instead.
+maybe IRQs can be used to handle error conditions and perform submission retrials
+No, because that will lose precise RTIO exceptions or create horrible race conditions. But we can use bus wait states and bus errors.
+We can merge address and write enable instead.
+We might be able to do both getting rid of two CSR writes in many cases:
+But we can use bus wait states and bus errors.
+Good!
+Doing that to the channel register is difficult because DRTIO uses it to look up first the state of the remote channel, and test for underflow, FIFO full, etc.
+And it is also used for muxing status between multiple (D)RTIO cores, so if the gateware redoes the transaction with the channel first, you'll have to block until the full transaction is completed so you get a valid status. There would still be a speed-up though as the gateware can do the transaction in a few cycles.
+using a channel-dependent bit mask.
+Is the bit-twiddling that will be required to compute the data faster than one register write? Note that we can have a second RTIO output function that writes to address zero by not doing the address CSR write.
+Does it do that channel status lookup early to be in parallel with the CPU doing the address/data writes?
+Pretty sure that the bit twiddling is faster. But it also pays to have fewer arguments being passed up and down the API. And it saves DMA and DRTIO size increasing throughput. Having separate rtio backend functions hurts caching and code size/maintainability.
+The other thing we could do is merge that address into the channel number. Then the (compound) channel number would be {u8 core, u16 channel, u8 address}, maybe with permutations.
+AFAICT we will also want a "length" field for the data in the RTIO API so that the DRTIO master and the DMA storage engine can truncate. But maybe it can just count the number of data writes.
+Merging the address into the channel sounds OK.
+The DMA playback engine takes LSB-first data of arbitrary length with byte granularity and zeros the missing MSBs, and DRTIO similarly removes zeros in front of data.
+There is no gateware DMA storage engine and I don't know why you want one.
+The new RTIO writes could be done this way, with a total of 4 bus write accesses (instead of the current 6) if the data is small:
+(plus status readout)
+The automatic zero-stripping/extending sounds good.
+I'd think that there would be a DMA storage engine for either DMA input events or for remote DMA.
+register-pinning of now
+If I recall correctly, I've tried this and it made no practical difference.
+Since event submission (i.e. writing the now to CSR) seems to be as frequent if not more frequent than manipulation of now, why don't we do "CSR pinning of now", i.e. to the timestamp CSR of the RTIO interface. This may be problematic for DRTIO (it might be using a separate CSR) but that could probably be changed.
+DRTIO is not using a separate CSR for the timestamp. The (D)RTIO cores are demuxed after the CSRs, see cri.py.
+CSR pinning of now sounds good and easy to implement (just pin the global to the address of CSR instead of having a global in ksupport).
+The other thing we could do is merge that address into the channel number. Then the (compound) channel number would be {u8 core, u16 channel, u8 address}
+@jordens Do you confirm that a 8-bit address is still sufficient for SAWG and all foreseen needs?
+@whitequark What do you think of now pinning to the CSR with atomicity implemented in gateware by committing the value when the 32 least significant bits are written?
+I don't see anything that would need more than 8 bit address space.
+use bus wait states and bus errors to signal RTIO exceptions
+Are bus errors working correctly with mor1kx and do they result in exceptions that can be traced?
+OK, that would be acceptable.
+This needs to be rechecked before committing to this implementation though, it was a while ago when I looked at it.
+@sbourdeauducq What do you think about mapping the RTIO registers to OR1K SPRs? I've just thought of a good way to expose those to LLVM; we can add a new address space so that accesses to SPRs are just pointer accesses and most optimizations still apply to them.
+Why does that help, single-cycle access? What kind of interface would that have? Wouldn't that cause problems with now pinning? Wouldn't that cause timing issues in the FPGA? Also that contributes to breaking compatibility with other CPUs. Is it really worth it?
+Why does that help, single-cycle access?
+Yes.
+What kind of interface would that have?
+Interface where? To software? More or less the same, just use mfspr/mtspr in Rust and slightly different codegen in ARTIQ Python.
+Wouldn't that cause problems with now pinning?
+Quite the opposite, it will eliminate some inefficiency from now pinning (if pinned via the linker all accesses to now will still have to go via the GOT offset, which adds a few setup instructions and increases register pressure).
+Wouldn't that cause timing issues in the FPGA?
+I think you have more insight into this than me at this moment.
+Also that contributes to breaking compatibility with other CPUs.
+All mature soft CPUs I'm aware of have some sort of coprocessor interfaces.
+Is it really worth it?
+Well, how much do we want to shave cycles off RTIO submission time?
+Interface to gateware.
+How many of those registers can we have anyway? The RTIO data register is quite large.
+Well, how much do we want to shave cycles off RTIO submission time?
+That would shave 4 cycles (32ns) and seems quite complicated to do.
+Also that contributes to breaking compatibility with other CPUs. Is it really worth it?
+It seems to me that ARTIQ is pretty heavily invested in mor1kx, and that changing to a different CPU (even if there were a better option, which it seems at present there isn't) would involve a great deal of work anyway.
+Interface to gateware.
+How many of those registers can we have anyway? The RTIO data register is quite large.
+At least 32K.
+Well, how much do we want to shave cycles off RTIO submission time?
+In my experience this is one of the main pain points for ARTIQ users, and whatever improvements we can squeeze out in a reasonable fashion are really welcome for all users.
+@dhslichter Something you can do to advance this is submit realistic benchmark code that I can profile. There might be inefficiencies that I don't currently expect in different parts of the stack.
+@sbourdeauducq I assume that the proposals for shaving time off RTIO submissions would also shave time off RTIO retrieval (i.e. from reading timestamps from an input FIFO).  Is this accurate?
+@whitequark ack, I will send along some code for sideband cooling to give a sense of what we're up against, and to give you something to benchmark with.
+I assume that the proposals for shaving time off RTIO submissions would also shave time off RTIO retrieval (i.e. from reading timestamps from an input FIFO). Is this accurate?
+Not really, apart from now pinning this only applies to outputs.
+It seems to me that ARTIQ is pretty heavily invested in mor1kx, and that changing to a different CPU (even if there were a better option, which it seems at present there isn't) would involve a great deal of work anyway.
+Not that much, it's basically a bit of system code, the exception handling/unwinder, and dealing with rustc/LLVM breakage that I cannot imagine will miss the opportunity to manifest itself. A lot of things are portable.
+@whitequark instead of SPRs, we can maybe do Wishbone combinatorial feedback for writes; would that work (i.e. no mor1kx bugs, and single-cycle performance) and meet timing? And does it actually improve things - with the write buffer, does the 2-cycle access have an impact on performance at all?
+And it's just 32ns at most...
+@sbourdeauducq are there modifications that would help with input speeds as well?
+Ack on the CPU portability comments.
+Not that much, it's basically a bit of system code, the exception handling/unwinder, and dealing with rustc/LLVM breakage that I cannot imagine will miss the opportunity to manifest itself. A lot of things are portable.
+I don't imagine we're going to migrate to LM32 at this point because of the time investment for the LLVM backend and more importantly the lack of features in the CPU core, so the only option is RISC-V. I've just looked at RISC-V status in LLVM and it's somewhat underwhelming compared to what I expected.
+As far as I can tell they have a decently working LLVM backend but very little of it is upstream (10/84 patches), so there's no real advantage over our current OR1K LLVM backend. I cannot imagine the situation with rustc is any better, though rustc needs only a tiny amount of architecture-specific code (it's something around 100 LOC for OR1K, I think).
+The EH/unwinder changes are trivial (especially after I made them once for OR1K) so that's not a factor.
+Apart from what you listed, what else should be handled is linking, but that's not major either.
+To summarize, whether we should switch to RISC-V should be informed exclusively by what we win by using a different CPU softcore, since that's the only thing that will matter in practice, at least until RISC-V is fully upstream and widely used, which isn't going to happen until the end of 2018 or even 2019.
+@sbourdeauducq Worth a try.
+For inputs, in addition to now pinning, we can shave 1 programming register access, plus another one and (in the fast code path) some tests by using Wishbone bus wait/error states.
+@sbourdeauducq ack, thanks.
+(optionally) use the Wishbone wait state for flow control.
+(optionally) use Wishbone bus errors to signal underflows and link errors.
+Currently, RTIO CSR writes go through the write buffer, and each <=32-bit write takes 2 cycles to complete, which (thanks to the write buffer) is done in parallel with the CPU preparing the next operation.
+The problem with this scheme is, write error exceptions become asynchronous (raised some instructions after the write), so race conditions can occur. For example, a RTIOUnderflow can potentially be raised after the software has made a decision based on the incorrect information that no underflow has occured.
+So to implement this, the write buffer would have to be disabled for RTIO CSRs. This raises two difficult issues:
+I'm not sure if saving 1 CSR read and 1 test (dozens ns) is worth going through those difficulties.
+Maybe the best solution is to dig into the CPU pipeline and implement custom instructions for RTIO operations. But that's significantly more complicated than the other optimizations proposed here.
+Such instructions, on the other hand, could be pretty fast. With optimized assembly (the production of which by the compiler is another issue), producing a square waveform on a TTL would be something like (@whitequark correct me if I am wrong):
+So, a total of ~96ns per TTL state change.
+So to implement this, the write buffer would have to be disabled for RTIO CSRs. This raises two difficult issues: […]
+You could emit an msync after the stores for which you need precise exceptions to get around this, but I haven't checked whether that would make sense performance-wise.
+I know, but I think it's marginally faster than reading the status register and a lot more complicated.
+Funded by NIST.
+Great!
+Done. test_pulse_rate results:
+Before: 7.20e-07
+After RTIO output layout change: 4.44e-07
+After now-pinning: 4.56e-07
+Nice, thanks @sbourdeauducq.  We will test here in the next week or two.

@@ -1,0 +1,38 @@
+Currently, importing scqubits changes the matplotlib defaults as done in
+
+This can be quite unexpected for a user.
+Importing and computing with scQubits shouldn't change how plots made by the user look. The custom style should be applied only to the scQubits plotting functions, such as, plot_t1_effective_vs_paramvals.
+matplotlib.pyplot.rc_context is a context-manager (with ...) that would appear to work for this purpose. One could store the rcparams as a a dict in settings and fetch that for the context-manager in approriate plotting functions.
+@nikosavola Many thanks for spotting this bug. @jkochNU I have implemented the fix as suggested by Niko in 408becb. Pytests are passed manually tested with functions with a few qubits and GUI (all functions as expected). Is there anything I have overlooked?
+One thing that I haven't yet figured out: since we are using matplotlib_inline.backend_inline.set_matplotlib_formats("pdf", "svg") rather than rcParams to make the output be vector images whenever we are using notebooks, that context manager cannot manage the format of the image if we stick with set_matplotlib_formats("pdf", "svg") to plot vector images (it does have some benefits over rcParams when working with notebooks). What do you think?
+set_matplotlib_formats("pdf", "svg") is better but I think this is also one of the things that should be left for the user in the basic usage of a library. As an exception, the example notebooks should contain this line, which they apparently seem to already do in the form of
+for example in https://github.com/scqubits/scqubits-examples/blob/master/examples/demo_fluxonium.ipynb. I didn't check all the notebooks but this is how I would suggest using this 😅
+A couple of thoughts - @petergthatsme, please pitch in.
+My suggestion would be a solution along the following lines:
+Sorry for my slow response - I missed this post earlier.
+I personally like the idea of not changing the plotting defaults for the whole session, and only applying those to plots that scqubits produces (behavior, which could even be be user-settable).
+Keeping things consistent maybe would not be a problem: we could define our own scqubits-style and expose it to users who would like to use it with their other project plots - i.e. they could explicitly set that style, so that all their plots in a given session use it. (I think that's what @nikosavola  is proposing essentially).
+However, assuming rcdefaults() works (?? - at some stage, a while ago, I remember there were items that were not reset properly, and it was more than just the in-jupyter operation differences), as Jens points out the users could very easily just force-reset their matplotlib config, after importing scqubits (although currently probably some of our plotting routines do choose some hard code style components for certain plots). We could add that to the docs to make clear.
+Hello ,
+I found the same bug lately as well. Is there going to be some fix soon ?
+I haven't found a way to set back the settings after import even basic functions.
+Just running
+from scqubits import Fluxonium 
+Makes all plots take 10 s instead of 0.3 s and i haven't found anyway to resolve it as rcdefaults() is not enough.
+@MFMFMFMFMF Changes regarding matplotlib settings are lined up for the next release, currently reflected in the  jk-ipv branch. None of the existing settings are supposed to or understood to impact runtime, though. I'd be grateful to learn more about the reason for runtime issues and whether the lined-up changes address this issue for you. I cannot see any runtime differences here (and 0.3s vs 10s is massive and puzzling).
+It seems like i was importing deprecated plotting routines.
+I didn't see any runtime difference when trying to make a smaller example.
+Sorry about the mix up
+Changes made in jk-ipv branch under 5d73786, queued for merging into main and to be included in next release
+Hello again,
+I found particular specific plots in which importing scqubits changes the runtime drastically.
+to reproduce :
+The plot takes 200ms the first time and 13 sec the second time.
+There is no runtime impacts for simpler plots.
+Running rcdefaults() after restores 'some' things but the sizes and fonts stay changed for example.
+@MFMFMFMFMF Your provided code simply crashes with TypeError: Dimensions of C (2, 100, 1000) should be one smaller than X(1000) and Y(100) while using shading='flat' see help(pcolormesh). Can you revisit and provide working code, please?
+Sorry about the error.
+Here is the correct version.
+So i found the problem for me :
+On line 71, the settings file changes the matplotlib format to vector graphic display when executed_in_python() is true.
+Maybe this format change could be enable only when the interactive parts of scqubits are used as opposed to anytime scqubits is loaded ?

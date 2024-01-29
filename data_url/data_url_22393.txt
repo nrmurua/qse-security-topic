@@ -1,0 +1,22 @@
+Using 1.0 rc3 on Windows. If I have an experiment that's running, if I make any changes to it while it's running and save the file it changes the experiment while it's running. I think it would be better if changes were only effected when the experiment is restarted. Basically a running experiment should be unaffected by changes in the python script.
+I was running the following experiment
+And was just turning the print on and off.
+That's a Python problem...
+Yes, Python caches lines inside inspect.getsource.
+No, it does not, which is the problem.
+https://bugs.python.org/issue1218234
+Oh, so they broke it in 3.5...
+We could do this, but it's ugly and not thread-safe.
+Huh?? You could simply cache it yourself instead, it is actually easier to implement. But I'm not convinced that this is the desired behavior yet. It seems like we ought to cache all files during startup or something, not cache on first use.
+Huh?? You could simply cache it yourself instead
+How? inspect will call checkcache which will look for changes on the disk.
+Do not call inspect.getsource every time, use a dict from functions to sources. That would be equivalent to your snippet above.
+Ah right, I thought linecache was smarter than that.
+We can hook imports, keep in-memory copies of imported sources, and ship our modified version of inspect that uses those copies instead of linecache. With this strategy, the typical cost is ~15MB of bytes objects per worker, and ~45ms of startup slow-down per experiment.
+Options to cut that down are:
+FYI, Chrome does this on Unix:
+http://neugierig.org/software/chromium/notes/2011/08/zygote.html
+but this cannot be applied here because text editors (at least Sublime Text which I tested) do not do file replacements like package managers.
+That works as long as nobody overwrites the contents of the file we have open; thankfully, package updates write a new file and rename it over the old name, leaving our open copy the only remaining reference to the old file
+This solution sounds good to me.
+ack

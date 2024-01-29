@@ -1,0 +1,38 @@
+fidelity() returns >1 by a significant amount for certain pure states. States are normalised, and taking the inner product returns 1. Code below provides two examples of states which give fidelity >1 with themselves.
+Output:
+I suspect this is because of A.sqrtm(), which is not necessary for a pure state. I'll go on and try to see what I can do with it.
+There is numerical error in the answer due to the need for the sqrtm method. I am not sure if I would call this error significant as the error is of order 1e-7, while the fidelity is of order unity. However, as Chris said, there might be a better way for pure states.
+Paul
+On Aug 26, 2015, at 13:11, dick-t notifications@github.com wrote:
+fidelity() returns >1 by a significant amount for certain pure states. States are normalised, and taking the inner product returns 1. Code below provides two examples of states which give fidelity >1 with themselves.
+#to test qutip's fidelity routine
+import qutip as qu
+psi0=qu.Qobj()
+i=0
+while i<=1:
+j=0
+while j<=1:
+psi0+=qu.state_number_qobj([2,2],[i,j]) #even superposition of qubit states
+j+=1
+i+=1
+psi0=psi0.unit() #normalise
+print(qu.fidelity(psi0,psi0))
+print((psi0.dag()psi0).norm()*2)
+print("\n")
+psi0=qu.tensor(psi0,qu.basis(10,1)) #tensor product with Fock state
+print(qu.fidelity(psi0,psi0))
+print((psi0.dag()psi0).norm()*2)
+Output:
+1.00000002107
+1.0
+1.00000003485
+1.0
+—
+Reply to this email directly or view it on GitHub.
+Untracked with Trackbuster
+I went on and gave a stab at it (PR #362), as it turns out we don't need sqrtm(sqrtm(A) * B * sqrtm(A))  even for mixed A and B--- we only need the trace of the outer sqrtm, which can be done by looking at the eigenenergies directly. After informal checking, this resulted in more precise answers when F = 1. I also added more checks to make sure that the fidelity is bounded by [0, 1] to within 1e-7.
+@cgranade did you test your PR #362 against dick-t example? If so what were the results?
+It would seem that dick-t is comparing a method that works with states in general (mixed or pure) with one that assumes states are pure. Do we have some method in qutip that gives the fidelity when states are assumed pure? It would seem more efficient (and less numerical error risk) to compute the fidelity without the sqrtm (as dick-t did in the comparison) if we knew the states were pure.
+When I ran against @dick-t's example, it still violated the bound F ≤ 1, but by significantly less than before, as can be confirmed by the success of test_fidelity_bounded_purepure, introduced by #362. That PR doesn't fully adapt to the pure vs pure case that @dick-t lists, but it does avoid sqrtm in that case. I can fully specialize to that case, if you like, by using the inner product of the two pure states.
+Having looked at the description of the function, that is it specifically refers to density matrices, then I would say that it does what it promises to do, and that the changes mean that it does it much better. So (now) personally I don't think we need to adapt for a pure vs pure state in this method.
+With the new fidelity implementation, the numerical precision seems improved enough that I think we can mark this issue as being fixed now. Thank you for reporting this!

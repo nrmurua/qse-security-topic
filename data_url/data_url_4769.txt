@@ -1,0 +1,27 @@
+This should be an identity operator, no?
+
+I suspect that the problem is in the BSgate, which is the one you use to define the S2gate (I checked the single-mode squeezing and it seems OK to me)
+
+Thanks @ziofil. We will take a look.
+Do you see the same behaviour for all three backends, or is it backend-specific?
+Also, are you able to produce a bug without using the extract_unitary function? Just trying to minimize the (possible) sources of error
+This is the only backend that I checked
+I just ran @ziofil's minimal example --- looking at state.cov() for the Gaussian backend, and state.ket() for the Fock backend with a cutoff of 4, in both cases my output is the vacuum state
+Yes because |0,0> is mapped to |0,0>. Try with |1,3> or |3,1> It's not even unitary there
+It's a bit unusual that it would give incorrect results for all three backends, considering there are two quite different representations being used 🤔
+The Gaussian backend cannot take as input |1,3>. I doubt that for valid inputs it gives wrong results.
+@ziofil I have the working hypothesis that the results you're seeing are numerical truncation issues. If I run this example:
+I can confirm that the resulting density matrix is unphysical (not normalized). Specifically, the density matrix elements [1,1,3,3] and [3,3,1,1] are non-zero; they have values of 0.25. This leads to a trace of 0.5.
+However, a simulation cutoff dimension of 4 means that only Fock states (0,1,2,3) in each mode will be captured. The (0,4) and (4,0) Fock states, which are possible to populate from these input states, will be missed.
+However, if I rerun the same example with cutoff_dim=5, the resulting density matrix is what we expect: only the [1,1,3,3] element is nonzero, and equal to one.
+Are you seeing the same issue in a case where there is no ambiguity about the cutoff dimension relative to the inputs?
+Exactly, for cutoff=4 amplitudes of up to 3 photons per mode should be there, but for |1,3> it gives the wrong numbers. (for cutoff=5 see |4,1>). I mean, just look at the unitary.
+I suspect that it's a truncation issue (multiplying truncated matrices not in the LU order): this could happen when the two beamsplitters (the one with theta and the one with -theta) are multiplied together. But they are not in the lower-triangular upper-triangular order (like instead when we have  exp(a^dagger) and then exp(a)), so we see truncation issues which then propagate to the definition of the 2-mode squeezing, which you (correctly) represent as BS(-pi/4)S(z)xS(-z)BS(pi/4).
+Do you agree?
+Yes, that's my assessment. A single beamsplitter already "overflows" the cutoff dimension. Adding the reverse unitary doesn't correct this (but we could also merge gates before running program to fix that).
+But I wouldn't classify this as a bug, more of an issue with numerical parameter choice.
+Yes, the BSgate is not wrong. The 2-mode squeezing matrix elements are wrong, though. A possible solution would be to redefine S2gate on its own with some disentangling formula rather than via the BSgate.
+If only we had the matrix elements of a general gaussian transformation 😁
+Two mode-squeezing is implemented as passive beamsplitters and energy-changing squeezing operations. The single-mode squeezing gate itself causes numerical errors (even without any beamsplitters) if squeezing is too high relative to cutoff. Again, this as a truncation problem.
+Closing this particular issue, as it seems not to be a bug, but rather due to a known drawback/tradeoff of numeric simulation
+@ziofil: We do have the matrix elements of general Gaussian transformation

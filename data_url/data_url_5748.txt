@@ -1,0 +1,54 @@
+qiskit-aer: 0.11.0
+qiskit-terra: 0.21.0
+mpirun (Open MPI): 4.0.3
+python: 3.8.10
+Hi, I'm trying to replicate the code example in the Qiskit Aer documentation (distributing the Quantum Volume algorithm using MPI and GPUs) as seen here: Running-with-multiple-gpus-andor-multiple-nodes
+This is the code I'm running:
+import qiskit
+from qiskit import IBMQ
+from qiskit.providers.aer import AerSimulator
+from qiskit import transpile
+from qiskit import execute, QuantumCircuit
+from qiskit.circuit.library import QuantumVolume
+qubit=24
+sim = AerSimulator(method='statevector', device='GPU')
+circ = transpile(QuantumVolume(qubit, 10, seed = 0))
+circ.measure_all()
+result = execute(circ, sim, shots=100, blocking_enable=True, blocking_qubits=23).result()
+print(result)
+This is the error I get:
+I tried creating a simple circuit to test the parallelization. It seems that the segmentation error happens when one puts a gate on the last qubit. Example: on a 24 qubit circuit, if I put a gate (like Hadamard) on the last qubit (qc.h(23)), I get  a segmentation error. The other qubits seem unaffected, I can put arbitrary gates in the other qubits and it works.
+Thanks a lot!!
+@jakelishman @doichanj I've tried different configurations with MPI and CUDA, and it seems to me the problem is in Qiskit Aer. Any algorithm fails to distribute with GPUs if the circuit's last qubit performs any operation (any gate on the last qubit seems to make the simulation fail). Can you fix this issue or maybe point out something I'm doing wrong?
+Thanks a lot!!
+I could not reproduce this issue. Please provide more info (number of processes, number of GPUs, GPU and CPU memory size, etc.)
+Could you test with smaller blocking_qubits value ? I think blocking_qubits=23 is too large for 24-qubits circuit, i.e. if you use 4 processes blocking_qubits should be less or equal to 22. (If you set 23 for 4 process, Qiskit Aer will abort with message like ERROR:  [Experiment 0] cache blocking : blocking_qubits is to large to parallelize with 4 processes)
+Hi! I'm using g5.xlarge instances on AWS:
+Just in case there is some error in the way I'm building Qiskit Aer:
+I've installed CUDA 11.7 following  these instructions and built Qiskit Aer using
+python ./setup.py bdist_wheel -- -DAER_MPI=True -DAER_THRUST_BACKEND=CUDA
+I've tried lowering the blocking_qubits but it doesn´t seem to  make any difference, I get the same segmentation error as in the other comment.
+Thanks a lot!!
+In case it helps, these are all the steps I follow on a new AWS machine to install Qiskit Aer with GPU support:
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-ubuntu2004.pin
+sudo mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600
+wget https://developer.download.nvidia.com/compute/cuda/11.7.0/local_installers/cuda-repo-ubuntu2004-11-7-local_11.7.0-515.43.04-1_amd64.deb
+sudo dpkg -i cuda-repo-ubuntu2004-11-7-local_11.7.0-515.43.04-1_amd64.deb
+sudo cp /var/cuda-repo-ubuntu2004-11-7-local/cuda-*-keyring.gpg /usr/share/keyrings/
+sudo apt-get update
+sudo apt-get -y install cuda
+sudo apt -y install build-essential libopenblas-dev git  openmpi-bin python3-pip python-is-python3
+git clone https://github.com/Qiskit/qiskit-aer
+cd qiskit-aer
+export PATH="/home/ubuntu/.local/bin:$PATH"
+pip install -r requirements-dev.txt
+source ~/.bashrc
+export CUDACXX=/usr/local/cuda-11.7/bin/nvcc
+python ./setup.py bdist_wheel -- -DAER_MPI=True -DAER_THRUST_BACKEND=CUDA
+pip install -U dist/qiskit_aer*.whl
+Here is additional information on the GPU:
+
+Thanks a lot!! Tell me if you need more information :)
+I think this issue is same as issue #1583
+I could not reproduce this one.
+Let me close this issue because of no response in more than two weeks. Please create a new issue when this issue should be fixed in your environment.

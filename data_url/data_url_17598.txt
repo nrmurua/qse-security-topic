@@ -1,0 +1,29 @@
+Currently there is an assumption in the transpiler's unroller pass that if the circuit cannot be unrolled to the given basis, it will just unroll down to U and CX, which are universal.
+However this is a bit magic, and we should move towards requiring the basis to be explicit.
+This should throw an error because the circuit cannot be unrolled to the empty basis, instead it gives this circuit:
+Valid choices for the basis can be:
+Unroller(basis=['h', 'cx'])
+Unroller(basis=['u2', 'cx'])
+Unroller(basis=['U', 'CX'])
+Unroller(basis=['u2', 'CX'])
+...
+Currently ['U', 'CX'] is appended to the basis list during init of Unroller. Should this be removed? Also, if given basis=[], this error is raised: NotImplementedError: ('No decomposition rules defined for ', 'U'). Should we instead check for valid basis as you listed above, then give some warning or error if an input is invalid?
+Yes 'U' and 'CX' should not be inserted as basis without an explicit request. So unrolling to basis=[] should indeed raise an error.
+However it is hard to apriori check what a valid basis will be. I would instead rely on the Unroller itself.
+If the Unroller fails to unroll to a given basis, then it will already throw an error.
+This could be:
+1- NotImplementedError: There is no rule to decompose a particular gate (the error you put above)
+2- RecursionError: It keeps recursing for ever because it never hits the final desired basis. ( i think this error will not be raised currently, but it could. For example if cx is defined in terms of cz, and cz is defined in terms of cx, but the desired basis is CX. it will just keep recursing, but never reach CX).
+You could catch both of these exceptions and raise a meaningful error such as: "cannot unroll the circuit to the given basis".
+It would be nice if you could write some tests for these different cases.
+While you're at it, can you also move the Unroller pass one directory up to qiskit.transpiler.passes? It shouldn't be in qiskit.transpiler.passes.mapping.
+we should not think of  CX and U as a basis. They are just another way to write a gate in my view. You should not be allowed to unroll to that basis.
+@ajavadia What's a setup where RecursionError would be expected? Does Jay's comment require me to do anything beyond what you're asking?
+Nothing will cause a RecursionError in the current way that decompositions are defined (all are defined in a hierarchy with u and cx at the bottom). I'm just saying it could, so better to catch that possibility.
+Based on @jaygambetta's comment, you would also have to remove the decomposition rules for u1, u2, u3, cx, because they are defined in terms of U and CX. This is in qiskit.extensions.standard. So they will act like non-decomposable gates. This is what you were thinking Jay?
+@max-reuter any update on this?
+Not at the moment. I'll continue on Monday. I can hand it off if it needs to be done sooner?
+I won't be able to work on this until next Monday. If someone wants to pick it up between now and then that'd be great.
+@ajavadia could you outline a case where a RecursionError would be expected so I can set up a test for it please?
+@max-reuter Nothing I know of at the moment can trigger a RecursionError. I was just saying in principle we should catch the error where the unroller does not terminate (unroller will be changed and expanded in the future). So no test needed at the moment.
+done in #1802

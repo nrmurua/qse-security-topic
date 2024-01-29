@@ -1,0 +1,34 @@
+Today I was testing the put function with the below method:
+C2 = put(N, Tuple(m:n,)=>C1)
+where C1 is a ChainBlock, n>m.
+I found that with Tuple(m:n,) and Tuple(n:-1:m,) I got different outputs.
+Here is an example:
+Clearly only C3 outputs the right answer if we assume the qubit sequence from lower order to a higher order(down->up, low->high) is global for the entire circuit. I wonder if this is designed by purpose, but I think it's probably better if we can make the put function not sensitive to the sequence of the location range to avoid potential mistakes in coding.
+Just a suggestion, thank you!
+I found that with Tuple(m:n,) and Tuple(n:-1:m,) I got different outputs.
+This is expected. The locations in a tuple specifies the ordering of qubits in that subspace. If we make it non-sensitive to ordering, we are not possible to let put(n, (1,3)=>CNOT) represent 1 control 3 while put(n, (3, 1)=>CNOT) represent 3 control 1. This is why put(n, 2:3=>CNOT) can be confusing and is forbidden in Yao.jl.
+BTW: if you have a large sub-block, we would suggest using concentrate(n, put(10, 1=>X), 2:11). This avoids constructing sub-blocks matrices explicitly and accelerates simulation.
+Thanks for asking and giving us a chance to clarify.
+Understood. However, if the only application for this location sensitivity of put is applying CNOT gate, I think it's better to just add a specific method for CNOT instead of keeping the sensitivity not only because for avoiding mistakes for other situations but also because to decide which line to be controlled should be the property of CNOT not the put function.
+I suggest adding this method to CNOT:
+where the first parameter is the control location, the second parameter is the gate location.
+So that we can write:
+As for put function we can have only two methods for location part:
+There is an eye candy cnot(nbit, cbit, ibit) in Yao.jl.
+Thanks for your suggestion, but one should notice put(10, (2,7)=>CNOT) is also very useful.
+We can add some doctring to notify people about the location sensitivity, or maybe also some examples on this.
+I agree with @frankwswang , there is no ambiguity between 1:3 and tuples, we should allow one to use UnitRange and StepRange, it's more convenient sometimes, since there completely no need to convert things to tuple every time you have a block on contiguous locations.
+But the described behaviour is a feature, since we should allow one to change the wire location of a block.
+The sub-block in put should be short for performance. Allowing put(nbit, m:n=>block) is encouraging the inefficient simulation. Use concentrate for fitting a subprogram into a circuit.
+I don't prefer introducing additional interfaces when it is not necessary. It will increase the maintenance pressure.
+And eye candies are cheap, users are clever enough to define one for themselves. Less interface can help building a unified using experience, and help them memorizing APIs.
+If put means to use on single qubit gates, we should provide an error when multiple qubit gate is feeded.
+Or there's nothing to do with encouraging to use concentrate, it is too vague about what is encouraged by preventing one from using the sugar.
+It's necessary, if put a multi qubit gate is allowed: it makes the code drier, that's the whole point of these functions, or we don't actually need all of them.
+If eye candies are cheap, why we are providing so many one liners in the package? It's not about cheap, it's about convenient. Lazily put number of qubits to lambda is also cheap, it only cost one line to define them but it make code drier, that's why we are providing them. If users are clever enough to define these things, we shouldn't provide those curried functions for number of qubits either, it's just one line, users should be able to define them themselves.
+it makes the code drier
+DRY means don't repeat yourself. More interface with similar functionality, more codes to maintain, which means not DRY.
+It makes the users' code drier. you have stand here as a package provider not a user. If this logic holds we shouldn't have things like comprehension at all in Julia [k for k in 1:2], one should use hcat and vcat, since supporting comprehension is an extra interface and require a lot more work, it make things hard to maintain.
+But why we are having comprehension and are happy with it? It's because it make the users' code drier. you can input less things while doing the same job.
+There are things that really dry, with only a few hundred lines, but are people happy to use them? No, from the users' point, we have to write a lot more, since the developers are lazy.
+I think the original question is solved we could open other issues for further discussion.

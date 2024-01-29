@@ -1,0 +1,16 @@
+When using custom gates which should transpile to separable single qubit gates, the transpiler is appling routing passes to these which results in the insertion of lots of swap/cx gates in a circuit that shouldn't be there.
+Here is a minimal example:
+Define a custom N-qubit gate with a  definition in terms of 1-qubit gates:
+Apply this gate across 2-qubits not in coupling map and transpile
+Produces the following circuit:
+If "cx" isn't include in the basis gates above a transpiler error will be raised about being unable to map swaps to give basis.
+If initial layout is not included, it will remap the qubist that dont need remapping (but avoid adding swaps). This has a separate bug of adding an additional qubit to the circuit that is not even in the coupling map (returns 4-qubit circuit for this example)
+Importantly this only happens if the custom gate is 2-qubit, if its a 3+ qubit gates, routing seems to be skipped and things behave as expected:
+produces
+Running the above 2-qubit example should return the circuit equivalent to qc.decompose() , Eg
+I would expect that this requires that unrolling to intended final basis gates needs to happen before any routing is done, but currently it seems routing is done on any opaque 2-qubit gate regardless of its definition and whether it is in basis gates or not.
+There's an advantage to doing the basis translation later, in that then the layout and routing passes have to do less work (because there's fewer gates in the circuit). Doing the basis translation too early may also get in the way of high-level synthesis routines.
+Perhaps a sensible compromise is to replace the Unroll3qOrMore pass with one that also splits custom instructions (by an unrolling or translation approach) into subinstructions that act on separate qubits - the DAG methods for determining the partition already exist.
+The reason it is the way it is now is because none of the layout/routing algorithms can cope with 3q gates really (and the old coupling map assumed that notl native 3q could exist), so they needed to be unrolled prior.
+I'll add that this bug directly applies to the build in PauliGate which is of this form (which is close to how I found the bug). The above example can be replaced with
+Yeah, the mechanism is fairly clear from how our layout/routing passes work, I think - there's an assumption built in that any object that appears to operate on 2 qubits necessarily requires coupling between the two.  It's hard to untangle that right now, but a rework of the (role taken by the) Unroll3qOrMore pass like I was talking about above should hopefully get us around these problems in the near term.

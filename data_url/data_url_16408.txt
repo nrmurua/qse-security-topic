@@ -1,0 +1,26 @@
+statevector_simulator gives wrong results when classical bits are included in the circuits being executed
+from qiskit import *
+simulator = Aer.get_backend('statevector_simulator')
+circ = QuantumCircuit(2,2)
+circ.h(0)
+circ.cx(0,1)
+print(execute(circ,simulator).result().get_counts())
+gives {'00':1} which is the wrong answer.
+from qiskit import *
+simulator = Aer.get_backend('statevector_simulator')
+circ = QuantumCircuit(2)
+circ.h(0)
+circ.cx(0,1)
+print(execute(circ,simulator).result().get_counts())
+gives {'00':0.5, '11':0.5} which is the right answer.
+Give a warning/ throw an exception whenever we try to execute a circuit with classicaly bits. statevector_simulator does not require classical bits to store measured qubit values at the end of the circuit like in normal computation anyway.
+Happy to work on this provided I haven't missed something/ this has already been fixed etc.
+This is not a bug -- there are no measurements in your circuit, so the classical bits stay in their initial value of '00'.
+Furthermore, {'00': 0.5, '11': 0.5} are probabilities not counts so if you did add a measurement to the statevector simulator the returned counts would actually be a single-shot measurement outcome. For the Bell-state example this means you would see counts of either {'00': 1} or {'11': 1} with 50% probability each.
+If you want counts for > 1 shot you must use the Qasm simulator, not the statevector simulator. If you wanted the exact final state probabilities instead of sampled counts you can also use a probabilites snapshot with either the qasm or statevector simulators (see API docs)
+Sure, I knew your last 2 paragraphs already - it's more that the .get_counts() method gives only the output of classical bits in all Qiskit backends (qasm_simulator, statevector_simulator if any classical bits are included, and real IBMQ backends), but gives quantum bit probabilities for qubit-only circuits passed to statevector_simulator. The former situation as you said is completely different from the latter (experimental outcome vs analytic probability). Should this not be changed, or at the very least, give a warning (eg to only use .get_statevector() with statevector_simulator, which works unambiguously)?
+Ah I see. I thought you meant that was what you expected, not what was actually happening. I wasn't aware get_counts would return probabilities for statevector simulations.
+Edited I guess this was a "feature" (or "bug") added to qiskit-terra in #3514 which leads to the inconsistency in behavior as you have noted in this issue.
+My personal preference would be to removing get_counts allowing conversion of a statevector to a probability dict, and instead have get_statevector return a Statevector object from which you can use the sample_counts, probabilities or probabilties_dict methods to generate this data.
+That sounds sensible - can you assign me and I'll work on it?
+I'm going to close this as stale now, but also because Aer's response is correct, as Chris noted - classical bits are defined to be initialised to 0, and these are never written to.  If IBM backends are giving something different, that's a (potential, unless documented otherwise) issue with them.  Feel free to re-open if there's more to discuss.

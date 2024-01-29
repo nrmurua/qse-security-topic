@@ -1,0 +1,90 @@
+depends on m-labs/jesd204b#5
+@sbourdeauducq Has this been tested on the M-Labs setup?
+The code is there and somewhat works intermittently, but I cannot do anything until sinara-hw/sinara#567 is resolved.
+@gkasprow Can you expedite the rework, testing, and shipment of the replacement Sayma?
+I'm solving #475 . It was caused by at least 3 independent factors. 2 were found and fixed, the last one I'm trying to identify but I think I'm very close.
+The microtca mess is annoying but it's not blocking other people's developments and experiments, unlike this.
+I solved the issue. I will ship one Sayma AMC ASAP.
+I cannot use it without another rtm, can you ship that as well?
+sure.
+In email today with @marmeladapk and @hartytp, @sbourdeauducq said
+Sayma v2 DAC synchronization doesn't quite work and I don't understand why.
+By this do you mean synchronization between DAC chip on a single Sayma AMC v2?  What debugging steps did you do?
+DAC to FPGA. I cannot test between DACs since only one DAC is working on the board I have.
+Please look for DAC-DAC synchronization on the other two Sayma.
+Again, this pair is not for M-Labs, and I don't have it anymore. If you will recall, we had independently ordered an additional set of Sayma boards. I've kept reminding Creotech to ship more hardware.
+Does board bring up now work reliably for the DRTIO slave? Unsynchronised RF? BaseMod features (switch, attenuator)? Is that all decently well tested from kernels now?
+All of this generally works. Sometimes (and rarely AFAICT) the DRTIO link appear to become corrupted with some bitstream builds (visible symptom is a storm of broken aux packets); making a minor/unrelated change to the gateware code appears to "fix" it. I have never seen this on Kasli so this is probably GTH/Ultrascale specific.
+DAC -> FPGA synch?
+There are unexplained/unpredictable/obscure bugs and I don't have a timeframe.
+Thanks for the summary. Is there a write up of any of the symptoms you see? Anyway, it sounds like synchronisation between a single DAC and TTL is not reliable yet.
+I've kept reminding Creotech to ship more hardware.
+If you're not getting what you need out of Creotech or me or Tom or Xilinx to progress on your work make more noise. Let's get the hardware sorted so the synchronization testing can progress.
+DAC -> FPGA synch?
+There are unexplained/unpredictable/obscure bugs and I don't have a timeframe.
+Do please get on with trying to reproduce these bugs and create Issues. Understood that you may not have a timeline for fixing bugs which you've not seen reproduce. What's your timeline for running tests on the hardware to try to reproduce the bugs?
+Do please get on with trying to reproduce these bugs and create Issues. Understood that you may not have a timeline for fixing bugs which you've not seen reproduce. What's your timeline for running tests on the hardware to try to reproduce the bugs?
+Do you mean me or @sbourdeauducq? Right now I don't have a good description of the bugs from @sbourdeauducq. Also, AFIACT @sbourdeauducq isn't having any trouble reproducing these issues, so I don't see that me reproducing them as well would help. I can do it but it will take a non-negligible amount of my time without contributing much clear value to the project.
+AFAICT no one has done any real work/testing on Sayma for months now. It would be useful to understand what the issues are in more detail, who is going to work on them and when.
+Right now I don't have a good description of the bugs from @sbourdeauducq.
+Install the beta firmware (with synchronization) and reboot the board a few times while looking at the log. You'll see the sync errors, unless this is a problem with my board in particular.
+Can you post a log?
+Anyway, currently I do not know how the synchronisation process works in any details. It's been heavily rewritten/modified since I last used Sayma. As I don't think there are any docs, I don't expect that I would understand the log messages without investing a significant amount of time reverse engineering the process from the source code. I can do that, but it would be time consuming and I'm not clear that it would add any value to the project.
+I'm not clear on the responsibilities or expected time commitments for Sayma. I naively assume that the plan here is for @sbourdeauducq to investigate the synchronisation issues on hw he already has. But please correct me if that's not the plan/not possible.
+There are unexplained/unpredictable/obscure bugs and I don't have a timeframe.
+Do please get on with trying to reproduce these bugs and create Issues.
+This was in reply to @sbourdeauducq. I'd like to know more about the "unexplained/unpredictable/obscure bugs."
+we know DRTIO works well.
+We know that it works well:
+@hartytp If you want to help, could you validate, with the latest code, that you get reproducible RTIO clock phases (and to what tolerance?) between AMC and Kasli, and between AMC and RTM? You can check the outputs of the three Si5324s after the message "INFO(board_artiq::si5324::siphaser): calibration successful" on the satellites. If that doesn't work, this should be fixed before further synchronization attempts.
+OK. Will give it a go next time I have access to my lab.
+Okay so it seems that the synchronization problems are three-fold:
+General DRTIO corruption as mentioned above, when that happens the sychronization code also reports all sorts of errors.
+Where is the DRTIO corruption described?
+#795 (comment)
+Thanks! Uuurgh, nasty! Any plan for investigating?
+visible symptom is a storm of broken aux packets
+FWIW, we very rarely (once every few weeks between 5 DRTIO links) see bursts of invalid aux packet errors on Kasli <-> Kasli links as well. Might not be related.
+I'm not clear on the responsibilities or expected time commitments for Sayma.
+Contracts spell out who is doing what.
+General DRTIO corruption and sysref_ddmtd_phase_fpga  are definitely in the M-Labs wheelhouse.
+"Marginal AMC DDMTD jitter on SAWG builds." If this never happens on non-SAWG builds it suggests the hardware is working correctly. Given how subtle these configuration-dependent "features" are in Vivado/Ultrascale/GTH I'm not sure that @hartytp can substantially contribute.
+It makes most sense for @hartytp to work on testing aspects that are part of his contractual focus and/or tap his unique skills.
+There is still this bug where outputs are randomly 180 degrees out of phase (aka "55ns bug" since I've been using a 9MHz waveform to test, but it really is an inversion - which becomes obvious when changing the frequency). This can't be caused by JESD204 sync problems. @jordens Any idea? Can that be inside SAWG e.g. something that isn't reset?
+What are you doing exactly, what do you expect and what are you observing?
+There is a lot of channel and sample shuffling in JESD and the DAC. I can imagine a lot of situations where this happens, independent of SAWG.
+If you think this is really an inversion in SAWG, you should verify that using the envelope and not the phase. I.e. time a change (in amplitude or phase) on two channels. Or use the DC spline.
+Start this and keep it running:
+https://github.com/m-labs/artiq/blob/master/artiq/examples/kasli_sawgmaster/repository/sines_urukul_sayma.py
+Reboot Sayma and measure phase difference between Urukul and Sayma after each Sayma reboot. It randomly jumps by 180 degrees instead of remaining constant.
+If you think this is really an inversion in SAWG, you should verify that using the envelope and not the phase. I.e. time a change (in amplitude or phase) on two channels. Or use the DC spline.
+Can you try doing that? Or try other experiments to find out where the problem is?
+Start this and keep it running:
+Can that be reduced to an MRE?
+measure phase difference between Urukul and Sayma
+How would I do that?
+Can you try doing that? Or try other experiments to find out where the problem is?
+Not in the next days. Probably much more efficient if you continue debugging it on-site.
+Can that be reduced to an MRE?
+I am open to suggestions on how to reduce that code. I don't see any obvious ones.
+How would I do that?
+The second Red Pitaya that I connected has one channel on Sayma and the other on Urukul.
+After replacing SAWG with a simple DDS core there are no more inversions and synchronization at 2.4GHz often works. So the issue is either in SAWG or the sines_urukul_sayma.py experiment. @jordens you are the most familiar with SAWG so please look into it.
+Probably much more efficient if you continue debugging it on-site.
+I'm just also using the Red Pitaya and the remote development infra, and using a physical oscilloscope etc. would not make it more efficient.
+I posted this before but here is the script I am using to measure the Urukul/Sayma phase difference.
+So the issue is either in SAWG or the sines_urukul_sayma.py experiment.
+We've had plenty of examples in the past where this simple logic was plain wrong.
+I'm just also using the Red Pitaya and the remote development infra, and using a physical oscilloscope etc. would not make it more efficient.
+That's intentionally ignoring the most important differences.
+As I have explained before, some of the unresolved major problems are:
+We've had plenty of examples in the past where this simple logic was plain wrong.
+What is your better idea then?
+That's intentionally ignoring the most important differences.
+The network delays are small compared to the compilation/flashing/boot time of Sayma, and are not really important for grabbing waveforms with the script above. What is the interactive work you want to do?
+Most of the information about the setup is in your inbox, if you have questions please ask.
+@jordens Have you looked into this?
+
+There are two non-determinisms and one problem.
+Note that:
+I'd propose:

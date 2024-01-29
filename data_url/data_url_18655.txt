@@ -1,0 +1,26 @@
+Rewiring comments are currently stored in the **comments** hash table, keyed on object identity. This means that if a program contains multiple instructions that are represented as singleton classes in cl-quil, all occurrences of those instructions in the program will share the same rewiring comment.
+The current list of singleton instructions is: HALT, NOP, RESET, and WAIT.
+I am not sure what this means for program correctness, but at a minimum this means that any test that wants to verify the output of print-instruction for a singleton instruction has to clear the **comments** table first, otherwise prior test runs may have attached a rewiring comment which will get printed by print-instruction.
+The desired outcome of this issue to investigate and determine the best way to fix this without breaking other stuff.
+To be fair, I'm not certain this a bug. Maybe both WAITs are supposed to have the same rewiring.
+This was originally reported as "Curio No. 2" in #245.
+The testing consequences became evident while working on #257, e.g. see this comment thread.
+My vote is that these AST classes stop being singletons. At a variety of places in the code (including the comments table, but e.g. also in the entire logical-scheduler data structure) I've made the assumption that instructions that are distinct within a Quil program are represented as distinct Lisp objects. I don't know whether we actually rely on these particular instruction types being singletons anywhere; if we do, it should be in a relatively slender segment of the codebase, and so easy to fix, but I suspect that we actually don't anywhere.
+My vote is that these AST classes stop being singletons.
+That was my first idea as well: just try removing the singleton abstract class and see what breaks. I will give this a shot and report back.
+I'm not quite sure we should succumb to the world of referential opaqueness quite yet. The compiler is hard and I feel like everything having a pointer identity is risky.
+(One thing we could do is hash the identity of the program with the identity of the object:
+instead of just
+But you'd still have the problem if there are multiple RESETs, say, in the same the program, no?
+Or are you not supposed to have multiple instances of these singleton instructions in the same program?
+I guess maybe if we hashed on the instruction's index in the program + program + instruction identity... but that assumes instructions don't move around and also now I feel like I'm taking crazy pills.
+I tried removing the singleton metaclass from NOP, HALT, RESET, and WAIT.  There was one parser test (test-parse-reset) that broke because it was testing object identity on a RESET instruction. I changed it to instead check (typep instr 'reset) and after that the rest of the test suite does not complain.
+I think the next step is to grep through the sources looking for places that might rely on the singleton nature of these instructions, in case there is some bug lurking in a code path that doesn't get exercised by the test suite.
+I forgot to post this right away in response to this thread: https://www.youtube.com/watch?v=_asNhzXq72w
+No, you're right, I didn't think hard enough.
+Another idea is to have comments based off of the position in the program.
+As a short-term fix, I'm ok with removing the singleton class, but only if we shame ourselves a bit by doing something like
+I'm hahaonlyjoking, but I don't want the metaclass line to disappear, just be disabled, until we do a better job.
+I said it already, but I want to say it again: coping with the desired referential transparency elsewhere in the code is going to be a real bear, primarily as the guts of logical-scheduler are built on the opposite assumption. It's going to be a lot of work to make this broadly OK (though perhaps not so much work to get RESET and HALT back into shape).
+I grepped around and didn't see any obvious places where dropping the singleton metaclass would break things. PR coming soon.
+I also had a quick look and concur with @ecpeterson that breaking the dependence on object identity in logical-scheduler appears to be the bigger can of worms, though this is based on my superficial understanding of what's going on in there. But if ecpeterson says it's hard, I believe it :).

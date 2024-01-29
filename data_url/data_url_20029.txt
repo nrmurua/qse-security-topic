@@ -1,0 +1,39 @@
+With the time there is multiple test errors appeared (for 0.7.1 on x86_64):
+Full build log and test details http://git.altlinux.org/beehive/logs/Sisyphus/x86_64/archive/2022/0702/error/liboqs-0.7.1-alt2
+For example, excerpt for one test:
+I can say this output is quite obscure and hard to understand what exactly is failed.
+The key line in http://git.altlinux.org/beehive/logs/Sisyphus/x86_64/archive/2022/0702/error/liboqs-0.7.1-alt2 is:
+. > /usr/src/RPM/BUILD/liboqs-0.7.1/build/tests/test_kem_mem HQC-128 2
+ERROR: OQS_KEM_decaps failed
+And it is very surprising: It seems the final (decaps) operation of this single algorithm (HQC-128) is failing. If nothing in the code base was changed (?) this should not happen. Can you manually reproduce this error by running these commands (and sharing your output):
+If this also fails, please also run git status in the main project directory (/usr/src/RPM/BUILD/liboqs-0.7.1 in your case) as well as uname -a, cat /etc/os-release and share the output of these commands, too: Is this ALT Linux?
+Finally, does the current liboqs main branch fail in the same way as the release (0.7.1) you're running?
+Yes this is ALT Linux and it's daily rebuild of the package which previously built without errors. Package is build from the tag 0.7.1.
+This is not raw upstream repository, but a repo with RPM spec which builds this package, but you can see it's merged from 0.7.1.
+Finally, does the current liboqs main branch fail in the same way as the release (0.7.1) you're running?
+Will report that a bit later.
+Ok merged origin/main and build & run tests (failures are reproduced):
+Rerun of three test_kem_mem in origin/main tree produces the same result as before — first 2 runs are ok and third fails with ERROR: OQS_KEM_decaps failed.
+Quick gdbing it seems that /usr/src/RPM/BUILD/liboqs-0.7.1/src/kem/hqc/pqclean_hqc-rmrs-128_avx2/kem.c PQCLEAN_HQCRMRS128_AVX2_crypto_kem_dec producing the error. greping log I don't find any error or build warning regarding that.
+$ grep  pqclean_hqc-rmrs-128_avx2/kem log2
+Thanks for these logs and reconfirmations. So in summary: you do a daily build with 0.7.1 (unchanged for quite some time) and suddenly HQC started to fail?! The most prominent thing that changed recently was the OpenSSL update. Would HQC work OK if you built liboqs without it ("cmake -DOQS_USE_OPENSSL=OFF")?
+I just checked the logs, and we started getting re-build failures on June 2, the day we switched to gcc-12 as default compiler. I just tried to rebuild the package (with main still merged) using CC=gcc-11 and there is no test failures: 638 passed, 383 skipped in 28.37s
+$ grep pqclean_hqc-rmrs-128_avx2/kem log3
+[553/2363] /usr/bin/gcc-11  -I/usr/src/RPM/BUILD/liboqs-0.7.1/build/include -I/usr/src/RPM/BUILD/liboqs-0.7.1/src/kem/hqc/pqclean_hqc-rmrs-128_avx2 -I/usr/src/RPM/BUILD/liboqs-0.7.1/src/common/pqclean_shims -pipe -frecord-gcc-switches -Wall -fdiagnostics-color=always -fdiagnostics-color=always -fdiagnostics-color=always -g -O2 -flto=auto  -Wa,--noexecstack -O2 -g -DNDEBUG -fPIC -fvisibility=hidden -Werror -Wall -Wextra -Wpedantic -Wstrict-prototypes -Wshadow -Wformat=2 -Wfloat-equal -Wwrite-strings -Wstrict-overflow -ggdb3 -mavx2 -mbmi -mpclmul -Wno-missing-braces -std=gnu11 -MD -MT src/kem/hqc/CMakeFiles/hqc_128_avx2.dir/pqclean_hqc-rmrs-128_avx2/kem.c.o -MF src/kem/hqc/CMakeFiles/hqc_128_avx2.dir/pqclean_hqc-rmrs-128_avx2/kem.c.o.d -o src/kem/hqc/CMakeFiles/hqc_128_avx2.dir/pqclean_hqc-rmrs-128_avx2/kem.c.o -c /usr/src/RPM/BUILD/liboqs-0.7.1/src/kem/hqc/pqclean_hqc-rmrs-128_avx2/kem.c
+Rebuild with -DOQS_USE_OPENSSL=OFF, as you requested, on gcc-12 still produces the same test failures: 9 failed, 629 passed, 383 skipped in 28.18s.
+I thought this may be related to LTO (-flto=auto) and turned it off. After that there is build error appeared:
+There is 3 errors like this in
+This is perhaps the cause of test problems.
+Thanks very much for these additional checks. Yes, it seems to be related to that file and that compiler (version).
+Given there's not a lot of algorithm maintenance (fixing such bugs) going on until NIST decides which algorithm(s) are eliminated from consideration for standardization, here's my workaround suggestions until this "low maintenance mode" is lifted:
+Edit/Add: Looking at #995 HQC seems to be in an exceptionally "deep" "low maintenance" mode .... If I were you, I'd go for option 1, thus.
+Yes let's wait July 5 for the NST announcement. I also produced my workaround:
+This GCC error is obscure but while experimenting with an idea of replacing this array indexed access with _mm256_extract_epi16 which requires index to be immediate value I tried to achieve the same property of the index just for the casted array index i by unrolling the loops and it's worked.
+With this patch (and LTO disabled) it builds 0.7.1 without errors and the tests do not fail.
+Yes let's wait July 5 for the NST announcement. I also produced my workaround:
+So HQC remains "in the running" for NIST. Do you prefer to
+I would rather submit PR to liboqs since I'm not user of raw PQClean.
+I submitted the PR.
+ps. BTW, our tests run on ARM32 (armv7hf) architecture fail due to 1-hour timeout expiring for the FALCON (so I temporary disabled it[1]). But because it's selected by NIST, perhaps, I should debug it more and submit proper bug report.
+[1]
+I submitted a bug to GCC: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=106470

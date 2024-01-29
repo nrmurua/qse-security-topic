@@ -1,0 +1,16 @@
+Trying to get a subgraph of this coupling map:
+
+If I use retworkx directly to get the subgraph on 9 nodes, it gives me this which is correct I think:
+
+But if I do the same using the CouplingMap API I get this. There are incorrect nodes added here:
+
+@mtreinish says this is due to a difference in how networkx and retworkx implement .subgraph(). But I like the retworkx output because it numbers nodes as 0-k, and that is consistent with how coupling maps in qiskit are numbered (i.e. no "holes"). So I think something just needs to change here to remove the extra nodes. If we provide an option to keep the original node numberings, I'd be fine with that, but I'm not sure whether Qiskit can actually work with such a coupling map object. The best route I see is to remap the node numbers in the same order (smallest to 0, largest to k).
+Right, so if we don't care about retaining node indices (and I agree that it breaks the assumptions of the CouplingMap class if we did retain the ids) then we can just remove https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/transpiler/coupling.py#L118-L120 as retworkx does everything we need and this is fixed.
+If for some reason (which I don't think there is any) we want to retain node ids (either by default or with a flag) we can do this, but the easiest way will require a retworkx PR to add an option for that (we can try to do it in python but it will require adding and removing nodes to create index holes as expected).
+Also I think the arg should be a set, not a list. Otherwise we have to renumber the ids based on the order passed, which could be a bit confusing I think. But I need to think about this a bit more.
+At least for the retwork implementation the order of the list isn't preserved. The first thing it does is convert it to a HashSet internally and then uses that to create an internal iterator for a subset of the graph that is looped over to create a copy:
+https://github.com/Qiskit/retworkx/blob/main/src/digraph.rs#L2389-L2417
+I think that will preserve index sorted order, but I wouldn't count on that as a guarantee either more just a side effect.
+Reading this issue, I've noticed the difference between subgraph() and reduce(), two similar functions in CouplingMap. subgraph() does not care about the order of passed qubits while reduce() does.
+(I'm using reduce() in #6756)
+Another issue, but we could consolidate these two functions into one adding optional args like validate_connection and retain_ordering in the future. (To me, subgraph sounds like retaining node labels and reduce sounds good)

@@ -1,0 +1,22 @@
+I expect that with the same circuits, I can run it multiple times with different input data. In this case, I don't need to recompile the circuits multiple times.  Every time when I want to run on new data, I just need to update the data section without updating other parts.
+For example, in this qasm below, I had one operation "u3(data:input_magic1,0,pi) q1[0]" and a data section with foreach. So if it will execute all circuits for every different input_magic1, it will be very great.
+OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q0[2];\nqreg q1[2];\ncreg c0[2];\ncreg c1[2];\nmeasure q1[1] -> c1[1];\nu3(data:input_magic1,0,pi) q1[0];\nmeasure q1[0] -> c1[0];\nu3(pi,0,pi) q0[1];\nmeasure q0[1] -> c0[1];\nu2(localinputvar1,0) q0[0];\nmeasure q0[0] -> c0[0];
+section data: foreach (input_magic1: pi; input_magic1: 0.1; input_magic1: 0.2, input_magic1: 0.3)
+I think qiskit-terra is the component that should deal with this. Everything related to compilation is Terra resposability. I'm (gonna try) moving this issue to qiskit-terra.
+The idea is to allow this at the circuit level with parametrized circuits (currently under construction). So you would make a parametrized circuit, transpile it once, then drop in new parameters and run.
+Hi,
+So how will you support parameterized circuits? Will you support loop operations like 'for'?
+Qiskit asm supports string in operators. I tried this way below with string 'localinputvars1' in u2 operation. It works on basicaer and aer. So I extended it to qsvm. But I found it's very slow to replace all string parameters if I run a lot of events.
+qc_test = QuantumCircuit(q0, q1, c0, c1)
+qc_test.u2('localinputvar1', 0, q0[0])
+qc_test.u2(0.23, 0, q0[0])
+qc_test.x(q0[1])
+qc_test.x(q1[0])
+qc_test.measure(q0, c0)
+qc_test.measure(q1, c1)
+transpiled_circuits = transpiler.transpile([qc_test], backend_sim, **backend_config, **compile_config)
+qobj = assemble_circuits(transpiled_circuits, run_config=run_config)
+str_qobj = json.dumps(qobj.as_dict())
+str_qobj = str_qobj.replace('"localinputvar1"', '0.3')
+qobj = Qobj.from_dict(json.loads(str_qobj))
+A parametrized circuit is just a circuit where some gate parameters (e.g. rotation angles) are not yet set to a concrete number. Not sure what you mean by supporting 'for' loops. You can just use loops in Python to set the parameters and create many concrete circuits out of a single parametric circuit. The speed comes from the fact the the transpiler can handle parametric circuits, so you can transpile once, then drop in many numbers later to generate many concrete circuits.

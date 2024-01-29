@@ -1,0 +1,29 @@
+The current implementation of postprocessing consumes memory needlessly. Two copies of each intermediate output are serialized and passed to the postprocessing function; note that the lattice argument already contains all intermediate outputs in its transport graph. For workflows with many large intermediate outputs, this inefficiency can nearly double the memory pressure on both the Covalent server and the postprocessor, potentially causing postprocessing to fail.
+Some possible improvements include:
+Since the Result object also has a post_process method, just send the Result object to the postprocessor and invoke Result.post_process() inside the postprocesor.
+Replace the "Lattice" argument to _postprocess with just the serialized workflow function, construct a new Lattice inside the postprocessor from just the workflow function (empty transport graph), and set the self.electron_outputs attribute with the list of intermediate outputs.
+Either of these would eliminate the duplicate copy of each intermediate output.
+I guess the implementation has changed slightly since this issue was opened, but to summarise:
+Initialising an object of Postprocessor has the lattice with it by the virtue of the following constructor:
+Also, the _postprocess function takes in *ordered_node_outputs which can be constructed from the lattice itself i.e. we have the following currently:
+Now, the Result class also has the _lattice with it, owing to the following constructor:
+and the post_process function constructs the ordered_node_outputs by itself with the help of the underlying _lattice.
+Note that, after we construct the ordered_node_outputs, the snippet that follows is an exact replica of whatever is present in _postprocess method of the Postprocessor class i.e.
+https://github.com/AgnostiqHQ/covalent/blob/develop/covalent/_results_manager/result.py#L328-L336
+is same as
+https://github.com/AgnostiqHQ/covalent/blob/develop/covalent/_workflow/postprocessing.py#L101-L109
+Clearly, there is code duplication.
+To avoid code duplication, there are two potential solutions:
+OR perhaps have...
+2. Use Result inside _postprocess method of the Postprocessor class i.e.
+Clearly, both of them DON'T solve the issue of memory usage since using either of (1) or (2) forces us to have both objects i.e. an object of Postprocessor class as well as an object of Result class -- both of which have the lattice with them i.e. double memory consumption.
+Another idea that comes to mind is to perhaps change the signature of _postprocess method of the Postprocessor class i.e. to have:
+But then, this leads to even more code duplication since the _postprocess method of the Postprocessor class now resembles post_process method of the Result class even more...
+In retrospect, we should evaluate if:
+a. The current level of code duplication is acceptable or not?
+b. Do we need to use Postprocessor and Result classes together in any way? Given that this won't solve memory consumption but will reduce code duplication.
+c. Do we need the ability to post process from both Postprocessor and Result? This is related to (a). I ask since I am not sure if _postprocess method of the Postprocessor class is used anywhere right now, apart from tests. Perhaps we can eliminate it altogether?
+We can also consider closing this issue altogether if (a) is acceptable since there is no double memory consumption when using post_process method of the Result class.
+It is only in using _postprocess method of the Postprocessor class that requires ordered_node_outputs explicitly, which are kinda not required since they can be constructed via self.lattice, but that gives us more code duplication as discussed above. Maybe it's okay to keep this API as well at the expense of partial code duplication.
+Could appreciate your thoughts @cjao
+Closing as this is most likely resolved by the new memory improvements.

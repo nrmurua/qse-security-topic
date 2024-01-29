@@ -1,0 +1,20 @@
+result.Counts would be more convenient if it were a subclass of OrderedDict.  The keys are bit strings, which have a natural order, so it would be useful to preserve the order. For example, currently, when displaying the counts interactively, the keys (bit strings) are not ordered.
+Is there a reason this choice was made ?
+If ordering the counts is not desirable (too expensive or not necessary for most uses, etc.) an alternative is a function that returns the an ordered dict.
+It was mostly done this way for compatibility with the dict that was there before see #4501 I didn't really think about it except to make the new Counts class subclass the same type as what was there before. That being said I think preserving insertion ordering is fine. But, I don't think we'll need to do anything here. After #4926 merges python will be preserving insertion ordering. In python3.6 that was added because of performance optimizations in that release. but it wasn't explicitly guaranteed yet. In 3.7 it was added as a guarantee moving forward, so we really only need to use OrderedDict while we still support Python3.5.
+But, I don't think we'll need to do anything here
+This makes sense since python dicts are now ordered.
+But, in applications I am playing with now, under python 3.8, the strings are not ordered. Since insertion order is preserved, this tells me that the strings are not ordered when the source dict is created. They also don't appear to be inserted in the order in which the results are obtained (which should be random) because many strings with very low counts come before strings with very high counts.
+Well we can look at sorting them before they're added to the Counts object here:
+https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/result/result.py#L250
+change that to be something like
+but before we open a PR doing this we should benchmark it to see what the practical overhead of sorting is. If it's minimal lets go for it, but if it adds a noticeable amount of overhead I'd say lets just add a helper method (or kwargs to existing ones) to counts() to get a sorted iter of the counts dict and leave it up to the user.
+Then
+I can imagine situation where a user wants the counts ordered by value instead, as she might be interested in the most statistically significant results only...
+This issue was recently added in the "To Do" list of Backends, Qobj, and Result . Requires more information on the status.
+I can imagine situation where a user wants the counts ordered by value instead, as she might be interested in the most statistically significant results only...
+this use cases is covered with the Count.most_frequent() method.
+@mtreinish, is the performance analysis done by @jlapeyre enough to make a decision about this issue?
+To reproduce the issue, notice that the output of the following code result in an unsorted key:
+In the interests of trimming old issues, I'll close this as stale now.  There is more than one ordering that might be useful to users, and "arbitrary" is the cheapest to construct, which is convenient for performance-focussed users who want to do their own post-processing.  If there's more to discuss, feel free to re-open.
+fwiw, sorting this particular object in Python in the order requested is as simple as Counts(sorted(counts.items())), so imo it's something we should reasonably expect a user to do themselves if they want to choose the performance hit.

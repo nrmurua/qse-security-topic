@@ -1,0 +1,16 @@
+Description of the issue
+First reported in quantumlib/qsim#612. Cirq ~=1.0 requires qsimcirq to return its simulation output as a cirq.StateVectorTrialResult. In the current implementation, it causes an OOM when running a 32-qubit circuit on an a2-highgpu-1g, with a RAM of 85 GB. But it used to be not the case in qsimcirq 0.13.
+In the specific case when the statevector is final (no further operations on the statevector are needed after the simulation), this construction is expensive as it requires, at one point, 3x-4x more RAM than is necessary. The allocations are:
+A quick modification on a live Cirq 1.1.0 install, where I removed the state_vector = state_vector.copy(), resulted in the OOM error gone. But it seems that the extra RAM consumption could be further reduced.
+How to reproduce the issue
+Steps to reproduce and the output can be found in quantumlib/qsim#612 (comment).
+Cirq version
+~= 1.0
+cc: @daxfohl @95-martin-orion @sergeisakov
+Solving this piecewise:
+Ideally, the Python buffer should be gone, and we only have 1 buffer in C++, but this is not blocking the quick solution for allocation 3 and 4. This might be sufficient for our use case.
+On 30 qubits, for this circuit, removing the copy operation reduces the elapsed:
+qsim_state.astype(np.complex64, copy=False) doesn't work, because qsim_state is an ndarray of floats, which are supposed to be reinterpreted as an ndarray of complexes. I suppose view is a memory view, and doesn't take any relevant space.
+9 GiB is about 1 GiB more from an array of 2^30 np.complex64's. This likely means that allocation 1 and 2 don't exist at the same time in the steps.
+Edit: benchmark was run on cuQuantum Appliance 23.06 (Cirq 1.1.0, qsimcirq 0.15.0)
+The benchmark on cuQuantum Appliance 22.11 (Cirq 0.14.1, qsimcirq 0.12.1), before the large memory usage was introduced:

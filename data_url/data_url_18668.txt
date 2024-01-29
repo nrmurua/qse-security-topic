@@ -1,0 +1,23 @@
+Tweedledum integration makes use of this, and if it's not, it'll be a slow memory leak.
+If YES, we should add a comment. If NO, we should fix it.
+It appears the memory is not freed by cffi. The cffi docs say
+The :string type performs automatic conversion between Lisp and C strings. Note that, in the case of functions the converted C string will have dynamic extent (i.e. it will be automatically freed after the foreign function returns).
+which is somewhat ambiguous and makes it seem like maybe the foreign string would be freed, but on further review I think the above only refers to strings passed as arguments to foreign functions which were allocated by cffi as part of the lisp->cstring conversion.
+For strings returned from foreign functions, the magic happens in the generic function translate-from-foreign. The :string type ultimately is parsed into a foreign-string-type, which has the following method defined:
+You can see the memory is freed only when fst-free-from-foreign-p is true. But by default, it's nil for foreign-string-types.
+This is easy to verify in the REPL
+Just to be sure, I modified translate-from-foreign to print a debug message and tried calling cl-quil.tweedledum:systhesis-dbs.
+This actually makes some sense as a default behavior, since cffi can't really know for an arbitrary C function returning char * whether it's safe to call free on the returned pointer.
+Caveat lector: I haven't tested any of these beyond REPL-poking.
+Probably the simplest workaround is to switch the return type of the foreign function from :string to (:string :free-from-foreign t).
+Alternatively, switch the return type from :string to :string+ptr, which returns both the converted lisp string and the foreign pointer, so you can then free the foreign pointer yourself. From the cffi docs:
+Foreign Type: :string+ptr
+Like :string but returns a list with two values when convert from C to Lisp: a Lisp string and the C string’s foreign pointer.
+CFFI> (foreign-funcall "getenv" :string "SHELL" :string+ptr)
+⇒ ("/bin/bash" #.(SB-SYS:INT-SAP #XBFFFFC6F))
+The result would look something like:
+There are other options, like defining your own foreign-type that derives from foreign-string-type and then doing whatever you want in your custom translate-from-foreign method. But this seems strictly more complicated than the above two options, and with no added benefit.
+@appleby This is a very great analysis. I think the option to the :string type is best. I didn't know that option existed!
+If no one beats me to it, I will send a PR later adding the :free-from-foreign option to the return type.
+I think the option to the :string type is best. I didn't know that option existed!
+This was my first peek under the hood of cffi, and I was suitably impressed. Defaults are sane but with plenty of knobs for when you need more control. For example, when defining your own foreign types, you can avoid the overhead of method dispatch for the translate-{to,from}-foreign methods by instead defining methods called expand-{to,from}-foreign that return a lisp form to be expanded inline by the defcfun macro. Pretty slick!

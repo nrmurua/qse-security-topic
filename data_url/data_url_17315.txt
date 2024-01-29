@@ -1,0 +1,44 @@
+I'm measuring T1 for a specific qubit of melbourne device, qubit 0.
+If I use a single-qubit circuit it works well:
+
+But if I use a 2-qubit circuit, using the same algorithm, it seems like the state didn't decay, or the identity gate aren't applied.
+
+I would expect the same behavior using 1-qubit circuit and 2-qubits circuit, because both times I put gates only on the first qubit.
+I don't know
+Hi @Marco9719. You need to put barriers between your id gates, otherwise they all cancel and get optimized away. Here's how one of your circuits looks like:
+circuit[1].draw(output='mpl')
+
+By the way Qiskit Ignis has tools to do these kinds of T1 experiments so you don't have to manually set up the circuits. See here: https://github.com/Qiskit/qiskit-tutorials/blob/master/qiskit/ignis/relaxation_and_decoherence.ipynb
+I'm sorry to continue this thread also if it is closed, but i didn't understand it too well.
+@ajavadia are you saying that if i put a barrier after each identity it should work?
+Because this circuit still gives me the same results:
+circuit[1].draw(output='mpl')
+
+Where am I wrong?
+And I know about the possibility of doing it by qiskit ignis function, but I explain this example because it si simpler but has the same problem of what i'm working on: measuring how much time the entanglement in a bell couple remains acceptable.
+I'm sorry @ajavadia, but can you please answer me?
+Seems like there is a bug here in that iden gates are being removed, even if they are the only gate between two barriers.
+But this would imply the 1q experiment wouldn't work either (though I'm not sure how that worked in the original example, as it didn't have barriers either). @Marco9719 , can you confirm if you are still able to replicate the single qubit T1 experiment?
+I just tried again and it works with the 1 qubit register.
+This is the circuit used at the first iteration:
+
+I really don't know why, maybe it removes the iden only with a multiple qubit register.
+Ok I see what is happening. This is due to the Optimize1qGates transpiler pass. It used to be that this pass only merged gates, so putting barriers between them prevented any collapse. However, now it also simplifies them, i.e. it replaces iden with a "nop" (eliminates it). So barriers don't help there.
+I actually prefer this. Identities should be removed where possible. If you want to keep them, tell the transpiler to not optimize your circuit (use optimization_level 0):
+or just skip the transpiler entirely:
+(^ the above works with the latest release of qiskit.(
+I agree that we should be removing iden gates on transpile, but I'd wager iden is used much more often now as a timed delay gate (e.g. pad_id_gates in ignis). This was not a change we publicized, so it's likely this will break a bunch of existing circuits/notebooks. I'd argue we should bring back the old behavior and then deprecate, but if we can't do that, what's the best way to inform users wanting to do characterization work with iden that they need to use optimization level 0?
+Separately, do we think there is a use case for having an explicit timed wait gate, something like delay?
+Sure i think you are right. Not sure how to deprecate it -- maybe have a message pop up whenever the Optimize1qGates pass tries to remove identities? It might be quite noisy though for circuits that have nothing to do with this behavior.
+I think we have gone back and forth on having a delay gate, probably deferring to pulse. @jaygambetta do you have strong feelings here? We need to clarify our policy on iden vs. u0 too.
+Thanks, using the optimization_level=0 it works!
+Maybe I can change the title of this issue in something like "iden getting optimized even with barriers" to make it more visible to who might have the same problem.
+Hey @Marco9719
+We are trying to achieve the same time delay and running into the same issues with identity gates being erased.  Would you mind posted a snip-it from your code that worked, where you were able to successfully implement a time delay with I gates.
+To be honest I thought it worked, but it was the single register.
+This approach works when working with only one qubit:
+It didn't work if I try to use it in the entanglement measure: it gives me the error "the experiment failed", so I assumed that it was because the transpiler makes some optimization necessary to run a CNOT.
+And then I forgot to repost that it didn't work. Thanks to remind me.
+Try the assemble method, and then if it doesn't work we will wait for an answer by the developers.
+We decided to have identity gates be defined as explicit "wait" commands, therefore they will never be removed.
+In summary:

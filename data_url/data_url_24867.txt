@@ -1,0 +1,32 @@
+If the bug manifests in unexpected behavior (as opposed to a crash), confirm that you have consulted the
+API documentation
+I want to make two capacitively coupled fluxoniums. There are two ways to do it:
+Using built-in fluxonium objects + hilbertspace.add_interaction
+The Hamiltonian will be the following (the capacitive energies of the fluxonium renormalize because the capacitance seen by fluxonium is now different):
+$H = - E_{J1} \cos\phi_1 + \frac{1}{2} E_{L1} \phi_1^2 + 4(E_{C1} + \frac{E_{C1}^2}{E_{Cg}} n_1^2) - $
+$- E_{J2} \cos\phi_2 + \frac{1}{2} E_{L2} \phi_2^2 + 4(E_{C2} + \frac{E_{C2}^2}{E_{Cg}} n_2^2) - $
+$- \frac{8 E_{C1} E_{C2}}{E_{Cg}} n_1 n_2 $
+Using Custom Circuits
+The problem is, with these two methods I get different results, in particular, the anticrossing size is different.
+For method (1), I get anticrossing_size_1 = 0.1338
+And for (2) I get anticrossing_size_2 = 0.0946.
+I've checked that the Hilbert space is large enough, so the further increase of the Hilbert space doesn't affect the result.
+anticrossing_size_1 should be equal to anticrossing_size_2
+Here is my code for (1):
+And for (2):
+Hi @AlesyaSokol, thank you for raising the issue. I tried to work through the code you posted and found the following. First, I think the normalized capacitances you used to generate the eigenvalues using Hilbertspace are incorrect (which I will talk about in more detail in a following paragraph).
+Secondly, please note that the input to the Circuit module is a graph and it does not have any information as to the geometric placement of circuit elements in space. Therefore, the sign of the fluxes that the code generates is not always what the user expects. We suggest that the user first checks whether the flux signs are as they expect, if not flip the sign wherever necessary. In this case, it is necessary to flip the sign of Φ2 in the Circuit module to make the results consistent.
+Coming back to the normalized capacitances, you can get the correct normalized capacitances by looking at the coefficients of $Q_1^2$, $Q_2^2$ and $Q_1Q_2$ from the symbolic Hamiltonian that the Circuit module generates. I found the coefficients using the following code snippet. You can easily verify that these coefficients are correct by starting with a Lagrangian and then making a Legendre transform to get to the Hamiltonian.
+The above code snippet is just the same as the code you posted, but with two differences. I changed the input file such that node 1 is set to ground node, and then set the transformation matrix to generate the new variables to an identity matrix. These two changes do not affect the numerical results, but help us to look at the symbolic Hamiltonian in the form we expect. In the last part of the code, I am extracting the coefficients for the renormalized capacitances which I will now use for the coupled fluxoniums using the Fluxonium module in scqubits.
+The resultant variables anticorssing_size_1 and anticorssing_size_2 have the same value of 0.0863.
+@saipavanc Thanks so much for looking into this in all the detail, very helpful!
+I will give @AlesyaSokol a chance to comment before closing this issue.
+Hi @saipavanc, thank you for the detailed response!
+I've tried your suggestions and noticed that flipping the sign of Φ2 changes the numerical result. I'm not sure I understand how this sign should be chosen. Also, shouldn't fluxonium spectrum be symmetrical with respect to zero, so the sign should not matter?
+@AlesyaSokol, you are right that the spectrum of fluxonium should not depend on the sign of the external flux. But, when two fluxoniums are coupled, the relative direction of the external flux matters. That is what is making a difference in this particular case. Since, the circuit module does not have an idea as to the position of branches in space, the direction assigned to the external fluxes is not guaranteed to be consistent to the way we represent the circuit in a diagram (there are multiple ways to represent the same graph).
+As to the question about how the sign of the external flux should be chosen, I suppose the best way is to look at the symbolic Hamiltonian and see if the signs of external fluxes used in the expression are as expected. This is definitely feasible for small circuits, but for large circuits I do not have an answer as of now. Maybe comparing an external flux sweep with experimental data can help. @jkochNU Please feel free to add or edit my response to the question.
+@saipavanc ok, thank you for answering my questions, it looks like everything is correct.
+By the way, the coefficients in the Hamiltonian that scq.Circuit gives can be simplified: 0.0078125/0.001953125 = 4, and then:
+@saipavanc and about choosing flux sign - I checked, if I inverse the sign in the first approach that I use (coupled fluxoniums and hilbertspace) it gives consistent results with circuit approach. In experiment, I guess, the flux direction can also be reversed physically (if there are two separate flux lines). So there is no single correct flux direction, it just should be chosen consistently.
+@AlesyaSokol I agree with your comments. And with regards to the coefficients, I did notice that they could be simplified, but I just wanted to ensure that I would use the same expression that the Sympy coeff function returned to avoid any confusion.
+I will go ahead and close the issue then.

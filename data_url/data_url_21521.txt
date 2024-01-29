@@ -1,0 +1,62 @@
+When using DRTIO, inter-channel synchronization with Urukul doesn't work, although the same configuration produces the expected results on a standalone crate.
+(+ more, hopefully irrelevant peripherals)
+The Urukul v1.4 card has IFC mode 1010 (en_ad9910 and en_eem1 activated).
+100 MHz sines on CH1 and CH2 have 180° phase difference
+@dnadlinger @jordens Is this a known issue? or a problem with our particular setup?
+I think:
+@airwoodix: We've definitely tested this on DRTIO master builds in the past, but it's been a few years since the initial bring-up.
+Hi @airwoodix and all, have you been able to replicate this issue again with ARTIQ-7 (e.g. 43eab14)?
+With ARTIQ-7 and ARTIQ-6 I have tried your code on a DRTIO master setup with a single Urukul card, but I have never seen absurd variance in terms of phase difference across power cycles and reboots. The worst STD I can get on the DRTIO master is ~0.01 rad. I also compared the phase with a standalone setup on the same hardware, and I can't see significant difference in the results.
+On the other hand, I noted one of @airwoodix's observation was that the red LED for CH0 turned on when sync'ed. I confirm that this can be reproduced, and I get the following observation (NB the criteria of the channel fault indicator is SYNC_SMP_ERR | ~PLL_LOCK):
+I suspect there might be some issue doing SPI transactions within a Urukul card. I could look into that, but that will not be related to this very issue about Urukul AD9910 sync phase errors.
+Hello @HarryMakes, thanks for your feedback.
+This issue is still open in our group. Due to being a bit of a low-priority in the past months, I did not work on this topic that much but it sounds like a good Debugging-Friday job ;)
+Correction: I have not found issues with writing and reading the sync_delay_seed and io_update_delay values. There was a mistake in my test code as I forgot to call init() on the channels to read from EEPROM before printing the values.
+Therefore, my current findings show that this Urukul sync issue cannot be replicated on DRTIO master on ARTIQ-7 or ARTIQ-6.
+With ARTIQ-7 and ARTIQ-6 I have tried your code on a DRTIO master setup with a single Urukul card, but I have never seen absurd variance in terms of phase difference across power cycles and reboots.
+Which channels did you test? It seems there is an issue with ch0 which does not have deterministic phase wrt the others (also on non-DRTIO systems). @Spaqin
+With ARTIQ-7 and ARTIQ-6 I have tried your code on a DRTIO master setup with a single Urukul card, but I have never seen absurd variance in terms of phase difference across power cycles and reboots.
+Which channels did you test? It seems there is an issue with ch0 which does not have deterministic phase wrt the others (also on non-DRTIO systems). @Spaqin
+I did test the phase stability involving Ch0 of a single Urukul AD9910 card (e.g. between Ch0 and Ch1, between Ch0 and Ch2), which is configured on a Kasli 2.0 DRTIO master.
+In my previous comment, I mentioned the worst standard deviation (std) I have seen was ~0.01 rad, but this applied only to @airwoodix's original code where the two Urukul channels (which involves Ch0) are offset by 180°. I also separately tested with 0° offset involving Ch0, but the std is significantly lower at ~0.001 rad.
+I have redone the tests today, and I could not reproduce any issues with phase. Tested it with a system that has 3 AD9910s and a Kasli 2.0; on both ARTIQ 6 and ARTIQ 7. With the system configured both as DRTIO Master, and as Standalone.
+Once calibrated, using the simple experiment code from OP (and even modifying it to include more channels across all three cards), I got very consistent results, even after power cycling. To be exact: two cards had very close phases, third one was using longer cables and thus had a significant phase shift, but still consistent across the reboots.
+Which is weird - I could've sworn we couldn't get consistent results last week with ch0... All I did is tightened the screws?
+Also, red light on ch0 is more like a red herring. It pops up after set_mu function is called. It causes a SYNC_SMP_ERROR - PLL_LOCK is at 1 at all times. Modifying the AD9910 code to clear smp flag after that causes the light to go green again and no other issues pop up. However, the code is the same for all channels. I could not figure out why only first channel was affected. It may be a bug with communication with the CPLD as @HarryMakes mentioned - but other than being slightly misleading, the red LED does not change anything in the behavior.
+Previously I was worried that the calibration data was lost or incorrect and on multiple power cycles it would cause a shift.
+The phase shift between power cycles, on both cold and hot devices, is constant. But that's the key word here - between power cycles. So, with the same system as previously (3 Urukul AD9910 cards, Kasli 2.0), on ARTIQ 6, when I do the following, I get consistent results:
+Again, phase differences seem to be identical every time. That is true for both DRTIO Master and Standalone configurations.
+However, I managed to reproduce the issue - it pops up within a power cycle, e.g.
+Phase shift may differ between each time, but only on DRTIO Masters - Standalone systems seem not to be affected. Running either cpld init or channel init more than once within one powerup may change the phase shift. Still not sure why exactly, but I can reproduce the issue more reliably.
+Thanks @Spaqin and @HarryMakes for the investigation! Sorry for the very, very delayed feedback.
+I got back into this because of issues observed on standalone systems with Urukul v1.5 and v1.5.1 (ARTIQ v7.0.b02abc2.beta, Kasli v1.1). The observation is the same as that of @Spaqin (changes in the intra-card phase offset without one power cycle) except that it systematically fails lock the urukul2_ch0 (v1.5.1) PLL:
+Experiment code (urukul1 is v1.3, urukul2 is v1.5.1):
+Relevant part of device_db (same for urukul2_cpld):
+WIth same-length cables, the scope picture looks like:
+
+The phase offset between urukul1_ch0 (CH1) / urukul1_ch1 (CH2) and urukul2_ch0 (CH3) is always the same over repeated calls to artiq_run (no power cycle, no reboot) but not that between urukul2_ch0 (CH3) and urukul2_ch1 (CH4) which oscillates with unstable period between the previous configuration and this one:
+
+The non-deterministic phase between channels (intra- and inter-Urukul) is very problematic.
+Thanks!
+Could it be an issue with the CPLD gateware @jordens ? The v1.4 boards in the first post were flashed manually, those in this message by Creotech.
+Seems unlikely but it's certainly not impossible.
+I did a few more tests with Urukul v1.5.4 and Kasli standalone.
+Passing values from tune_sync_delay and tune_io_update_delay to device_db did not change anything.
+From the top of my head, places where I'd look:
+I found out that setting attenuators is what affects the phase of the output signal on channel 0. It's also correlated with data that is sent to attenuators: 0xffffffff very rarely triggers the glitch, 0xaaaaaaaa does it almost every time.
+SPI bus on attenuators changed between 1.3 and 1.4, now there are dedicated buses to each attenuator, however it seems that they are driven all at once. These signals are routed in parallel over long distances, however they are not in direct vicinity of sync signals.
+Also it seems that spi signals do not affect sync in clk on channel 0 - I had a differential probe on sync in clk and I didn't notice any glitches on it, despite jumping phase of the output signal. Same for the DDS CLK.
+I also noticed that DDS SPI bus has the same clock and data as attenuators and I thought that maybe activity on the digital side of the DDS was causing some glitches. But when I set 3rd DDS channel in loop instead of attenuators there are no glitches in phase.
+This suggests crosstalk issues, but I still have to pinpoint where exactly is this happening.
+I modified CPLD code to single out signals responsible for this issue. I disconnected miso from attenuators and drove them from cpld one by one. It seems that problematic signals are:
+From those att s in 2 is the one that causes phase shifts. Other signals only cause SMP err to go high, but I didn't notice any changes in phase. I tried setting slow slew rate (and verified that it slows down edges) but it didn't help. One thing that all these signal have in common is that they all run parallel to SMP err for a few millimeters at some point. However I couldn't observe any crosstalk on this signal.
+Everything seems to point to crosstalk issues, but I still can't pinpoint it. I also don't know why att s in 2 is the one that affects dds0 the most.
+This all seems a bit strange. If I understand correctly, from the single-signal tests, it really it is the signals to the attenuators that causes the issues, not some power/RF glitch from the attenuators switching?
+It seems so, because if I disable all of the above signals then attenuator 0 still switches (since its mosi, clk and le are active) and I don't observe any problems on channel 0.
+It seems that I found the culprit or at least some part of it. All of aformentioned 6 lines run under pll filter of dds0. I was able to induce smp error and phase glitches on other channels by probing their filters with an oscilloscope probe (8 pF).
+I lifted loop filter pin from the pad and assembled the filter in air, connecting it to capacitor nearby, so electrically it's the same connection. By lifting the pin I should avoid pickup from antenna that is now formed by floating pads.
+It helped to some extent. Now att s in 2 and att le 2 no longer cause smp error or phase glitches. This means that there shouldn't be any phase glitches but smp error will still remain. However, s out 0, s in 1, s out 1 and s out 2 still cause smp error to occur.
+I'm fairly certain that fixing the stackup, rerouting these signals to run somewhere else and giving them a proper, continuous reference plane (sinara-hw/Urukul#72) to couple into will help. I think it's safe to close this issue, or transfer it to Urukul repository (@jordens, do you have such powers?).
+Doesn't look like it. Either I lack the perms on Urukul or it can't cross orgs.
+I was about to point out that the SMP errors can be cause indirectly by PLL glitches/transients. The P1V8_SYSCLK net is also a sensitive node here.
+I think this issue can be closed.

@@ -1,0 +1,16 @@
+The nightly benchmarks runs have flagged numerous regressions associated with #6072 including:
+https://qiskit.github.io/qiskit/#transpiler_benchmarks.TranspilerBenchSuite.time_compile_from_large_qasm?machine=dedicated-benchmarking-softlayer-baremetal&os=Linux%204.15.0-46-generic&ram=16GB&commits=f436f5ab
+and
+https://qiskit.github.io/qiskit/#quantum_volume.QuantumVolumeBenchmark.time_ibmq_backend_transpile?p-Number%20of%20Qubits=8&p-Basis%20Translation%20Method='translator'&os=Ubuntu%2018.04&commits=f436f5ab
+Run transpile()
+No Performance regression
+Figure out the source of the regression and fix
+I took a brief look at this with today and profiling a simple QV circuit:
+Prior to #6072 the profile for parameter assign() (which is the slowest operation in the transpile()) looks like:
+
+Then after #6072 it changes to:
+
+My guess as to what's going on is that sympy is taking longer to query what kind of expressions are being used when they're not simplified. Th extra time looks like it's mostly in the assumptions module which looks like it's there to query different properties of a sympy expression: https://docs.sympy.org/latest/modules/assumptions/index.html Although even excluding that time the subs() call is still ~2x slower, so I'm wondering if there is follow-on tuning to do when we go to use the expression later.
+So with #6187 merged now it looks like things have definitely improved for the regression in compile from the eoh qasm file it is now faster than it was before the regression: https://qiskit.github.io/qiskit/#transpiler_benchmarks.TranspilerBenchSuite.time_compile_from_large_qasm?machine=dedicated-benchmarking-softlayer-baremetal&os=Linux%204.15.0-46-generic&ram=16GB&commits=f436f5ab
+However, for the QV case it only made a modest improvement: https://qiskit.github.io/qiskit/#quantum_volume.QuantumVolumeBenchmark.time_ibmq_backend_transpile?p-Number%20of%20Qubits=8&p-Basis%20Translation%20Method='translator'&os=Ubuntu%2018.04&commits=f436f5ab
+and we're still much slower than from before #6072

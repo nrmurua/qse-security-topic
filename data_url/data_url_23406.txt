@@ -1,0 +1,22 @@
+Currently it is hard to abort a running measurement. Pressing CTRL-C can leave the system (in particular the instruments) in an unusable state. The FAQ (https://github.com/QCoDeS/Qcodes/blob/master/docs/user/faq.rst) only mentiones ipython notebook. The original description (https://github.com/QCoDeS/Qcodes/pull/86/files) is only valid for a background measument, which is disabled by default.
+PR #463 creates an abort measurement hook that can be used for proper abortion of a measurement.
+@giulioungaretti @jenshnielsen @WilliamHPNielsen
+I am not sure how I feel about this.
+I would say that the canonical way would be to catch a CTRL-C and wait for the get sets to finish (one iteration) and then exit.
+I will think about this a bit more, although right now we are really without time.
+@giulioungaretti , CTRL-C is generally an unsafe way to stop things from the terminal as it kills your entire interactive environment. In the qtlab version of PycQED (old version) we patched in a keypress of q to safely shutdown an in progress loop.
+I think there is an important distinction to be made between a safely abort and shut down vs a kill/interupt the process kind of interupt. Ideally the distinction should not be there but I find it very practical to make it. As such I think the hook @peendebak proposes makes a lot of sense.
+@AdriaanRol  not to be annoying, but generally it's the very opposite.  If it unsafe, then  the problem is elsewhere  (probably bad software somewhere).
+If you catch it (that's the reason why I am so pedantic with not catching randomly all the excetions in say drivers and qcodes in general), then clean stopping it's trivial and very pythonic.
+But again,  I don't know what happened with say qtlab, so if you can tell me more about unsafe, and about how exceptions where handled I'd be really happy.
+note I am not saying this is a bad idea per-se, it may be necessary to do something very similar with a multiprocessing architecture. But then you may end up in the situation we had before (just ask @nataliejpg ) where  stopping a measure worked sometimes, and sometimes not it's a naive implementation.
+@giulioungaretti . I agree with you on the principle. The problem comes from a very simple (even minimal) use case.
+If you run an ipython kernel from the terminal, pressing CTRL+C will interupt the terminal. Directly killing the active environment and all instruments in it.
+I am not about catching random errors here. I suggests the keypress or whatever triggers the hook, raises a very specific error or (as my old implementation used) set a flag that leads to the experiment being shut down safely at the start of the next (loop) iteration.
+@giulioungaretti @AdriaanRol I do not see how we can clean up an interruption with a try-catch construction.
+Consider for example the IVVI ask(code is here) function. If the interruption is between the write and the read, then the construction handling the interrupt should either execute the read, or call some kind of flush function on the IVVI (which does not exist right now). If the interruption is before the write or after the read then no cleaning up is needed. Any generic try-catch in a Loop will not know what to do.
+One could argue that the IVVI driver should handle this, but that makes the driver (and all other drivers) much more complicated. On the other hand, the proposed PR adds a minimal amount of code, is easy to understand and has the advantage that aborting the measurement in this way will return a partially filled dataset.
+Note: one could argue that the break statement here could be replaced by something like:
+@peendebak  right, that is true.  My answer before was gibberish (which I edited).
+This basically means that calling ask on your IVVI, will leave the machine in an unpredictable state if any exception happens, right ?
+@giulioungaretti Yes. If a call to the IVVI is interrupted the driver (or connection) is in an unknown state and this means that our safest option is to ramp gates to zero voltage, physically disconnect the IVVI connection module, reset the module, connect again and ramp voltage back up. The same argument will be true for many other drivers.

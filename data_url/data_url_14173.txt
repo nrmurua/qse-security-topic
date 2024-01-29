@@ -1,0 +1,23 @@
+I am adding a custom instruction to my backend target and then using generate_preset_pass_manager to create a pass manager with respect to the modified target. The custom instruction implements the _directive property and should just be ignored by the existing transpilation framework.
+When I generate a level 2 or 3 pass manager, it errors out because it expects an iterable for the target.add_instruction(properties) argument; however, I do not need any properties to define my custom instruction and leave that argument to its default None value. Unless I misunderstand the docs, this should be the correct way to add this instruction.
+First, install circuit-knitting-toolbox from source
+I believe a pass manager should be successfully generated for all optimization levels. I see no reason optimization levels 0 and 1 would accept None in add_instruction(properties) and optimization levels 2 and 3 would error out ungracefully.
+No response
+I haven't immediately looked at the bug, and this comment isn't related at all, but just beware: the CircuitInstruction you construct in your example is invalid.  Because you pass it through QuantumCircuit.append, it probably gets normalised to the correct thing, but it's an internal object, so if you actually need to be using it, you need to be maintaining its invariants yourself.  In this case, the types are bust: the qubits argument should be tuple[Qubit, ...], not tuple[int, ...].  That said, you don't need CircuitInstruction here at all: the call you actually mean is qc.append(sample_qpd_instruction, (0,)).
+whoops, thanks I whipped up this little snippet quick. I just verified, and this doesn't change behavior
+Updating original code snippet to correct usage
+For the actual problem: looks like a bit of a bug in the VF2Layout handling that was added quickly to support backends with failing links; it should probably recognise that Target.qargs being None or containing None means that there's an operation that acts on all qubits.  I'd have to look into the details of exactly how we intend to handle that in VF2PostLayout, which is working fine, since I remember it being relatively subtle since there are many reasons a target might include perfect operations on all qargs.
+As an immediate workaround, you can be slightly more explicit and set the properties as
+it should probably recognise that Target.qargs being None or containing None means that there's an operation that acts on all qubits
+I think I understand what you're saying, but in our case the gate doesn't act on all qubits -- it only acts on 2 qubits, but we want the transpiler to ignore that fact with respect to SWAP routing (and probably everything else). Treat it like a non-adjacent two-qubit barrier. Is that possible?
+To be more concrete:
+It seems like a circuit cutting transpilation routine would take an input circuit and produce an output circuit with N non-local gates flagged for cutting (based on some heuristic) with TwoQubitQPDGates. The layout stage will add these gates, but they should basically be ignored from then on. They are just directives to be used by a post-processing routine (circuit cutting).
+Oh my bad sorry, I thought it was a 1q gate because I just read the SingleQubitQPDGate and missed that it was derived from a cx.
+I think what you're currently doing is correct for what you want, it's just a bug in VF2Layout right now that prevents it from working.  @mtreinish can check me on that, though.
+Oh my bad sorry, I thought it was a 1q gate because I just read the SingleQubitQPDGate and missed that it was derived from a cx.
+Hah, I forgot I used SingleQubitQPDGate in example. Either way, I believe we have a way forward :). Thanks a lot!
+Yeah, the bug is definitely in VF2Layout and also in VF2PostLayout. The code which is computing the set of qubits which have instructions on them is not accounting for the value of the qargs being None for an ideal global instruction. This should be a simple fix to adjust https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/transpiler/passes/layout/vf2_layout.py#L148 and https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/transpiler/passes/layout/vf2_post_layout.py#L225 to skip a None entry in target.qargs (or maybe we shouldn't be putting None in target.qargs).
+As a short term workaround you can try target.add_instruction(SingleQubitQPDGate, name=gate_name) which will treat SingleQubitQPDGate as a variadic instruction and the special handling for that may work.
+@caleb-johnson I pushed up #10633 to fix this, if you wanted to give it a try and confirm it fixes the issue for you
+Fixed by #10633
+We can actually leave the issue open so others can see it's not merged yet, and mark #10633 as closing it.

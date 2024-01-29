@@ -1,0 +1,28 @@
+I am trying to use BlockCollector and BlockCollapser with filter functions that include circuit ops with classical bits, which currently doesn't work.
+Here is a simple example where first I tried using the BlockCollapser:
+This raises raises CircuitError: "Bit 'Clbit(ClassicalRegister(3, 'meas'), 2)' is not in the circuit.
+I would like to be able to use BlockCollapser (and implicitly DAGCircuit.replace_block_with_op) with blocks that also contain Clbits.
+I took a stab at trying to modify the collapse functionto try different handling to include clbits in wire_pos_map and when DAGCircuit.replace_block_with_op
+and it seems to work if I draw the DAG:
+
+But calling dag_to_circuit on the output returns a circuit without connection to clbits on the collapsed op:
+which if i try and transpile or decompose gives error: DAGCircuitError: 'bit mapping invalid: expected 3, got 6'.
+I dont know if this is an issue with my attempt to modify the function, with replace_block_with_op, or with dag_to_circuit.
+Full error trace for BlockCollapser(dag).collapse_to_operation(blocks_meas, _collapse_fn):
+Full error trace for
+This line seems to be culprit for the custom function I wrote (which itself could be a fix for BlockCollapser): https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/dagcircuit/dagcircuit.py#L1137-L1138
+It seems cargs I being thrown away for everything that isn't a conditional op. If I change
+to
+it seems to work for my use case, though I dont know if there are any other unintended concequences
+Thanks @chriseclectic!
+Indeed, the BlockCollapser code that I wrote does not treat clbits correctly, and your fix above is perfect.
+And indeed, the dag_to_circuit code
+seems to incorrectly drop clbits for non-conditional ops. It seems that I was the last to change these particular lines as well, however this behavior also existed in the code before my changes
+https://github.com/Qiskit/qiskit-terra/blob/ea0266769802a57de2ca823b1b996b668ec81178/qiskit/dagcircuit/dagcircuit.py#L1084-L1087,
+again your fix seems perfect, though let me double-check with @jakelishman or @mtreinish if there might be a reason to have this check in the code.
+Out of curiosity, how are you planning to use the "COLLAPSED" blocks, I guess circ.decompose() would just result in the original circuit?
+@alexanderivrii While my above fix seemed to work for measurement blocks, I found it still didn't work for conditional blocks since conditional dag ops still report cargs=None, and only have the clbits hidden in node.op.condition. To get it to work for that case I ended up having to write a function like:
+to find all the cargs for a node that may or may not be conditional, and then use that in replace_block_with_ops like
+There was some more complications with rewriting the collapse function because it had to correctly rewrite the conditioning in the circuit definition, which I could only mange to get to function if the conditioning was done in terms of individual clbits, not classical registers
+Yeah, Chris your most recent comment looks logically correct to me (there's some superfluous set creations, but no big deal).  I'm not sure what was going on with the current implementation - as you say, it just looks broken.
+Thanks @chriseclectic! I have updated the PR with additional fixes based on your code. So we should be able to correctly handle measurement blocks (with explicit cargs), and conditional gates conditioned on classical bits (e.g., cx.c_if(clbit, 0) or cx.c_if(creg[1], 0). This still does not handle conditional gates conditioned on classical registers (e.g., cx.c_if(creg, 3)). I am expecting that handling cregs correctly will require bigger changes and should best be treated in a follow-up PR.

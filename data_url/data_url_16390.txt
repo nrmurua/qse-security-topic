@@ -1,0 +1,26 @@
+I want to help solve this issue. How can I get started?
+Hi @HuangJunye , that's great. The issue here is that, because mcx_gray is not in qelib1.inc, the definition for the gate needs to be written to as a custom gate definition to the output QASM string.
+This could be done by adding an MCXGrayCode.qasm method (similar to the approach taken for e.g. UnitaryGates from #3069 ) but, there should be code in QuantumCircuit.qasm that automatically inserts definitions of composite gates. I'm not sure why it's not working for instances of MCXGrayCode.
+@HuangJunye any update on this?
+@ajavadia Sorry I haven't started working on it, but I am still interested in it. I wasn't sure about the plan for OpenQASM2 because @1ucian0 mentioned a few times that OpenQASM might be split into its own repo. If that's not the case, I can start working on this issue next week.
+Thanks, I think this bug needs fixing soon. I have seen bug reports from multiple people about round-tripping of circuits < - > QASM when there are composite gates present (not just MCX). I'll tag it for the 0.17 release which is for end of March.
+@ajavadia I started to take a look at the code and related issues today. I am really new to this so it may take sometime. But I’ll probably be able to fix it by the end of Feb.
+ok thanks, @1ucian0 might be able to help as he has fixed multiple bugs related to QASM before.
+@ajavadia Thanks! I’ll bug @1ucian0 for help 😉
+Dig a bit more on gates that can't generate correct qasm code.
+In summary, most (if not all) gates that are not defined in qelib1.inc can't be parsed by QasmParser. QuantumCircuit.qasm also don't generate gate definitions for composite gates except for "generalised gates" which are child class of QuantumCircuit not `Gate.
+Definition of composite gate is added but the child ucrz is undefined.
+qc.append(cl.MCMT(cl.XGate(), 1,1), [0,1])
+produces
+qc.append(cl.MCMT(cl.XGate(), 2,1), [0,1,2])
+produces
+qc.append(cl.MCMT(cl.XGate(), 1,2), [0,1,2])
+produces
+qc.append(cl.MCMT(cl.XGate(), 2,2), [0,1,2,3])
+produces
+I open a WIP PR (#5887) to fix this bug. There are a few things:
+The 1st bug is due to a mistake introduced in the condition https://github.com/Qiskit/qiskit-terra/blob/25b47af83f14afb3441d7b2c1bd31bda93e3549d/qiskit/circuit/quantumcircuit.py#L1202-L1206 by original author of #3748 and subsequently by #5059.
+https://github.com/Qiskit/qiskit-terra/blob/25b47af83f14afb3441d7b2c1bd31bda93e3549d/qiskit/circuit/quantumcircuit.py#L1217 is never executed if the instruction is not of Gate or Instruction type. The correct way to write it is isinstance(instruction, (Gate, Instruction)):.
+However, checking the instance of instruction is not the correct way to check if it can be parsed by QasmParser which requires definitions in qelin1.inc. So the correct condition for generating qasm composite gates should be
+I am still investigating the 2nd bug. One thing I know is that C3XGate and C4XGate can generate correct custom gate definitions while MCXGate(3) or MCXGate(4) do not.
+Inside the C4XGate definition above, rcccx and rcccx_dg are not defined in qelin1.inc so we need to add definitions for these children gates in the output qasm string as well.

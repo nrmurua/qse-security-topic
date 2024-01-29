@@ -1,0 +1,38 @@
+Hello all,
+While this is not CP2K problem on it's own.. I'm having problems compiling ELPA for CP2K. I get following error during the build:
+I see that the problematic constants are defined in "elpa/elpa_constants.h.in", but I couldn't figure out where it is being miscompiled/wrong compilation order, or what is going on.
+Do you have any suggestions please?
+system:
+Fedora 5.3.14-300.fc31.x86_64
+MPICH + gcc 9.2.1
+ELPA 2019.05.001 as well as 2019.11.001.rc1
+Thank you!
+it's 31ce44d CP2K git master version (with all the submodules). ELPA 2019.05.001 is the toolchain version, the 2019.11.001.rc1 is downloaded from ELPA's site. Here's the toolchain installation command:
+i.e., only the cmake, gcc, fftw and mpich are from system, everything is CP2K toolchain installed. My intention is to build the SIRIUS support in the end as well.
+Also, on top of this, new gcc versions (9.2.1 on my system) on some systems will require "-fPIC" / "-fpic" / "-fpie" compiler flags as I just found out.
+Thank you!
+is that --with-elpa=no a typo?
+IF you are building ELPA with the toolchain despite the given commandline, can you please attach the full ELPA build logs (possibly as a tarball)? Most likely the following files while some of them might be missing:
+Hi, yes, that was a typo, if I didn't overlook anything else, remaining of the command should be what I actually used (even though it should not really matter). Attached are the requested files.
+config.log
+configure.log
+make.log
+edit: also, it seems to be related to gcc 9.2, or other, machine specific things. Compilation on cluster with gcc 7.3 went fine.
+So far I'm unable to reproduce the issue with vanilla gcc 9.2.0 and mpich 3.3.2. Guessing from the make.log it seems that for some reason the dependencies are not generated in the same order as our test systems even though ELPA is built with -j1.
+But even with a Fedora 32 and gcc-9.2.1 I'm unable to reproduce it.
+for reference: the problem seems to be with either MPICH (Fedora's 3.3.2-1) version of MPI or FFTW of MPICH. Building with toolchain version of MPICH, and therefore of toolchain's FFTW, goes fine. Also, using the Fedora's version of OpenMPI (and the corresponding system FFTW) compiles fine.
+Thank you!
+I've contacted the ELPA developers, unfortunately the error is also unknown there. But since this is not the first time I've seen this, can you please post the obj_no_thread/src/fortran_constants.F90 from the faulty build? I suspect that something goes wrong in the following build commands:
+You can also try to apply the attached patch (cd tools/toolchain; patch -p1 < ~/Downloads/elpa-debug.patch.txt) and rerun the toolchain. The build will then interrupt after the configuration step and then you should upload elpa-2019.05.001/obj_no_thread/config.log, elpa-2019.05.001/obj_no_thread/src/fortran_constants.F90 and elpa-2019.05.001/obj_no_thread/src/fortran_constants.F90_.
+elpa-debug.patch.txt
+took some time because I was trying several build options.
+In the attached tar you will find the requested log and fortran files after applying the patch.
+Also, I am not sure whether this could possibly be related, but, using the system OpenMPI + toolchain FFTW I can "successfully" build the tools, but cp2k build fails afterwards (I tried local, popt versions only). See the cp2k-OpenMPIinstall.log file.
+error.tar.zip
+cp2k-OpenMPIinstall.log
+@stanos4 as a side-note for testing: when changing options in the toolchain (especially when switching the MPI mode) you may have to force rebuild of dependent packages manually (like scalapack or elpa) by removing their directory and the corresponding setup_... script in build/ and the installed files in install/.
+yep, that's what I'm doing and that's why it takes so long. Everytime I delete the build & install dirs to be sure to rebuild properly everything (and using libint-lmax=7 takes some time on my laptop to finish). Also, before compilation of cp2k itself I do "make distclean", that, as far as I can see removes all previous-build related files.
+I also try not to forget open new terminal every rebuild. Which makes me remember, to successfully build libint I think, I need to set CPPFLAGS before running the install script:
+TBH I'm a bit lost now: the generated fortran_constants.F90 are exact matches and there are not many possibilities on what could go wrong between elpa_api.F90 which uses elpa_constants.F90 which #includes the fortran_constants.F90.
+What we have seen in the past are that some warnings flags (of which a large number seems to be implicitly enabled on your system) may lead to the compiler not being standards compliant anymore.
+There are now multiple things you could check:

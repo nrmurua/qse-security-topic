@@ -1,0 +1,20 @@
+Delay and RTIO related drivers that are outside of a self.core_dma.record() malfunction after DMA playback is being terminated in the middle of execution on EFC.
+This bug is discovered when developing the example code for shuttler #2193, which can be modified to reproduce the bug.
+This bug exists on both DMA and DDMA. I do not know if it is an EFC exclusive bugs.
+After self.core_dma.playback_handle is being terminated during execution, at least the following drivers malfunction when it is not placed inside a self.core_dma.record(),
+But, self.core.reset() looks to be functional by observing the logs on both kasli and EFC and all the previously mentioned drivers still work inside a self.core_dma.record().
+To show that self.core_dma.playback_handle() is still functional, you can comment out self.init() line.
+You will not see LED blinks and relay got reset. All the delay does not exist and the program immediately stops at
+assert self.afe_adc.read_id() >> 4 == 0x038d as it reads a zero value.
+The printed offset value is incorrect and has a vlaue of 0.
+The lack of RTIO output & proper input handling can be reproduced using a standalone variant.
+I think it is most likely a CRI routing issue.
+When DMA starts playback, the CRI listens to the DMA instead of the kernel, until the playback is completed.
+
+Given we are performing playback using an infinite loop, terminating the kernel via CTRL-C is very likely to not execute L415 in time, which leaves the CRI routing RTIO instructions from the DMA.
+Adding L415 before executing the new kernel fixes the issue in my example (it does not use DDMA).
+I found that using the scheduler to run the experiment in the following way can also recreate this buggy behavior.
+Steps to Reproduce:
+The RID0 experiment should be terminated as usual but same buggy behavior existed on RID1 experiment.
+(Same as described in the PR description)
+In that case, should core.reset() also reset the cri_con back to 0?

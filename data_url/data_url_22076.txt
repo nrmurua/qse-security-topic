@@ -1,0 +1,87 @@
+I'd like to begin using the 3U BNC, SMA and RJ45 EEM boards with ARTIQ. Initially this will be using a KC705. Here's the specific path I want to use.
+KC705-> FMC-VHDCI adapter -> VHDCI cable -> VHDCI carrier -> IDC cable-> 3U BNC
+@sbourdeauducq provided advice on how to get going by email:
+To use those boards with ARTIQ and a KC705 I'd recommend the following:
+@gkasprow provided information about how he validated the hardware using WUT tools:
+I did simple test bench that takes signals from half of VHDCI
+connector and forwards to second half. Then I took VHDCI breakout + 4x
+DIO BNC boards and connected it with BNC cables. In this way I could
+test all features of VHDCI carrier, FMC-VHDCI, DIO BNC, DIO SMA, DIO
+RJ45 boards at once. The KC705 code also controls I2C tree and
+direction of LVDS buffers on FMC VHDCI in such way that you only
+specify 32bit vector and the state machine does the job.
+The I2C tree is controlled using simple, open source J1B  FORTH
+processor that takes commands from UART and executes them immediately.
+In this way I can either load all init commands to block RAM or play
+with it using console. It has more features, i.e. can measure
+frequency of other clocks and control IOs.
+In this way I managed to quickly test all LVDS connectivity, I2c path,
+I2C registers, unique IDs on the PCBs.
+And the question is: how to integrate such code with ARTIQ.
+One can of course write functions that do SPI configuration of 3state
+buffers  under ARTIQ, or simply reuse my code together with buffers,
+state machnine since it works.
+On the WUT side,  @marmeladapk was working on this but now it's assigned to @michallgaska and Tomasz. Please work with the M-Labs guys to develop this interface.
+This gist contains the test code by @gkasprow. https://gist.github.com/jbqubit/2d99dac5ed61c4a924b398da6f2c9fbb
+@jbqubit I have much more complete code for KC705.
+It is here; https://www.dropbox.com/sh/8ax6ew8xyx9p7y3/AAAoJOV5Gda7PSPyF4UWOKqIa?dl=0
+On the WUT side, @marmeladapk was working on this but now it's assigned to @michallgaska and Tomasz. Please work with the M-Labs guys to develop this interface.
+@jboulder Out of curiosity, what's the WUT involvement in this? I thought that now these boards have been thoroughly tested by WUT, this would be handed over to M-Labs to write the interface. Do M-Labs need more than the schematics for this?
+In parallel with the EEM hardware testing, a WUT student (@marmeladapk ) was working on writing ARTIQ drivers back in June. But there wasn't much progress. I posted the discussion in this Issue to externalize the discussion. Agreed the most efficient approach at this point is for M-Labs to write the interface.
+@jbqubit Okay, that makes sense.
+Back in June, before these EEMs had been tested by WUT, it made sense for WUT to consider writing ARTIQ drivers to use for their testing. But, now that these boards have been tested, I don't think that makes sense any more.
+Given how much work needs to be done to finish designing and testing the boards that have been funded, it might make sense for WUT to focus on hardware and leave the drivers to M-Labs.
+I agree with @hartytp. Division of labor is the fastest way forward.
+These are simple board but there's more to it than wire mapping. Also needs configuration via rust.
+@jbqubit IIRC, the I2C on the BNC board is only for direction readout, not for direction control.
+AFAICT, I2C isn't required for the basic functionality of any of these boards -- although it is nice to have if implemented properly (e.g. auto-detection of IO direction would be great!). What I'm not clear on is whether the current M-Labs contract covers getting that up and running...
+Via rust?
+These I2C chips are used to either read switch positions or set directions when switches are off.
+They are very simple to read - have just one register.
+EEPROMs have unique ID and of course array that can be written with some content, at least name.
+We can follow FMC convention - here is tool I use to build FMC EEPROM contents
+https://www.opalkelly.com/tools/fmceepromgenerator/
+@hartytp These extenders have open drain output ('8051 style) so can be used for both purposes
+ICs are now configured using runtime, right? Won't that be true for 3U boards too? For example,  artiq/firmware/libboard/ad9154.rs
+Here's a stab at this. @sbourdeauducq Please critique the following outline of a commit. @gkasprow Please supply the pin mappings for KC705 LPC.
+https://gist.github.com/jbqubit/c37574ed2b4daf4f7d05eba7a171d355
+We'd rather not merge it because we don't want to maintain KC705+EEM support and especially not mix it with the phaser target, but it looks fine for your local tests.
+And you can reference FMC pins in Migen, see how it's done in nist_qc2.py.
+Only some ICs are configured by the runtime; for those on the EEM boards, kernels are perfectly fine.
+@jbqubit the pin mapping is here
+Can you give me a hand? See attached for the patch of what I've got. I'm modifying the phaser build for kc705 as a starting point. Several observations.
+https://gist.github.com/jbqubit/a8826061c7593b53bf291c33d5d3a137
+Am I correct in assuming ttl_serdes_7series.Output_8X(pads.p, pads.n) combines pads.p and pads.n into a single RTIO channel with differential signaling?
+Yes.
+What's the right structure for the the platform extension file fmc_lpc_to_vhdci_breakout_io.py? I'd like to indicate differential signaling.
+See I/O entries elsewhere that also use differential signaling.
+See I/O entries elsewhere that also use differential signaling.
+I'm following ```gateware/ad9154_fmc_ebz.py ````
+As a simple test I setup sma_ttl to be differential on KC705. When I compile, load the bit file and toggle the ttl I only see transitions on USER_GPIO_N. Here are the modifications I'm making -- see also gist above.
+What am I doing wrong?
+Are you writing to the correct RTIO channel number?
+PHYs "lpc_vhdci_ext0" 0 to 7 don't register properly as RTIO channels. That is "sma_ttl_diff" and "user_led" are RTIO 0 and 1.
+The RTIO channel numbers do not increment as I would expect. I have to write to a different RTIO channel number than I'd expect.
+I pushed to a jbqubit fork of ARTIQ. It makes for easier-to-read source. This is what I'm using. Also, I don't see differential pulsing of sma_ttl_diff.
+master...jbqubit:vhdci
+@sbourdeauducq Please comment on the fork. I'd like to get this working in the lab.
+Do the usual debugging. Check your cables and measure the signals at different points. Connect something else than that RTIO PHY (e.g. the MSB of a counter that increments at every cycle, plus OBUFDS) to check that the FPGA itself can toggle logic levels where you want. Double-check RTIO channel numbers.
+OK. I can now differential toggle sma_gpio_p and sma_gpio_n.
+https://github.com/jbqubit/artiq/commits/vhdci_play
+@gkasprow It looks like the I/O direction choosing IC on fmc-vhdci adapter has an ill defined power-on state. This is SN74LV595APWT. Is that right? Working now on figuring out how to initialize it for all-output.
+@gkasprow It looks like the I/O direction choosing IC on fmc-vhdci adapter has an ill defined power-on state. This is SN74LV595APWT. Is that right? Working now on figuring out how to initialize it for all-output.
+Related question:
+I can now successfully drive output on 3U BNC. Thanks to @npisenti for help playing with the SN74LV595APWT. It's not a full driver but enough to get basic stuff working the lab. See the following commit.
+jbqubit@58f0b9b
+@jbqubit The PCF8574 has open drain outputs with weak pullup so it does not interfere with DIP switches.
+It means that when DIP switch is open, you can always change the line low. You can always read DIP switch position by reading the PCF8574.
+Switches and PCF chip realize  wired and function.
+So to summarize, you don't have to touch PCF chip if you don't use it. You can use it to change direction, in this mode all DIP switches must be in off position to not interfere with I2C control.
+@gkasprow Understood.
+My question was more: do ARTIQ users (e.g. @jbqubit) plan to use the PCF8574 instead of the DIP switch to set the direction control? Or, will they just use it for direction read-out? If they plan to use it for direction control, how do they intend to initialise it to avoid sequencing issues?
+SN74LV595APWT on FMC-VHDCI adapter requires bit-setting for input/output configuration.
+PCF8574ADW direction-setting via I2C is desired but not required. It doesn't take long before the snarl of cables in a typical lab makes it inconvenient to add/remove cards to set dip switches.
+An additional caveat here too that @jbqubit and I realized today is if you're using KC705 + fmc adapters, you'll also have to synchronize the lvds buffer directionality on the fmc -> vhdci boards. This is potentially more problematic (unless I've misread the data sheet), since they are set via shift register with a global latch which might mean undesirable directionality on other i/o lines during the reprogramming.
+Only speaking for myself, we're fine keeping ttl directionality fixed at boot (i.e., use the DIP switches + startup kernel to configure fmc -> vhdci rx/tx).
+I managed to make design for KC705 where direction can be changed at any time.
+Don't worry about direction - LVDS standard don't care if you connect outputs together since it is current source.

@@ -1,0 +1,71 @@
+Alex has asked about having a faster expm method for Qobj objects.  Having looked into it a bit, here are my thoughts:
+I tried some experiments with elementwise exp with numpy to see if mkl did any parallel processing. It did not seem to.
+scipy.linalg.expm claims to use the Pade approximation. There used to be a expm2 (that used diagonalisation) and an expm3 (method?) but these have been deprecated. The scipy docs claim that the method used in expm is "numerically more robust".
+In the control modules we either use a eigendecomp (diagonalisation) method or scipy.linalg.expm_frechet as we typically need to compute propagators (which either uses the eigendecomp or is provided by the frechet deriv) . Frechet also uses some Pade approximation. I think the Pade method uses something like a LU decomp, but would need more research. It would always be more efficient to use the eigendecomp if it has been computed already.
+My guess is that if parallel LU decomp provides much (x100) faster eigendecomp, then the diagonalisation method would be much faster than expm. However, some experimentation would be needed to verify.
+I am told that there are many methods of computing expm, and is there is much numerical research into it. It seems strange that scipy only offer us one method. The spinach control library (http://spindynamics.org/Spinach.php) reputedly has some interesting methods of computing expm.
+A quick Google search found scipy/scipy#354, which shows that scipy considered adding a method kwarg, but have parked the idea.
+We currently have multiple methods in qutip based. I assume there must have been some motivation for writing our own sparse matrix functions for expm. It would seem that a pretty thorough investigation would be required determine to value of the various options. Would make a nice self contained project for someone.
+One must set the number of threads manually for MKL in Anaconda:
+import mkl
+mkl.set_num_threads(N)
+I think most expm methods use the Pade approximation.  We coded ours many year ago before SciPy had a sparse expm function.  However, like I said, it seems that, unless the matrix is diagonal, the output is always dense.  Therefore, the dense solver should be the way to go.  The one exception would be an idempotent matrix, but again, I do not think this is encountered in practice.
+I will have a look at the Spinach methods.  Seems to be similar to the Matlab code, scaling, Pade, then squaring.  The SciPy dense and sparse expm uses the same Higham algorithm as Matlab, so it should be good.
+On Apr 8, 2016, at 08:38, Alexander Pitchford notifications@github.com wrote:
+I tried some experiments with elementwise exp with numpy to see if mkl did any parallel processing. It did not seem to.
+scipy.linalg.expm claims to use the Pade approximation. There used to be a expm2 (that used diagonalisation) and an expm3 (method?) but these have been deprecated. The scipy docs claim that the method used in expm is "numerically more robust".
+In the control modules we either use a eigendecomp (diagonalisation) method or scipy.linalg.expm_frechet as we typically need to compute propagators (which either uses the eigendecomp or is provided by the frechet deriv) . Frechet also uses some Pade approximation. I think the Pade method uses something like a LU decomp, but would need more research. It would always be more efficient to use the eigendecomp if it has been computed already.
+My guess is that if parallel LU decomp provides much (x100) faster eigendecomp, then the diagonalisation method would be much faster than expm. However, some experimentation would be needed to verify.
+I am told that there are many methods of computing expm, and is there is much numerical research into it. It seems strange that scipy only offer us one method. The spinach control library (http://spindynamics.org/Spinach.php http://spindynamics.org/Spinach.php) reputedly has some interesting methods of computing expm.
+A quick Google search found scipy/scipy#354 scipy/scipy#354, which shows that scipy considered adding a method kwarg, but have parked the idea.
+We currently have multiple methods in qutip based. I assume there must have been some motivation for writing our own sparse matrix functions for expm. It would seem that a pretty thorough investigation would be required determine to value of the various options. Would make a nice self contained project for someone.
+—
+You are receiving this because you authored the thread.
+Reply to this email directly or view it on GitHub #462 (comment)
+Untracked with Trackbuster https://trackbuster.com/?sig
+Yes, I did the mkl.set_num_threads. This is my test script
+Whether I set NUM_THREADS to 1 or 4 I only see one processor active in system monitor, and the processing time is the same.
+This is what starting me looking into whether I should expect numpy / scipy to use multiple cores. The articles I read suggested that numpy and scipy do not contain any intrinsic parallelisation. It may have been out-of-date.
+Now I just tried a similar test with scipy.linalg.expm and it did use multiple processors and was approximately twice as fast with 4 than with 1.
+If they call BLAS functions then they should use threads. It looks like scipy is calling the mkl blas where as numpy is not. A bit odd.
+On Apr 8, 2016, at 09:52, Alexander Pitchford notifications@github.com wrote:
+Yes, I did the mkl.set_num_threads. This is my test script
+import numpy as np
+import timeit
+NUM_THREADS = 1
+try:
+import mkl
+use_mkl = True
+except:
+use_mkl = False
+def timing(f):
+def wrap(_args):
+time1 = timeit.default_timer()
+ret = f(_args)
+time2 = timeit.default_timer()
+print('{} function took {:0.3f} ms'.format(f.name, (time2-time1)*1000.0))
+return ret
+return wrap
+if use_mkl:
+mkl.set_num_threads(NUM_THREADS)
+print("Number of threads is {}".format(mkl.get_max_threads()))
+else:
+print("mkl unavailable")
+d = 10000
+n_reps = 10
+A = np.random.random([d, d])
+print("Starting tests")
+@timing
+def calc_exp(A):
+for i in range(n_reps):
+E = np.exp(A)
+calc_exp(A)
+Whether I set NUM_THREADS to 1 or 4 I only see one processor active in system monitor, and the processing time is the same.
+This is what starting me looking into whether I should expect numpy / scipy to use multiple cores. The articles I read suggested that numpy and scipy do not contain any intrinsic parallelisation. It may have been out-of-date.
+Now I just tried a similar test with scipy.linalg.expm and it did use multiple processors and was approximately twice as fast with 4 than with 1.
+—
+You are receiving this because you authored the thread.
+Reply to this email directly or view it on GitHub
+Untracked with Trackbuster
+I have tried to address this in #464.  It defaults to a dense method that runs about 10x faster.  Also, as already discussed, one can use the MKL to get a performance benefit when the dimensionality becomes large.
+Closing this now

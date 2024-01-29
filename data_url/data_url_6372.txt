@@ -1,0 +1,25 @@
+Proposed in #367, converting between stabilizer formalism and QUnit representation as a QInterface "layer" has some potential drawbacks. Alternatively, or at least as a step beforehand, QUnit already allows some internal basis switching, for optimization, and allowing for conversion to and from Bell basis (and hopefully some generalization to GHZ) would definitely help cover a larger subspace of the Clifford group. Bell(/GHZ) basis handling should be implemented and leveraged in QUnit, first.
+See these two Wikipedia articles:
+It's tempting to think that the ultimately desired result will be a generalization of Bell basis to all GHZ states, but there's a nice feature to Bell basis that doesn't generalize to more bits: 2 qubit states can be represented with 4 amplitudes, compared to a single qubit's 2 amplitudes, such that only 2 qubit states effectively scale linearly, (and can repurpose the QEngineShard cached amplitudes to this end). For this reason, I think I'm starting with just Bell basis.
+Bell basis states will be represented distributed across two QEngineShard instance cached amplitudes. We transform the states like so:
+(1/sqrt(2)) * (|00> + |11>) -> |0>
+(1/sqrt(2)) * (|00> - |11>) -> |1>
+(1/sqrt(2)) * (|01> + |10>) -> |2>
+(1/sqrt(2)) * (|01> - |10>) -> |3>
+The ordering of which QEngineShard is "low" and which is "high" is nonarbitrary, but it's easy to think of the two as control and target bits in the preparation of a Bell state, as by H(control); CNOT(control, target);. (When the CNOT is applied after the H, no conversion of the amplitudes even has to be done in the QEngineShards, due to the |+>/|-> basis caching that already exists.) This suggests adding two pointers to each QEngineShard: a bellControl and a bellTarget, only one of which would be used at a time, implying a boolean ordering property. However, this further suggests a simple possible generalization to GHZ states, as a linked list on bellControl and bellTarget, where "middle" bits use both pointers.
+First question in my mind is whether this is totally redundant with "inversion" gate buffering and |+>/|-> basis switching; I think it's not. The buffering of a controlled inversion or phase gate requires the control bit to be taken out of |+>/|-> basis, as we have it now. I don't think the existing buffering will leverage the full symmetry of the explicit Bell basis, such as recognizing that an X gate on either bit becomes equivalent to flipping the "high" bit, in both cases.
+Full generalization to 3 bits, for example, could work like this:
+(1/sqrt(2)) * (|000> + |111>) -> |0>
+(1/sqrt(2)) * (|000> - |111>) -> |1>
+(1/sqrt(2)) * (|100> + |011>) -> |2>
+(1/sqrt(2)) * (|100> - |011>) -> |3>
+(1/sqrt(2)) * (|010> + |101>) -> |4>
+(1/sqrt(2)) * (|010> - |101>) -> |5>
+(1/sqrt(2)) * (|001> + |110>) -> |6>
+(1/sqrt(2)) * (|001> - |110>) -> |7>
+... But there are 8 basis states, here, which is exponential scaling we don't want. If we could limit the available basis, maybe by eliminating 2 of the states above as simply not relevant to the optimization, we could scale to 3 qubits, (or higher). Obviously, the basis would be degenerate.
+I think I'm going about this the wrong way, in the branch the commit above sits in.
+An "inversion buffer" (representing CNOT) is already part of the way to a "Bell basis buffer," isn't it? We should peel "Bell buffers" off of inversion buffers when the control bit was first set to |+>/|-> basis, (and recombine and re-stream them with other buffers as appropriate). This forces us to generalize away from just eigenstates, but it's going to integrate better with other work in QUnit.
+Here's a theoretical trade-off: we can think of Bell basis as a product of qubit "configuration" or a product of the "field" of gates. The first attempt at implementation seems to be closer to "configuration space," whereas relying on equivalence to phase/inversion buffers implies the "field" or "phase space." Regardless of any deep philosophical reason, though, the buffers are probably the better approach in terms of software design.
+I've changed my mind: the doubly-linked list structure of eigenstates can be generalized more than 2 qubits, with limitations in total generality but toward the end of #367. If relevant, first quantization vs. second quantization aside, I'm starting to make headway, with the last commit.
+I'm not sure that this gives a performance payoff, after experimenting with it. Closing for now, unless something indicates that this feature would give a performance return.

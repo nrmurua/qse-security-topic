@@ -1,0 +1,20 @@
+The headline summary is that the XY gate works as expected when provided a numerical value, but not when provided a parameter.
+
+This behaviour can be traced to an incorrect assumption about parameters deep in the stack, and may affect other gates (although we haven't yet found any).
+To reproduce:
+First, we observe that the behaviour of the QPU is consistent with the angle being mod 2𝜋'd. In other words, we can reproduce the same behaviour of the simply by replacing:
+with
+The XY(theta) is implemented as a 0.5*%theta phase shift on the xy frame in the defcalibration. When the calibration is expanded in the program instruction sequence, we thus end up with something like:
+becoming,
+Here, the parameters have been recalculated by rewrite_arithmetic and the calibrations have been expanded. So theta is now __P2[0]. Additionally, in the recalculation table, the parameter is divided by 2𝜋, giving the mapping:
+This is what is submitted to the API.
+Somewhere behind the API, __P2 is being modulo'd by 1.0.
+For many instructions that is the correct behaviour, but in this case the full range of the parameter is 8𝜋. To be specific:
+SHIFT-PHASE 112 125 "xy" -0.25*__P2[0] has a domain of 0 to 8𝜋, but the scaling of the parameter and subsequent modulo treat it as if the domain is 0 to 2𝜋.
+For real numbers, the parameter expression is evaluated prior to modulo. So the output of -0.25*__P2[0] is periodic in 2𝜋.
+The RZs defcals include numerous xy frame updates, so we might wonder how anything works. It seems that the frame updates in RZ may indeed be off by a sign, but without a physical effect.
+We can see that the definition of theta to 4theta is effective, however, this would break all existing programs using XY.
+
+Aspen devices
+Snippet to modify an XY defcal:
+Note that the plot titles are incorrect. The QVM is operating here on theta, not theta % 2pi

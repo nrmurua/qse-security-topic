@@ -1,0 +1,21 @@
+I have been wondering about this in BlackmanWaveform.from_max_val():
+We check _scaling against max_val, based on the hypothesis that the max value of the samples is always 1.
+But the numpy.blackman() documentation states that "the value one appears only if the number of samples is odd".
+Hence, the current code always returns a correct waveform but, once in a while, when its duration is odd, the previous solution was better (the max value is closer to max_val).
+I tested with an area of 2 * np.pi for 1000 different max values (100~1100), using the existing method and then checking with a slightly shorter duration:
+75 fails out of 503 odd durations (14.91%) and 1000 total checks (7.50%).
+For instance:
+Do we want to correct this behavior or should we stick to assuming 1 as the max values of samples (interpolated somehow between the real max values of even durations)?
+@LaurentAjdnik this is an interesting point. The most important thing about this method is that the resulting waveform does not go over the given maximum value. That being said, it's okay to get as close to it as possible, so I'm okay with implementing this correction if it's done in an efficient way.
+However, bear in mind that the values you are considering here are substantially above what can be done on real devices (at least for now). Currently, the highest value you can reach is 10 * 2π ~= 62.83, so if the first value you are seeing a "fail" is 230, then in practice it never happens.
+Note also that, right now, most of this goes out the window when the waveform is added to the Sequence due to the rounding up to a multiple of 4 ns. This might not always be the case, as the different devices might have different specs, I just thought it was worth noting.
+However, bear in mind that the values you are considering here are substantially above what can be done on real devices (at least for now). Currently, the highest value you can reach is 10 * 2π ~= 62.83, so if the first value you are seeing a "fail" is 230, then in practice it never happens.
+I felt there would be something like that but I was unsure of it.
+The problem arises with smaller max values when the area gets smaller.
+For instance with area = π / 6, the result is suboptimal starting at max_val = 46:
+Here again, I don't know if such an area value is relevant in real life, but it's always a pity to leave a "flaw" that can become problematic later on.
+That being said, it's okay to get as close to it as possible, so I'm okay with implementing this correction if it's done in an efficient way.
+Well... Everytime the current guess has an odd duration, we would check if the previous even duration yields a higher max value.  It would not be super efficient, but that would not happen too often (only when creating a BlackmanWaveform AND doing it through from_max_val() AND the duration is odd).
+Since we're looping on incrementing durations, maybe we can always cache the previous "even duration waveform" instead of computing it again.
+I will PR something soon for further discussion.
+I think that sounds reasonable, go ahead!

@@ -1,0 +1,111 @@
+In the current stdgates.inc OQ3 header file we find the following two gate declarations:
+I believe that the declaration for the cx gate contains a conflict with the declaration of the T gate: the second qubit parameter to the cx gate declaration has the same name [t] as the T gate.
+Since gates have global scope, this is an implicit re-declaration conflict (qubit parameters are not explicitly declared, they are implicitly declared and have gate scope).
+There are several other similar conflicts currently present in stdgates.inc.
+I think these conflicts should be cured.
++1 to this.
+I thought that those things live on different namespaces. I might be wrong but the places where we might be referring to a gate are precisely delineated in the language, so we know when we are referring to a gate. If that is not the case, then we have a big issue: The live spec and some examples use variable names like x, y, z and s, which are all gate names. IMO, blocking such common variable names would be problematic.
+Now, that I look at it, the syntax highlighting is even show in it:
+https://github.com/Qiskit/openqasm/blob/3960b13e1d465ae882d1a3a762522d3b62fd5b9a/examples/pong.qasm#L39-L40
+I thought that those things live on different namespaces.
+OQ3 doesn't have namespaces. Neither did OQ2, actually.
+Currently, OQ3 has a very loosely defined concept of scope. Certain types have implicit global scope, others have local scope.
+I might be wrong but the places where we might be referring to a gate are precisely delineated in the language
+They are not. A gate can be declared anywhere in a program. Gates have implicit global scope. As soon as they are declared, regardless of where the gate declaration occurred, the gate automatically acquires global scope, and it is visible anywhere in the program.
+So, after declaring a gate named t, it is not possible to implicitly declare a qubit parameter that is also named t.
+the syntax highlighting is even show in it
+Editor syntax highlighting is not a formal definition of scoping.
+They are not. A gate can be declared anywhere in a program. Gates have implicit global scope. As soon as they are declared, regardless of where the gate declaration occurred, the gate automatically acquires global scope, and it is visible anywhere in the program.
+I've heard you say that before, @steleman , but in the ArXiv doc on pg. 11 we read:
+Once we have defined “h”, we can use it in later gate blocks.
+"Later" would seem to imply that linearly a gate def must appear in a source file prior to its invocation.
+Or are there later mods in the live spec that alter this?
+OQ3 doesn't have namespaces. Neither did OQ2, actually.
+Indeed. There is no formal concept of namespaces. But it does seems somewhat implicit (or "loosely defined").
+In fact, about the scoping of a gate body, the live spec clearly says: The statements in the body can only refer to the symbols given in the parameter or argument list, and these symbols are scoped only to the subroutine body. Even though few lines early it says Only built-in gate statements, calls to previously defined gates, and timing directives can appear in body. So where do the symbols for defined gates live?
+They are not. A gate can be declared anywhere in a program. Gates have implicit global scope. As soon as they are declared, regardless of where the gate declaration occurred, the gate automatically acquires global scope, and it is visible anywhere in the program.
+I was not talking about gate declaration, but to where they are "called". In the snippet you showed, we know that t cannot refer to a gate.
+Editor syntax highlighting is not a formal definition of scoping.
+I didn't say it was. I just used as an example another place where this is also an issue, and that, in fact, the highlighting was showing s as a gate, instead of the intended variable.
+"Later" would seem to imply that linearly a gate def must appear in a source file prior to its invocation.
+This has nothing to do with the original problem description.
+The statements in the body can only refer to the symbols given in the parameter or argument list, and these symbols are scoped only to the subroutine body.
+Again, this has nothing to do with the original problem description.
+I am not referring to the statements inside the body of the gate declaration.
+I am referring to the type conflict created by using the identifier of an already-defined gate as identifier for a gate parameter.
+Again, this has nothing to do with the original problem description.
+I disagree.
+When the specification says that The statements in the body can only refer to the symbols given in the parameter or argument list, and these symbols are scoped only to the subroutine body. but still allows gates to be referred from within the body. One could assume that the identifiers used in gate definitions and those used for gate parameters do not live in the same place.
+Also, isn't this similar to dealing with gate and defcall? They can both use the same identifiers.
+Also, isn't this similar to dealing with gate and defcall?
+No, it isn't.
+They can both use the same identifiers.
+Really? Where is that written in the Spec?
+The statements in the body can only refer to the symbols given in the parameter or argument list, and these symbols are scoped only to the subroutine body.
+Your quote from the Spec contradicts your theory.
+If the statements in the body can only refer to the symbols given in the parameter or argument list, and these symbols are scoped only to the subroutine body, then these statements cannot refer to symbols that were defined prior to the current gate body.
+Which is precisely what I said in the problem description. Gate t was defined prior to the current gate body, and has different scope than the symbols scoped to the subroutine body.
+I am referring to the type conflict created by using the identifier of an already-defined gate as identifier for a gate parameter.
+Well, that oversight can be remedied. Possibilities include the following:
+Possibilities include the following:
+[ ... ]
+There is no need to do any of that. This isn't a structural problem with the Spec. This is a word processing bug inside the stdgates.inc header file.
+The only thing that needs to be done is to ensure that, in stdgates.inc, gate parameter names do not clash with the names of previously defined gates. That is easy enough to do.
+The only thing that needs to be done is to ensure that, in stdgates.inc, gate parameter names do not clash with the names of previously defined gates. That is easy enough to do.
+The occurrence of such a clash within stdgates.inc indicates that the state of affairs is a trap for the unwary.
+Either it's an error to use a gate name (or other previously defined symbol) as a parameter name, or the parameter name hides some set of classes of previously defined names.
+Obviously, the current text of the language spec has not sufficiently clarified the matter.
+Perhaps a legalistic reading can adduce clarity from the current text, but it's "obviously not obvious" to everyone.
+Thus, the TSC should state what the case is, and document it sufficiently that fools like myself see the light.
+Also, isn't this similar to dealing with gate and defcall?
+No, it isn't.
+Indeed, it is not similar.
+Really? Where is that written in the Spec?
+https://github.com/Qiskit/openqasm/blob/3960b13e1d465ae882d1a3a762522d3b62fd5b9a/source/language/pulses.rst#L95-L103
+And a defcal can even be overloaded. By qargs
+https://github.com/Qiskit/openqasm/blob/3960b13e1d465ae882d1a3a762522d3b62fd5b9a/source/language/pulses.rst#L57-L65
+Or by parameters:
+https://github.com/Qiskit/openqasm/blob/3960b13e1d465ae882d1a3a762522d3b62fd5b9a/source/language/pulses.rst#L72-L73
+Can even overload a reserved identifier:
+https://github.com/Qiskit/openqasm/blob/3960b13e1d465ae882d1a3a762522d3b62fd5b9a/source/language/pulses.rst#L28
+(The last example (arguably) breaks one of the explicit rules about identifiers: Variable identifiers may not override a reserved identifier, in this case measure)
+... All using the same identifier, which is the intent for these cases.
+Also, the spec does not explicitly say that a gate and a gate param/qarg cannot have the same identifier. On the contrary, many examples in the specification indicate that the same identifier can be shared by:
+The problem you are pointing out is an example of that intent. (A problem that you have because of how you decided to fill the gap in the specification.)
+Which is precisely what I said in the problem description. Gate t was defined prior to the current gate body, and has different scope than the symbols scoped to the subroutine body.
+Isn't your precise problem description pointing out the fact that t is first declared as a gate, which has a global scope accessible from inside other gates' bodies, and then t is also used as a parameter, which is implicitly re-declared inside a gate body? Like:
+The only thing that needs to be done is to ensure that, in stdgates.inc, gate parameter names do not clash with the names of previously defined gates. That is easy enough to do.
+Except it goes against intent that is not yet captured/defined on the live spec, but is part of many (if not most) examples.
+Except it goes against intent that is not yet captured/defined on the live spec, but is part of many (if not most) examples.
+Thanks.
+You have failed to demonstrate that my quote from the specification contradicts my "theory." You even failed to clarify if my rephrasing of the problem is accurate. I used the quote simply to show that the specification contradicts itself.
+If the statements in the body can only refer to the symbols given in the parameter or argument list, and these symbols are scoped only to the subroutine body, then these statements cannot refer to symbols that were defined prior to the current gate body.
+Yes, so how are you allowing gates' bodies to access other symbols?  If you follow this part of the specification, gates cannot call other gates. In fact, according to it, they seemed to have a closed scope which should not conflict if any other. (Or at leas you could implement in that way.) Nevertheless, we allow references to previously defined gates and end up with the problem you mention. Clearly, there is a problem in the specification.
+Yes, many examples have mistakes, and the specification is live. Shouldn't we discuss how to proceed to fix both? (Well, since I also cannot read minds, I seemed to have misjudged this issue's intent as a call for an open discussion.) Also, if a mistake appears so often on the examples, shouldn't it raise questions about the specification? Shouldn't it signal that something needs to be more explicitly defined or clearly conveyed.
+I'm not going to argue any further.
+So far, you haven't done much arguing anyway. You simply dismissed any discussion by stating this and that are not in the specification, while, in fact, your desired/implemented solution is not backed by it as any other.
+Before you said:
+Editor syntax highlighting is not a formal definition of scoping.
+I completely agree, but bear in mind that your compiler implementation isn't either.
+In the end, all this "discussion" did was send a concerning signal that OpenQASM is as open as its globally scoped variables are global. Whenever there is a bug in the specification and its examples, IBM's closed-source backend compiler must be taken as the source of truth. The community will have any discussion point dismissed until arriving at the solution desired/implemented by one of the developers of the said compiler.
+This is the exact quote from the Spec:
+The statements in the body can only refer to the symbols given in the parameter or argument list, and these symbols are scoped only to the subroutine body.
+I agree that this is somewhat confusing re: calling gates from within a gate statement. Obviously that's allowed. I think they must have meant
+Symbolic arguments in the statements of the gate body shall only refer to the symbols provided in the parameter or argument list. Such symbols shall have local scope to the gate body.
+What I do not agree with is the notion that a global symbol -- i.e. a declared gate symbol -- can be temporarily clobbered by a local symbol -- i.e. a gate qubit parameter -- of the same name, but with different type and scope, and no semantics. That would contradict the Spec statement above, such as it is.
+To make it even more obvious: the names of qubit parameters of a gate declaration have no semantics whatsoever, and they are completely irrelevant to the gate's properties.
+A gate declaration such as:
+is functionally equivalent to a declaration such as:
+or:
+or:
+So I'm not sure I understand why the names of the qubit parameters in a gate declaration are relevant in the first place. Or why the ability to do ad-hoc parametric overloading is a must-have for a gate declaration, or for the OQ3 language in general. It's not that difficult to choose qubit parameter names that don't cause scope or type conflicts.
+There's also something to be said about the choice of using single-character names for parameters and arguments.
+This is like arguing about the names of the formal parameters of a C function prototype declaration:
+You could write the same exact prototype declaration as:
+or
+All three prototype declaration are (1) equivalent and (2) valid. The parameter names are irrelevant, and can be omitted. The only difference between a C function prototype and an OQ3 gate declaration is that in C parameter types are explicit (C only cares about types in a formal prototype declaration), while in OQ3 parameter types are implicit, therefore we must have names.
+To address your comments about the "closed-source" IBM compiler: we follow the Spec, as it evolves, and as it is published, just like everyone else.
+For this particular stdgates.inc bug, there is a very simple fix. Moving the cx gate declaration somewhere above the t gate declaration cures the bug. That's all there is to it.
+Thanks for the input.
+For this particular stdgates.inc bug, there is a very simple fix. Moving the cx gate declaration somewhere above the t gate declaration cures the bug. That's all there is to it.
+I opted for changing the name of the qargs in the offending gates. Using c and t for a couple of gates was inconsistent with the rest of the definitions, which are all using a and b. I think it should be cured by now.

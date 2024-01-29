@@ -1,0 +1,50 @@
+At the moment, we can draw instances of Sequence  using the draw_sequence function of pulser.sequence._seq_drawer, but there is no function to draw SequenceSamples (the result of the sampling of a Sequence instance, that can be obtained using the sample method from pulser.sampler.sampler). We could need such a function to draw SequenceSamples in the recently built QutipEmulator of pulser_simulation.
+In fact, draw_sequence mainly relies on the sample method, and handles almost exclusively SequenceSamples. I propose to have an intermediate function (draw_samples) that would draw samples, and that would be called by draw_sequence with the sampled sequence.
+This can be implemented by modifying gather_data such that it works with SequenceSamples. The features of Sequence that cannot be accessed in SequenceSamples (like interpolation of waveforms) can normally still be performed in the draw_sequence, such that the previous results of draw_sequence are unchanged.
+Hey all, I would like to work on this issue as part of the Unitary Hack.
+Is it possible for me to be assigned to this challenge?
+Hey @neogyk,
+Thanks for you interest in this issue ! It is now assigned to you, good luck !
+@a-corni I have a doubt; the parameter list of draw_samples can also have the sequence?
+EDIT: The drawing of targets should belong to draw_sequence or to draw_samples? Because in gather_data() the target field preparation uses seq._schedule[ch].slots.
+If I try to use SequenceSamples.samples_list[].slots I found different data (only _TargetSlot).
+This is the last thing I have to handle to complete the task.
+Content of seq._schedule[ch].slots:
+Content of SequenceSamples.samples_list[].slots:
+There is indeed an issue in rebuilding the targets from a ChannelSample of a SequenceSamples:
+I see two options:
+There is indeed an issue in rebuilding the targets from a ChannelSample of a SequenceSamples:
+I see two options:
+The best option I think is the first, but I can't get it; in ChannelSample slots only contains _TargetSlot while seq._schedule[ch].slots contains _TimeSlot which can be a target, a Pulse, a delay, etc; how can I reconstruct from _TargetSlot to _TimeSlot? I also need pulse information for drawing phase_shifts.
+I commited the branch, still WIP but draw_samples and draw_sequence are decoupled and works.
+You can only reconstruct the _TimeSlot of type Pulse of seq._schedule[ch].slots from the TargetSlot in sampled_seq.channel_samples[ch].slots.
+That is why I was saying you cannot rebuild seq._schedule[ch].slots from sampled_seq.channel_samples[ch].slots. However, you can have a look to the tf of a _TargetSlot of sampled_seq.channel_samples[ch].slots and the ti of the slot after: if they differ, it means there was initially _TimeSlots of type delay or target in seq._schedule[ch].slots. In this case you can have a look to the targets of the two _TargetSlot: if they differ, it means a _TimeSlot of type target existed - I propose you make the assumption that this _TimeSlot started at tf and finished at ti - if they are the same then it means it was a _TimeSlot of type delay.
+I am not sure I see why you need pulse information to draw phase shifts. Can you be more explicit about what you have in mind ?
+You can only reconstruct the _TimeSlot of type Pulse of seq._schedule[ch].slots from the TargetSlot in sampled_seq.channel_samples[ch].slots.
+That is why I was saying you cannot rebuild seq._schedule[ch].slots from sampled_seq.channel_samples[ch].slots. However, you can have a look to the tf of a _TargetSlot of sampled_seq.channel_samples[ch].slots and the ti of the slot after: if they differ, it means there was initially _TimeSlots of type delay or target in seq._schedule[ch].slots. In this case you can have a look to the targets of the two _TargetSlot: if they differ, it means a _TimeSlot of type target existed - I propose you make the assumption that this _TimeSlot started at tf and finished at ti - if they are the same then it means it was a _TimeSlot of type delay.
+Now I think I understood it.
+I am not sure I see why you need pulse information to draw phase shifts. Can you be more explicit about what you have in mind ?
+This was my misunderstanding, I've got it.
+Now the current solution I'm implementing is this:
+To work as before for draw_sequence, I need to  do you think is a good solution if I add an optional parameter seq of type Sequenece in gather_data and draw_samples?
+Discussing with @HGSilveri, we are now convinced that the second option is the best - it's a bit annoying to approximate the times of the _TimeSlot of type target whereas we can get them easily.
+We can even do something easier than having an attribute for the _TimeSlot of type Pulse (ChannelSamples.slots then) and one to store the attributes of type targets (as I was proposing to create): you can add an attribute time_slots to ChannelSamples, that will store the slots of the ChannelSchedule when you get_sample.
+To avoid the repetition of information of the attributes slots and time_slots in ChannelSamples, you can transform the attribute slots into a property that returns a list of _TargetSlot, one for each _TimeSlot of type Pulse in time_slots.
+You can also transform the attribute initial_targets of ChannelSamples into a property.
+Discussing with @HGSilveri, we are now convinced that the second option is the best - it's a bit annoying to approximate the times of the _TimeSlot of type target whereas we can get them easily.
+We can even do something easier than having an attribute for the _TimeSlot of type Pulse (ChannelSamples.slots then) and one to store the attributes of type targets (as I was proposing to create): you can add an attribute time_slots to ChannelSamples, that will store the slots of the ChannelSchedule when you get_sample.
+To avoid the repetition of information of the attributes slots and time_slots in ChannelSamples, you can transform the attribute slots into a property that returns a list of _TargetSlot, one for each _TimeSlot of type Pulse in time_slots.
+You can also transform the attribute initial_targets of ChannelSamples into a property.
+ok.
+For avoiding repetition and so creating the property slots (to generate the target slot list) I also need channel_obj that is not contained in ChannelSamples; I can:
+What do you prefer?
+For consistency, I think we have to pass channel_obj to ChannelSamples constructor. That way, SequenceSamples and ChannelSamples will be closer in structure to Schedule and ChannelSchedule, I find this nice.
+Perhaps there will be redundancies in SequenceSamples or tests to introduce like asserting that the channel_obj of the ChannelSamples match with the channel_objs provided as an attribute. I let you have a look.
+I think the first option has to be dropped for consistency.
+About the third, I find preferable to add to the current implementation an attribute to store the target slots instead of creating an attribute to store all the time slots.
+EDIT: Perhaps adding the list of target slots is in fact the best solution.
+@HGSilveri what is your opinion on this ? I find it better to add to the attributes of a ChannelSamples a list containing all the _TimeSlot of type "target" instead of adding a channel_obj to compute the slots of a ChannelSamples as a property. I think that it needs less memory (this list is smaller than a channel object in most cases) and less computing power (unless we cache this property).
+@dakk you can go for the last proposal, that is, add to the attributes of ChannelSamples a list containing all the _TimeSlot of type "target". Is it clear for you ? I think this list can directly be the target list of ChannelDrawContent.
+@a-corni it is clear, but I don't understand why only _TimeSlot of type target; in gather_data we have this part that also need Pulse slots
+This part is to draw InterpolatedWaveform. If you have a look to the definition of draw_interp_pts, you will see that they are only associated with Sequence and not SequenceSamples. This part should be taken out of gather_data and should not appear in draw_samples but in draw_sequence. In a SequenceSamples,  InterpolatedWaveforms are already interpolated.
+Ok done; please have a look to the edits

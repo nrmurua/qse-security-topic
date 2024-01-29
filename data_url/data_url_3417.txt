@@ -1,0 +1,19 @@
+Now that we increased the sampling in the operator estimation tests again, the unit tests take at least 30 mins (I'm seeing 40+ right now as I type this). That is way too long to run on every commit. First things that come to mind for potential solutions are:
+I regret everything. Next time someone submits a PR to speed up the tests, I will keep my big mouth shut 🤐.
+How many CPU cores are available on the CI runners? Is running the tests in parallel via the pytest-xdist plugin an option?
+On my laptop, for example, runtime was cut ~ in half when running across four processes rather than one. This was (almost see below) as simple as pip install pytest-xdist && pytest -n 4
+Of course, my laptop has plenty of memory and cpu cores to go around.
+Note that in order to get the tests passing when run concurrently, I had to disable logging in quilc due to rigetti/rpcq#92. So if we want to try xdist, that quilc/rpcq bug would need to get resolved first.
+Edit: The above cl-syslog concurrency issue looks to be mac-os-only.  I ran than full test suite with pytest-xdist against the rigetti/quilc and rigetti/qvm docker images, and everything worked fine.
+For what it's worth, here is a list of the runtimes of the slowest tests from test_operator_estimation.py when run on my laptop:
+Many of the slowest operator estimation tests have a similar structure: build some TomographyExpirement, call measure_observables on it in a loop 100 times, then check at the end to see if the mean result is within some absolute tolerance of the expected value.
+Maybe this invalidates the tests idk, but one way to speed it up would be to instead run the loop in batches of say 20 iterations, then check after each batch to see if the value has converged to within the tolerance, rather than always waiting the full 100 iterations.  Obviously this doesn't help the worst-case, but would probably speed up the average case, assuming that stopping early doesn't invalidate the test. Perhaps @msohaibalam can comment on whether this is a valid approach.
+For example, I modified the loop in test_2q_unitary_channel_fidelity_readout_error to collect intermediate results and plotted the estimated fidelity against the number of loop iterations. Here are results for test runs of 100 and 200 iterations:
+
+
+In the case of test_2q_unitary_channel_fidelity_readout_error, the test compares against the expected fidelity with an absolute tolerance of 2e-2 (plus a smaller relative-tolerance factor). Unless I'm misunderstanding (or my plots are wrong lol) it looks like the tolerance is sufficiently loose that the fidelity estimate is within the bounds right from the off (for these two runs anyway). Which is to say that both of the above two runs would have passed the tolerance test after 20 iterations.
+Here is another run of 100 iterations against a different random quil program with different expected_fidelity. This one converges more slowly, but is still always within the 0.02 tolerance range.
+
+If speed is the issue, then I don't think it's too big of an issue to switch to the use-random-seed version of those tests. For PRs relating to operator_estimation, the reviewers should just make sure to run the longer versions of the tests at least once locally.
+Having now sat through multiple full-length runs of the test suite, I would no longer stand in the way of common sense and/or progress if we switched the default to --use-seed. I probably should have just listened to @msohaibalam from the start!
+To be fair, the original PR discussion talked about reducing the operator est. test time from ~5 min -> ~30s, and I didn't realize at the time that the number of loop iterations for the slow version of the tests was simultaneously increasing by 4x, resulting in the run time of the slow version increasing from ~5 min -> ~20 min. It was all there in front of me in the diff of course, but I didn't notice it.

@@ -1,0 +1,26 @@
+Sorry for the potentially long winded question:
+Has anyone found a good way to lock to an arbitrary point of a MZI using pyRPL?  I have a dither lock set up which works great for locking to the peak, and in principle could also use the bare (not demodulated) signal to lock to the point where the transmission is 50% (though, in principle using the bare signal means the lock would be sensitive to power fluctuations), but I have no way of smoothly going between these two extremes.  Also, using either the dither or locking using the bare signal becomes quite unstable, as expected, when moving too far from the optimal locking point.
+There is a paper (https://www.osapublishing.org/ol/abstract.cfm?uri=ol-20-6-635) which achieves this, but it uses demodulation at both omega and 2*omega followed by some (fast) algebra of the resulting two signals, which I think is outside my comfort zone implementing.
+Just hoping I'm missing something and that it is quite simple.  Does anyone have any thoughts?
+-T
+Hi @tymomboe ,
+there is a number of things you can try. The possibiliities listed here are in order of increasing effort to implement, with increasing payoff in the performance, simplicifty or beauty:
+Let me know if anything is unclear. I expect to have the differential PID module working in about 2 months from now, unless somebody jumps in to accelerate the development.
+Thanks very much for you detailed response!  That is all very useful.
+I am currently using the lockbox module, though only in GUI mode since I had trouble working out how to implement it in python.
+Lastly, to get me started on using pyRPL and the lockbox class from the command line(or python notebook), is it best to get a lockbox module setup with the GUI, then import the config file from the command line?  This was the quickest way I could think of for using the lockbox module and avoiding having to fish around in the class definition to find the names of all the variables that need setting.
+Sorry for all the questions and thank you so much for all of your help,
+T.
+Sorry for the long absence. It is best to setup in the GUI as much as possible (check the video on it), and then customize by editing the config file (.yml) direclty in a text editor. I would only use the API for starting locks and reading out the status of the lockbox.
+this is now possible with the differential PID functionality. What is now missing is an upgraded interferometer class that acts on the differential pid.
+The way to go here is to define a new input signal class DifferentialInput with:
+The locking sequence will then have adjust_error_signal and the desired setpoint in the first or final stage, and should work out of the box.
+For backwards compatibility, i.e. if a lock to a direct signal is desired, it should not be forgotten to upgrade the normal lockbox functions such that they disable the differential pid mode.
+Taking a stab at this, but ran into trouble when defining two "input_signal" (InputSelectProperty).  The trouble is that all of the useful functions defined in InputSignal and its children are defined for a single input derived from a dsp module (and linked to it using input_signal).
+Does this mean I will have to implement new versions of _input_signal_dsp_module, signal, sweep_acquire, and calibrate so that we have two-input-versions?  Or is there some slick way of having two input_signal's and reusing all the old functions?
+I think that is the way to go, by re-using as much existing code as possible. But I realized that there are corner cases where the ratio of gains should be very large, i.e. close to 0 and 90 degrees, such that we would better have two inpur gains in the differential pid module for this to work properly. So I would first implement that before the lockbox module. But feel free to give it a try since I will not be able to do this before christmas.
+Can the two gains not be implemented in the InputSignal class?  We are already planning on adjusting the relative gains to make the two error signals roughly equal in magnitude.  Why not have some function that adjusts them to make the error signal 0 at the point you want to lock?  Then pass the gained signals to the differential pid module rather than the bare inputs.
+This is possible if you have a way to adjust the two input signal gains. For the dither signal the gain can be tuned with quadrature_factor, but if the other signal comes directly from an analog input, there is currently no gain implemented in the fpga. One could of course pass that input through another pid, and this is the only implementation of the MZI lock that would work without fpga changes.
+If you want to go this way, you should define something like ScaledInpuSignal class to group the input with a PID for scaling, and then define a DifferentialInput class whos constructor takes other InputSignals with a settable gain.
+Have you done this already or should I give it a try?
+I'm afraid I wasn't able to, no.  I'm having a little trouble understanding how the input signal classes are implemented.  I'm sure I will learn a lot from your code, so go for it!

@@ -1,0 +1,28 @@
+I observe large variations in the execution time of kernels on the core device (Kasli v1.x). While the standard deviation of the execution time may be small, in a small number of cases there are anomalous long processing delays. That is, the execution time has a long tail, implying non-gaussian statistics. This can be observed in code examples below.
+In my lab's experiment codebase we make heavy use of abstraction. We write modular kernel methods with sufficient built-in slack to reliably run without RTIOUnderflow (eg Doppler cooling, gates, detection). We combine these modular elements to produce large monolithic kernels. Unfortunately, the slack that works for the atomic modules often proves insufficient when many modules are called in succession. We suspect what's happening is a random walk in slack; with a sufficient number of reps  we hit RTIOUnderflow.
+Below are tables showing the execution time in ns for 80 successive kernel calls for a variety of kernel methods. At the end of each table are summary statistics that exclude the first two reps. The first two are excluded from the statistics because they are known to be reproducibly slower than successive reps.
+The example code relies on get_rtio_counter_mu() to put a bound on kernel execution time. I note that the non-determinism of get_rtio_counter_mu() method is documented. In my test I put a bound on this in test_dummy(). The balance of uncertainty seems attributable to the core device microprocessor.
+Another manifestation of this is in #1987.
+Repeat these tests 800 times per loop and only print the statistics.
+It's a common to observe that tests with small variability show larger variability a minute later. Compare above the maximum fractional deviation for test_dataset with 80 reps and 800 reps.
+The only way to guarantee fully deterministic CPU execution times is to use SRAM only; as soon as you use SDRAM and caches then you have this sort of issue. Zynq is even worse though the much faster speed makes up for it.
+SRAM is a very limited resource on FPGAs and it tends to be slow for large blocks. Can you use ARTIQ_DUMP_ELF to get the binary for the largest kernel in your experiment and see if it could fit?
+I assume you beam BRAM not SRAM.
+Can you use ARTIQ_DUMP_ELF to get the binary for the largest kernel in your experiment and see if it could fit?
+The constraints for code complied to ELF are extreme.
+I can see this a problem inherent in SDRAM (link). Have you looked into using RLDRAM? The arxiv paper describes a memory controller design that predictably manages accesses to the RLDRAM.
+BRAM is a particular form of SRAM. The constraints you mention are specific to artiq_compile and not ARTIQ_DUMP_ELF, the latter has no restrictions. The problem is inherent to all DRAM, the paper only mentions a reduction of the latency variation, not an elimination. And the vast majority of boards don't support RLDRAM.
+The constraints you mention are specific to artiq_compile and not ARTIQ_DUMP_ELF, the latter has no restrictions.
+I'm not familiar with this feature of ARTIQ. Please give an example of how of how to use it to do an ELF dump. There are a lot of options for the Target class...
+The problem is inherent to all DRAM, the paper only mentions a reduction of the latency variation, not an elimination. And the vast majority of boards don't support RLDRAM.
+A 10X reduction in latency variation would be a big win. Sinara builds it's own boards so that's not necessarily a roadblock. I guess it would entail writing another memory controller. @gkasprow Have you worked with RLDRAM?
+Please give an example of how of how to use it to do an ELF dump.
+Just set the ARTIQ_DUMP_ELF environment variable to a string (which will become the file name), either when calling artiq_run, or when starting artiq_master (the latter IIRC will just write to the result file directory).
+A 10X reduction in latency variation would be a big win. Sinara builds it's own boards so that's not necessarily a roadblock.
+Just put SRAM on the board then. But SRAM is expensive and we need to support the existing fleet as well as new boards for which SRAM isn't necessarily a good option. Preloading of kernel or kernel parts into existing on-chip SRAM (e.g. FPGA BRAM) might be better.
+I followed the advice of @dnadlinger for a typical experiment in my lab. Here's the size.
+How much BRAM is typically available on a Kasli running ARTIQ? Is there an established path for fully loading a kernel into BRAM?
+33K would fit in BRAM but needs gateware, firmware and perhaps (minor) compiler modifications.
+Is there a way to do an initial test and see how the latency variation improves? Has the latency variation for Zynq been evaluated yet? It may be that both core device variants would benefit from use of BRAM for sufficiently simple kernels.
+Zynq would use OCM not BRAM.
+Has the latency variation for Zynq been evaluated yet? I'm curious how the test I wrote above would perform.

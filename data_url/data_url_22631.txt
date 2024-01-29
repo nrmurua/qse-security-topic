@@ -1,0 +1,106 @@
+From terminal, commands to thorlabs tdc001 connected to prm1z8 rotation stage are executed but do not terminate. I can ping the device and get its position initially. Upon calling move_() it moves, but the terminal never registers that it has completed its move. The device becomes unresponsive after this. I do not have this problem with a linear translation stage, so far only the rotation stage.
+I remember testing this successfully with a rotation stage in the assembly room, though I'm not sure if it was a prm1z8.
+Can you see if this this is not a hardware glitch:
+Yes, it fails with another prm1zd. It works with the other driver we've be
+using.
+On Oct 27, 2015 7:33 PM, "Sébastien Bourdeauducq" notifications@github.com
+wrote:
+I remember testing this successfully with a rotation stage in the assembly
+room, though I'm not sure if it was a prm1z8.
+Can you see if this this is not a hardware glitch:
+—
+Reply to this email directly or view it on GitHub
+#169 (comment).
+When do you need this to work?
+And are you running the controller standalone, or via the controller manager? How long does it take for the rotation stage to complete the move?
+I was running just the thor_labs_tcube_controller. Depending on the length of the move, a few seconds. I could reproduce the behavior with any movement command, though. Even if the device is 'home', telling it to 'go home' - which doesn't cause it to move at all - results in it freezing up like this.
+It's not urgent, I'm just working on getting the various devices up and running with artiq. @jboulder is there a timeline for getting the tcube stuff working with artiq?
+I guess I'll have a look at this during the next visit then. Or you can add some prints in the driver and see where it blocks...
+The full transition of the Penning experiment to ARTIQ requires use of the
+Thorlabs tcubes to control wave-plate angles using the rotation stages. It
+would be good to get this to work next week.
+On Wed, Oct 28, 2015 at 10:29 AM, kgilmo notifications@github.com wrote:
+It's not urgent, I'm just working on getting the various devices up and
+running with artiq. @jboulder https://github.com/jboulder is there a
+timeline for getting the tcube stuff working with artiq?
+—
+Reply to this email directly or view it on GitHub
+#169 (comment).
+The commit on June 18th
+4d077f5
+seems to be the source of the issue. In reverting to prior to these changes, I'm able to get the rotation stages working just fine. Except for 'move_home', which has the same behavior as before. That is, the rotation stage moves 'home' and then hangs and becomes unresponsive. Otherwise, I seem to be able to move the device.
+Also, the model of this rotation stage should be the same as the one that you tested in the assembly room - according to others here.
+Just checking in on the status of this issue. Again, it seems the addition of the 'wait_for_msgs' parameter in 4d077f5 is what is in some way causing the hanging problem.
+If you want me to fix this, I need the devices.
+@fallen has some TDC001 devices currently, can he reproduce the effect?
+I'm having a TDC001 and rotation stage ordered and sent out to you
+Received
+Unfortunately, this works fine with the device I have received. Let me improve the logging so I can guess what is wrong with yours.
+Ah.. Ok. Let me know what you need from me.
+Please replace your artiq/devices/thorlabs_tcube/driver.py with the current one from git, and run thorlabs_tcube_controller -P tdc001 -d hwgrep://0403:faf0 -v -v in one terminal, and artiq_rpctool ::1 3255 call move_home in another.
+When you issue the move home command, the controller should print the messages below, and the move_home call should finish afterwards. Let me know what happens instead.
+You can locate your driver.py this way:
+(The new debug feature will be part of the conda packages after someone figures out what is wrong with conda again)
+I've updated the t_cube driver to e1e082e.
+Using either the working translation stage or the rotation stage, which still freezes up, I don't see any messages printed.
+I used the following as well, in case I need to specify the exact device (since there are several connected). Didn't seem to make a difference.
+Any idea why I'm not seeing the debug messages?
+Have you sent any move commands?
+Yes. Using bash artiq_rpctool ::1 3255 call for various move commands resulted in movement with no messages for the translation stage, and no movement with no messages for the rotation.
+That does not make sense, if there is a movement it means the RPC has been received by the controller and you should see at least DEBUG:artiq.protocols.pc_rpc:calling move_home() which ARTIQ has been printing for many months when in debug mode.
+All the messages I'm talking about are printed by the controller, not rpctool.
+I think there was another instance of the controller running. I'll check
+this on Monday and get back to you.
+On Nov 25, 2015 7:06 PM, "Sébastien Bourdeauducq" notifications@github.com
+wrote:
+That does not make sense, if there is a movement it means the RPC has been
+received by the controller and you should see at least DEBUG:artiq.protocols.pc_rpc:calling
+move_home() which ARTIQ has been printing for many months when in debug
+mode.
+—
+Reply to this email directly or view it on GitHub
+#169 (comment).
+Running two controllers on the same device may also cause the initial issue.
+There's only one running normally. I think I unintentionally ran a script
+yesterday that starts up the controller, and then started it again
+manually. I have seen the debug messages previously, so it has definitely
+worked recently.
+On Nov 26, 2015 7:58 AM, "Sébastien Bourdeauducq" notifications@github.com
+wrote:
+Running two controllers on the same device may also cause the initial
+issue.
+—
+Reply to this email directly or view it on GitHub
+#169 (comment).
+Alright, with only one instance of the controller running I get the debug messages. Here's what this looks like for the translation stage that's been working:
+when I call
+and
+when I call
+Contrasted with the rotation stage that is not working properly:
+at which point it hangs. This was using
+Same thing happens with bash move_home:
+Previously, I was able to send some move commands to the rotation stage before it would freeze. I'm not sure what's changed, but I seem to not be able to do that anymore. It's now completely unresponsive.
+Can you use Wireshark to obtain USB dumps of these two scenarios (with the same device) and post them:
+Do you have the source code of the other driver, or an idea of the protocol it uses to detect completion?
+Are Thorlabs offering support with this sort of issue? p. 41 of http://www.sal.wisc.edu/manga/archive/public/datasheets/thorlabs/APT_Communications_Protocol_Rev%203.pdf is pretty clear about what should happen, but the controller in this case does not send anything back (or sends fewer than 6 bytes).
+The driver that was working with the rotation stage is from prior to this commit: 4d077f5.
+I'm not sure about Thorlabs support. If we continue having problems, I'll contact them to see.
+I'd get on the horn with Thorlabs as a parallel track. If the devices are
+not returning the expected byte payload this sounds like a bug.
+On Tue, Dec 1, 2015 at 9:56 AM, kgilmo notifications@github.com wrote:
+The driver that was working with the rotation stage is from prior to this
+commit: 4d077f5
+4d077f5
+.
+I'm not sure about Thorlabs support. If we continue having problems, I'll
+contact them to see.
+—
+Reply to this email directly or view it on GitHub
+#169 (comment).
+The problem seems to be with the tcubes. We have a few different 'issues' of these things, and some don't work properly with the controller. Issue 2 MOD A and Issue 4 work fine, but Issue 2 MOD 0 (which the rotation stages I was trying to use are connected to) and Issue 4 MOD B do not work properly - ie they don't return anything and hang.
+I'm contacting thorlabs about this.
+The previous driver did not check for completion of the commands, so of course it was returning...
+This issue has seemingly been tracked down:
+The older tcube models must first be conncted via usb to the computer before they are powered on. If power is supplied first, or if the usb is disconnected and reconnected without power cycling, the tcubes fail to respond appropriately.
+If the tcube is in this state, power cycling seems to bring it back to normal working order.
+We ran into this issue because the tcubes had been disconnected and reconnected to the computer without power cycling. Upon power cycling they so far work fine.

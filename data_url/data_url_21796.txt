@@ -1,0 +1,110 @@
+Using the HMC7043 cycle slip feature intermittently causes breakage of the DAC synchronization, which is manifested by a 53.33ns slip between the two DAC chip outputs.
+The magnitude of the slip is always 53.33ns and the slip can be in either direction.
+53.33ns corresponds to 8 cycles of the 150MHz clock.
+Those phase slips are used for synchronizing DACs to the RTIO timestamp counter. If only 8 DAC channels on one Sayma are required, a workaround is to disable this synchronization; then the DACs are always properly synchronized with each other.
+I am pretty sure that the problem comes from this obnoxious HMC7043 acting up again (i.e. it produces wrong SYSREF phases) as the DAC is programmed to ignore SYSREF while the RTIO/SYSREF alignment is running. Scenarios where temporary SYSREF states during RTIO alignment permanently corrupt internal DAC state are not likely.
+Maybe someone with a fast scope, e.g. @hartytp or @gkasprow can confirm? It should be sufficient to measure the time difference of SYSREF edges between DAC0 and DAC1, and confirm that it is incorrectly varying between board reboots. (Those two SYSREF should actually occur at the same time, i.e. the time difference should be ~0, since everything is delay-matched)
+Replacing sysref_rtio_align with this  code is sufficient to reproduce the problem (NB: the problem occurs with the original code already; this is only to narrow it down to the cycle slip) :
+Maybe someone with a fast scope, e.g. @hartytp or @gkasprow can confirm? It should be sufficient to measure the time difference of SYSREF edges between DAC0 and DAC1, and confirm that it is incorrectly varying between board reboots. (Those two SYSREF should actually occur at the same time, i.e. the time difference should be ~0, since everything is delay-matched)
+@marmeladapk are you okay to do this, as you have boards up and running? If not, I'll do it when I get my board back from you...
+Can you align SYSREF onto the RTIO clock before initializing the DACs? Maybe mute the HMC7043 outputs that go to the DACs?
+You can try that, it's straightforward on the standalone target - but I doubt that'll make a change. The DACs are in one-shot sync mode now, and the code does not trigger any syncs until SYSREF/RTIO alignment is done. As I wrote, I suspect the HMC7043 sometimes permanently outputs broken SYSREFs after you use the cycle slip.
+okay, well it's easy to look at the two sysrefs and verify that their phase is constant w.r.t. each other and to the DAC clock. That's a good starting point.
+@gkasprow /@marmeladapk are you okay to look at this?
+As I wrote, I suspect the HMC7043 sometimes permanently outputs broken SYSREFs after you use the cycle slip.
+@sbourdeauducq
+Does sysref have 300 MHz frequency?  That's what I see on one DAC.
+@hartytp
+Yes, after we finish testing boards for Duke.
+Does sysref have 300 MHz frequency?
+Hahaha no. Maybe that's why things don't work...
+https://github.com/m-labs/artiq/blob/master/artiq/firmware/libboard_artiq/hmc830_7043.rs#L165
+Are they all 300MHz? Any idea why?
+Does the frequency change when you modify the divider?
+Since the divider is AFAICT programmed correctly, I was wondering if the SYSREF FSM/timer "features" could produce extra pulses. So I tried disabling the SYSREF timer but then the 7043 became even crazier...
+Does sysref have 300 MHz frequency? That's what I see on one DAC.
+wft? Are you sure?
+@hartytp @sbourdeauducq No, I misread @sbourdeauducq's comment (don't post when sleepy ;) ). I've got 300 MHz coming out of one DAC (to AFE) no matter which frequency I set.
+@hartytp @sbourdeauducq Nah, I misread @sbourdeauducq's comment. I've got 300 MHz coming out of one DAC (to AFE) no matter which frequency I set.
+How are you setting the frequency?
+@hartytp
+https://github.com/m-labs/artiq/blob/master/artiq/examples/sayma_standalone/repository/sines.py
+That's probably another board-specific bug, can you locate a board that doesn't do that and then focus on SYSREF?
+@marmeladapk odd. How are you loading that? Are you flashing it as a startup kernel?
+sines.py is working correctly for me, both as a startup kernel and over Ethernet. Let's keep this issue on DAC sync.
+@marmeladapk Any progress with measuring SYSREF?
+@hartytp Did you get your board back and are you able to do this measurement as well?
+@sbourdeauducq nope, I don't have it yet. FYI: I'm away next week, so the earliest I can look at this now is the 27th, assuming I get the hardware back by then.
+@gkasprow Where are the best points to measure SYSREF (DAC0, DAC1 and FPGA_DAC_SYSREF)?
+Bias resistors by the 7043 outputs works well ime
+Also, is there an easy-enough way we can disconnect SYSREF for both DACs from the HMC7043, and connect them to the FPGA directly, in a HP bank? That certainly will work for 600MHz and perhaps 2000MHz since the FPGA IOs are advertised to support 2133Mbps DDR4. Note that DDR4 uses source-synchronous clocking with DQS, and they probably have a lower-noise clocking path inside the "native" I/O block to support that rate. If necessary (we'd need to experiment...) that can - perhaps - be handled by using an external clock fanout on the PCB that drives DQS pins, but I'm not sure which is the biggest trash fire - HMC chips or Ultrascale I/O native mode.
+Here is an excerpt from the Ultrascale I/O wizard output, that gives a very accurate idea about how native mode works:
+https://hastebin.com/oputaqejuz.coffeescript
+@sbourdeauducq that might well work, but I’m still a bit concerned with how far the gateware design from ARTIQ is diverging from the way that everyone else does this and turning into a NIH reinvention of the wheel.
+As I said, look in the JESD app notes from ADI etc and you’ll see only one way this is done: using the 7044 as the SYNC source and feeding the SYNC/TRIGGER pulse that’s sampled from the 100MHz clock. Then let it take care of all the synchronisation issues internally.
+My feeling is still that part of the reason we’ve hit so many bugs in the 7043 (which is a widely used chip) is that we’re using it in a way that wasn’t intended or properly tested. Going further down the path of reinventing the wheel doesn’t feel like it’s going to end well.
+Conceptually what you’re saying sounds right, but pratcically I think we’ll be in much better shape if we do what everyone else does to solve this problem...
+Then let it take care of all the synchronisation issues internally.
+Hmm, how does it know the proper skew to apply to SYSREF so it meets s/h at the DACs?
+How do we know if the RFSYNCIN pulse meets s/h at the 7044? You cannot count on HMC to have implemented something reasonable there. On the other hand the AD9154 has SYSREF diagnostics that actually work and are not designed in a silly way.
+Why is it "NIH" to scan a delay that drives the DAC, and not NIH to scan a delay that drives the 7044?
+The only drawback that I see with the FPGA technique is PVT skew/jitter issues that can become problematic at high sample rates and may require the use of that trashy "native" I/O block to mitigate. Not "NIH".
+@sbourdeauducq obviously one still has to trim the sys ref analog phase to meet S/H at the DACs. But, AFAICT, we have that part working fine on the HMC7043 already. It’s the cycle slip etc to align the clocks with the RTIO clock that isn’t working atm. The 7044 does take care of all of that with just a simple trigger that has to meet s/h on the 100MHz clock, which is easy.
+It’s NIH in the sense that you won’t find it in any white paper on a JESD system. If you can find any write up of a 2GHz system working the way you’re trying to do it then let me know. On the other hand, there are plenty of papers solving this exact problem using an HMC7044 in the way I describe.
+And, yes, the “only” drawback is that it probably won’t work over the full range of DAC clocks. Do you really think you can make this work reliably at 2GHz once board SI from AMC to RTM, jitter, phase drift over V/T etc are taken into account? I also ideally don’t want to have all my phases scrambled every time I change my gateware, so I’d ideally like this to be stable from build to build, which seems unlikely.
+If you can make it work then great! I’ll be the first one to say “well done”. But why not do this with the HMC7044 in the way described in every app note? At least then you’re using a configuration that has been well tested by many people and really should work, rather than dealing in unknowns...
+The 7044 does take care of all of that with just a simple trigger that has to meet s/h on the 100MHz clock, which is easy.
+Even if the window is larger, how do you know that you actually hit it? It's not really "simple" and "easy", even without taking into account the fact that, based on the track record of the HMC830 and HMC7043, HMC chips are lousy with bugs and design misfeatures (e.g. broadband noise before reset).
+Let’s discuss this more next week when I’m back in the office, but I’m confident we can find a good solution with the 7044 if we want to. I can also use an eval board to test as much of this as possible to make sure it will work properly.
+I don’t think that hitting the (>5ns IIRC) S/H window for the 7044 will be a problem — If we need to we can route the HMC830 clock to the AMC and then clock the IOB FF from that clock. Then we can just specify an appropriate timing constraint on the SYSREF signal to ensure that S/H is met. We can then check this easily with a scope. We can even do something like add an extra FF on the RTM, whose output is looped back to the AMC to allow us to verify the timing window...
+Sure, but what should the timing relationship be between RFSYNCIN and the input clock at the 7044 pins? Do you trust what HMC tells you, with their datasheets that show AC-coupled RFSYNCIN and tell you to read registers that return nonsense such as 0x007d?
+I'd rather double-check, scan the delay and look at the DAC outputs to determine that window myself, but that's not simple or easy.
+Edit: I meant loop the 100MHz ref clk to the AMC, not the HMC830 output since there is no HMC830 with the HMC7044...
+Anyway, yes, I do trust the S/H timing specified on the data sheet. Those chips have a retiming FF straigh after the ref in buffer, so the timing is very well specified w r t the 100MHz clock. WIth such a huge timing window, I really don’t expect issues and, anyway, this is something we can easily test on an eval board.
+Also, FWIW, IIRC most of those bugs you’re talking about only affect the 7043, not the 7044 (at least, that’s what the ADI forum says). I assume that no one uses that functionality on the 7043, so they didn’t notice that it’s broken! In all the white papers, the 7043 is only users following a 7044, not on its own the way we do.
+As I said, my belief is still that if we follow the subclass I synchronisation process described in all the ADI white papers as closely as we can, then this will work without problems. There are plenty of references for other people doing similar things to us in the literature, so we can also contact them to ask for pointers.
+If you want to do something else and try to get it working then go for it, but I’ve outlined technical reasons why I’m sceptical that it will work, and you’d be the only person in the world trying to do it that way AFAICT, so you’d have to figure out all the bugs/subtleties on your own. That’s not how I want to spend my time...
+Anyway, that’s all from me on this until next week
+I don't necessarily want to do it that way, as I pointed out the native Ultrascale I/O is also full of garbage (and so is the GTH transceiver which would be a third solution for driving SYSREF) - I'm just pointing out that the 7044 should be treated with caution. Basically there is no good option unless silicon vendors get their act together.
+Also, SYSREF has to be aligned to the RTIO clock, which is not 100MHz.
+
+
+Measured on R63 and R68 (one is _P one is _N of diff pair, that's why they're inverted).
+Measured under what conditions?
+The relevant situation is when RTIO/SYSREF is enabled and DAC sync has failed (i.e. measured phase between DACs is incorrect).
+Right, I reenabled sysref_auto_rtio_align and margins are proper everytime now, when I'm trying to catch bad DAC sync. Sigh...
+Another board:
+Calibration:
+Then, after power cycle:
+
+
+The SYSREF offset after a failed margin test is normal; the only visible anomaly here is the test failure.
+Maybe the code should keep going after a failed test and program SYSREF delays, in order to expose any 7043 shenanigans...
+Or more simply, the margin scans can be disabled (if that doesn't make the bug disappear).
+@marmeladapk
+@sbourdeauducq
+* If I do power cycle then yes. If I do artiq_flash -t sayma start then no.
+This is the worst case I caught when alignment worked.
+
+Usually I get something like this when alignment works:
+
+What do SYSREF signals look like when DAC synchronization breaks?
+Broken:
+
+I didn't have time for 3. yet. So far I tried few times with your patch and sysref alignment enabled, but nothing conclusive. Sometimes signals where out of phase in a similar way that is shown in the first picture.
+Yes*
+Interesting. My board behaves differently. Can you check that the HMC7043 receives a reset pulse at some point after doing artiq_flash -t sayma start? There should be a hardware rework on the reset.
+The same as in 1.
+What I meant by "DAC to DAC sync" in all the questions above refers to what happens at the DAC outputs, not what is in the log. Did you look at the DAC outputs?
+This is the worst case I caught when alignment worked.
+What does that mean?
+What do SYSREF signals look like when DAC synchronization breaks?
+Confirming: Those are the two SYSREF for each DAC, correct? Also, this was not observed immediately after a calibration but after a normal boot? (please follow the procedure 0-3 exactly)
+@marmeladapk From your comment sinara-hw/sinara#557 (comment)
+do I understand correctly that you do not have a single board on which the HMC7043 garbage behaves itself even with RTIO/SYSREF alignment disabled, and so you are unable to debug this?
+one working board was shipped to you, another to Tom.
+We have 2 sets that sometimes do not align.
+@gkasprow well, since we are most likely going to scrap the HMC7043 in the next revision, is it worth tracking this down further? I'm implementing the new synchronization scheme right now...
+I had asked @jbqubit by email, but no reply so far.
+@jbqubit ping
+Doesn't happen anymore after switching DAC clock to 1.2GHz with 2X interpolation.

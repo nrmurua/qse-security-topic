@@ -1,0 +1,41 @@
+When trying to run a circuit with noise_model and coupling_map based off the Tokyo device, I encounter the following error:
+This happens consistently over several attempts.
+Below is an adapted version of the code I am running:
+The circuit looks as follows:
+
+When runnning the same circuit with a noise model based on the Poughkeepsie device, instead of Tokyo, the mapping does not throw an error:
+Equally when running the same circuit on the real Tokyo device the mapping does not throw an error:
+Unsure - am rather stumped that the real Tokyo device does not throw the same error. Is the transpiling different compared to an Aer simulator with identical properties and coupling map?
+I should also add that the simple example used in the "Device noise simulation" chapter of qiskit-tutorial does not throw the same error when using Tokyo's properties.
+For those wishing to reproduce, the particular ground state I'm using has amplitudes:
+ground_state = [ 0.00000000e+00+0.j,  0.00000000e+00+0.j,  0.00000000e+00+0.j,
+0.00000000e+00+0.j,  0.00000000e+00+0.j,  3.71748034e-01+0.j,
+-6.01500955e-01+0.j,  0.00000000e+00+0.j,  0.00000000e+00+0.j,
+-6.01500955e-01+0.j,  3.71748034e-01+0.j,  1.33322273e-17+0.j,
+0.00000000e+00+0.j,  0.00000000e+00+0.j,  0.00000000e+00+0.j,
+0.00000000e+00+0.j]
+This sounds like a Terra issue: transpiling should be same for device or simulator given same basis gates / coupling map.
+Does it fail if you don't include the noise model, or basis gates? Can you try these permutations:
+I would suggest opening this as an issue on the qiskit-terra github
+I can confirm that all the above permutations raise the same error as the original post.
+Only if I remove the coupling map completely:
+does it not fail.
+I'm not able to reproduce this issue @bjader Can we come up with a minimal failing example?
+This seems like working:
+I was able to reproduce this using OP's example with the ground state he gave.
+However, I also get failure when trying to run on the Tokyo device.
+Hi @1ucian0 I can concur that your example does not fail for me either - but it should be noted in your code you are running on the real tokyo device and not doing the qc.initialize() step. The failure I'm encountering occurs when using the Tokyo coupling map on the qasm simulator.
+Here is a more minimal example of my original code with only the qubit initialization left, that does fail for me:
+@bjader which version of qiskit terra are you running? Are you running from master or pip 0.7?
+@ajavadia I'm using a conda virtual environment based on the environment.yaml defined in the qiskit tutorials. Details from conda list:
+Ok thanks. On master, I get failures running both on simulator and device. I am investigating.
+Ok, this issue is actually no longer present on master now.
+The problem is finding a good initial layout (if this is done, the chance that the swapper succeeds is increased). The issue was that in version 0.7.1, the code to find the layout was only being called for the device, not the simulator. This is now fixed on master.
+However, there is a tangential issue which still makes the original code not runnable on master. The initialize() instruction has temporarily become less optimized, which must be fixed (#1943). Until this is done, using the initialize() instruction still fails.
+However, to demonstrate that the original circuit is runnable, you can manually code it like this:
+before mapping:
+
+after mapping:
+
+I'll keep this issue open until after #1943 is fixed, to make sure everything works.
+Hi @ajavadia, thanks for your hard work and for finding the root of this problem. Looking forward to the fix in the next release.

@@ -1,0 +1,34 @@
+I am trying to initialize a quantum circuit and draw the circuit using the Matplotlib backend:
+size = 4
+q = QuantumRegister(size, name='q')
+ckt = QuantumCircuit(q, name='ckt')
+initial_state=np.zeros(2**size)
+initial_state[size] = 1
+ckt.initialize(initial_state)
+ckt.draw(output='mpl')
+When I set size to a relatively small value, say 4, I get the figure as expected:
+
+Note that the state vector to which I initialize the state is displayed in the box denoting the Initialize instruction.
+When size is increased to, say, 7, the figure gets stretched too much, according to the length of the state vector:
+
+Continuing likewise, I increase size to the value 13, on doing which, the figure is not generated, and after a stack trace, I see the following error:
+/opt/conda/lib/python3.8/site-packages/matplotlib/backends/backend_agg.py in __init__(self, width, height, dpi)
+     89         self.width = width
+     90         self.height = height
+---> 91         self._renderer = _RendererAgg(int(width), int(height), dpi)
+     92         self._filter_renderers = []
+    93
+ValueError: Image size of 1604x65702 pixels is too large. It must be less than 2^16 in each direction.
+<Figure size 1604.72x65702.3 with 1 Axes>
+Outlined above.
+I think the problem is caused by the excessive length of the state vector, and won't be unique to the Quantum Lab environment. As 1 possible solution, I would like to have a way to disable the state vector supplied to Initialize getting printed in the box. I believe this should stop the error being reported.
+As an alternative, another possible solution would be to limit the size of the vector getting printed.
+I think both the above solutions can be achieved by adding options to the style kwarg for use with the Matplotlib backend. See https://qiskit.org/documentation/tutorials/circuits_advanced/03_advanced_circuit_visualization.html.
+For the first solution, one can add an option (bool) to disable the state vector from getting printed in Initialize. By default, the value of this option can be kept false, and it can print the vector, as before.
+For the second solution, one can add an option (int) to limit the size of the vector getting displayed to this number.
+If you think this is a good issue, I would like to try the fix.
+This definitely should be fixed. We had a similar problem in the latex drawer and just limited the number of parameters it would display and then put '...' at the end. In the mpl drawer, there's a lot more room to display so I'd suggest the following.
+The default fold number for the drawer is 25. This is essentially how many X gates would display on a qubit before wrapping to a new row of qubits. So if there were 30 X gates on q0, then 25 would show on the first row and 5 on the second.
+I think if we keep the initialize to a width less than the default fold, this would be sufficient. I hacked a worst case for this, (the widest possible parameters) for 4 qubits,
+
+The initialize is 19 wide, so it fits on one row using the default fold. A solution would then be to show parameters for up to 4 qubits, and don't display parameters for an initialize with > 4 qubits. I think this would be fine since there are a number of gates, like Hamiltonian, that have numpy arrays as parameters, and we do not display the parameters at all for these.

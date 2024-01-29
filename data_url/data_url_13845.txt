@@ -1,0 +1,55 @@
+zx.editor.edit() fails to run, even in legacy/Jupyter Notebook mode. Checking my browser console, the issue appears to be that for security reasons, browsers have started enforcing MIME type checking, and for whatever reason Jupyter is claiming that d3.min.js is a text/html file (and not a js script).
+Thanks for sharing. It does work on my local copy, but not on cloning the latest github repo, so I think this has to do with it not being able to find the right file. zx.draw does work for me when installing the latest from github and running in Chrome. Does zx.draw work for you?
+Aleks recently made some fixes to zx.draw so maybe I can simply do the same stuff to make zx.editor.edit work.
+So it turns out that the CDN url I was using to import D3 into Jupyter was giving a 404. I changed the url to a working one, and made sure pyzx is using that. I've also disabled pyzx trying to use a local copy, as I found that this sometimes does not work nicely with Jupyter.
+Can you see whether it works now for you if you pull the latest github version (I haven't updated the pip release yet)
+Pulled the latest version, but neither zx.draw nor zx.editor.edit work. Both give the no-sniff MIME error mentioned above; I also got a NetworkError trying to pull purify.js.
+An MWE:
+at which point the next cell is either zx.editor.edit(g) or zx.draw(g). Console logs the error
+The resource from “http://localhost:8888/edit/anaconda3/envs/gpgpu/lib/python3.8/site-packages/pyzx/js/d3.v5.min.js?v=20220926175936” was blocked due to MIME type (“text/html”) mismatch (X-Content-Type-Options: nosniff).
+and the expected followup errors from not having that file.
+I'm primarily using Firefox on Windows 11, but I have also tried Edge, with the same result.
+So the latest commit should have made it so that PyZX doesn't try to read that file, and instead use a CDN to load in D3. So I think your notebook might not be using the correct version. This might be because the Javascript is put into the cells themselves, which are read if you haven't cleared them before loading the notebook.
+Can you try this on a completely fresh notebook (or otherwise do Kernel -> Restart and Clear all Output, and then close the browser tab containing the Notebook and reopening it)?
+I have just tried it in Edge, and it works for me.
+Hmm...
+Well, it looks like I didn't properly install the new version; I tried uninstalling PyZX entirely and then reinstalling from the git and that seems to have partially fixed things.
+Now, zx.draw works, but zx.editor.edit() throws
+Are you using Jupyter Notebook or Jupyter Lab? Which version are you on? Was this on Firefox or Edge?
+Jupyter Notebook, version 3.4.5; Microsoft Edge, 105.0.1343.50.
+That seems like quite an old version of Jupyter. Could you try updating it? I am currently on
+jupyter core     : 4.7.0
+jupyter-notebook : 6.1.6
+qtconsole        : 5.0.1
+ipython          : 7.19.0
+ipykernel        : 5.4.2
+jupyter client   : 6.1.7
+jupyter lab      : not installed
+nbconvert        : 6.0.7
+ipywidgets       : 7.6.3
+nbformat         : 5.0.8
+traitlets        : 5.0.5
+(run jupyter --version to get the same information)
+If this indeed fixes the issue I'll try to add a requirement somewhere that Jupyter must be a certain version
+Ah, whoops. Yeah, I don't seem to have a specific jupyter-notebook version; 3.4.5 is my Lab version. I've been running it in Jupyter Notebook with the Launch Classic Notebook feature (and just to be safe, the last time I ran it I explicitly ran jupyter notebook instead of jupyter lab, but...)
+IPython          : 8.4.0
+ipykernel        : 6.15.2
+ipywidgets       : 8.0.2
+jupyter_client   : 7.3.4
+jupyter_core     : 4.11.1
+jupyter_server   : 1.18.1
+jupyterlab       : 3.4.5
+nbclient         : 0.5.13
+nbconvert        : 6.4.5
+nbformat         : 5.4.0
+notebook         : 6.4.12
+qtconsole        : not installed
+traitlets        : 5.3.0
+As a side note: upon taking a second look at my logs, it seems that trying to load /static/zx_editor.js is throwing 404s. ... Which seems a bit strange, because the cell itself is reporting
+Okay so it looks like you are actually on a newer version. I'll try upgrading on my side as well, and see if that gives the same error
+Yup, after upgrading I get a similar set of errors in Chrome:
+I will look into it, but this probably has to do with the additional security features that prevent executing arbitrary code in Jupyter. I will need to see how I can work around this, which possibly means that the editor has to be packaged as a separate Jupyter extension package.
+If you really want to use the editor right now I suggest you downgrade your Jupyter version to what I showed in my message above, because that definitely worked.
+I selectively upgraded and downgraded some package to find the culprit, and I think it is the newer version of ipywidgets that breaks stuff. I am now running on the following, and everything seems to be working fine:
+Specifically, going from here to ipywidgets=8.0.0 breaks it
+Yeah, I made myself a specific env with a lower version of ipywidgets and it seems to work now. Thanks!

@@ -1,0 +1,17 @@
+The code below constructs two circuits, each with one measurement gate that should have the same measurement results. Instead, one measures 0 and the other measures 1.
+Output:
+The reason this happens is that if all measurements are terminal, the code will first simulate all noisy moments and then simulate all measurements. This is incorrect for Circuit 1 above because the moment with the measurement gets simulated (with noise, ignoring the measurement) before the measurement itself is performed.
+However, I think this example raises the question of whether the output of Circuit 1 is actually the correct one (putting aside the fact that in this case it resulted from incorrect behavior). It seems a bit strange to specify a bit flip noise model but have all the measurements be perfect because the noise is applied after the measurement rather than before.
+This is partially fixed by #2487 which is in the review queue.
+In what way is it partially fixed? Would it change the output of my code snippet?
+Oh I see, this is a different issue. That PR added the option to not perform perfect measurements during the simulation.
+Well, I have run your code with ignore_measurement_results=True and it looks even stranger:
+Looks like terminal measurements have some special treatment now, which feels wrong.
+Found where it happens in density_matrix_simulator.py:
+self.run_sweep_sample directly calls step_result.sample_measurement_ops and self.run_sweep_repeat does more nuanced things (including dephasing).
+Not yet sure what is the best way to fix this.
+I think the correct fix for this issue is to modify the "simulate then sample" optimization to discard all operations that come after measurements. The optimization could also be extended to apply to any circuit where all measurements are outside of each other's "light cone" if we wanted to be ambitious.
+@Strilanc what you propose would not fix this issue. In my opening post, the incorrect behavior arises in simulating Circuit 1, which does not have any operations after measurements.
+One possible way to fix this is: when all measurements are terminal, simulate the noisy circuit ignoring the measurements. Then perform the measurements. However, this is tricky when there are qubits with no operations on them other than the measurement. Just removing the measurement will also remove that qubit from the circuit.
+Actually, what you said makes sense; we just need to discard the operations after applying the noise model.
+@Ashalynd the issue you raised has to do with the ignore_measurement_results flag, and not the noise argument. I think main issue there is that when ignore_measurement_results is set to True, then simulator.run should not return any measurement results. I opened #2777 for this issue.

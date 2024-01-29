@@ -1,0 +1,95 @@
+Working with parameters, I have noticed there are some features missing that I think could be a useful addition.
+I have listed them below.
+The suggested improvements are mainly in the StandardParameter and the CombinedParameter.
+Please let me know what suggestions you agree/disagree with, and possible ways (and pitfalls!) of implementing it.
+The val_mapping functionality is useful, because it allows the input to be transformed before performing the actual set/get.
+The limitation here is that val_mapping must be a dict, and an enhancement would be to also accept functions for getting/setting.
+This could be especially useful for the CombinedParameter, where it would allow you to use a single value to set a linear combination of several parameters.
+Parameters other than the StandardParameter might need a delay.
+It would therefore be good to standardize the set method to always perform a delay if the attribute is not set to None.
+This could furthermore be used for inter_delay (see below).
+I'm not sure what would be the best approach for this.
+One idea would be to add it to the BaseParameter, which then decorates the set and get commands to include delays etc.
+Another way is to create a method such as _set_with_delay or _set_decorated_, which is triggered by call(), and which then calls a set and performs delays.
+Being able to use the slice notation for parameters is very useful, as it is a quick way to create an np.arange list.
+Currently, the slice notation requires three inputs: [start:stop:step].
+However, both the default slice notation and np.arange don't need the step argument, and use the default value 1.
+To mimick this behaviour, I suggest we also use 1 as a default value for step.
+When creating sweep values for a parameter (param[val_list]), val_list must be a list.
+Often one would like to use values through numpy functions, such as arange or linspace.
+Currently, parameters do not accept numpy arrays for sweep values, and so these arrays must first be converted to lists.
+I suggest we also allow numpy arrays as sweep values.
+As a side question, would this then need to be converted to a list internally?
+Several methods are strongly related to getting/setting attributes (e.g. get_delay, set_delay).
+These can be replaced dependent attributes (via the @Property decorator).
+This results in more readible code, and less methods cluttering up the namespace.
+From looking at the code, it seems to me that max_delay is not doing anything.
+I've done some testing, and could not come up with a situation where max_delay actually changes something.
+It is also not clear to me from the documentation what its use is.
+Is someone using it, or does someone understand its use?
+If not I suggest we remove it.
+Currently, the attribute delay results in a delay after every set operation.
+The main use of this is to let the system settle after such a set operation.
+In some cases, a different type of delay can be useful, namely to ensure that two set operations are not performed too rapidly after each other.
+One possible reason for this is that sending visa commands too rapidly could freeze up a device.
+In this case, the current delay results in an unnecessary delay after each set operation.
+To illustrate this, assume an instrument parameter that can only process one command per second.
+After setting the parameter, an acquisition can be performed, which we assume also takes a second.
+If we use the current delay, it will ensure that no two commands are sent within a second after each other.
+However, setting a parameter and then subsequently performing an acquisition will take a total of two second instead of one.
+This is because it will sleep for a second after setting the parameter, while it should be able to perform the acquisition straight away.
+I suggest we change the current delay to post_delay, indicating that it will perform the delay after the set operation.
+Adding a second inter_delay can be used to ensure that set operations are not performed too rapidly after each other.
+This delay is not performed right after each set, but instead occurs when a subsequent set is performed too rapidly.
+In this case, the system sleeps until inter_delay has passed, after which it will perform the subsequent set.
+The two methods have a lot of overlapping code.
+Furthermore, adding validate to the method name seems unnecessary (the ManualParameter.set does this implicitly)
+I think it would be better to combine these two methods in the set method, which starts with checking if delay is None
+Instead of being a Parameter, the CombinedParameter seems to have an attribute called parameter that somehow mimicks the behaviour of a parameter.
+I'm not seeing why it can't simply be a parameter, either a subclass of Parameter, MultiParameter, or BaseParameter.
+The comments of @giulioungaretti  say that it's a hack, so could you explain why this hack is needed?
+I suggest we transform it into a parameter.
+We could then create a separate SweepValues class for the CombinedParameter.
+The CombinedParameter currently requires a name.
+This means that when using combine(param1, param2, ...), it is always necessary to also include a name.
+Since the name usually refers to the parameters that are combined, we can have name as an optional argument, and have a default name.
+This could be '{param1.name}{param2.name}...' or 'combined({param1.name}, {param2.name})' or something similar.
+There is no get method for the CombinedParameter, while in many cases this would be useful.
+For instance, if you have two voltage gates which you want to treat as one.
+There are several ways in which a get method can be implemented.
+I think the best solution would be to by default return a set containing values for each of the parameters.
+This default behaviour can be overridden by a get_modifier (see above).
+One useful feature of the CombinedParameter is to treat several parameters as one.
+To this end, it would be useful to be able to set multiple parameters through a single value, i.e. combined_parameter(val) would set each of its parameter to val.
+We could therefore add a flag allow_scalar, which for safety reasons should be set to False by default
+We should be able to simplify this by simply using self.aggregate = aggregator
+By doing this, we can use the CombinedParameter while not necessraily in a loop
+This probably ties in with making the CombinedParameter a parameter.
+This way, we won't have to use the combined_parameter.sweep() method, which isn't necessary for other parameter types.
+@nulinspiratie Great additions you point out here!
+I have one more.
+Sometimes instruments return values in not SI units, but rather mV or nA or something, it would simplify the code and make it more readable if a parameter had a gain one could use on numbers. That would translate the set and get values of that parameter, now we have to write an extra function into the driver to do that conversion.
+@MerlinSmiles Good idea, I would definitely be for this! This way, we wouldn't have to create a new parameter just for a conversion factor.
+@nulinspiratie  one thing I can already say is that the slicing syntax will be most likely removed in the next version see #465 .
+Let me carefully read the rest.
+Working with parameters, I have noticed there are some features missing that I think could be a useful addition.
+I have listed them below.
+The suggested improvements are mainly in the StandardParameter and the CombinedParameter.
+Please let me know what suggestions you agree/disagree with, and possible ways (and pitfalls!) of implementing it.
+Sounds really good !
+It could be an idea to move all the delay  things to the base parameter indeed.
+I know @MerlinSmiles had some complaints//issues with the current way delays are handled.
+the slicing syntax will be axed, see comment before.
+The reason is the slice notation hack. The solution is to actually  make the base parameter sweep method to accept an array other than the start, stop, step .
+Yes, please.
+See above, maybe even better we should have a joint effort making the entire delay thing better.
+See above
+Yes it would be a lot  nicer and less code too!
+The reason was just  time pressure :D So yeah we can definitely improve!
+As per above, sounds good!
+actually @nulinspiratie : let us split this issue into two:
+let's fix the param as per above comments  (use this issue)
+write a spec for the combined parameter ( this will also help in making it compatible with the future dataset and loops)
+The issues with multi/array parameters noted in #498 are also worth remembering i.e.
+@giulioungaretti  good idea to split the issue into two. I think the CombinedParameter will have a few hurdles to implement, so first creating specs is a good idea. I'll create one, should that be a PR? I have also begun with the easiest changes to parameters, as they are quite straightforward to implement. I'll create a PR once they are done, and we can continue from there to tackle the more complicated changes.
+@jenshnielsen I wasn't aware of the issues with the MultiParameter, I'll have a look at them

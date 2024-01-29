@@ -1,0 +1,29 @@
+Currently, the servo cycle time is hard-coded in the artiq.coredevice.suservo driver.
+artiq.gateware.eem.SUServo.add_std supports changing the servo loop timings via the t_rtt parameter. This is important when using Sampler in a remote crate, where the clock out -> clock/data in round trip time exceeds the default of 32 ns. If t_rtt is increased, though, the cycle time also changes, which throws off the I gain scaling and IIR update delay calculations.
+The easiest way to fix this might be to just print the final computed cycle time during gateware builds and add a constructor argument to SUServo to be set accordingly from the device db.
+For synchronising other operations to the servo cycle (cf. #1337), it might also be interesting to expose the different phases.
+Actually, it seems like the comment in 
+T_CYCLE in the core device driver is one cycle longer than the computed t_cycle in gateware.servo.SUServo, though, as it adds an extra cycle on top of the t_dds calculation. @jordens: Do you remember where that +1 came from? I'll add a comment either way…
+(I'll commit this if my understanding is correct:
+.)
+It also seems like the computation of the cycle length 
+as otherwise t_restart > 1 isn't true.
+I counted the cycles in the simulation. On top of the bits*period time there should be one half cycle idle with CS asserted, and (at least) another half cycle with CS not asserted, plus the clock cycle it takes to transition between states (setting the active bits). Check with simulation, maybe I miscounted.
+The t_adc + 1 you propose is not correct AFAICT from a quick glance. If the ADC cycle time were to limit the overall cycle time, then the counter logic would needs to be changed.
+I guess the easiest way of verifying this without a doubt would be to scan for the timestamps where get_status() bit 1 is being strobed at runtime. I was just comparing the eponymous values in gateware and driver; I might have indeed missed an extra cycle introduced by the FSM transition.
+Do you agree that t_rtt < 52 shouldn't increase the total cycle time, though? (t_cycle doesn't change, then.)
+Regarding t_adc, it might well be that there is more that needs changing; I didn't check. I just noticed that the code purports to handle arbitrary times, but doesn't actually do so.
+I am unsure about the max RTT. Make certain that the pipeline slots and the memory access by the different stages writer don't collide if you increase this. This (the 4) could be a vestigial number from when the pipeline looked different and both the ADC and the IIR stage needed to be shorter than the DDS stage.
+c.f. also #788 (comment)
+Turns out the cycle length is actually 146 * 8 = 1168 ns, not 147 periods, i.e. it matches the gateware t_cycle.
+Determined using this quick hack (which could be added as a unit test, if we had suservo tests):
+Will commit a fix.
+Regarding:
+Make certain that the pipeline slots and the memory access by the different stages writer don't collide if you increase this.
+Could you point me to an example of two possibly colliding accesses? I'm not sure I follow.
+There is an entire bench of unittests for suservo: https://github.com/m-labs/artiq/tree/master/artiq/gateware/test/suservo
+HITL tests are #1004
+I was probably overly worried. One problem would have been the x value shifting phase of the IIR processor which runs in parallel with the DDS writes. But there is an assert protecting against that. In an older design there was also the possibility of the ADC x writes to memory colliding with the IIR x shifting and reads from memory. But since the shifting is now after the processing it's fine.
+There is an entire bench of unittests for suservo
+Sure – I wasn't trying to be snarky, but merely wanted to mention that I was unsure about adding driver-side tests to the tree that then never actually get executed. I guess we could always feature-gate them, to make manually running them on hardware easier until automated tests are set up.
+Sure. There is tooling for gate these tests on suitability HITL device_db content already. I'm all for adding tests like these.

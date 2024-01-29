@@ -1,0 +1,63 @@
+Timestamps for input events, and/or as used in the gater, seem to be deterministically wrong on the ~100 ns level.
+Check out this experiment for illustration, which uses a loopback connection (loop_out -> loop_in) to scan the arrival time of a TTL pulse over the gate window (requires #1115 for explicit timestamp arguments):
+Apologies for the spaghetti code, this was hastily distilled from code using custom primitives.
+Either way, this is what the resulting scans look like on one test system (Kasli DRTIO master corresponding to 2463e56):
+
+The expected result is a 200 ns window where events are received. The exact roundtrip times will depend on a number of setup details and PVT characteristics, so the window position in terms of output event timestamps isn't terribly indicative. The input event timestamps, however, should certainly fall between the gate open/close timeline positions.
+Instead, the plots show that no timestamps with gate-relative values of less than ~ 85 ns are observed, and they continue until ~235 ns, i.e. 35 ns after the gate has been closed. The trailing edge also isn't as sharp as expected (at most one point where the true edge falls in between 1 ns steps).
+If the timeout for reading out events is increased by an extra 500 ns (i.e. t_in_mu = self.loop_in.timestamp_mu(t_gate_close_mu + 500)), the results look like this:
+
+The window is now 200 ns long, with edges as expected, but the input timestamps still misaligned with respect to the gates.
+Something is clearly broken here. If I generate the edges using a free-running function generator, I can trigger funny behaviour where chunks are missing in the middle of the gate window rather than at the end, but that's probably not a helpful starting point for debugging:
+
+(~2 MHz square wave input, so expected is a ~500 ns distribution of (first) rising edges after gate start. Shown is a histogram of first edge times in a 505 mu window; there are no weird beating effects going on, as verified using an external scope. The dip disappears with some extra 100 ns slack for the timestamp readout like above, but the ~85 ns offset stays.)
+I did not test this without SED; it is possible that this is related to delay compensation going wrong.
+Test case at #1136, we'll see whether it fails with vanilla master as well. No timing violations in the local gateware build used for the above.
+Do you expect the input rising edge timestamp to be the same as the output rising edge timestamp? That's tricky.
+The input timestamps are expected to be offset w.r.t. output timestamps if you compare them at the BNC plane. But that timing plane is arbitrary. It depends on all kinds of delays between the event dispatch and the electrical outputs. They should not be offset at an internal timing plane at or close to the rtio counter.
+The loopback offset has been around 150ns for a long time. (test_loopback (test_rtio.CoredeviceTest) ... 1.59e-07)
+AFAICT that explains the offset you observe, the behavior that you see when extending the timeout.
+In addition to that TTLOut-TTLIn offset, I would also expect an offset from gate opening to first event for the same reason.
+Does that shed some light?
+Do you expect the input rising edge timestamp to be the same as the output rising edge timestamp?
+No, I expect a constant (but consistent!) offset.
+They should not be offset at an internal timing plane at or close to the rtio counter.
+They are, as evidenced by the fact that the input timestamps extend beyond what the gate sensitivity settings specify. From the user (kernel) perspective, the output events that set the sensitivity register use a different time reference than the input events.
+In addition to that TTLOut-TTLIn offset, I would also expect an offset from gate opening to first event for the same reason.
+Would you? Since the events are streaming in continuously, one would expect that as soon as the gate opens, an event would arrive. Whatever the reference plane is, it should be the same for input events, output events, and busy-spin timeouts.
+And such an offset indeed exists, which is reflected in the y offset in the left of the two plots.
+Does that shed some light?
+Only in so far as to confirm that we are probably not the only ones miscounting photons because of this bug. self.pmt.gate_rising(1µs); self.pmt.count() doesn't count edges for 1 µs but something more like 0.85 µs, depending on how hungover the CPU feels that day. For typical detection times of a hundred microseconds or two, this is barely noticeable, but for faster stuff (or just measuring single-shot detection efficiencies), it greatly matters.
+Also check out the hole in the middle of the gate window in the last plot, which is clearly a bug, any (un)expected timeline offsets notwithstanding. I'm sure the culprit is somewhere after the DIO-BNC input buffers (as evidenced by the fact that it disappears when using a longer RTIO input read timeout, and as verified histogramming edge times on a scope), but after giving the CRI/input collector code a quick read, I still don't have a clue as to the cause. I imagine it might well be related to other bugs in the timestamping logic, though.
+Does replacing rtio_input_timestamp(self.i_previous_timestamp, self.channel) in count() with rtio_input_timestamp(self.i_previous_timestamp+500, self.channel) make the problems disappear?
+The weird hole in the arrival times, yes. The offset is still there, of course.
+As for doing latency compensation everywhere, it conflicts with performance. The SAWG has a lot more latency than TTLs, so the TTLs would become slower if compensated.
+We can reasonably, on the other hand, compensate TTL input and outputs so that they are at the same reference plane at the FPGA.
+The weird hole in the arrival times, yes.
+OK. And the incorrect counting time? 0.85us instead of 1us.
+I suspect that the bug is: due to the gateware latency in the timestamp counter to gate path, the timeout - referenced to the timestamp counter - is too small and the kernel thinks the gateware has closed the gate when it has not.
+SED makes this worse by increasing the latency in the timestamp counter to gate path.
+ARTIQ versions before 3.0 also have the bug, but it is likely latent and completely hidden, because they did the timestamp comparison in firmware (3.0+ does it in gateware) and did not use SED; since the CPU is "hungover" as you say, it most probably does not race the (lower) gateware latency.
+https://github.com/m-labs/artiq/blob/release-2/artiq/runtime/rtio.c#L84
+OK. And the incorrect counting time? 0.85us instead of 1us.
+Yes; see the second set of plots.
+OK. So, all the buggy behavior is explained by this scenario? #1137 (comment)
+Potentially yes. I'm not sure how that would selectively cause part of the arrival time histogram to disappear, but since that also goes away with the extra delay, the issues are probably related.
+As for the offset in the timestamps relative to the gate open period, it would be important for low-latency work to have a clearly defined/documented reference plane.
+(I'll set up the latter test again and dig out the code once we have clarity about the former.)
+Summarizing and calming this down a little:
+One way of fixing it would be to add the latency offset to the timeout (500 is an overly pessimistic value).
+@jordens:
+For input vs. output latencies, it's not about mismatch of mental model and reality for me. Rather, as far as I can see, it's currently impossible to even build a mental model of the behaviour without measuring everything yourself, as the documentation simply doesn't exist (not even in the source code).
+We should indeed make sure the kernel polling functions never ignore events; the alternative (requiring the user code to take care of adding enough slack) seems like a disaster in terms of usability. It is not necessarily a software bug, though; we might prefer to fix this in the input collector/… instead.
+Compensating the timestamps on either sensitivity or input path would indeed be useful, as it would lead to a model that is simpler to document/teach.
+@sbourdeauducq: We have indeed been running with only 100 ns in production (local TTLs on a Kasli DRTIO master) without apparent issues. However, does this "latency" change for remote input events from somewhere down the DRTIO tree? I'd like to avoid adding a hugely conservative amount of delay for local events.
+However, does this "latency" change for remote input events from somewhere down the DRTIO tree?
+Not significantly. The timeout decision is made by the satellite by comparing its local timestamp counter with the value coming from rtio_input_timestamp and provided by the master. The gate opening/closing is done also on the satellite by comparing the same local timestamp counter with the values coming from rtio_output and provided by the master. So the latency imbalance is only on the satellite FPGA and is the same as with local RTIO (modulo a few RTIO clock cycles, since the implementations are slightly different).
+For latency compensation, see #40. But it is not a simple topic and funding is lacking.
+ARTIQ versions before 3.0 also have the bug, but it is likely latent and completely hidden
+Actually, ARTIQ-3 is also not affected because the latency of determining timeout (transfer of RTIO counter to sys domain plus one sys cycle) is higher than the latency to the gate (1 RTIO cycle).
+The latency to the gate is higher in ARTIQ-4 because of SED and exposes the problem.
+How do we resolve this? With the new API, it can be done either in the documentation of functions like count(), or by adding an offset to the passed value.
+I'd argue we should definitely add the offset internally. Without knowing about RTIO internals (i.e. for the typical user), it is pretty much impossible to reason about what is going on here. Thus, the current interface (i.e. with manually specified delays) is not only a leaky abstraction, but also one that leads to wrong-by-default code.
+The question then is how to determine the amount of delay to add, and how to best manage it in the code. One option would just be to add a constant to artiq.coredevice.rtio which hardcodes, say, 100 ns (which seems to be enough for all current RTIO/SED setups). Another option would be to add it directly to input_timestamp/…, where it could be replaced by a value calibrated on startup further down the track (or absorbed into the gateware as part of latency compensation without further changes).

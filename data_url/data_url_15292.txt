@@ -1,0 +1,29 @@
+In a Jupyter notebook, the following code cell sometimes takes a very long time (about one minute):
+The most consistent way I have found to reproduce this issue is to first execute a seemingly unrelated cell that causes an error:
+After running this cell, the following cell takes a long time (about one minute):
+Interrupting the kernel while it is executing gives the following stack trace:
+It should execute in at most a few seconds; certainly not one minute.
+No response
+I run your example on the command line (ipython): 1) the code that produces an error 2) The code that runs slow in Jupyter
+The code does not run slow. It finishes in about 100 ms.  I am using Python 3.10.5 . Did you try the command line ?
+No, I did not. Are you able to reproduce the issue in a Jupyter notebook?
+I'll try. I'm installing terra in a python 3.9 venv so I can test that. While it's installing requirements, I'll try Jupyter.
+I do not see the slowdown in Jupyter. Still 100ms to execute the example after first running the code that errors.
+@kevinsung,  I do see the slowdown with the following
+If I change only the Python version to 3.10.5, I do not see the slowdown.
+EDIT: I also confirm that the bug does not occur if I omit first running the "unrelated" code that errors.
+This is very interesting. Thanks for the investigation @jlapeyre !
+It appears that the number of calls to this line
+https://github.com/Qiskit/qiskit-terra/blob/f98ddc6ddaf68475b9aca717fa8c91646c60a2da/qiskit/pulse/parser.py#L172
+does not change when running the test code with and without the "preamble". But, the time for each deepcopy call is much larger if the preamble runs first, which accounts for the slow down. Furthermore I don't see anything that looks like a memory leak. Replacing deepcopy by copy here avoids the slow down, but of course may not give correct behavior.
+It seems almost certain that some state is being preserved unintentionally. (Mutable) state is the root of all evil. I won't be able to continue with this till at least after Thursday. I guess someone with a bit more familiarity with this code might find the problem quickly.
+I've found an example that causes slowdown with Python 3.10. Copy the following into a code cell. The first time you execute the cell, it's fast (and results in an error). Subsequent executions are very slow.
+That's a good clue. It's pretty clear that it's unlikely that the bug is in Python (3.9 or 3.10), but rather our code is erroneously keeping some state. Probably when creating ASTs.
+FWIW, I have run the code above in the jupyter notebook, windows 10, python 3.10, trunk version of terra; on the first run it takes about 2.3s; on every consecutive run it takes about 130 ms -- so for me it's actually much faster on subsequent executions. And I have run the above experiment several times -- the results are consistent across runs.
+I can reproduce this as well when raising an error and then trying to transpile.
+First do
+which raises an attribute error because the backend is v1, not v2.  Then do:
+This always hangs.
+It does not happen for BackendV2 objects
+I wasn't able to use any of these cells to reliably reproduce the issue, but I think #9063 should hopefully fix the issue?  I saw the deepcopy as looking very questionable, so I just made it shallow, and propagated through the shallow copy to any mutated nodes.
+Could people verify if it fixes their problems?

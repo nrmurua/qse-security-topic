@@ -1,0 +1,39 @@
+After manually measuring the CNOT and Readout error measurements and updating these values in the backend.properties() object, the transpiler fails to produce differing circuit layouts in the following qiskit version:
+{'qiskit-terra': '0.16.0', 'qiskit-aer': '0.7.0', 'qiskit-ignis': '0.5.0', 'qiskit-ibmq-provider': '0.11.0', 'qiskit-aqua': '0.8.0', 'qiskit': '0.23.0'}
+This is not the case with an older qiskit version {'qiskit-terra': '0.12.0', 'qiskit-aer': '0.4.0', 'qiskit-ignis': '0.2.0', 'qiskit-ibmq-provider': '0.4.6', 'qiskit-aqua': '0.6.4', 'qiskit': '0.15.0'} where the transpiler produces differing circuit layouts with the exact same custom error measurement data as noted above.
+On checking, it looks like this pull request (#5146 ) has made changes to neighbor discovery inside noise-adaptive layout which seems to be sensitive to our workflow.
+Could someone please look at this and check if the above change has affected the functionality of the noise-adaptive transpilation procedure?
+Circuit layouts produced with default backend.properties() object and those with manually updated object should be different.
+Could this change (#5146) be implemented in the form of a switchable parameter in the transpiler?
+#5146 should not have changed any behavior in the noise adaptive layout pass, all it did was cache the neighbors list for nodes in the internal graph for performance.
+I actually think what is going on is that you're not using the noise adaptive layout pass anymore. In qiskit-terra 0.13.0 (metapackage 0.18.0) the default layout pass for optimization level 3 was changed to CSPLayout. You should change your transpile call to be
+transpile(circuit, backend, layout_method='noise_adaptive') which will explicitly set the layout pass to be the noise adaptive layout pass (at any optimization level).
+This was documented in the release notes at the time: https://qiskit.org/documentation/release_notes.html#notable-change (you have to search for it unfortunately a recent docs theme change is breaking links to the release note directly :/) Although it's not the best upgrade note there, it didn't mention what the old behavior was or how to retain it just that it was changed and a new dependency was added because of that.
+Can you confirm that you still get the incorrect behavior when explicitly setting the layout method to the noise adaptive layout pass? If that doesn't fix the issue for you I can dig into the issue more (but will need example inputs for the noise properties you're using and a circuit).
+@mtreinish Thanks, I tried your suggestion but the behavior is still the same. Setting layout_method='noise_adaptive' in transpile call didn't seem to help.
+Sure, can I share the files with you here? Also, I have the error data from ibmq_boeblingen, is that fine?
+@mtreinish Were there any updates on this thread?
+Currently, setting layout_method='noise_adaptive' will not prevent CSPLayout from running (and setting a layout if it finds one which does not require routing). This is noted in the transpile docstring, but might not be obvious behavior and might be worth changing. Thoughts @1ucian0 ?
+@sudhakarsingh27 Feel free to post your code for building and transpiling your circuit here.
+(Also, FYI, CSPLayout is being made aware of device noise characteristics in #5075 .)
+Currently, setting layout_method='noise_adaptive' will not prevent CSPLayout from running (and setting a layout if it finds one which does not require routing). This is noted in the transpile docstring, but might not be obvious behavior and might be worth changing. Thoughts @1ucian0 ?
+I'm back and forward about this. rn, I think the transpiler should always honor layout_method and skip CSPLayout. Let me try to write a short PR to test if that flies. That's the approach in PR #5495
+Attaching here the experiment.
+experiment.zip
+@kdk Our experiments rely on the noise-adaptive capabilities of the transpiler and without that, the experiments fail in the newest qiskit (0.23) version.
+Also, if layout_method isn't able to enforce the characteristic then perhaps it's misleading for the user.
+(Also, FYI, CSPLayout is being made aware of device noise characteristics in #5075 .)
+Will it sill prioritize CSPLayout characteristics over the noise-awareness?
+The latest changes are somewhat constraining our objectives of research. Is it possible to switch off CSPLayout altogether?
+@kdk Our experiments rely on the noise-adaptive capabilities of the transpiler and without that, the experiments fail in the newest qiskit (0.23) version.
+There might be something else at play here. This behavior (CSPLayout always runs for optimization levels 2 and 3) has been in place since CSPLayout was added in qiskit 0.18.
+Also, if layout_method isn't able to enforce the characteristic then perhaps it's misleading for the user.
+Agree, see PR #5495 .
+(Also, FYI, CSPLayout is being made aware of device noise characteristics in #5075 .)
+Will it sill prioritize CSPLayout characteristics over the noise-awareness?
+You can look for more detail at the implementation in #5075, but my understanding is that it will find, of the available layouts which satisfy the csp constraints, the one with the best noise characteristics.
+The latest changes are somewhat constraining our objectives of research. Is it possible to switch off CSPLayout altogether?
+Yes, you can manually build the level 3 pass manager and then remove the CSPLayout pass:
+
+
+and then transpile them with

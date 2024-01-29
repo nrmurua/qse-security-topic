@@ -1,0 +1,36 @@
+I wrote the following code to test the capability of the framework to share a GHZ state over a large amount of nodes.
+Everything works really good till when the nodes number is under 13: above 13 nodes the code stucks at the first qubit measurement.
+Debugging the framework I found out that the code is stuck at line 332 of python3.8/site-packages/eqsn/gates.py :
+res = ret.get().
+It seems to me that someone steals the object just put in the queue from line 331 of the same file because right after the end of the put() at line 331 the queue is empty again, but I didn't find the actual cause of the bug.
+Am I doing something wrong?
+Thanks for the bug report, I'll test it as well and update you with any progress towards fixing it. Your code looks fine at first glance, and it runs fine for me as well. One thing to note is we're using raw matrices here so a GHZ state across 14 hosts may start to push the limit... The state matrix has dimension 2^14 x 2^14 = 268,435,456, so this likely hits the upper limit of what can be done with QuNetSim with EQSN backend.
+One thing to try is, that might be what you intended, is that you imported ProjectQ backend, but actually the backend is not set on the hosts, so it's using the default EQSN backend. ProjectQ might be more optimized for this kind of thing...
+I'll try it myself and report back.
+Here's an update:
+With 14 hosts on my computer, I get the same bottleneck. On another computer running the C version of ProjectQ as the backend, it would run up to ~25 hosts in a few seconds. I've also updated the PyPi project to version 0.1.1.post3 which contains a new backend: QuTiP. QuTiP can also handle a higher number of hosts.
+You can try those two backends and see if it works for you. If it improves for you, then I will close this issue.
+Hi, thanks for the fast response.
+Honestly, I thought that hosts would have inherited the backend from the network they are added to, now I saw the optional argument in Host's constructor.
+Thinking about it though, it's better that it works this way because I suppose that a host can be added to more than one network that might work with different backends.
+I can confirm you that if the hosts are running on ProjectQ backend the script performs fluently up to 23-24 hosts, than the time demand starts to grow exponentially:
+23 0:00:02.539018
+24 0:00:03.297146
+25 0:00:06.699881
+26 0:00:15.285010
+27 0:00:28.608917
+28 0:01:02.755283
+29 0:03:36.598100
+I have also done a few tests with QuTip backend on both network and hosts with the following results:
+13 0:00:01.064913
+14 0:00:03.667216
+15 0:00:16.009192
+16 0:02:00.250605
+17 ValueError: maximum supported dimension for an ndarray is 32, found 34
+20 ValueError: maximum supported dimension for an ndarray is 32, found 40
+23 MemoryError: Unable to allocate 1.00 PiB for an array with shape (8388608, 8388608) and data type complex128
+Note: the time mesurements start right before the measurement for cycle and end right after that, all the print in between have been commented out as follows:
+At the moment, the best backend for a large scale GHZ seems to be ProjectQ.
+Actually your suggestion of inheriting from the network makes a lot of sense. Currently QuNetSim is using a Network singleton so there can only be one network.
+Thanks for your timing  analysis. I think just playing around with the various backends is the best approach. If you know of other qubit simulators that might further improve the run time, feel free to suggest them in another issue and we can add them in.
+Hopefully you've got a clearer picture of the limitations of QuNetSim. Feel free to post any other questions / comments. I'll close this thread for now.

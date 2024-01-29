@@ -1,0 +1,42 @@
+I am compiling the liboqs using the waf/wscript building system for the ave32-gcc compiler.
+Now I encounter the following errors during linking:
+I tried to search for the source file of the definition but I cannot find the implementation of these 3 funcitons.
+A search in the github repo also only shows the 3 results.
+Where are those functions implemented?
+The binary files in the build directory are of no use to me since I use a different compiler.
+You may want to check FrodoKEMs external folder and how it gets built in your environment.
+Isn't this a definition for the default crypto_kem_enc pointing to a specific version of the function:
+And this a declaration of the function
+And this the assignment of a struct pointing to that function:
+But nowhere is the implementation of the function in a c-source file ?
+Or do you mean the kem source code must be included separately from a different repo?
+But nowhere is the implementation of the function in a c-source file ?
+Hmm, doesn't kem/frodokem/external/kem.c contain the code? crypto_kem_enc (et.al.) containing the generic code that's "instantiated" for each variant via the "..._params.h" defines... Maybe reviewing the CMakeLists.txt and "#include" directives manually may be a way to see how things are put together (for x86_64 and arm using gcc&clang).
+src/kem/frodokem/external/kem.c is compiled multiple times with different headers (e.g., src/kem/frodokem/external/frodo976aes_params.h) yielding implementations of the different FrodoKEM variants.
+I see, this lib is not meant to be built by any other autobuilder. I will try to add the avr-gcc compiler to the current CMakeFiles.
+I forked the project and will continue the integration of the avr32-gcc compiler (and perhaps also the arm-none-eabi-gcc) on separate branches. Are you at all interested in having this library ported to microcontroller platforms and possibly support it on the upstream branch?
+It is our goal to have support for the widest possible range of platforms, Yes. That said, our team may not have the required bandwidth and/or capabilities to support platforms we're not familiar with. However, if you'd volunteer to maintain embedded platform support directly within our project, I see no reason why we should not welcome that. Please be aware, though, that we very much rely on CI; thus, any contribution that you may provide should have a CI component ensuring the (new) platforms "keep ticking" (or we are automatically made aware what/if sth fails in the future).
+For the rest of 2021 i am funded by a research project where I need liboqs on avr32. I will certainly look into CMake and CI. I am open to maintaining what I added but time will tell what I can achieve.
+How important is the C11 requirement?
+Unfortunately the latest avr32-gcc (3.4.2 / 3.4.3) only supports up to C99.
+If delete the set(CMAKE_C_STANDARD_REQUIRED ON), the build process obviously fails with:
+How important is the C11 requirement?
+I'd say "rather relevant for reasonably portable code". But then again, if you have a(n old) compiler for an old architecture, what speaks against conditionally (upon compiler/architecture) setting cmake property C_STANDARD suitably (99 for avr32, 11 for everything else) or --less desirable-- switching off CMAKE_C_STANDARD_REQUIRED only for avr32?
+Yes, for now I am digging through the error messages while having CMAKE_C_STANDARD_REQUIRED=OFF. Turns out, there are many more problems.
+First there is the unsupported #pragmas
+which means, I would also have to wire more preprocessor directives into all these source files and not just the CMake scripts.
+And then the endless errors which really should not happen
+(meaning, something is really wrong with perhaps the included files..)
+I don't have a good sense of how far the present code is from being C99 compliant. I know that some code in liboqs does use alignment-related features (e.g., aligned_alloc) which I believe is new to C11, which would make it problematic to revert everything to C99.
+I know that some code in liboqs does use alignment-related features (e.g., aligned_alloc)
+Yes, I already had trouble with the alignment features.
+Simply replacing it with malloc did the trick of compiling without errors. However, I have not debugged this on actual hardware yet. I fear that I require deep knowledge of the algorithms usage of the target instruction set in order to decide if I can just replace it with malloc.
+Anyhow, I was just able to compile a minimal static library using kyber:
+cmake -GNinja -DCMAKE_TOOLCHAIN_FILE=../.CMake/toolchain_avr32.cmake -DOQS_DIST_BUILD=ON -DOQS_USE_OPENSSL=OFF -DCMAKE_BUILD_TYPE=Release -DOQS_BUILD_ONLY_LIB=ON -DOQS_MINIMAL_BUILD="OQS_ENABLE_KEM_kyber_512" ..
+Doing the same thing with OQS_ENABLE_KEM_sike_p751 yields many pointer conversion warnings
+Ultimately we decided not to build the full liboqs project for our avr32 target and just use kyber-512 from the pq-crystals/kyber project, which compiles right away for avr32-gcc.
+Thanks for letting us know. Please also let us know if/when you see a need for other algorithms on that platform.
+Follow up for the interested reader:
+Our work using kyber on AVR32 will be presented & published at the 2022 smallsat conference.
+For future projects in our group, we are looking at implementing other algorithms (e.g. Dilithium) and on more performant hardware (Xilinx Zynq 7000).
+Too bad you couldn't use liboqs b/o C11/aligned alloc. But then again, I'm not sure other algorithms would have been small/performant enough for your "space adventure". Thanks for letting us know, anyway: Cool stuff!

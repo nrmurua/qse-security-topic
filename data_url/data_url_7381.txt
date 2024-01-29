@@ -1,0 +1,43 @@
+Hey, what problem are you looking to benchmark/profile? I would be willing to help out, and am looking to profile v0.5 --> v0.6 changes anyways. I know there are a few regressions due to internally changing to broadcast and @. removing muladds, but OrdinaryDiffEq.jl should still be in very good shape (and all of the issues I've found have been traced to Base compiler optimizations suddenly missing... not much we can do there but wait...)
+Instead of taking on the full dependency, you can use the minimal dependency versions instead. If you make it so that way the user has to pass the algorithm to solve, you can directly depend on DiffEqBase only, which is a really low dep library (in fact, you already depend on it through ODE). If you want to set the algorithm, for example to DP5() or Tsit5(), you will need to depend on OrdinaryDiffEq.jl.
+Let me know what you need and I'd be willing to profile and PR.
+Hey Chris, thank you for offering your help! I saw that you already fixed a few things in the profiling directory, but I used this code only while I developed the corresponding functionality and most of it is terrible out of date. All the real benchmarking is currently done in https://github.com/qojulia/QuantumOptics.jl-benchmarks, and the results are displayed on our website (which is not completely up to date since we are doing some restructuring). Most functionality is pretty well covered, only the (stochastic) mcwf solver is missing.
+The dependence on the ODE package is also a little bit out of date and was mostly used to test that our own ode solver worked correctly.
+It's great to hear that there are versions that don't have as many dependencies as the complete DifferentialEquations.jl package. Transitioning the non-stochastic methods should be pretty much straight forward since the actual ode solver is only called at one single point in the code. The monte carlo solver will probably be a little bit more work but also shouldn't be too hard. My plan for the near future is to release version 0.4 in the next two weeks and immediately afterwards I will start working on this. As soon as I have first benchmark results I will share them here. Of course if anyone else is motivated to work on this please just go ahead - help is always welcome!
+the actual ode solver is only called at one single point in the code
+Can you point me to that spot?
+It's in src/timeevolution_base.jl line 20. (https://github.com/bastikr/QuantumOptics.jl/blob/master/src/timeevolution_base.jl#L20)
+Using test_dopri.jl, I did:
+and got for ode_dopri:
+and for Tsit5():
+then using @benchmark solve(prob,DP5(),dense=false), I get:
+so it looks like DP5() does well here.
+That's on v0.5.2. However, it looks like DiffEq has a very disgusting regression on v0.6:
+I'm going to take a look at that right now.
+Yes, the regression on Julia v0.6 is due to a problem in Base with broadcasting:
+JuliaLang/julia#22255 (comment)
+Avoiding broadcasting, Tsit5() gives on v0.6:
+while ode_dopri on the same computer on v0.6 gives:
+So yes, I would expect that, disregarding Base bugs which will be worked around, you'll get a small <2x speed boost of by changing.
+I started the transition to DifferentialEquations.jl in the branch https://github.com/bastikr/QuantumOptics.jl/tree/diffeq. The first benchmarks on more realistic examples already look very promising:
+
+(Green line DifferentialEquations.jl vs red line ode_dopri). The other examples yield similar results. However, they don't measure completely the same thing yet. At the moment I want to keep the same interface as before, which means I want to save output only at points in time specified in tspan. Also the output should not be stored in the solution object but should only call the _fout function. Is this somehow possible using the callback functionality?
+At the moment I want to keep the same interface as before, which means I want to save output only at points in time specified in tspan.
+For explicit saving, pass the values using saveat: sol = solve(prob,alg;saveat=ts). tspan is just start and end.
+Is this somehow possible using the callback functionality?
+Yes, just make the callback call _fout.
+Is it somehow possible to call the function only  at times that are given to saveat? The DiscreteCallback is called at every single ode step and I guess using ContinuousCallback would be less efficient.
+Is it somehow possible to call the function only at times that are given to saveat? The DiscreteCallback is called at every single ode step and I guess using ContinuousCallback would be less efficient.
+Yes, a DiscreteCallback is the tool for the job. You can take over the entire saving procedure. If you do condition(t,u,integrator) = true to make it apply every time, save_values = (false,false) to turn off the default saving, you take full control of the saving and call it directly by doing:
+With that, you're essentially doing exactly what OrdinaryDiffEq.jl is doing internally. In OrdinaryDiffEq.jl, this is implemented here:
+https://github.com/JuliaDiffEq/OrdinaryDiffEq.jl/blob/master/src/integrators/integrator_utils.jl#L71
+There are many many complications there that probably don't apply to your use-case, but the first part is how saveat is done:
+https://github.com/JuliaDiffEq/OrdinaryDiffEq.jl/blob/master/src/integrators/integrator_utils.jl#L72
+You can see that like what's done internally in Sundials, saveat points are skipped over and back-interpolated to (if you instead want to force hitting the timepoints, say because they are discontinuities, use tstops=ts instead). Instead of directly pushing the interpolated value:
+a function call can be put in there to modify save_val before it's saved.
+What's the interface for _fout? I can just do a general implementation for the callback in DiffEqCallbacks.jl which takes in an _fout and have it match what you're looking for. I actually have an open issue for that:
+SciML/DiffEqCallbacks.jl#4
+We have a callback for this now in the callback library.
+http://docs.juliadiffeq.org/latest/features/callback_library.html#SavingCallback-1
+If you add that to the solve call it will save the output of your save_func which above you call _fout. So let's revive this!
+Done with #191

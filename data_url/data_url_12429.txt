@@ -1,0 +1,45 @@
+Is there an option to use a Quantum channel in my network.
+Currently there isn't support for explicit channel placement in circuits in TFQ. There are two alternatives though:
+You could place errors into your circuits manually (in the form of gates) and simulate those batches of circuits on their own and average their outputs together.
+You can also do something like this:
+Here you can calculate expectation values from a noisy simulation, where noise is defined at the simulator level. In cirq.depolarize(p) you place a depolarization(p) channel after every gate in the circuit.
+Does that clear things up ?
+Thank you for your quick response, Michael! can you give an example or point to a resource for doing the first method. I am only familiar with simulating batches of circuits with the same structure but diff parameters.
+Sure thing. I will say that the first method does not allow for as rich a set of errors as the second method. Here's a simple problem where I might accidentally apply an x**0.5 before enacting my desired circuit of just X. This happens with probability 0.1:
+Going to close for now :)
+thank you! This was really helpful!
+How should I go about adding a PQC before/after this noise layer? I am trying to optimize an Error Correcting Code. Thanks in advance.
+These are really open ended question so I can't give you very specific answers:
+How should I go about adding a PQC before/after this noise layer ?
+I don't know what the specific problem you are trying to solve is but a PQC layer can accept any kind of cirq.Circuits that have been converted to a tf.Tensor using tfq.convert_to_tensor.
+I am trying to optimize an Error Correcting Code
+There are lots of different things one could "optimize" when it comes to error correcting codes. I would recommend reading the introductory tutorials (https://www.tensorflow.org/quantum/tutorials/hello_many_worlds) and getting a better feel for how TFQ might help you conduct your specific experiments.
+Also,
+Next time you comment on a closed issue, It's a good idea to re-open it so that other people watching this repo will get notified properly :).
+Are there any plans for incorporating this in the near future? :-)
+I'm also interested in this feature :)
+Here you can calculate expectation values from a noisy simulation, where noise is defined at the simulator level. In cirq.depolarize(p) you place a depolarization(p) channel after every gate in the circuit.
+You mean a depolarization(p) channel after every moments, right? @MichaelBroughton
+Hello, I also consider this a relevant feature, and I understand that you are correct @artix41 .
+I wonder if these layers, with the noisy backend, are meant to be used for training also. I'm finding them extremely slow and I wonder if anyone else has been doing similar stuff. As an example of what I mean:
+(compile model, etc.)
+Thanks a lot for this amazing piece of software :) !
+Matías.
+Looks like there is a substantial interest in adding support for these features. @matibilkis you're snippet is 100% correct and that is the intended way to use non standard simulators by specifying a backend=... argument. The problem is that non-standard backends don't go through fast C++ like our default simulator does. Perhaps it is time to invest some effort into making a fast C++ density matrix simulator as well. There would be a lot of needed changes depending on the degree of support we want to add, big areas that would need a look are:
+On the topic of workaround hacks to get noise in your simulations, up above I mentioned:
+It's just occurred to me now that there might be a third and fourth option, albeit they are a bit less faithful to reality than the ones above are. One might also consider:
+I know it's not perfect 1:1 with what happens on the circuit level, but I bet with some tuning it wouldn't be half bad :) . Plus it would also benefit from being able to use our fast C++ backend and things like adjoint differentiation (also very fast). This method also has a plus where if you are doing raw sampling, you can also work this in by just "mask flipping" some subset of the bit strings you get out.
+Again not a perfect 1:1 with what happens but also not half bad in terms of a proxy for what's happening with the benefit of being a bit quicker that non-standard backends doing density matrix simulation.
+I would add that placing errors in the gates randomly works quite well with the TFQ circuit batching feature.  If one has a channel represented as a probabilistic mixture over unitaries, then circuits can be sampled from this ensemble and run together in a single batch; averaging the outputs over the batch will yield an approximate application of the channel, and the number of samples can be tuned to get better accuracy.
+For simulating channels which cannot be represented as a probabilistic mixture over unitaries, there is the Stinespring dilation theorem, where we can use our existing fast C++ wavefunction simulator to emulate a density matrix by doing a pure state simulation on twice the qubits.
+@MichaelBroughton in terms of the library I would think channels amenable to probabilistic unitary decomposition could be best to add first, since it can fit on top of existing simulation infrastructure.
+Interesting, @zaqqwerty do you think would we be able to incorporate a good number of the channels provided here: https://github.com/quantumlib/Cirq/blob/master/cirq/ops/common_channels.py on existing qsim wavefunction simulators in both the analytical and sample based case by doubling the number of qubits ? Have you given this any thought ?
+Yes, I think we can use the pure state simulator in both cases with twice the qubits for all those channels.  I have a draft tutorial we can discuss which demonstrates how to do this with the existing TFQ infrastructure.
+Good news! We have found time to move forward on implementing noisy versions of our existing TFQ ops in a new tfq.noise module. This is mostly because our backend "qsim" has introduced support for noise simulation (so we no longer have to think about the best way to do it on our end). Here's a rough breakdown of how we plan to implement things:
+Implement serialization support for existing cirq channels. Workarounds in the serializer in the past have been done using things like: https://github.com/tensorflow/quantum/blob/master/tensorflow_quantum/core/serialize/serializer.py#L127
+Qsim introduced a new type called NoisyCircuit https://github.com/quantumlib/qsim/blob/master/lib/qtrajectory.h#L70 which doesn’t appear to be compatible with our existing qsim parse code so we will need an upgrade in support there.
+Next we will need to add error mechanisms (probably in the form of OP_REQUIRES_OK statements) to all existing ops indicating that they do not support noisy simulation and they should instead use the tfq.noise versions.
+Next we will need to create three new and independent ops. tfq.noise.expectation and tfq.noise.sampled_expectation will have identical signatures to tfq.sampled_expectation where the only functional change will be to explicitly use trajectory simulation. We can’t roll trajectory simulation into existing ops since that would create api friction in the noiseless case.
+Once these ops have been created we will need to incorporate their support into all tfq.differentiators via a modification to https://github.com/tensorflow/quantum/blob/master/tensorflow_quantum/python/differentiators/differentiator.py#L31 .  All differentiation methods should immediately port back to these new ops without issue, except for the adjoint state method. It’s fine if we don’t immediately support the adjoint state method since an implementation of the adjoint state method based around monte carlo trajectory simulation would be an incredibly complex task from an implementation standpoint.
+Finally we will need to implement support for these ops (where possible) into existing tfq.layers so that users can quickly switch between noisy and noiseless simulations.
+This should synergize very well with existing work here from you @zaqqwerty #454

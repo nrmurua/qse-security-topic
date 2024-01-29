@@ -1,0 +1,23 @@
+Now that I have discovered the magic of Futures, I am starting a second round of clean-up of AcquisitionModules, and I would like your opinion on a modification of the API: I am realizing that any curve acquisition actually involves asynchronicity:
+When running scope.curve(), it is not clear in advance when the function will return because a trigger might never occur, so this function needs (and already has) a timeout. In order not to duplicate the code everywhere, this needs to be handled by a Future that will implement the timeout in its method result(timeout=None).
+Since we decided to move everything that involves asynchronicity into the 'run' submodule, I guess it makes sense to also move the function "curve" in there. Also, I think we need to prevent the use of this function when the instrument is in running_single or running_continuous (otherwise we will never be sure that another call to setup hasn't occured in between).
+Basically, the following acquisition functions would have 2 versions:
+run.curve_async(): # returns a Future (and can be used as a coroutine in asyncio). No effect on the gui
+run.curve(): # blocks until curve is ready, raise an exception if running_state is in ["running_single", "running_continuous"]. (internally, a onliner useing the previous function). No effect on the gui.
+run.single_async(): # returns a Future (and can be used as a coroutine in asyncio). Updates the gui if open
+run.single() : # blocks until n-curves are ready and averaged (uses the previous function as well). Updates the gui if open.
+I thought at first that we could get rid of the curve() function (or at least make it private), since it is very close from calling single with avg=1, but maybe it is useful to have separate control over setup() and curve(), which is not the case in single() ?
+Also, I would like to move the code that prepares the scope for actual acquisition outside Scope.setup() because we want setup to be "higher-level" (basically it should set the setup attributes of the scope and the 'run' submodule): for instance now, calling setup(run=dict(running_state="running_continuous", rolling_mode=True)) fails because in the end, it sets the scope up for a curve acquisition after being initially setup for rolling_mode...).
+The function could be start_acquisition() or something like that (and would be public if we decide to keep curve in the API).
+I am waiting for your feedback!
+OK, so finally, I came to the following conclusion:
+I want to remove from the public API the current content of the function Scope._setup(). Basically, this will be moved towards a private function _setup_acquisition().
+From now on, the way to launch a triggered acquisition (a single curve) with the public API is to call:
+If the user doesn't care about the resulting curve (which is kind of weird), he simply needs to disregard the future... Moreover, as described above, it makes more sense to put this function in 'run' since this involves asynchronicity.
+Basically, the synchronous versions curve(timeout=None) and single(timeout=None) of the functions are just a thin wrapper around the asynchronous versions: for example:
+As such, I would maybe just put them in the 'run' object as well (but we can discuss to put them on the scope directly instead).
+--->  Basically, all the acquisition of the scope is delegated to the run object and is implemented internally with 2 futures: run._curve_future and run._single_future
+Ok, I have pushed the new version in a branch "refactor_register_future".
+For now, only the scope is implemented (but it seems fully functional without unittests yet).
+Using the futures makes the code much cleaner, but before I also implement the other instruments, I am starting to wonder if we don t want to go back to the previous situation where  all the acquisition functions were in the instrument rather than in instrument.run (ie getting rid of AqcquisitionManagers). Indeed, the idea behind run was to separate synchronous acquisition from asynchronous one, but basically, now everything is based on asynchronous methods. Moreover, the asynchronous code is fully encapsulated inside future objects (and not inside run anymore), such that the separation between instrument and run becomes very artificial...
+This issue is in an advanced state / basically implemented. We will gradually use more Futures as we re-implement various asynchronous behavior. This will become much simpler if we drop Python 2 support and only write in Python 3. This, however, requires advancing on other parts, such as the Curve Management system and gaining experience from our user base (as to how many people need python 2 support). For now, this issue is solved.

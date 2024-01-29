@@ -1,0 +1,26 @@
+ Issue by ahusain
+Thursday Mar 03, 2016 at 03:21 GMT
+Originally opened as https://github.com/msr-quarc/Liquid/issues/15
+The current Spin and Fermion classes are very limited, I was interested in applying my own Hamiltonian, perturbations, initial state, etc. Can someone post a short example how to use the Hamiltonian base class (of which there is very little documentation) and/or explain how to do this? I know you can effectively simulate this by using gates and time-stepping on your own, but I was hoping the class could take care of some of the bookkeeping for you.
+ Comment by dbwz8
+Friday Mar 04, 2016 at 18:44 GMT
+The class you want to use is Fermion (Hamiltonian has almost nothing in it, hence the lack of documentation). Unfortunately, Fermion is a really complex class (over  2500 lines of code plus support from other classes) and details of the internals are not publically available in this release.
+That being said, there are several things you can do. If you call the Fermion constructor directly (see the API docs for the second form), you can load any orbital integrals you desire and then the Ua property will contain a compiled version of your molecule (this already uses over a thousand lines of the code in the class). The result can be converted to a circuit via Circuit.Compile and then manipulated at the circuit level (doing whatever you like to it). This is just a normal circuit at this point and you can optimize it (GrowGates) and run it in a simulation (Circuit.Run). What you lose is all the "extra code" that comprises the run-time harness specific to Hamiltonian simulation (all the PE support and optimized single unitary manipulations). All of the rotations are already controlled, so it's easy to add your own Phase Estimation handling to it. This is equivalent to specifying 'g' described in "Quantum Chemistry Options" in the User's Manual.
+The normal flow (after construction) is to call the Build function which will take the previously defined Ua and build an optimized circuit that Run can operate on (all public methods). At this point there is no way for you to overwrite Ua so that Build/Run will use your version instead of the one automatically generated when you constructed the class.
+This is actually a choice we made since almost all changes you might make to Ua become illegal later in the simulation. The Fermion class assumes that all Hamiltonian terms preserve Fermion number and spin. So,  if you did something as simple as adding an X gate in the middle of a term (e.g., to simulate noise), the term no longer obeys these laws and both Build and Run will break. This is why it's better to just run the straight circuit simulation yourself after calling Fermion.
+ Comment by ahusain
+Friday Mar 04, 2016 at 20:12 GMT
+Thanks Dave,
+Is there an analogous method to do this for a purely Spin system? As far as I can tell, the Spin class doesn't have an analogous property to orbital integrals to do something like adding next-nearest neighbor terms.
+ Comment by dbwz8
+Friday Mar 04, 2016 at 23:50 GMT
+Actually, Spin is much simpler. The constructor already takes a list of SpinTerms which contain gate functions that you provide. Normally these are taken from HamiltonianGates, but you could define your own gates as desired. The actual simulation will automatically Trotterize and optimize the circuits., There is a multi-threaded factory that generates these circuits in parallel with execution so that you can run as fast as possible.
+ Comment by ahusain
+Sunday Mar 06, 2016 at 20:22 GMT
+So if I understand correctly, if you take the circuits created by Spin(or Fermionfor that matter), they are simply optimized matrix representations of U=exp(-i H t/hbar) for some fixed t? Or do they have more structure than just time evolution?
+ Comment by dbwz8
+Tuesday Mar 08, 2016 at 16:19 GMT
+t is still a parameter at that point. When you run a Spin Hamiltonian you provide a Trotter# and an annealing schedule. The max time and number of steps of the schedule along with the Trotterization determine what t is passed to the circuit.
+ Comment by ahusain
+Friday Mar 11, 2016 at 02:35 GMT
+That cleared things up, thanks!

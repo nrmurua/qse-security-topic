@@ -1,0 +1,34 @@
+For backends that are configurable with optimizations options, we would like to pass them in a dictionary of parameres that will be specified by the backend.
+@chriseclectic  will add some examples below.
+Until the official release of Aer, this would include the hpc parameter and measurement sampling.
+The code would be
+Tasks
+simulator settings options
+experiment_settings
+Renamed config settings
+An example of a config for the in development Aer statevector/qasm simulator would be along the lines of:
+Each backend in general will have its own optimisation settings, which could be specified in a dictionary or schema.
+Measurement sampling will be done automatically be any backend that supports it (which will be all Aer backends that support measurement while simulating without noise). The flag of whether a circuit allows measure sampling should be in the circuit config, not the backend config. You could add a backend config setting to disable measurement sampling if you wanted to for debugging reasons though.
+Thanks @chriseclectic - is there a schema already defined or mentioned in the specs? Also, how would the current hpc parameters fit in your example - does it make sense to just have them as top-level keys?
+I'm asking mostly to agree on the scope of the PR - if the schema is not set on stone and as this will be mostly handled by Aer properly, I think it would make sense to just not aim to include validation of the schema, etc at the moment.
+Also, @jaygambetta, expanding a bit your code sample taking into account our current architecture:
+backend_2 will have {'multi_shot_optimization': True, 'omp_num_threads': 12} as its config, as it is the same instance  as backend_1 (ie. currently both Aer and IBMQ store internally a list of instances of backends, and get_backend just returns the matching one instead of creating a new instance). Would that be acceptable behaviour?
+On another topic - can we try to play a bit with the names of the concepts? We currently have backend.configuration() (which relies on a configuration parameter passed to __init__), which seems rather close to config. Is there any chance we can avoid the similarity via renaming one of them to something else (parameters, settings, user_config, ...)?
+I don’t mind on naming. I think make that work with Chris.
+I think the case you bring up is a problem.
+@chriseclectic why can't we use
+@diego-plan9 yes its not set in stone, so  i think it makes sense to include the current ones as top level options like you say. I also agree the naming is a bit confusion: currently there would be the backend config, the qobj config set with execute/compile, and the backend configuration information itself.
+@jaygambetta while you could to add the ability to go backend.run(qobj, backend_config), i think it makes more sense to set it once with backend.set_config(config) and use that backend for multiple qobjs. It makes it more explicit that this is a property of the backend, not the qobj being executed. I imagine most of the time you would have a standard configuration based on your system hardware that you almost always want to use.
+Then when you make a new backend as @diego-plan9 gives you need to wipe the config so then it needs to have some internal state that holds the config. This is ok for local backends but for remote you need to send the message to set it up and that does not happen until you activate run.
+Each backend should have default settings for anything you can set in the config, so that if you don't set a customized one the default will be used.
+max_credit should be part of the ibmq configuration.
+The seed kwarg could also go here for simulators too.
+I think histogram should be here too. By default it is True, to limit the amount of data sent over the network. Setting it to False, the per-shot measurements ("memory") is returned (#1064).
+@chriseclectic can we stop saying seed and say
+and
+can we start adding to the original as bullets above what fields should go there as we agree with them?
+but really @diego-plan9 we need to discuss the architecture not what should be there. Can we get back to the flow.
+I see the config as a something very much tied to the experiment we want the backend to execute. Isn't it? For example, if we are just running one shot because we only want the statevector at some point with qc.snapshot(), maybe my threading setup is totally different than an experiment that may need many shots. My optimization settings, and noise parameters may change as well depending on the type of experiment I want to run, so having
+... could make a lot of sense because it's explicitly saying: "run this circuit with this config".
+with #1379 we have decided it will be the second case.
+Closed via #1379

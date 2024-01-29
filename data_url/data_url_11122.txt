@@ -1,0 +1,37 @@
+In __iadd__ and __isub__, it tests abs(val) < EQ_TOLERANCE,  yet in __eq__, the comparison is <=.
+In compress, it uses <=, and even worse, it can eliminate complex values whose absolute value is > EQ_TOLERANCE, because of the previous checks to see if the real and imaginary parts separately are <= the tolerance (Imagine the tolerance is 1.0, and the real and imaginary parts are both 1.0, the absolute value is 1.4..., but the value gets deleted anyway!)
+many_body_order also has the same inconsistency.
+The documentation for __eq__ implies that the tests should all be < EQ_TOLERANCE:
+Hi all,
+My apologies for commenting this issue. I've also been having some odd behaviour when playing around with EQ_TOLERANCE.
+Regardless of the value I fix this value to, whenever I create a Fermion or QubitOperator with a coefficient smaller than 1e-8 the operator is not printing. However, if I save this object and I print the terms, they do appear.
+The same happens if I leave the EQ_TOLERANCE to the default value 1e-8, I can create operators with lower coefficient but they do not print.
+Is this behaviour expected?
+A follow up question: are the terms with coefficients smaller than 1e-8 accounted for when operating with the operators?
+Again, sorry for asking in this issue, instead of opening a new one.
+Best,
+Xavi
+@ScottPJones I agree that we should consistently use < or <=, but I doubt that it matters in practice. With regards to whether for complex values we should check the absolute value or the real and imaginary parts separately, I don't see a problem with the latter. It's really a matter of convention, and I also don't think it matters in practice.
+@xabomon The behavior you are seeing is due to the fact that the __str__ method of SymbolicOperator explicitly ignores small coefficients, and it does this using np.isclose, whose default atol parameter is 1e-8:
+
+Hi @kevinsung ,
+your comment answers basically all my questions, thank you.
+In my view, having EQ_TOLERANCE and use it to fix atol is a much better option. In this way the user has the option to set the threshold in one part of the code only that will apply to the rest of the package.
+Best,
+Xavi
+@kevinsung Part of the issue is also performance - calculating abs() on a complex number involves doing sqrt(r2 + i2).   If the square of EQ_TOLERANCE is calculated once, then you can simply check if
+r2 + i2 < EQ_TOLERANCE_SQRD.  Also, it's checking 3 conditions, and the code could be simplified.
+In pseudocode:
+rsq = r2
+isq = i2
+if rsq >= EQ_TOLERANCE_SQRD
+if isq < EQ_TOLERANCE_SQRD (set i to zero)
+elseif isq >= EQ_TOLERANCE_SQRD
+(set r to zero)
+elseif rsq + isq < EQ_TOLERANCE_SQRD
+(delete element)
+end
+I'm skeptical that your proposal would be faster, since it always performs an addition, whereas the current code avoids the addition when operating on a real number. In any case, I doubt any speedup would be significant enough to warrant the reduction in readability.
+The addition only happens if both the real and imaginary parts are < the tolerance.
+The current code always has 3 calls to abs() and 3 comparison/branches, where the 3rd abs()
+is very expensive when operating on a complex number.

@@ -1,0 +1,49 @@
+When doing my numerical simulations, I get the following result:
+
+This looks more like an experimental result than a theoretical one (When I ran this simulation without the instrument server and dataserver, the result was fine)
+The code I used to run the loop was
+loop = qc.Loop(simulation.gate[-0.3:0.3:0.01], 0.01).loop(simulation.ldos_omega[-0.8:0.8:0.01], 0.01).each(simulation.ldos) data = loop.run()
+It worries me a lot that qcodes does not accurately reflects the data produced by the measurement/simulation,
+looking at the datafile itself, It can be seen that the same values are put in the output over and over again.
+This behavior is reproducible and is sometimes combined with the following  but note however that an error is not always generated and it is possible to only get a result like the plot I showed above without error:
+To clarify more on this issue and hoping for a fast resolution of this issue I will post some about this. I am worrying that in experimental setups you might not resolve this behavior because it might be attributed to experimental noise/weirdness. Maybe more of you guys are experiencing this without even knowing it.
+The good
+When I run the simulation with:
+I can plot the data afterwards and get the result:
+
+which looks like it should look like,
+The bad
+when I run the code however with
+I get the result that I posted above. (repeated here)
+
+Always the distorted figure, sometimes the error as well.
+The distortion is not deterministic however, it will always look a little different.
+I would like to ask the people now using "loops", can you check your data to see if you also get behavior like this (a small strip of values that are exactly the same)?
+And @alexcjohnson , can you tell me what you would like from me to resolve this issue as fast and efficiently as possible?
+EDIT: added figure from previous post
+@damazter this looks really bad, and it concerns me.
+We have noted in differend places here that for instance the background=False does funny things.
+If you only remove that one, how does your simulation look then?
+@MerlinSmiles
+curiously enough, the background=False is the case that everything works as expected. When I remove this option, my liveplotting doesn't work because there is no dataserver working in this case.
+The result is also not written to the file, so I am afraid that it is not possible for me to test this in any way.
+(I would have to file two issues for this as well, but I think this issue has to be resolved first)
+Ahh, i see, i hear alex is working on it...
+@damazter yikes! I did see something like this - intermittently getting some repeated data, though in that case never more than one erroneous point at a time - quite a while ago in the example notebook and never figured out what it was. I hadn't seen it for some time so I thought I must have fixed it inadvertently. Fat chance!
+Any chance you have some self-contained code I could use to reproduce this?
+Just to be clear on what you're seeing: it appears that the measurements sometimes get associated with later setpoints than they should. I'm guessing this has to do with commands getting put into queues out of order, perhaps because ask (get) commands (to any of our server processes) wait for a response but write (set) commands do not. I've been running through a bunch of hypotheses about how this could happen and may have some thoughts on how a single point could get repeated, but an explanation for a long string like this still eludes me...
+I am afraid that I don't have a real self contained code.
+I am suspecting that my simulation is slower than qcodes wants it to be. It feels like the loop skips a few beats. Hence a string of values don't get simulated but only the last one of them is and this value is then used for the entire (preceding) string.
+I will try to give you access to my development repo for this code, then it would be possible to just run the code. But a real self-contained example would be better, I think So let me give that a try first.
+Now I come to think of it: if write commands do not wait for a response, is it possible in any way that qcodes continues with setting values while the simulation is running? So while the ask is going on, the next writes are already executed?
+Would it be possible to remove the write command and replace them by asks (which seems to be more controlled I think)(maybe This could be tested in a separate branch, then I can test that branch with my code, @alexcjohnson what do you think?)
+Now I come to think of it: if write commands do not wait for a response, is it possible in any way that qcodes continues with setting values while the simulation is running? So while the ask is going on, the next writes are already executed?
+That's certainly what it looks like, I just don't see how that could be happening.
+Would it be possible to remove the write command and replace them by asks (which seems to be more controlled I think)(maybe This could be tested in a separate branch, then I can test that branch with my code, @alexcjohnson what do you think)
+Yes, I'm thinking this would be a good idea anyway - for instance if a set has a built-in ramp or other delay, we want to wait for it to finish before we attempt to acquire data at the new setpoint. There's really only one place where I really want write to not wait for a response from the server, and that's when pushing data to the DataServer, so when it decides to write to disk or something it doesn't stop more data from coming in. I'll give it a shot.
+I got a self contained example:
+instrument driver:
+notebook code:
+using "restart kernel and run all" gives me:
+
+wow, ok - looks fine on mac, but I see the problem on PC. Investigating...

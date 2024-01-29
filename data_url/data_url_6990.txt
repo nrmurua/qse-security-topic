@@ -1,0 +1,17 @@
+For some reason, the redos (and undos) take priority over the redrawing.
+Okay, I think I've figured out what's happening.
+The redraw cooldown is set at 16ms (60fps), to avoid draws getting in the way of state update (since circuit edits are faster than circuit calc/draws). That way, when edits are coming in faster than 60 per second, the draws don't hold them up.
+Note that the 16ms is the time from the end of one draw to the start of the next (since otherwise it would trivially always be satisfied).
+Okay, now suppose that the time to do a circuit got near 16ms. Then by the time the edit was done, and redrawing was triggered, the cooldown would have expired. And a redraw would delay the next edit for say 100ms. So suddenly every edit is taking 116 ms instead of the 58ms you get when under the limit. User events come in faster than that, things pile up, everyone loses. The difference between under-16ms and over-16ms is a factor of 2 in throughput.
+There's a few ways I could deal with this.
+Optimize edits so it takes less than 16ms to apply them even for big circuits.
+This is probably a decent idea, since there's not a ton of optimization in the UI code. Probably a lot of easy wins that save a factor of 2.
+Raise the draw cooldown.
+This makes big circuits perform better at the cost of small circuits being less smooth.
+Buffer inputs, always run down the queue.
+Buffering can be done super fast, and since we don't give control back to the browser it won't be able to interject with an animation frame while we do our work. The cooldown will expire, but the redraw will wait for us. We could also merge redundant edits (e.g. a move followed by a move).
+Another advantage of buffering is, in an emergency situation where the buffer is exploding, we can just dump the inputs.
+Hold the cooldown while editing.
+This would probably cause a lot of jitter, where if events come in fast then the cooldown decreases too slowly.
+At the moment I think optimizing edits and buffering are the right approaches.
+Fixed by the optimizations and throttle-cooldown-padding introduced by #244

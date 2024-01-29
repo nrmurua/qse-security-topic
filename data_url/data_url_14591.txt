@@ -1,0 +1,23 @@
+I don't have much experience with Github, I hope this is the right place.
+A Toffoli gate, or a double-controlled NOT, or a CCXGate, is its own inverse. However, its standard decomposition into CX and single unitary gates in the Qiskit library is not itself symmetric. Qiskit recognizes that the CCX gate is its own inverse, that is, applying the .inverse() method to a circuit containing a single CCX returns back the same circuit. However, if two Toffoli gates are applied to the same qubits back-to-back, the simple transpiler pass with optimization_level=3 or any lower will first decompose the gates, and then attempt to optimize the circuit and it will fail to recognize the circuit does nothing, i.e. implements an identity operation.
+If we have a look at the decomposition of the Toffoli gate:
+
+We can see that there are 2 CNOTs and 3 single qubit rotations at the end that do not involve the target qubit.
+If we use the following code:
+That generates the following circuit:
+
+We can see by inspection that nothing is happening to the first two qubits between the two Toffolis and the third qubit only acts as a control. If the second Toffoli is decomposed into the inverse of its standard decomposition, the standard transpiler will cancel the 5 operations mentioned above and produce the following result:
+
+However, if that is not done, the transpiler won't understand the need to do it by itself and produce the following circuit:
+
+Those two circuits are identical in their effect, but the first one uses 8 CNOTs and 8 T-gates, and the second one uses 12 CNOTs and 14 T-gates. Also, the second one requires the underlying layout to have a connection between qubits 1 and 2, while the first one does not.
+This sort of building blocks appear mostly in context of the Grover-like algorithms, oracles, quantum adders, or construction of multiply controlled gates using ancilliary qubits, such as the one described in Nielsen & Chuang, fig. 4.10:
+
+Currently, this can be forced by creating the "forward-computing" circuit with a cascade of CCX gate, transpiling it, inverting it, and then appending the whole inverted circuit at the end. If the inverse is done first, the result will be different though.
+What is more, if we have a look at the current decomposition of a CCCX (an MCX gate with 3 controls) it looks like this:
+
+We can see that the gates that do not interact with the target qubit (and only "fix" the control qubits) are applied first and in the implementation of the CCX gate they are applied last. This means that if I construct a similar circuit using one CCCX gate, something acting only on the target qubit, and then uncompute, or apply the CCCX again, the "fixing" gates will not cancel. However, to make them cancel I need to decompose the first gate into the inverse of the standard decomposition, and the second one into the standard decomposition.
+This means that if I construct a large network of multiply controlled gates and then attempt to construct their inverse, transpiling/unrolling first and then inverting will not do the job, as the CCX and CCCX gates are treated differently.
+I appreciate that making the circuit composer/transpiler/unroller understand that a sequence of 15 operations is a Toffoli gate and can be run backwards for the same effect is difficult. Therefore, I think there should be a pass that can be run before these 3 or more qubit gates are decomposed, that will recognize that using the inverse decomposition is advantageous and "mark" the gates in an appropriate manner, so that in the next pass they are unrolled in a different way. Alternatively, the transpiler might just be aware that different, symmetric and equivalent decompositions exist and just try all of them at a higher optimization level until something hopefully cancels.
+If implementing this is also too difficult, maybe it will be worth adding some sort of label to the CCX gate that a user can utilize to force the decomposition into the inverse, but the CCX gate is still drawn as a single gate in the circuit. Of course this can be done by just defining a custom gate, but it's annoying.
+At the very least, consistent decompositions of MCX gates that will keep the gates only interacting with the control qubits either on the right or the left of the circuit will go a long way,

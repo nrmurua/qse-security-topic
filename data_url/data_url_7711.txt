@@ -1,0 +1,23 @@
+Hi Johnnie,
+I was trying a TN contraction flow for an MPS tensor network for a simple QFT circuit. Here is the flow and the sample code:
+tncirc = qtn.CircuitMPS(nqubits, psi0=psi0) gate_opt["method"] = 'svd' gate_opt["cutoff"] = 1e-6 tncirc.apply_gate(gate_name, *gate_parameters, *gate_qubits, parametrize=True,**gate_opt) tncirc.to_dense().flatten()
+There were some minor issue I encountered during this flow. In tensor_network_gate_inds function of tensor_core.py file, the condition elif contract and ng > 1: is always true for 2-qubit gates and hence, raises an exception. After I got past that, the function qr_stabilized_numba in decomp.py needs to pass the parameter twice to sgn_numba as the return value of this function is a lambda. Can these changes be added in the new/upcoming release?
+Not sure if I've missed anything. I was also trying to scale the number of qubits to check the point at which lowering the MPS cut off would reduce the memory usage as some low-precision values are ignored. Please let me know your thoughts on this and if there is a way to accelerate the computations using a GPU. Thanks.
+-Nitin.
+Hi @nitinshivaraman, as I understand, but maybe you could clarify things a bit, the issues are from using parametrize=True with the MPS circuit method. Is your overall aim to optimize parameters or just simulate with an MPS? If you aren't planning on optimizing the parameters, you can just turn parametrize=False.
+For GPU support, you would currently need to create the MPS and gates, convert them to a gpu backend, and then handle applying them outside of the Circuit context.
+Thanks for the quick response Johnnie! The parametrize=False fixed part of the issue. As for the qr_stabilized_numba here is the code:
+def qr_stabilized_numba(x):   Q, R = np.linalg.qr(x)   for i in range(R.shape[0]):   rii = R[i, i]   si = sgn_numba(rii)   ....... 
+In the above code, the line si = sgn_numba(rii) had to be changed to si = sgn_numba(rii)(rii) as the function sgn_numba returns a lambda to use rather than the output of lambda with rii as shown:
+def sgn_numba(x):   from numba import types   if hasattr(x, "dtype"):   dtype = x.dtype   else:   dtype = x   if isinstance(dtype, types.Complex):   return lambda x: x / (np.abs(x) + (x == 0.0))   else:   return lambda x: np.sign(x) + (x == 0.0)   
+I was wondering if this change could be included in the next release or update.
+For the GPU support, does handling them outside of Circuit context mean that each of the gates and the MPS circuits have to be converted to equivalent tensors and solve the tensors? If there is an example that I can refer to, it will be of great help.
+Thanks a ton!
+-Nitin.
+I think you probably just need to update quimb! That bit of the code currently looks like:
+
+Regarding GPU, I'm afraid there is not currently an example. But you can look into using:
+Thanks a lot! I realized I was on 1.4.0 while the latest one (1.6.0) had all the necessary changes. One last question:
+Is there a native support for multi-node multi-GPU in Quimb? If yes, could you please direct me to an example. If not, can the above method of converting the gates and MPS into raw arrays work on Multi-node, multi-GPU?
+Thanks for the help!
+I’m not aware of any plug and play style multi gpu general array libraries (I.e. numpy style high level interface libraries) that quimb can use. And it also doesn’t implement multi gpu stuff itself, so for the moment I’m afraid not!

@@ -1,0 +1,50 @@
+In presenting Qcodes to Matthias and colleagues, they felt it could be even more readable to others with a few enhancements.
+His complaints:
+So lets say I have this Loop:
+If I make these changes, it would look like:
+In general I think he's right, though I'm not sure if we can actually convince people to use these if they aren't strictly necessary, except Set, which would be trivial to implement and seems like a nice simplification. delay= you can already do, and Measure would basically be a noop (other than potentially doing a little error checking).
+We also talked about how to build up pulse sequences out of pre-calibrated quantum gate operations. I proposed something like this, but I'm not sure if it's the best solution:
+simple repetition to gather statistics: these qgate objects would have to contribute to setting up the AWG pulse sequence at the very beginning of .run() but then would do nothing during the repetitions (other than I guess collectively triggering the pulse prior to the measurement, but perhaps Measure(sensor) would do that by itself.)
+Now for something a bit more interesting: sweep some parameter(s) of the sequences, parameters which may get used multiple times within the sequence. This would have to set up and load into the AWG a whole array of pulse sequences, and then as you go through the loop you activate the right one prior to each measurement.
+It would of course already be possible to make a regular Parameter that sets up the whole pulse sequence with some variables you can sweep - but it seems like a syntax like this could be much more flexible and expressive. Any other ideas about how to make this easy? The syntax above would take a little work but I think it would be OK.
+Then the next step would be inserting measurements (and responses to those measurements) in the middle of the sequence... which I don't want to design right now but we should keep it in mind for future flexibility.
+After thinking a bit about this, I would propose the following structure:
+I feel that measuring and setting parameters are an intrinsic property of the parameter in question, and therefore I feel that the callables that enter the "loop" function must reflect this.
+Hence I would propose that the "parameter" class that is the superclass of all parameters in qcodes gets functions like (please ignore my naming conventions)
+Such that the loop in the example would change to
+I do recognize that the names "get_function" and "set_function" might be confusing, but I think the general grammatical structure of this would work if they would be given a proper name
+@damazter My concern is that it's adding more requirements to a parameter - as opposed to a Parameter. As it stands, you don't need to use the Parameter class at all, you just need a set or a get, a name and a label for organization and plotting, and unless it has more complex return values, that's it. Syntax like Set(c2, 5) and c2.set_function(5) both require the user to learn some extra syntax that wraps c2.set, but the former does so without increasing the surface area of parameter objects.
+get_function has the additional problem that we use more than just the get method for measured parameters - name, label, and others for complex return values. I notice that you actually can get this from .get - see object.method.__self__ - so in principle we could put param.get or param.get_function() - but this seems a bit hacky and implicit.
+Also it occurs to me that wrapping a parameter in Measure() (or perhaps Get() for symmetry?) would allow the user to override name and label, which could be really nice:
+His complaints:
+So lets say I have this Loop:
+[...]
+If I make these changes, it would look like:
+In general I think he's right, though I'm not sure if we can actually convince people to use these if they aren't strictly necessary, except Set, which would be trivial to implement and seems like a nice simplification. delay= you can already do, and Measure would basically be a noop (other than potentially doing a little error checking).
+I like the improvements for explicitness.
+However what is the fundamental difference between "Measure" and "Get"?
+I think it is good to keep the amount of concepts simple, a parameter has a get and/or a set. Using it in a loop we can use Get and Set.
+I am not sure about the label overwriting option. I like it for convenience but I think it promotes bad style, if you need to rename your parameters you have chosen a bad parameter name in the first place. I would much rather have a way to automatically add extra information to it (e.g. this is the frequency of what instrument) or manually add meta-data to a label.
+In my opinion this does not change the quantity that is being varied, it only adds information about the context.
+However what is the fundamental difference between "Measure" and "Get"?
+@damazter and I had some followup discussions with Matthias about this, I think we're all in agreement on Get 👍
+I am not sure about the label overwriting option. I like it for convenience but I think it promotes bad style, if you need to rename your parameters you have chosen a bad parameter name in the first place. I would much rather have a way to automatically add extra information to it (e.g. this is the frequency of what instrument) or manually add meta-data to a label.
+In my opinion this does not change the quantity that is being varied, it only adds information about the context.
+That's a good point, the label at least is really a different kind of information, and anyway it would be more efficient and robust to put only the new info rather than having to rewrite the whole label.
+I should point out that when you create a DataSet, the DataArrays in it take their names and labels from the parameters that made them, but:
+This latter point is pretty annoying for working with the data later, as it makes some rather arbitrary (unless you spend a long time figuring it out) names that you have to use to reference the data, whether for plotting or analysis. I suppose we could do something smarter and more intuitive to users, like find all the 'cond' arrays and number them from 0 (or 1?) in the order they were specified in the Loop constructor, rather than based on their action indices directly... but it may also be nice to just let users provide their own names, or at least suffixes to names, to avoid these meaningless disambiguation numbers.
+We also talked about how to build up pulse sequences out of pre-calibrated quantum gate operations. I proposed something like this, but I'm not sure if it's the best solution:
+simple repetition to gather statistics: these qgate objects would have to contribute to setting up the AWG pulse sequence at the very beginning of .run()
+I like the idea and syntax, I think that eventually this is the sort of abstraction we might want to strive for. However my experience with making sequencers for different types of hardware in combination with ever changing ideas on how to control the setup make developing a custom syntax for this a bit hard. I think at this point we would only want to be able to execute custom code in a prepare function (that could be linked to a paramter) and that can be executed before entering the iterations of the loop.
+In the end what we (in Delft) call a 'hardware' controlled measurement is nothing more than a bunch of prepare statement and a Get function that returns arrays instead of single values.
+I should point out that when you create a DataSet, the DataArrays in it take their names and labels from the parameters that made them, but:
+I think that being able to handle them when the objects no longer is essential so I very much approve of this. As with respect to the second issue, I think this can be very easily solved by adding the Instrument the parameter belongs to to the label. Within an instrument parameter names must be unique, all instruments that live in your namespace must also have a unique name (right?). Therefore, this would solve any double naming (e.g. frequency) of paramters in datasets.
+The other case would be a paramter that is not tied to an instrument at all. I would argue that that should also have a unique name (and otherwise you (the user) should fix that.
+I think that this addition to labels could even be automated/default, what do you guys think?
+I think this can be very easily solved by adding the Instrument the parameter belongs to to the label
+No, notice what I was doing in that measurement: measuring the SAME parameter but in two different conditions of some other parameter(s). A related thing you could imagine doing is measuring the same parameter along two different inner sweep axes, say conductance vs B and Vgate at zero bias, alongside conductance vs B and Vsd at some particular Vgate.
+Ah I see your issue, I think this is not something that should in general be solved by adding extra things to the label.
+We have the same issue of course. We solve this by always saving the values of every single paramter at the start of a measurement/Loop. This way it is always possible to extract the exact conditions of the experiment.
+It might still be convenient to add something to the axislabel for the live-plotting (such as .. at paremeter V_sd-val "y").
+I think that it does not make sense to modify the base parameter name (or label) in the datafile for that purpose, adding some custom "label_prefix" or "label_suffix" would be better IMO (though I think we should settle on either one of those)
+Decided not to implement proposed changes

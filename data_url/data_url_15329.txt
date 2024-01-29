@@ -1,0 +1,15 @@
+Transpiling larger circuits at optimization levels >= 1 has a ~500ms per optimization loop overhead from the BasisTranslator, even when the circuit is already in the target basis. It seems like there's an early exit condition we're might be missing somewhere. (I had thought there was a similar PR sometime in the past, but I'm failing to find it now.)
+We should investigate if the runtime in BasisTranslator can be reduced, since it seems like this can be a ~constant time check (in the size of the circuit) if the BasisTranslator doesn't have any changes to make.
+No response
+There are 3q unitaries in your circuit, so the BasisTranslator is definitely having to do some work there.
+To be less terse: I threw a breakpoint in the middle of the translator, and by the time we were hitting it (after Unroll3q and UnrollCustomDefinitions), the source basis the translator needed to modify is:
+(compared to a target basis {'cx', 'x', 'sx', 'rz'})
+I think #6940 is the PR you were thinking of. I can take a look at reviving it since it should be an O(1)  lookup to check if the dag is in the global basis list case. For Target based compilation it will be O(n) (where n is number of instructions) since it needs to check that every instruction's qargs are available on the device.
+Besides #6940 the other thought we probably want to update the EquivalenceLibrary to build the equivalence graph internally instead of on demand in the pass. This is low hanging fruit and should reduce the overhead of the basis translator when running it without any transformations being needed.
+I reran your recreate script with #6940 applied and the output log was:
+The GatesInBasis pass is taking ~0.02 sec and the basis translator is skipped.
+Switching to the backendV2 SydneyV2 gates in basis is signficantly slower as expected (because it needs to verify each individual instruction to test the full Target is satisfied). But it is still faster than the 500ms for basis translator (although I don't know how my local times for an empty basis translator compare):
+Are we considering this fixed by #6940?
+(Also, in my above comment, I see now that I'd just looked at the first pass, not the instances in the optimisation loop, so I was just chatting nonsense.)
+I think we can, but it'd be good to confirm with @kdk that his performance issue is addressed. I still want to try and reduce the overhead of BasisTranslator and EquivalenceLibrary in cases where there is no transformation to perform but we can do that in more targeted issues.
+Thanks @mtreinish and @jakelishman , checked that this was resolved by #6940 so I think we're good to close this.

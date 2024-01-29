@@ -1,0 +1,23 @@
+Hi all- I am rebuilding CP2K on Summit after our OS upgrade. In August, I had a well running build using git:678222b. Now during the build, I error out with Error: Unused variable 'p_work_tmp' declared at (1) [-Werror=unused-variable] but can build if I remove that flag from the arch files. However, even with a totally serial, no GPU test I get rapid NaNs and infinity for all regtests I have tried. When I check out that previous commit, everything is fine and the tests pass.
+Details:
+GCC: I  tried 9, 10, and 7. I used 7 for the one that worked with git:678222b
+CUDA: 11.0.3
+FFTW: I used both system and local build through the toolchain. The final build that works used system
+Openblas: Tried 0.3.5 (this one is built with no threading) from system, local build with toolchain, final working build used openblas/0.3.17-omp (with threads) which is the default system version
+I used no other libraries, built with no packages except DBCSR
+Scalapack and lapack are the netlib refs
+It seems to me that it's not an issue with the libraries on Summit, based on the fact that 678222b is fine.
+arch file is this (with the -Werror=unused-variable flag removed from WFLAGS for the current version)
+It looks like PR #1798 should fix this issue (included in the latest release, i.e. CP2K 9.1)
+Just got a chance to try the new version. NaNs continue:
+arch file:
+modules:
+essl/6.3.0 gcc/9.1.0 cuda/11.0.3 fftw/3.3.9 netlib-lapack/3.9.1 netlib-scalapack/2.1.0 python/3.8-anaconda3
+Same behavior with reference netlib only for all blas.
+Ok, so it seems this doesn't happen with gcc 7.5 on our system. But something about gcc 9 is causing it. So far all tests I have run have passed with the gcc 7.5/essl/cuda build. Gromacs and Amber seem to run fine on our systems with gcc 9 and cuda  10 or 11 and the same fftw, so I'm thinking it's not our libraries/compiler.
+You can see in N2_t01.inp where the SCF values don't seem to move at all:
+then this happens:
+I let this run for 200 SCF steps and it stays locked on one value.
+@asedova, is this issue still present or can we close it?
+@oschuett it seems to still be an issue, but I need to rebuild with the latest version to double check. However, I am wondering if this is related to a very similar issue happening on our AMD GPU test systems and on NERSC Perlmutter (NVIDIA A100s)-- same input test (H2O-curvy-prop.inp). I'm getting segfaults when using about 8 threads with the GPU version of DBCSR on Perlmutter. I just tried it last week but with v 9.1.0 release. On Spock, I was using @mtaillefumier 's build after having a lot of trouble with segfaults with DBCSR-GPU, and I also got segfaults with his build, but now I realize I was testing with 8 threads there too. Last week I realized that the segfaults stop on Perlmutter when I use 1 thread, and it made me realize this may be something that goes beyond the new AMD GPU versions.
+I'm sorry you're still getting NaNs. Unfortunately, I don't think there is much we can do until you have narrowed down the source. So, I'm going to  close this issue for now. Feel free to reopen when you have new insights.

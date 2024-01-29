@@ -1,0 +1,29 @@
+I would like to have/add the possibility to take longer traces with the scope module, i.e. reduce the sampling time.
+I have found the definitions of the available durations in "pyrpl/hardware_modules/scope.py" line 310. Changing this to (e.g.)
+add the possibilities of selecting 17.17(...) and 34.35(...) seconds, but gives the following error messages printed to the terminal:
+Acquiring single traces works in triggered mode, while the rolling mode flashes and fails to display data for longer than a fraction of a second.
+I have tried digging backwards through the code to the definitions in 'attributes.py', but I have not been able to find what further changes must be done for the change to work without throwing errors (if possible at all).
+// Christoffer
+I hope this is the right way of suggesting improvements.
+Thanks for the wonderful software.
+Hi,
+thanks for your suggestion.
+I would like to have/add the possibility to take longer traces with the scope module, i.e. reduce the sampling time.
+I assume you mean increase the sampling time?
+The way you did that is correct, but the Python client (whose behaviour you have modified) does not find a corresponding setting in the FPGA register to go along with that sampling time.
+The scope works the following way:
+With a clock rate of 125 MHz (=sampling time of 8ns), all 16k points take 8ns*16384=131072ns=0.1ms (=minimum option for trace duration).
+To get longer trace durations than 0.1ms, two things can be done:
+Wait a prefined number of cycles between inserting the next value into the scope buffer. This is done if Scope.average=False, with Scope. decimation being the number of 8ns-clock cycles per value in the buffer. Scope. decimation must be a power of 2 for implementation reasons, and is currently at most 2^16. This gives a maximum duration of 2^16*131072 ns = 8589934592 ns = 8.6 s. The sampling time here is already 0.5 ms (!).
+If Scope.average=True, instead of taking a single sample of the input as the next scope value, the average of all input values since the last value was written to the scope buffer is taken. To get the average, the sum of input values is accumulated and eventually right-shifted by log_2(Scope.decimation), the latter being equivalent to the division by Scope.decimation. The recource-efficient right-shift is the reason why Scope.decimation must be a power of 2.
+Now to your request: You must simply modify the Verilog source code of the scope to allow for longer sampling times, and recompile it in Vivado to a new fpga bitfile. See http://pyrpl.readthedocs.io/en/latest/developer_guide/fpga_compilation.html for help on setting up the process.
+The necessary modifications must be done - along with the Python code mods that you have already done - in the file https://github.com/lneuhaus/pyrpl/blob/master/pyrpl/fpga/rtl/red_pitaya_scope.v
+Ill can submit a modified branch to show you how this must be done in case you tell me that you are unable to figure this out by yourself (its about 15min work for me, so gauge your request by how much time you loose/how much you learn from this).
+Cheers
+Thanks for the (swift) reply, and sorry for the long latency on my part. I have been rather busy.
+I have tried investigating the source code for the FPGA bitfile, but I must say that I cannot make a lot of sense of it; it simply goes above my head. If your offer of making a modified branch still stands I would appreciate it.
+Apart from this I think I am missing some fundamental thing related to the rolling mode of the scope. Here the data is read from the scope before the full duration is done. Once the data is on the PC, can the python program not be modified to simply keep e.g. 2/4/8/16 times the normal trace length, without changing the fundamental sampling etc? I mean, once the data has been transferred to the PC there is no fundamental reason to throw the data away just because the duration is longer langer than the time it takes to fill the buffer on the red pitaya?
+Okay, that sounds promising. Do I understand correctly that this will only require modification of the python code? There at least I will have a finite chance of figuring out what is going on.
+I can definitely wait. I'll also be happy to try and cook something up myself, though in that case I'd appreciate a couple of pointers of how you would prefer the implementation, specifically:
+If you think that it's just as easy/easier for you to just do it yourself in 3 weeks I won't use my time on it; just let me know.
+Another, but somewhat related question: I have no idea what how much work this is, but given that we/you make an implementation of this, what is the chance that it will make its way into a new version of the binaries before mid-April? I'm asking because we are considering using pyrpl for an undergraduate course, where we need the long acquisition time, but having the students do custom installs are quite a bit outside the scope of what we can hope to achieve. If it's a lot of work, then I'll just live with the fact that I'll have to patch a couple of computers myself.

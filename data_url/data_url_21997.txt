@@ -1,0 +1,21 @@
+http://buildbot.m-labs.hk/builders/artiq-win64-test/builds/670/steps/python_coverage/logs/stdio
+Also on linux
+http://buildbot.m-labs.hk/builders/artiq/builds/1904/steps/python_coverage_1/logs/stdio
+@sbourdeauducq rtio_counter transfer not working ccorrectly?
+Did you also see test_host_to_device fail?
+Or this: 
+No. You are seeing the same things I see.
+@sbourdeauducq rtio_counter transfer not working ccorrectly?
+Not likely. Otherwise we would see failures in test_time_keeps_running as well.
+get_rtio_counter_mu seems to be working fine. Likely a runtime bug (parallel programming with async RPCs? core device memory corruption when dealing with the large array?) or miscompilation (though compilation is a pretty deterministic process and this bug is intermittent). @whitequark
+Possibly a race condition with async RPCs...
+If this is confirmed, it might make sense to switch to a single mailbox.
+Or just fix the race condition.
+I remember you saying that, if another concurrency bug was found in this code, you'd switch to a single mailbox. :)
+I don't think this has anything to do with async RPCs. Even wrapping the offending line in try/except silences the bug (that is otherwise moderately easy to reproduce, it usually surfaces within ten iterations if running the test in a loop). Any attempts to observe t1/t2 also hide the bug. This seems to point to a miscompilation of some sort.
+A very interesting question is why test_device_to_host sometimes fails but test_host_to_device never does...
+On second look, this does have something to do with async RPCs, but not at all clear what. The following experiment reproduces the crash, often at the first iteration:
+... but the values look all sane:
+... and making any of the RPCs synchronous makes the crash non-reproducible.
+We had a broken floating point comparison function, but only for the greater-or-equal operation.
+This should definitely go into 3.5. Nevermind, the 3.x series didn't have this bug.

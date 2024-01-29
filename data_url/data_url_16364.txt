@@ -1,0 +1,17 @@
+Aqua uses TextProgressBar in several places and so it happens that sometimes the usage is reentrant. The problem is that the event infrastructure in Terra is global and sometimes we get crashes on the instance variable the TextBarProgress keeps (self.iter) since a single TextProgressBar receives all those events from parallel_map in mixed orders when actually they should apply to separate progress bars
+This fails on a VM with 1 processor core:
+TextProgressBar should receive events in order and just the ones that apply to that instance.
+We thought of one solution that might work: The parallel_map method and TextProgressBar class would accept some optional event id. The id could be appended/prepended to the global Terra event string so that when time comes to emit the event in parallel map, it knows how to emit the ones that are start or end etc. This way there would be no clobbering of states.
+And the publisher/subscriber would still work the same way not allowing the same event string more than once.
+So each parallel_map method invocation would have 3 unique events: one start, one end and one update.
+I think tqdm progress bars can support this. Maybe we can consider using them instead of our home grown bars?
+EDIT: Never mind, I misunderstood the issue
+This has nothing to do with the progress bars themselves. Rather it is the pubsub mechanism and how things listen to very general events that can easily conflict with others.
+You can see this consistently when using the UCCSD() function in aqua under the following conditions:
+UCCSD instantiates progress bar subscriptions when in DEBUG log level. These functions can send an empty value list to parallel_map(). This case was seen already in #3634 and was fixed by making it return early where otherwise the progress bar would blow up with a division by zero.
+However, even though the parallel_map returns early, the progress bar was already subscribed AND is uninitialized until there is a terra.parallel.start event.
+For some reason I have not figured out, the update function on the progress bar can still get called in this uninitialized state, which results in this traceback:
+self.iter is None, since the progress bar start() was never called to set it.
+The progress bar could check if it has been initialized based on self.touched before updating. However, a race condition would mean that something else that was not able to subscribe (collided due to an existing subscription) would still go on and publish events which would trigger a subscribed/uninitialized listener. Perhaps this is the cause for the above.
+So I agree with the problem here it looks like the previous subscriber when aqua calls parallel_map([], ...) doesn't exit out. I think the fix for comparing the subscribers object ids is a good way to handle this. It does feel like there is an aqua bug here (which is what I mentioned in #3634) but this is simple enough to fix. The other thing which I tried was to force the text progress bar subscriber to exit when the fast paths for len() 0 and 1:
+Which also fixed the failures, but still seems more hacky than comparing the object ids.

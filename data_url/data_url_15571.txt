@@ -1,0 +1,14 @@
+Motivation:
+currently the transpiler has two scheduling options: asap or alap. From a coherence perspective it makes sense to involve qubits as late as possible and leave them in the initial ground state after reset as long as possible. Below is a simple circuit scheduled on 3 qubits with 'alap' option. the single qubit gates here are simple H-gates. In this particular example qubit 14 is the control to qubit 13 and the first H-gate basically opens a 'Ramsey arm' which is very sensitive to phase accumulation and phase noise. Hence it makes sense to include the Q14 H as late as possible.
+
+However, due to the alap scheduling, the last H is aligned with the measurements, which are the very last pulses in this example here. This leads to the problem that the Ramsey arm on Q14 is unnecessary open for much longer than it needs to be and accumulating more phase noise.
+One can somewhat mitigate that issue by placing barriers in strategic places (between the second last and last CNOT gate). This forces the scheduler to execute the second H on Q14 immediately after the CNOT
+
+However, this solution is sub-optimal as it increases the circuit duration (in this particular case by the length of one H).
+Proposed enhancement: Provide a third scheduler option called 'compact' where the first gates on each an every qubit are scheduled as late as possible, the the last gates before the measurement on each qubit are implemented as soon as possible.
+@itoko: I've assigned you for comment/design rather than a hard commitment to implement the feature, since I think this is more in your wheelhouse than anybody else's.
+OK, I think compact option is a good feature to have. I'm thinking compact users care only the alignment of head and tail gates and don't care about "in the middle" gates, right? For example, if we had Hadamard in q_12 in the middle of CNOTs in the above circuit, where should it be aligned? I'm thinking "whereever". Do you have any preference? @PetarJurcevic
+Anyway, the implementation of this feature would be after the rework on circuit scheduling passes that @nkanazawa1989 has been starting in #7655
+yes this is a good option to have. and yes I think only the head and tail would need to move to the middle. if we do alap the head is taken care of, if we do asap the tail is taken care of. but we don't currently have an option to move both head and tail to the middle.
+The spec of the compact algorithm in my mind is first scheduling with alap and after that, back tracking the circuit from the end and move non-conditional gates (not in critical path) toward the front as possible.
+I've implemented this feature as a plugin transpiler pass in community repo.

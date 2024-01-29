@@ -1,0 +1,39 @@
+Sometimes the algorithms, in particular the variational ones, require the implementation of general unitary gates. Unitary gates must always be decomposed in terms of basis gates to be implemented in the quantum computer, but for simulation it might be more efficient if the general gates are directly applied
+Would it be possible to add some function that allows the user to create user-defined gates for calling them in a particular program?
+We have gates.Unitary that allows you to define a gate that acts on an arbitrary number of qubits via its matrix. For example
+gates.Unitary(np.random.random((4, 4)), 0, 1) will define a random 4x4 matrix that acts on qubits 0 and 1. Note that there is no check that the matrix you pass is actually unitary, the user just has to be consistent with this. Does this cover the functionality you mean?
+Also the "custom" backend will work for up to two-qubit unitaries. If you want to define a three or more-qubit unitary you have to switch to Tensorflow backends (these are slower).
+I think so
+I assume that this function does not accept parameters and any parametrization must be done outside the function, isn't it?
+And for 2 x 2 matrix it is as simple as gates.Unitary(np.random.random((2,2)), 0)
+Are there any further issues to be aware of with respect to the backends?
+I assume that this function does not accept parameters and any parametrization must be done outside the function, isn't it?
+And for 2 x 2 matrix it is as simple as gates.Unitary(np.random.random((2,2)), 0)
+Yes, the 2x2 matrix works like this. The matrix that you pass can be variational and you can also update it normally using circuit.set_parameters (if it is inside a circuit). If you need to do a calculation using some variational parameters to obtain the final matrix, indeed this has to be done outside the function and then gate should be created using the final matrix.
+Are there any further issues to be aware of with respect to the backends?
+Up to two-qubit gates (that is either 2x2 or 4x4 matrices) should work with any backend. Three-qubit gates or more (8x8 or higher) should work only with "defaulteinsum" and "matmuleinsum" (not "custom").
+Okay, backends are understood.
+Even though I might be repetitive, would it be easy (for the average user) to create a gate with the same functionality and usage as, for instance, RX, but being an arbitrary unitary gate?
+I am trying to write a circuit with the gate Rz() Ry() Rz() and would like to fuse them all in a single U3 gate
+Thank you very much for your replies, they are being very useful!!
+I am trying to write a circuit with the gate Rz() Ry() Rz() and would like to fuse them all in a single U3 gate
+There are two ways to implement this with what we have currently in Qibo, but each may have some complications:
+This creates a new circuit in which gates are fused up to two-qubits (see docs for more details). For example in the above case the three rotations will be fused to a single Unitary gate.
+Two disadvantages of this approach are that the fusion algorithm has some overhead and may not be efficient for small circuits (with less than 10 qubits) and sometimes (for more complicated circuits) the gates may not be fused as you expect (although one qubit gates acting in order on the same qubit should always be fused into one Unitary).
+The advantage of using fuse is that it works well with set_parameters, if you want to update the variational parameters. In the above example
+This will add a single Unitary gate in the circuit that is the product of the three. Note that the order of the product is reversed because g1 is the first gate to act on the statevector and @ works as gate matrix multiplication. The advantage of this is that you have better control on which gates are fused (while c.fuse() is totally automatic), however if you want to update parameters you have to create the new unitary matrix. So c.set_parameters([1, 2, 3]) will not work, because c doesn't know that you fused three gates to create it. Instead you need to calculate the new unitary as a 2x2 array:
+Regarding the RZ-RY-RZ, I noticed that this combination is used in various examples. If you think this is very common, we can add a U3 gate in Qibo. In this case, could you please write the matrix convention that you would prefer for this? Is it a product of the RZ and RY gates we already have with three different parameters?
+We will have to add this before Monday if we want it included in v0.1.0.
+My idea was to update parameters, so I think the first version suits better my needs. However, at this point I need to apply it to very small circuits, so I think it might not be the optimal approach. I have to face the problem and figure the best solution out.
+With respect to adding the operation to the base code of the package, I believe this might be a long-term solution, and we may want to include it together with some other special gates (U1, U2, U3). We can discuss it in the future. For the record, I think the convention should be
+U3(theta, lambda, phi) =  [[cos(theta/2)e^(-i \lambda / 2)e^(-i \phi / 2), -sin(theta/2)e^(i \lambda / 2)e^(-i \phi / 2)], [sin(theta/2)e^(-i \lambda / 2)e^(i \phi / 2), cos(theta/2)e^(i \lambda / 2)e^(i \phi / 2)]]
+U2 (lambda, phi) = U3(pi / 2, lambda, phi) = 1 / sqrt(2) *  [[e^(-i \lambda / 2)e^(-i \phi / 2), -e^(i \lambda / 2)e^(-i \phi / 2)], [e^(-i \lambda / 2)e^(i \phi / 2), e^(i \lambda / 2)e^(i \phi / 2)]]
+U1 (lambda) = ZPow(lambda)
+With respect to adding the operation to the base code of the package, I believe this might be a long-term solution, and we may want to include it together with some other special gates (U1, U2, U3). We can discuss it in the future.
+I agree with adding these special gates. I will open a PR implementing this using the convention you provided. This won't be included in the pip version until we make a new release, however once it is ready and merged it would be possible to use it if you clone the repository and build from source.
+My idea was to update parameters, so I think the first version suits better my needs. However, at this point I need to apply it to very small circuits, so I think it might not be the optimal approach. I have to face the problem and figure the best solution out.
+Until the U1, U2, U3 gates are added, a method to do this without using circuit.fuse() is the following: Define a function that calculates your unitary as a numpy array:
+and use it as follows
+This would be a bit more complicated if you have more parametrized gates, eg:
+but I think if you play a little bit with creating the set_parameters list for your circuit this method would work without any fusion overhead.
+Oh, nice! Thank you very much, I think this could fulfills my needs! I will give it a try and see whether it works or not. It is very helpful that you have so much knowledge about the inner working of Qibo!

@@ -1,0 +1,117 @@
+I built the newest cp2k-8.1 and previous cp2k-7.1 on my cluster using intel-2018-update3 compiler (including icc, ifort, intel-mpi and MKL). Their porformances on a simple BOMD task are tested, and timing information are attached. It seems version 8.1 is slower than 7.1. I also noticed that in version 8.1, the grid part in src is rewritten in C, and the SUBROUTINEs grid_integrate_task_list and grid_collocate_task_list take up a lot of time, while in version 7.1 the SUBROUTINEs integrate_v_rspace and calculate_rho_elec are faster.
+Is there any suggestions that the performance of version 8.1 can be improved?
+8.1_timing.txt
+7.1_timing.txt
+BTW, the arch files for compiling 8.1 and 7.1 are almost the same, except that in 8.1 arch file, the following line should be added accounting for grid part written in C.
+CFLAGS += -std=c11 -qopenmp -I$(LIBXSMM)/include
+The collocate and integrate routines were indeed re-implemented in C before GPU support was added. Generally, we believe that the performance of the new implementation is comparable to the old one.
+Maybe you can tell us a bit more about your setup, e.g. which basis set and how many OpenMP threads are you using?
+TZV2P-GTH basis sets with GTH pseudopotentials are used for all atoms. The xc functional is SCAN.
+In the SCF part, I used OT/IRAC algorithm with DIIS minimizer.
+I used 112 MPI processes, with 1 OpenMP thread per MPI process for running cp2k.
+I used 112 MPI processes, with 1 OpenMP thread per MPI process for running cp2k.
+Is this running MPI ranks on HT threads or is this an AP-platform?
+I used 112 MPI processes, with 1 OpenMP thread per MPI process for running cp2k.
+Is this running MPI ranks on HT threads or is this an AP-platform?
+Sorry, I do not have much knowledge about HT threads or AP-platform. The CPU model on my cluster is Intel(R) Xeon(R) Gold 6132 CPU @ 2.60GHz. So I guess it might be hyper-threading?
+I compiled both the 7.1 and 8.1 version, with the same  Linux-x86-64-intel-minimal.psmp setting and the same Intel-parallel-studio/cluster.2018.4-intel-18.0.4 compiler on a supercomputer.
+With one node (40 cores per node), 7.1 psmp completed the H20-64 benchmark test in 45.6 s, while 8.1 psmp completed this test in 66.0 s.
+Can you share you arch file ?
+7.1.txt
+8.1.txt
+@AdamsGo, how many OpenMP threads are you using? I have a theory that this and this reduction are the culprits.
+I used 112 MPI processes, with 1 OpenMP thread per MPI process for running cp2k.
+@oschuett , @JuntingYu1996 reported that he is using a single thread...
+@AdamsGo, how many OpenMP threads are you using? I have a theory that this and this reduction are the culprits.
+I have double checked, it's single thread. I will try to compile 8.1 and 7.1 on my local machine to see if it has to do
+with the HPC parallel enviroment.
+@AdamsGo We saw the same problem on other systems, no need to bother.
+@oschuett we have to put in place a strategy to fix this performance regression, eventually we have to make a new release. Do you have a plan?
+We saw the same problem on other systems, no need to bother.
+I disagree because there are also a number of system where we didn't see it. For example on Daint MC the H20-64 single thread benchmark did not slow down.
+So, we should gather more data points until we understand what triggers it. If it's not the number of threads, maybe it's the compiler?
+The example you are referring to is probably too small (only 27s) to see a real effect. I don't have an old enough output to compare with, but I don't think we need to debug where the problem is small, so this test doesn't conclude anything...
+The slowdown is much more evident for the H2O-32 RI-MP2 / Ri-RPA.
+So the problem exists, as reported by @AdamsGo and @marci73  too, and that's enough for me to start to worry and investigate.
+I did a comparison of the 7.1 and 8.1 outputs provided by @AdamsGo , these are the CP2K timers (2nd column 7.1, 3rd is 8.1):
+My understanding is that calculate_rho_elec and integrate_v_rspace are basically "replaced" (I mean the execution time) by the grid_* functions (few seconds slower, still reasonable). Then I assume that 7.1 doesn't use ELPA (it has the syevd call), while 8.1 does (please @AdamsGo confirm). The big difference in performance is cp_fm_gemm, which is only in the 8.1 call. Is this due to the grid changes? What kind of gemm is this, something we can replace with a COSMA call?
+So the problem exists...
+I never denied that. All I'm saying is that we first need to understand the problem before we can fix it.
+The example you are referring to is probably too small (only 27s) to see a real effect.
+No, a significant performance regression in collocate / integrate should still show up. These two operations take up about 50% of the runtime and the error bars are quite tight.
+The slowdown is much more evident for the H2O-32 RI-MP2 / Ri-RPA.
+Yes, there is something special going on with those RI benchmarks and I certainly intent to find out. Nevertheless, they only slowed down by 20%, which is much less than the 45% reported by @AdamsGo.
+The big difference in performance is cp_fm_gemm, which is only in the 8.1 call. Is this due to the grid changes?
+Good catch! This has definitely nothing to do with my grid changes. Yes, COSMA would have been my first suspect too (#1303).
+@alazzaro To clarify, I just recomplied 7.1, 8.1 and the developing version with:
+the with-libxc=install option was only applied for the developing version, without it the compliation would fail.
+I  performed benchmark test with the H2O-128.inp setting with export OMP_NUM_THREADS=1.
+With a single node (40 cores), 7.1  fininshed the test with 113.119 s,  8.1 finished the test with 148.89 s
+and  the developing version took 195 s.
+I am new to the linux system and cp2k, so I might made mistakes and as @oschuett pointed out
+on Daint MC the H20-64 single thread benchmark did not slow down. I would not be surprised if it's
+related to my HPC settings.
+UPDATE: with the --with-cosma=no flag, the 8.1 version finished the H2O-128 test in 124s and 130s in two sepearated tests.
+The attached timing data has been sorted according to the average self time.
+git_current_mkl.txt
+8.1_mkl.txt
+7.1_mkl.txt
+@AdamsGo I assume this is a different test with respect to the previous outputs you provided... Let's stick with it and try to understand the performance problem.
+So, as I understand from your UPDATE, the problem is COSMA. As @oschuett pointed out, this is a known issue (#1303 ). I do suggest to use --with-cosma=no.
+At this point, I suggest to use ELPA (it seems it gives some speedup) and libxsmm.
+Could you rerun the 3 cases and provided the full (standard) CP2K output? I have a script to make the comparison...
+Ok, sticking to my previous comment (H2O-128 benchmark test).
+7.1_log.txt
+8.1_no_cosma_log.txt
+8.1_with_cosma_log.txt
+git_log_40_cpu.txt
+Do you mind recompiling the git master version without COSMA too?
+Here it is, almost the same performance as 8.1 without cosma.
+git_no_cosma.txt
+OK, digging in the new outputs, I see that with COSMA git_log goes up in the following timers
+(order of values: 7.1, 8.1 w/o COSMA, 8.1 w/ COSMA, git_log w/ COSMA):
+This is clearly COSMA (even in Cholesky). So we understood COSMA is not good to have it here. I wonder what will happen if you change the number of threads, but this is another discussion...
+Then, let's consider 7.1 versus 8.1_no_cosma, these are the hotspots:
+Overall, CP2K 8.1 is faster in several timers, except the ones I'm reporting above.
+So, I would say that the 10 seconds in the CP2K_Total are entirely due to the new grid_ stuff (minus the integrate_v_rspace and calculate_rho_elec).
+Indeed, given "7.1 finished the test with 113.119 s" and "8.1 version finished the H2O-128 test in 124..130s" (no COSMA), there are about 11..17 s missing like 10-15% performance regression due to "new grid_ stuff (minus the integrate_v_rspace and calculate_rho_elec)". Unfortunately, I believe this is still relevant beside of what's recovered when omitting COSMA.
+Indeed, given "7.1 finished the test with 113.119 s" and "8.1 version finished the H2O-128 test in 124..130s" (no COSMA), there are about 11..17 s missing like 10-15% performance regression due to "new grid_ stuff (minus the integrate_v_rspace and calculate_rho_elec)". Unfortunately, I believe this is still relevant beside of what's recovered when omitting COSMA.
+I agree, this is A LOT relevant for me (i.e. LUMI-C, Archer2, Daint-MC...)
+Yes, even recent PRACE CP2K benchmark is about H2O-512 if I am not mistaken.
+Here it is, almost the same performance as 8.1 without cosma.
+git_no_cosma.txt
+I cannot spot where the 5s difference comes from, besides some minor changes. The most significant is:
+init_cphi_and_sphi
+which is slower (by 1s) in git_master version. Overall, I would say 8.1 and git_master are compatible.
+10-15% performance regression due to "new grid_ stuff
+Yes, that's more in line with my own observations. I'm certainly committed to optimizing the new grid code and I'm pretty optimistic that we'll eventually outperform 7.1. However, at this point it's mostly a research effort and I can't make any promises. We should therefore accept the 8.1 performance as our new base line.
+This is clearly COSMA (even in Cholesky). So we understood COSMA is not good to have it here.
+It's very unfortunate that we didn't catch this with our performance tests. They should really always use the latest toolchain.
+OK, digging in the new outputs, I see that with COSMA git_log goes up in the following timers
+(order of values: 7.1, 8.1 w/o COSMA, 8.1 w/ COSMA, git_log w/ COSMA):
+This is clearly COSMA (even in Cholesky). So we understood COSMA is not good to have it here. I wonder what will happen if you change the number of threads, but this is another discussion...
+Then, let's consider 7.1 versus 8.1_no_cosma, these are the hotspots:
+Overall, CP2K 8.1 is faster in several timers, except the ones I'm reporting above.
+So, I would say that the 10 seconds in the CP2K_Total are entirely due to the new grid_ stuff (minus the integrate_v_rspace and calculate_rho_elec).
+@alazzaro could you try to add this in the global section (if you run on cpu)
+&GRID
+BACKEND cpu
+APPLY_CUTOFF false
+&END
+and rerun the test. Or I can do it if I have the input.
+@mtaillefumier It is not me who run the test... I'm only comparing the inputs @AdamsGo provided to me.
+This is a question for @AdamsGo
+However, I think he is not using GPUs...
+@mtaillefumier It is not me who run the test... I'm only comparing the inputs @AdamsGo provided to me.
+This is a question for @AdamsGo
+However, I think he is not using GPUs...
+@alazzaro Sorry for the mistake. I think @AdamsGo  should try this on cpu only machines. The collocate/integrate functions will use dgemm for the computations
+@mtaillefumier It is not me who run the test... I'm only comparing the inputs @AdamsGo provided to me.
+This is a question for @AdamsGo
+However, I think he is not using GPUs...
+@alazzaro Sorry for the mistake. I think @AdamsGo should try this on cpu only machines. The collocate/integrate functions will use dgemm for the computations
+You are right! I misread GPU instead of CPU ;)
+I think it is the the library for low scaling method, which contains 3 library. one of them is the superlu. it would not been installed by default and the package of superlu-6.1.0 or 6.3.0 could not been compiled due to the omp / ompi settings both for openmpi and intelmpi.  I report the problem but no progress has been made.
+I think it is the the library for low scaling method, which contains 3 library. one of them is the superlu. it would not been installed by default and the package of superlu-6.1.0 or 6.3.0 could not been compiled due to the omp / ompi settings both for openmpi and intelmpi. I report the problem but no progress has been made.
+@alas-go I'm not sure if your comment is meant for this issue... Could you confirm?
+This was fixed via #1398. The orthorhombic collocate/integrate on CPU is now 5-10% faster compared to cp2k 7.1.

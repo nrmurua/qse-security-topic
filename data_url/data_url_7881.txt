@@ -1,0 +1,28 @@
+Hi,
+I'm using general_stochastic to solve a SME which does not take the canonical form, so I can't use smesolve. There is an analytic solution to compare with.
+I'm pasting my code below. I followed this notebook.
+Now, the expectation values returned in res.expect are completely wrong (let's say there's one trajectory).
+Calculating the expectation values 'manually' from the states using e.g. expect(x, res.states[0][-1]) also gives a wrong value.
+Now it turns out that the returned states are "vectorized", e.g.
+and furthermore are not normalized (even when using kwarg normalize=True).
+It seems that expect can't handle this type of object. Also .unit() does not seem to normalize properly.
+The only way I got it to give the correct expectation values is to iterate over all the states, use vector_to_operator, and then normalize by dividing by tr().
+This give correct results, which shows the SME is formulated properly.
+However, it is extremely time consuming, and it requires storing all the states, store_states=True which is slow and memory-hungry.
+By the way, even vector_to_operator does not work as-is, as mentioned in #1204. It assumes the dims are like [ [[rows], [cols]], [1]], however for the states returned from general_stochastic the dims are [[rows], [cols]] (see above). So this needed to be hacked.
+In #1204, it is mentioned that "vector_to_operator is part of the implementation of superoperators", however the state type is oper, not super. It is a density matrix returned by general_stochastic, but still vectorized.
+It seems that expect should be able to handle vectorized, unnormalized states, which it does not. And of course the values returned in e_ops should be correct.
+Thanks, and let me know if I missed something or need more information.
+Code:
+general_stochastic does not know about closed vs open system. It expect the state to be a vector. You need to change the input from a density matrix to a vector with ρ0 = operator_to_vector(ket2dm(basis(N))) for it to work. You also need to promote the e_ops to super operator with spre like you did yourself.
+Doing this will also fix the output state dims.
+Thanks for the quick reply. I did as you suggested, and it does fix the dimensions. However, there are two new problems.
+First, the call to general_stochastic now generates a numpy warning (shown with the full traceback):
+The second problem is more serious, and I think it was the same in the my original version. The expectation values returned in res.expect are not the same as those computed manually from res.states. The values in res.expect gradually (but quickly) diverge away from the correct manual values that agree with theory. It is not a small error. (Note that I'm using a single trajectory so no problem of averaging over trajectories.)
+I would expect complete equality between the two. I would suspect that it's something to do with normalization (?) Passing kwarg normalize=True doesn't change anything, nor does the solver.
+This is how I compute the expectations:
+Thanks again. I hope this is the correct venue for these kind of posts, but it does qualify as "strange behavior".
+The code below is a (hopefully) minimum working example that demonstrates the strange behavior of the stochastic solver. I'm simulating a single trajectory using general_stochastic and plotting the returned expectation values along with expectation values calculated from the states. There is also a theoretical solution for the variances of X and Y, which are deterministic despite the stochastic evolution.
+The manually calculated expectations match the theory perfectly which means the states are correct. The returned ones accumulate errors and obviously shouldn't be used. I don't see a reason why they should be different -- I would assume the expectations are calculated internally from the states.
+Note that the deprecation warning from above still appears.
+

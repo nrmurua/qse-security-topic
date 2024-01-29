@@ -1,0 +1,102 @@
+I have been trying to get QCodes parameter class to handle multi-type inputs.  I.e. I am asking what is the right way to setup a parameter class to handle the following example.
+Take the following example from a keysight frequency counter.
+"""Configures the expected frequency
+CONFigure:FREQuency [{ | MINimum | MAXimum | DEFault}
+[,{ | MINimum | MAXimum | DEFault}]] [,]
+So the right command in general would be something like
+'CONF:FREQ ' + freq + ',' + resolution + ',' + '(@'+ str(channel) +')'    .
+However, this command has three value inputs, (freq,resolution,channel).  The resolution and frequency can be both a float and a string like 'DEF'.   I'm unclear based how to set up the set the parameter class to handle a setting this complicated from the documents.
+Any help would be appreciated.
+Hi @tmautry ,
+What you are looking for, can best be done by implementing a class which inherits 'InstrumentChannel' class in qcodes. Then use 'add_parameter' with 'MultiType' validator to set min, max for your parameters. Lastly, you need to group your parameters with appropriate 'set_cmd' .
+Following example might make things more clear for you.
+You can find more examples at following links:
+https://github.com/QCoDeS/Qcodes/blob/master/qcodes/instrument_drivers/Keysight/private/Keysight_344xxA_submodules.py#L33
+https://github.com/QCoDeS/Qcodes/blob/5a198290ed56bf1a81f53e7aa3744a6daf19e6d8/qcodes/instrument_drivers/Lakeshore/Model_372.py#L67
+For more details on group_parameter, have a look at https://qcodes.github.io/Qcodes/api/parameters/group_parameter.html
+I hope you can now solve the issue.
+Hi Akshita07,
+Thanks for the help. I am still struggling with this. Mostly this gives me an error that I can't track down/figure out why.
+AttributeError: ("'NoneType' object has no attribute 'endswith'", 'asking None to <Key53230A: Counter>', 'getting Counter_1_frequency')
+class Channel(InstrumentChannel):
+def init(self, parent, name, **kwargs):
+super().init(parent, name, **kwargs)
+self.visa_handle = self.parent.visa_handle
+Then I run a set of commands to initiate the driver. The termination string is terminator=\n.  I can then access this channel with the following command for instance:
+key.Ch1.config_freq.set(1E5,'MAX')
+But I get the following error:
+File "", line 1, in 
+key.Ch1.config_freq.set(1E5,'MAX')
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\utils\deprecate.py", line 59, in decorate_callable
+return func(*args, **kwargs)
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\group_parameter.py", line 227, in set
+self._set_one_parameter_from_raw(set_parameter, raw_value)
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\group_parameter.py", line 240, in _set_one_parameter_from_raw
+if any((p.get_latest() is None) for p in self.parameters.values()):
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\group_parameter.py", line 240, in 
+if any((p.get_latest() is None) for p in self.parameters.values()):
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\parameter.py", line 2192, in call
+return self.cache()
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\parameter.py", line 2126, in call
+return self.get(get_if_invalid=True)
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\parameter.py", line 2090, in get
+return self._parameter.get()
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\parameter.py", line 585, in get_wrapper
+raise e
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\parameter.py", line 572, in get_wrapper
+raw_value = get_function(*args, **kwargs)
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\group_parameter.py", line 70, in get_raw
+self.group.update()
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\group_parameter.py", line 271, in update
+ret = self.get_parser(self.instrument.ask(self._get_cmd))
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\base.py", line 761, in ask
+raise e
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\base.py", line 754, in ask
+answer = self.ask_raw(cmd)
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\visa.py", line 227, in ask_raw
+response = self.visa_handle.query(cmd)
+File "C:\ProgramData\Anaconda3\lib\site-packages\pyvisa\resources\messagebased.py", line 607, in query
+self.write(message)
+File "C:\ProgramData\Anaconda3\lib\site-packages\pyvisa\resources\messagebased.py", line 223, in write
+if message.endswith(term):
+AttributeError: ("'NoneType' object has no attribute 'endswith'", 'asking None to <Key53230A: Counter>', 'getting Counter_1_frequency')
+Hi @tmautry , you need to provide 'get_cmd' as well for the group. Currently, it is not provided in the code and hence the error.
+Also 'key.Ch1.config_freq.set(1E5,'MAX')' is not the correct usage as 'set' is a deprecated method on a group. Correct usage would be
+In addition, self.visa_handle = self.parent.visa_handle in your code is unnecessary.
+Hi @Akshita07. I appreciate the help...Unfortunately, there isn't a "get_cmd" for this command.  The closest is a cmd 'CONF?' which returns the most recent setting, not necessarily the setting for the frequency and resolution. However, if the set cmd is run first then this get_cmd will work.
+Even using CONF?, I get a strange error.  This is why I want to set both parameters at the same tmie.
+Here's the code (Note Counter is the name of the parent class that inherits VisaInstrument.)
+Traceback (most recent call last):
+File "", line 1, in 
+key.Ch1.frequency.set(1E6)
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\parameter.py", line 638, in set_wrapper
+raise e
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\parameter.py", line 622, in set_wrapper
+set_function(raw_val_step, **kwargs)
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\group_parameter.py", line 77, in set_raw
+self.group._set_one_parameter_from_raw(self, value)
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\group_parameter.py", line 240, in _set_one_parameter_from_raw
+if any((p.get_latest() is None) for p in self.parameters.values()):
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\group_parameter.py", line 240, in 
+if any((p.get_latest() is None) for p in self.parameters.values()):
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\parameter.py", line 2192, in call
+return self.cache()
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\parameter.py", line 2126, in call
+return self.get(get_if_invalid=True)
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\parameter.py", line 2090, in get
+return self._parameter.get()
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\parameter.py", line 585, in get_wrapper
+raise e
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\parameter.py", line 572, in get_wrapper
+raw_value = get_function(*args, **kwargs)
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\group_parameter.py", line 70, in get_raw
+self.group.update()
+File "C:\ProgramData\Anaconda3\lib\site-packages\qcodes\instrument\group_parameter.py", line 273, in update
+p.cache._set_from_raw_value(ret[name])
+KeyError: ('resolution', 'getting Counter_1_resolution', 'setting Counter_1_frequency to 1000000.0')
+Hi @tmautry ,
+The error which you see now is because by giving get_cmd as CONF? you receive a string output which needs to be parsed. You can have a look at "53220A/53230A Frequency UniversalCounter/Timer Programmer’s Reference" for Keysight 53230A CONF? response format at https://www.keysight.com/main/techSupport.jspx?cc=US&lc=eng&nid=-33609.959903&pid=1893411&pageMode=OV
+Parsing can be done by writing a custom function based on CONF? response format and providing that to get_parser for the group.  Example follows.
+Hi Akisha07,
+Thanks for the help.  That solved the problem.
+This issue is solved.

@@ -1,0 +1,34 @@
+Since LeapHybridSampler instantiates the cloud client instance based on user config, but does not override the client classname setting, if client=qpu is set in the dwave.conf, or in the environment variable, the instantiation will fail because a hybrid solver will not be found with a QPU client.
+@randomir, I vaguely recall discussing this and you saying your solution would be to change the default from client=qpu and not overriding.
+I don't recall I said that, but that doesn't mean I didn't.
+The problem is, user-local configuration is persistent across Ocean upgrades, and at some point we had client=qpu set by default and stored in the config file.
+Yes, and a few customers have encountered this problem already, but you say "but does not override the client classname setting", so are you proposing we solve this by overriding the customer's setting? That seems like strange behavior.
+I personally see this more as a feature than a bug. client=qpu is pretty explicit, and there is a community post about it https://support.dwavesys.com/hc/en-us/articles/360044156953
+If this problem affects many users, maybe LeapHybridSampler could mention the client=qpu setting in its response.
+That's a good idea, I think a better-worded exception message would go a long way without having the hack qpu==hybrid or something
+@JoelPasvolsky, yes, I propose to override the local setting.
+@arcondello, in the strictest sense this could be considered a feature, but it's definitely not a "DWave for Humans" level-behavior. LeapHybridSampler should just work.
+The problem is client and solver settings are not orthogonal, and their semantics and the intended use has changed over time.
+The fix is just to set client='base' (see #279).
+My only concern with this fix, is that DWaveSampler now has inconsistent behavior, as it just uses the user-supplied client setting.
+It could be argued still that DWaveSampler is a general interface to SAPI solvers? Or if not, than we could specialize it for QPU solvers only (set client=qpu).
+With HSS out, I would like to see (in dwave-system): (a) general sampler, (b) qpu sampler, (c) hybrid sampler. The only thing 100% clear is that LeapHybridSampler is (c).
+I do think that we will want to have the flexibility to point the DWaveSampler as software simulators, for testing if nothing else.
+I think the actual categories are (a) qpu-like, (b) general, (c) hybrid
+@arcondello, not sure I understand your change in the list of categories, apart from ordering. QPU-like instead of QPU?
+Sorry for the ordering change, the important distinction is the QPU-like vs QPU. Though now that I've thought about it a tiny bit longer maybe I want to introduce a 4th category for QPU-like. For instance if we had a random sampler up that pretended to be a QPU for testing purposes, we would want that to be accessible from the DWaveSampler, but we would also want to be able to filter it out/in.
+Sure. I wasn't trying to provide an exhaustive list of solver categories, just main (existing) flavors.
+The point being, we need something like QPUSampler.
+@randomir when you say "(set client=qpu)" so you mean override for DWaveSampler too? Would the alternative be to replace DWaveSampler(solver={'qpu: True}) with setting client=qpu in the config file or env variable? I'd like to get rid of the solver={'qpu: True} that way.
+If we set (by default) qpu=True in DWaveSampler then it must be able to be overwritten, for the testing use case above. We do have existing solvers available to legacy users that are QPU-like, but software, that one would want to access through the DWaveSampler.
+@JoelPasvolsky, the ideal solution is not yet obvious, but one approach would be to have:
+(a) DWaveSampler, completely agnostic to solver/client, accepting/needing-to-specify everything.
+(b) QPUSampler, with implicit client=qpu.
+(c) LeapHybridSampler, with implicit client=hybrid (in future, but for now client=base && solver=hybrid).
+@randomir , or GeneralSampler for (a) and leave DWaveSampler as (essentially) synonymous with QPUSampler - which it is now.
+@arcondello, agree.
+Except that the current DWaveSampler does not imply selection of a QPU solver at all. It's all up to the user, and that really bothers me.
+I am fine with setting client=qpu as the default behavior in DWaveSampler
+I don't like GeneralSampler. Are we talking about a ClassicalSampler and TestSampler or what?
+I'm fine with adding client=qpu to DWaveSampler, but ideally not before we add that general sampler.
+Alternatively, we could just keep the "general" samplers at the client-level and only promote them to dwave-system when we specify.

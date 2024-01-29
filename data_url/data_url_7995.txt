@@ -1,0 +1,18 @@
+qutip has functions to detect the available of BLAS libraries.  For instance on my system (debian unstable), python3 -c "import qutip; qutip.about()" reports
+However, I think the logic behind BLAS Info is not robust.
+For context, debian builds packages against generic libblas.so (libblas-dev package). The various optimised BLAS implementations are supposed to be binary compatible, such that the system administrator can install the preferred implementation for use at runtime (the identity of libblas.so is controlled using debian's alternatives mechanism).
+On my system, OpenBLAS is indeed installed.  But taking a closer look, I'm not sure it was detected for the right reason.
+The blas configuration is identified by the _blas_info() function in qutip/utilities.py.  It uses the local numpy configuration (np.__config), testing the availability of various attributes in the numpy config,  in the form of
+MKL was not used to build debian's numpy package, and I don't have it installed.  So mkl_info is not detected.  OpenBLAS was not used to to build numpy either, but it is installed, so I want look closer at the logic.
+config (i.e. np.__config__) does indeed have an openblas_info.  But it is empty ({}). Nevertheless hasattr(config,'openblas_info')returns True, since the empty dict is there.
+As far as MKL goes, mkl_info is indeed not there, so qutip does not detect MKL BLAS. But there is a blas_mkl_info attribute, and hasattr(config,'blas_mkl_info') returns True, same as with openblas_info
+numpy provides a summary of its configuration in np.show_config():
+So numpy itself marks openblas_info as NOT AVAILABLE  (evidently using a build-time test, not runtime, which arguably is a pity).
+It seems to me that hasattr in qutip's BLAS support tests is returning false positives and false negatives.  It indicates if the attribute was defined, even though it might be empty.
+Would it be better to replace
+in qutip/utilities.py with
+likewise for blas_mkl_info (not mkl_info) ?
+This would be similar to numpy's own usage in np.show_config() (i.e. np.__config__.py.show()), which uses if not info_dict to print "NOT AVAILABLE".
+The qutip declaration of BLAS support should match the numpy declaration.
+If numpy says OpenBLAS is not available, then qutip should probably not say that it is available (even if it is installed).
+No response

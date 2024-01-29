@@ -1,0 +1,13 @@
+The documentation build fails when run on Python 3.9, due to failed forward references caused when the imported type alias pulse.schedule.ScheduleComponent is imported into assemble.assemble_schedules.  ScheduleComponent forward references Schedule within its own module (which is fine), but somewhere in our Sphinx build it becomes not fine for the type alias to be imported into another module.
+The two errors are:
+which are not super illuminating.
+Run the documentation build using a Python 3.9 environment and a recent version of Sphinx.  I was running a modified tox configuration that uses an isolated Python 3.9 environment but modifies the build command to
+(adds --keep-going for debugging purposes).
+The documentation should be able to build.
+From rereading the PEPs and typing's documentation, I think everything that's being done in pulse should be acceptable (but importing forward references doesn't seem like an ideal choice).  I suspect the main issue is with sphinx-autodoc-typehints; it only resolves references at runtime, so it's no good guarding extra imports with typing.TYPE_CHECKING (tox-dev/sphinx-autodoc-typehints#22).
+There look like there are two potential solutions:
+I think option 2 is probably better; it's slightly messier in the schedule.py file, but that's the one file where the forward references are 100% guaranteed to evaluate without any dodgy unused imports to set up the scope correctly.
+Note that while it only throws an error on Python 3.9, this is actually buggy behaviour in all versions: the current documentation has unresolved ForwardRef instances in the documentation of qiskit.assembler.assemble_schedules:
+
+Imported forward references are actually just quite fragile.  The issue (if we can call it that) starts in the standard library, not sphinx-autodoc-typehints, although there's a chance the Sphinx extension could ameliorate the problem a little.  typing.ForwardRef has a field for its resolved form so each reference is only resolved once (Union promotes strings to ForwardRef on creation), but this makes it susceptible to issues if the first place that calls for its evaluation is not the same scope it was defined.  This happens in our Sphinx build, because the autosummary stub files are processed in alphabetical order, and so assembler.assemble_schedules is processed (and asked to resolve its type hints) before pulse.Schedule.
+The only current way to make this robust is to ensure that any type alias that may want to be imported into other modules uses only concrete references.

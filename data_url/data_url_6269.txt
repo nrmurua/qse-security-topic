@@ -1,0 +1,43 @@
+original issue from @tigerjack: Qiskit/qiskit#1590
+I got an exception on two different machines, but I'm not sure if it's related to qiskit-terra or python itself. The exception arise when I invoke the job.result() method.
+File "/home/simone/LinuxData/virtualenvs/qiskit_env/lib/python3.7/site-packages/qiskit/providers/aer/aerjob.py", line 39, in _wrapper
+return func(self, *args, **kwargs)
+File "/home/simone/LinuxData/virtualenvs/qiskit_env/lib/python3.7/site-packages/qiskit/providers/aer/aerjob.py", line 98, in result
+return self._future.result(timeout=timeout)
+File "/usr/lib64/python3.7/concurrent/futures/_base.py", line 432, in result
+return self.__get_result()
+File "/usr/lib64/python3.7/concurrent/futures/_base.py", line 384, in __get_result
+raise self._exception
+concurrent.futures.process.BrokenProcessPool: A process in the process pool was terminated abruptly while the future was running or pending.
+I found other similar issue which suggested to use the if __name__ == "__main__": statement, but this is already there: the whole program code is under this statement.
+The problem appears randomly when I run my qiskit program. It's a huge project, and sometimes the program works seamlessly, while others fail with this message.
+The program should always run without problems.
+Does this only happen with the Aer simulators, or also with the python simulators when run on linux?
+@chriseclectic what do you mean by python simulators? statevector_simulator and unitary_simulator? The error appears also with those.
+I was thinking that maybe the error is related to the number of qubits; at the moment, my algorithm uses 34 qubits, and from the qasm page I read that I need 275GB of memory. I tried also to use the online qasm simulator, but even in this case I get the error
+qiskit.providers.exceptions.JobError: 'Invalid job state. The job should be DONE but it is JobStatus.ERROR'
+You would need 256Gb for 34 qubits, just to store the state vector.  If using the state vector simulator, there is also a copy being made from the c-array that holds the state vector to the nested-list format in the Result object.  So this would be doubled.  Using the Unitary simulator would reduce the number of qubits allowed to 15 for the same memory size, and there is still a copy.  Regardless, you also need to run your OS, store the quantum circuit, etc at the same time.
+@nonhermitian Yes, I'm aware of that and with some other tricks I reduced the number to 33, i.e. 137 GB. However, do you think that the error message is related to this? Do you know which is the maximum number of qubits available for the online qasm simulator?
+The online sim is 32.  It could be related to memory, but in that case I would expect your computer to first freeze up as the computer starts to utilize swap space. Does this occur?
+@nonhermitian Never, the process is really fast even on the server. I mean, I get the error just a few seconds after the launch of the algorithm on the local backend.
+Then it is likely not memory related.
+@nonhermitian I don't know. Is it possible that there is some kind of mechanism in the Aer provider or in python itself which prevent executions when there is not enough memory?
+In Python, no.  In Aer, probably not.  Try running your favorite resource manager, top for example, and see what the memory allocation is doing.
+By python simulators I am referring to the BasicAer provider simulators in qiskit-terra. If it happens with them as well it may it is likely an issue with Python/ProcessPool or the BaseJob classes themselves.
+Note that for the BasisAer provider simulators I added checks that will throw an exception before starting the simulation if the number of qubits is greater than can be stored in physical memory, but that check isn't on the Aer provider simulators at the moment. What is the available RAM on the system you are trying to run on?
+@nonhermitian nothing relevant, it doesn't seems to even allocate memory.
+@chriseclectic as you said, because of the check, the error is different. I now have a circuit with 33 qubits, but from the error message the qasm_simulator of BasicAer has a maximum of 24 qubits.
+Btw, the server has 126 GB of RAM, no swap enabled, so it shouldn't be able to run the 33 qubits circuit either.
+So the AerJob issue is not a memory issue.  It is breaking before the simulator starts to allocate space.
+The memory needed for storing a raw state vector with double precision complex numbers is:
+(2**n_qubits)*16/(1024**3)
+so with 128Gb you should be able to do 33 provided that nothing else is using any memory.
+@nonhermitian From here I read 137 GB, so maybe it's not possible even in this case. I'll try to optimize the algorithm even more, but I'm not sure that the memory could be the problem here. As I was saying, the used memory doesn't seem to even grow a little: the program just crash with the error above, as if a thread was killed beforehand.
+Actually the python BasicAer simulators only support a maximum of 24 qubits regardless of available memory.
+I would try testing (on the Aer simulator) with a some random circuit that uses less qubits (start at 29 or 30) and incrementally increase the number to see when this error first happens.
+@chriseclectic the critical point on the server with 125 GiB of RAM and no swap seems to be 32. With 33 qubits the same error appears again.
+On my system with just 4 GiB of RAM and 9 GiB of swap the error starts to appear with 30 qubits, while 29 of them just freeze after consuming all the memory.
+This results seems to be in line with the requirements specified in the qasm documentation, so in the end it seems to be a memory-related problem.
+Indeed it does.  Incidentally, a search confirms this:
+nipreps/fmriprep#1207
+Although many things could trigger this exception, perhaps grabbing it and returning a possible memory warning would help.

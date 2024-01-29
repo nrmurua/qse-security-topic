@@ -1,0 +1,15 @@
+Passing incompatible dimensions for rho0, H and c_ops to mesolve leads to a segfault when the dimensions are large enough and when passing c_ops.
+To Reproduce
+Pass something for the initial state that is neither a state vector nor square density matrix.
+Changing D = 13 to D = 12 correctly raises a ValueError:
+Trying to get a little more info on the segfault:
+Not passing c_ops restores just raising a ValueError
+gives
+Expected behavior
+A exception for incompatible dimensions raised in all cases.
+** Environment**
+Please use qutip.about() to get the information about your environment and paste it here.
+Ah, nice catch thanks, and thanks for the super clear repro.
+We're overhauling the solvers for QuTiP 5.0, which will include a lot more rigorous input checking on entry, but also it uses far safer low-level datatypes  that would catch this shape mismatch in the C layer (even though the dims should have been checked by mesolve).  I'll check the other solvers and patch in a sanity test - probably after these lines: 
+There may also be other segfaults lurking if you use a Python function to generate a time-dependent Qobj value in the Liouvillian or the expectation operators, but right now you're unlikely to use that form (because it's slow as anything).
+The bug slips through because we unsafely pass off a matrix down to C code (where we currently don't have sanity checks) without first verifying that it is a valid shape in Python space - the C code is working as designed, so there shouldn't be problems with correct inputs.  Removing c_ops causes mesolve to delegate to sesolve which presumably is better at its type-checking, and I expect that a small dimension size working is likely just malloc having slack in the memory it gives us for small sizes or small requests being allocated into the special pre-allocated store.

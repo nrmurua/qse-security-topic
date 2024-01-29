@@ -1,0 +1,36 @@
+Hello everyone, I am looking for a package for doing TEBD in 2D. I found quimb recently and the code for TEBD 2D is at here, but there isn't any documentation at http://quimb.readthedocs.io/en/latest/
+Is TEBD 2D a stable functionality in quimb?
+Hi @cbwang2016, sorry its not very clear but the TEBD2D class is inherited from by both SimpleUpdate and FullUpdate - details for using those here https://quimb.readthedocs.io/en/latest/tensor-2d.html#Specifying-2D-Hamiltonians. These are of course both imaginary time algorithms by default. The term TEBD is used here maybe slightly imprecisely to mean TN evolution with  trotterized local hamiltonians and compression.
+What is your use case? Since there is no canonical form in 2D there's no canonical TEBD algorithm, one has to choose some form of approximate gauging and gate applying.
+Thanks for your reply!
+Actually I want to do real time evolution, like this. Is it possible to do it using quimb?
+Technically that should be possible with very minimal changes :
+However the main issue is just that I expect the bond dimension will grow out of control very quickly since - 1) scaling with bond dimension is far more expensive with PEPS and 2) there is no canonical form to optimally truncate.
+Do you have a use case in mind where you are only interested in very short time scales, or believe very little entanglement will be generated?
+Thank you! For my use case, we're only interested in a small scale(5x5 sites) 2D evolution&ground state problem. Do you think 2D TEBD is a proper choice for solving a spin-1/2 5x5 sites 2D evolution problem?
+I think 5x5 is pretty borderline - while the full vector for a 25 qubit state fits easily into memory, 2D sparse hamiltonian are still quite dense and might a fair bit more memory to build, (e.g. more than 16GB and memory and a bit of care constructing - hopefully using some symmetry). But then you could find the groundstate very accurately (machine precision), and evolve to fairly long times without worrying about entanglement:
+and in case you haven't seen them:
+quimb isn't super memory optimized for scaling those calculations, you might want to check other libraries like https://github.com/weinbe58/QuSpin as well
+On the other hand, depending on the model (nearest neighbor?) PEPS will be able to find pretty accurate groundstates quite easily at these sizes, with a much lower memory requirements. You might be able to do very short real time evolutions, I don't have a feel for that. The main advantage would just be scaling beyond 5x5.
+You're right, integrating the complex ode might be the best method for my case. It should be much better than PEPS.
+I'm also curious, is it possible to make the ode solver parallel?
+My idea is to construct the hamiltonian with scipy.sparse.linalg.LinearOperator, and in the LinearOperator I can apply the one-site terms and the two-site terms in parallel, then sum up all of them. Do you think this can accelerate the ode solver?
+The default parallelization currently is achieved using threaded sparse matrix multiplication, possibly that could be sped up in other ways but I'd work out whether that is really the limiting factor before coming up with a new scheme.
+Note you can also use slepc4py to do a Krylov exponentiation evolution, which allows one to use MPI parallelism and memory distribution, though there's quite a few (temperamental) moving parts to get that all working..
+So, can you compare method="integrate" and method="expm" for me? For example, which one do you think is faster for a 25-sites problem? (For my case, I've got a 32-core CPU and a Tesla V100 GPU)
+I think the integrate method is probably your best bet, it has a few advantages
+The 'expm' method is single shot, so it just takes you directly from t0 -> T, I don't have a good feeling for at what point that becomes quicker than integrating but possibly if you were only interested in the state at time T it could make more sense. Mainly it just allows one to use slepc4py & MPI. I would do some tests.
+After some test, it seems that the qu.Lazy class is not powerful enough if we just naively use it to integrate the ode:
+code:
+version:
+run:
+I guess, I need to handle the ownership for each MPI process manually?
+I'm afraid the MPI / Lazy construct is only for the MPI slepc4py solvers, which for Evolution means
+i.e. its not supported for ODE integration yet (although petsc /slepc does have interfaces for that).
+OK, I get it. So what kind of parallel ode integrating method do you recommend?
+Is the default method, just with parallel sparse matrix multiplication and the scipy ODE solver, not sufficient?
+It seems that parallel sparse matrix multiplication is not very simple: https://stackoverflow.com/questions/16814273/how-to-parallelise-scipy-sparse-matrix-multiplication
+In this example, a C code snippet of used.
+Ah sorry I wasn't very clear - parallel sparse matrix multiplication is already implemented in quimb using numba - it should be used by default.
+
+Thank you so much! You've answered all my confusions!

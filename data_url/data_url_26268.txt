@@ -1,0 +1,85 @@
+Binary constraint games (sometimes called linear system games or binary constraint system games) are a subset of the class of nonlocal games that are related to binary constraint systems. We shall refer to these as BCS games for short. The formulation of these games can be found in arXiv:1209.2729.
+BCS games have served as useful tools for the study of nonlocal games and have also been used as a mechanism to disprove one variant of Tsirelson's problem as shown in arXiv:1703.08618.
+This task pertains to writing a function that takes a description of a BCS game and converting that to a description of a nonlocal game. The purpose of this task is to allow us to calculate various quantities of the game in question (including the classical, quantum, and non-signaling values).
+A BCS game is specified by a list of constraints that define the game. Specifically, it is defined by a list of n 2-dimensional binary numpy arrays where the entry of the array is equal to 1 if and only if the values of the variables for that constraint are satisfied. For concreteness, consult the example provided in arXiv:1209.2729 on the first page.
+A nonlocal game is specified by variables prob_mat and pred_mat, where
+The goal of this task is to convert the specification of a BCS game and convert it to represent the prob_mat and pred_mat variables to define a nonlocal game.
+Hey @vprusso, I'm interested in tackling this feature. However, I'm not entirely clear about the definition of a BCS game as defined as numpy arrays. in the first part of the definition, we define a BCS game as defined by a list of constraints. My initial intuition was to represent this as an m x (n+1) array where the (i,j)-th element is 1 if v_j is in c_i, for 0 <= j < n, and (i, n) is the result of c_i.
+However, the second half of the definition above seemed to use a solution to the constraints as the definition:
+where the entry of the array is equal to 1 if and only if the values of the variables for that constraint are satisfied
+Could you clarify what you meant above when representing the BCS game as a list of arrays? Using the example on the first page of the paper, do the n arrays represent the n variables?
+Hi @theRoughCode. Thanks for taking a look at this feature.
+Let me try and elaborate a bit on the above, and let me know if anything I'm saying is unclear--or if I can answer any follow-up questions, I'm happy to help.
+Perhaps an example may help. Consider a BCS game defined by the following two constraints:
+The above is actually just the CHSH game from https://arxiv.org/pdf/1209.2729.pdf (equation (2)).
+What I'm thinking is that each constraint in this case will be some 2-by-2 matrix. So one would specify the CHSH BCS game in numpy as follows:
+The entries in these constraint matrices are 1 if and only if the values of the variables for that constraint are satisfied.
+Does that clear up the confusion about one may specify a BCS game in Python/numpy? Let me know, happy to elaborate further if need be.
+Thanks for the quick reply! I see, so we will have m matrices corresponding to the m constraints. To clarify, it seems like each dimension in the array has 2 elements (corresponding to the binary values). Does this mean that for a BCS game with n variables, we would have an n-dimensional matrix (e.g. for n=4, we will have 2x2x2x2)?
+To clarify, it seems like each dimension in the array has 2 elements (corresponding to the binary values). Does this mean that for a BCS game with n variables, we would have an n-dimensional matrix (e.g. for n=4, we will have 2x2x2x2)?
+Yes, that is precisely it :)
+Thanks for the quick reply! I see, so we will have m matrices corresponding to the m constraints.
+Of course. And again, if I can lend a hand in any questions or aspects of this feature, please do not hesitate to ping me. Cheers!
+Cool, and regarding the location of the code, does creating a new file called bcs_game.py under toquito/nonlocal_games sound good to you?
+It would contain a BCSGame class with functions init(constraints: [np.ndarray]) and to_nonlocal_game() -> NonlocalGame. This would allow for adding BCSGame specific functions if we want.
+Alternatively, we can just create a NonlocalGame.from_bcs_game(constraints: [np.ndarray]) -> NonlocalGame that creates a NonlocalGame from a description of a BCS game. Let me know if this sounds better to you!
+Hi @theRoughCode.
+Cool, and regarding the location of the code, does creating a new file called bcs_game.py under toquito/nonlocal_games sound good to you?
+Yep, I think that's the most sensible location to place the code.
+It would contain a BCSGame class with functions init(constraints: [np.ndarray]) and to_nonlocal_game() -> NonlocalGame. This would allow for adding BCSGame specific functions if we want.
+That's great, I think something that mimics the designs found in both nonlocal_game.py as well as extended_nonlocal_game.py would make sense.
+Alternatively, we can just create a NonlocalGame.from_bcs_game(constraints: [np.ndarray]) -> NonlocalGame that creates a NonlocalGame from a description of a BCS game. Let me know if this sounds better to you!
+Honestly, this is also a good idea. I don't think I have a particularly strong preference over this way or the previous way you suggested. I'll leave it to you and your judgement to implement it in the way you feel makes the most sense.
+Happy to ping-pong ideas back and forth as well. Great questions, please do keep them coming if I can help!
+I think I'm leaning more towards the latter, simpler approach for now as it requires less boilerplate code. Also, it seems to me that currently there isn't a use for a BCS game other than to use it to construct a nonlocal game. We can easily move over to the first approach if needed.
+@theRoughCode. Yep, that makes sense to me, I like it :)
+Of course, if you have any more questions or want to discuss any design decisions, etc., do let me know! Cheers.
+@vprusso In section 1 of https://arxiv.org/pdf/1209.2729.pdf, they describe the conversion to a nonlocal game such that Bob receives a variable x_t from c_s.  I wanted to clarify that this means that if we have x1 ^ x3 ^ x5 = 0, then Bob can only be given 1, 3, or 5 and not any other variables?
+If so, then our current definition of the constraint matrix gives no immediate information about which variables are in use in any given constraint. A way to retrieve this information is to find the dimensions in which all values are the same regardless of index. However, this could be messy/inefficient. Another possibility is to pass in another  m x n matrix where the i,j-th entry is 1 if and only if the variable x_j occurs in the constraint c_i. What do you think?
+Hi @theRoughCode. One thing that I think might be a useful source of truth on this would be the following function that effectively performs the same action as provided by Nathaniel in his software package QETLAB:
+https://github.com/nathanieljohnston/QETLAB/blob/master/helpers/bcs_to_nonlocal.m
+Granted, the code is in MATLAB, so translating between Python and MATLAB can be a bit tricky, but there are some fairly good "Rosetta stones" out there that exist:
+http://mathesaurus.sourceforge.net/matlab-numpy.html
+I think this clarifies some of the questions you mentioned, but of course, if not, please do respond and I will do my best to help out on that front. Cheers!
+Hey @vprusso, thanks for the reference! It looks like QETLAB implemented it in the way I described above.
+I had one other question regarding testing this function: I was thinking of writing a unit test that converts the BCS CHSH game and compares the pred_mat and prob_mat of the converted BCS game with self.chsh_bcs_game(). However, it seems like the description of the converted BCS game differs slightly from the typical representation of the CHSH nonlocal game.
+In the typical representation. Alice's answer a is either 0 or 1, while in the converted BCS game representation, a is a truth assignment to the variables in the given constraint. In the case of the CHSH game, this means that a \in {0, 1}^2 which has 4 possible values instead of 2.
+Is my understanding correct? If so, should I create a new pred_mat for the BCS-converted representation?
+Hi @theRoughCode. Hopefully, the reference will come in handy. :)
+Regarding your question, indeed, I checked the BCS CHSH and vanilla CHSH games in QETLAB to see what the respective pred_mat results would look like.
+Taking the example from QETLAB fro the BCS CHSH game:
+Taking the C variable from this and converting it to a nonlocal game, one obtains:
+The prob_mat matrix is simply
+Now, it is possible to use both the prob_mat and pred_mat matrices within the NonlocalGameValue function also provided by QETLAB:
+Now, the way in which one "typically" defines the pred_mat for the CHSH game would be (adapted from http://www.qetlab.com/NonlocalGameValue):
+While the prob_mat is the same as in the BCS CHSH case, the pred_mat variable looks as follows:
+However, whether one provides the matrices in this form for pred_mat or in the form in the BCS CHSH section, the NonlocalGameValue function interprets the results as one would expect.
+So, despite the pred_mat variables looking different, I think the way in which one feeds these different formulations of pred_mat to the NonlocalGame class in toqito should not (perhaps) matter. Once you have a way that encodes it, it might be worth trying to throw it into toqito to see if that hunch is correct.
+Hope that makes sense, I know there's a bit here without a whole lot of proper context, but I'm happy to elaborate further!
+Thanks for the detailed reply @vprusso! I tested my implementation on the CHSH example and got the correct classical value. However, when trying to compute the quantum value via chsh.quantum_value_lower_bound(), I got a cvxpy error:
+This is because on line 392 in nonlocal_game.py, we have num_output_alice = 4 and num_inputs_alice = 2, and cvxpy expects a square matrix if PSD is true.
+I'm not too familiar with the algorithm to numerically compute the quantum value, so I would appreciate some guidance on how to proceed. Do we need the matrix to be positive semi-definite? Or can we pad the smaller dimension with zeros? Or does this require rethinking our algorithm in terms of how we map our 4-D pred_mat into 2-D?
+Also, is there a reason we use assertEqual in our tests instead of np.testing.array_equal? The latter gives us information about the differences in the numpy arrays, rather than just failing.
+Hi @theRoughCode. I'll work backwards here w.r.t. your questions:
+Also, is there a reason we use assertEqual in our tests instead of np.testing.array_equal? The latter gives us information about the differences in the numpy arrays, rather than just failing.
+Not any good reason at all, in fact. Certainly would prefer more information than less, so if np.testing.array_equal gives us more information, I think that should be the preferred approach. I've created a task here to capture that: #63
+Regarding the statement above:
+I tested my implementation on the CHSH example and got the correct classical value. However, when trying to compute the quantum value via chsh.quantum_value_lower_bound(), I got a cvxpy error:
+I haven't had much time to dive into this, but it might require a bit of investigation on how QETLAB is able to take these 4x2 matrices and still compute the NLG value--despite them being non-PSD.
+My hunch here is that there may be some differentiation in the way in which the arrays are ordered in Python vs. MATLAB. For more on that, refer to the section "RESHAPE and LINEAR INDEXING" on this page: https://numpy.org/doc/stable/user/numpy-for-matlab-users.html
+Outside of that, it may also require throwing similar tests at both MATLAB/QETLAB and Python/toqito for NLGs. For the former, even if you do not have access to a MATLAB license I believe you can either get 30 days via the online version of MATLAB or using a local version. If you do this, I would suggest a local version as you would require both CVX and QETLAB to be "installed" which is much easier locally as opposed to online.
+Let me know what you think, and thanks again!
+Hi @vprusso, @theRoughCode
+Regarding this error,
+I tested my implementation on the CHSH example and got the correct classical value. However, when trying to compute the quantum value via chsh.quantum_value_lower_bound(), I got a cvxpy error:
+it seems to me that the code in non local games might need an update. For example, the cvxpy variables below might not be square in a general setting or even alice_sum_a might not be of equal dimension with tau.
+
+
+@georgios-ts @vprusso Should this failure mode of the current numerical solution with non-square matrices be opened as a separate issue?
+@vprusso
+I haven't had much time to dive into this, but it might require a bit of investigation on how QETLAB is able to take these 4x2 matrices and still compute the NLG value--despite them being non-PSD.
+Looking at how QETLAB does it, they're implementing a different solution that does not require the matrix to be PSD:
+We could try this algorithm using #61 by @georgios-ts?
+Actually, this function is most relevant. It handles this issue by requiring as input the dimension of the Hilbert space that the players have access to.
+@theRoughCode from what I can tell, it seems as if the fixes you pushed forth in #64 and #65 overcome the comments in this thread. Of course, if I'm missing something or if you need any input from me to help out, please do let me know. Thanks, and great input from both @theRoughCode and @georgios-ts! Thank you both!
+@vprusso that's right, the comments above should be resolved now. Thanks!

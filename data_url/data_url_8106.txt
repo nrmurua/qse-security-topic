@@ -1,0 +1,67 @@
+When attempting to create (and then draw on) the Bloch sphere, the command b.show() as per the documentation (after doing the correct setup) does not display the Bloch sphere. Rather a matplotlib window appears for a fraction of a second before closing itself.
+Using plt.pause() after the b.show() line allows this window to remain open however it is simply black with nothing rendered on it.
+I am able to get a graph of the Bloch sphere by using the plt.show() command in place of b.show(). However this also brings up another window at the same time showing only a set of 3d axes.
+Here is my MWE
+This is the line I can replace with plt.show()
+As per the documentation I would expect b.show() to be the only command required to display the Bloch sphere. I have attempted to install correctly but I assume I am missing something still.
+My environment is:
+QuTiP Version:      4.6.2
+Numpy Version:      1.21.1
+Scipy Version:      1.6.2
+Cython Version:     0.29.24
+Matplotlib Version: 3.0.3
+Python Version:     3.7.1
+Number of CPUs:     4
+BLAS Info:          OPENBLAS
+OPENMP Installed:   False
+INTEL MKL Ext:      False
+Platform Info:      Windows (AMD64)
+Installation path:  C:\ProgramData\Anaconda3\lib\site-packages\qutip
+Thanks
+So I decided to reinstall Python (Anaconda specifically) to get a fresh slate as in my own debugging and trying to update packages other code started to behave weirdly.
+Here is my current qutip.about():
+QuTiP Version:      4.6.2
+Numpy Version:      1.20.1
+Scipy Version:      1.6.2
+Cython Version:     0.29.23
+Matplotlib Version: 3.3.4
+Python Version:     3.8.8
+Number of CPUs:     4
+BLAS Info:          INTEL MKL
+OPENMP Installed:   False
+INTEL MKL Ext:      False
+Platform Info:      Windows (AMD64)
+Installation path:  C:\ProgramData\Anaconda3\lib\site-packages\qutip
+I am using the Qt5Agg matplotlib backend, and changing to the TkAgg backend gives the same behaviour.
+However, running the code you pasted in a separate (command line) console I am able to view the sphere with even the b.show() command.
+I still have this behaviour in my editor however (Visual Studio Code) so I think the problem is something to so with my debug environment, this code even behaves as it should in the powershell window in VS code.
+I know this isnt the VS code issue page but if you have any suggestions I'd much appreciate it
+@ChesterCamm I don't have any experience with VS code myself, but perhaps someone else reading this does. If you (or someone else) get it working, please post a reply!
+@ChesterCamm Are you running this with one of the VS code Jupyter extensions? Or directly in VS code? (I really know nothing about what VS code looks like :).
+Directly in VS code. My launch.json looks like
+When using the plt.show() command, the second window only appears after a b.render() command, but thats also necessary for any vectors I want to draw to appear.
+If you have several different Conda environments. Sometimes VSCode chooses the wrong one. You could check if the default environment used is the same as the one you used in the console at the left bottom corner. Something like:
+
+The qutip:conda is the Conda environment. Or open a terminal in VSCode and do that manually.
+If you are using the Jupyter notebook extension then that's again different. Somewhere in the right-upper corner.
+To try keep things simple for me, I only have the base environment which VS code activates before any code is run.
+The text I have in that box is Python 3.8.8 64-bit (conda). I realise I'm missing the ('base':conda) as per https://code.visualstudio.com/docs/python/python-tutorial however I havent yet found why this is the case. I am continuing to look as I feel this might be the crux of the problem.
+As another work around I found that (after updating matplotlib to my current version) I can get some of the expected behaviour from b.show() within VS code by adding the plt.pause(interval) command after b.show() (as descibed previously however now I can actually render someting), where the interval is how many seconds I want to view the Bloch sphere for. The b.save() function also works as expected so I can use that as a workaround for now at least.
+Some more odd behaviour - likely caused by all the updating an reinstalling trying to fix things - is that the plt.show() no longer works as described before. Not a massive loss as I've gained other functionality and I am still able to render other graphs (so matplotlib isnt broken) and the bare 3d axes have stopped appearing.
+Not sure if this is a conda issue now as I can run the test script in the windows powershell terminal with python .\qutiptest.py where qutiptest.py is
+and I get the same behaviour as when I run throught the VS code debugger, where the matplotlib window flashes briefly. I can also recreate the rest of the VS code behaviour like this.
+This sounds like matplotlib just doing its normal thing when handling Windows backends. Does the problem persist if you put in the lines
+as the first things in your script?
+See also: https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.isinteractive.html
+At any rate, the root problem is likely to do with how your VS Code is handling matplotlib. I also don't know anything about VS Code, but there's a chance it's forking matplotlib calls into a separate process or something, and if those are in interactive mode, they may be nonblocking so the process returns immediately. In writing this out, I think I may have got it backwards in my previous comment - also try pyplot.ioff() instead of ion() at the start.
+So after starting with a fresh install of Anaconda and going through the steps described in https://qutip.org/docs/4.1/installation.html to install through conda-forge and conda, I am still seeing the same behaviour. However I have found a workaround that gives me exactly what I want.
+During my debugging I ending up adding the b.make_sphere() command, this seems to have caused the extra set of axes to keep appearing. I found that by omitting the  make_sphere command and just replacing b.show() with plt.show() worked perfectly.
+Heres my MWE
+My qutip.about() output is:
+Hopefully this helps someone.
+@jakelishman I tried interactive mode toggling when this problem first occurred as that's what the behaviour reminded me of too. Gave it another go with my example in this text (replacing the plt.show() with b.show()) but still same behaviour.
+I think it's to do with something similar to the problem/solution in https://stackoverflow.com/questions/12369693/how-to-make-the-plot-not-disappear/12905317 as self.fig within the Bloch class is initialised in render() (and then called in show()) a similar way. But I am not familiar enough with the qutip backend to know if this is an error, especially as this does not seem like a common issue.
+Great that you fixed it!  Our Bloch sphere hasn't been really looked at deeply in a while.  I know Paul copied it into Qiskit, and having a look at things over there, looks like he made some changes in Qiskit/qiskit#1091, which we may want to look at.  I don't think we need to worry much about the licensing (terra is Apache for reference), since we're just looking at a basic call to the mpl API.
+@ChesterCamm @jakelishman I've attempted to clean up the figure state tracking in Bloch.render() to make it more robust. As a bonus, I can no longer crash .render() in my own Python console by closing a figure and calling .render() now updates any existing figure that is already shown.
+@ChesterCamm Feedback on whether my change helps your case would be appreciated.
+The new code also works with all sort of combinations of .show() and .render() in a Jupyter notebook for me.

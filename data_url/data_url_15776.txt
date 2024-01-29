@@ -1,0 +1,25 @@
+When attempting to generate a random circuit using qiskit.circuit.random.utils.random_circuit with ~60 qubits with mid-circuit conditionals an error is generated;
+The underlying issue here is we're trying to set the condition value as a random number with a max value of 2**n qubits here:
+https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/circuit/random/utils.py#L150
+which we obviously can't do with a numpy int 64 which is what it looks like it's using under the covers. We probably will have to change the random logic to use python's stdlib rng and use a python int instead so we can set the value to > 2**63.
+Thinking about it a bit more the other option is to split classical registers up at 63 bits (or split the random values in a larger register for every 63 bits) so we can use a random value generated with the current code.
+Or generate random bitstrings and then convert.
+Hello! I would like to work on this issue. Can you assign me to it, please? Thank you!
+Hey! @Kit-Kate  Are you still working on this issue?
+Since the issues is stalling, do you want to take it @deeksha-singh030 ?
+@1ucian0  Yes, I want to work on this issue.
+assigning it to you @deeksha-singh030 ! Thanks!
+The error is occurring for all the values of n > 31. So, to figure out the cause I changed the max condition value to number of qubits to verify for numpy int 64 but it is still giving the same error. I'm not able to figure out the issue here. Please help me with it @jakelishman
+
+Hi, I'm so sorry this fell through.  Probably the best solution here is to not generate an integer directly - we'll always hit an upper limit in Numpy if we try this, either at 31, 63 or 127 qubits.  Instead, let's assume that we can safely generate 16-bit integers (Windows sometimes defaults to 32-bit rather than 64-bit), then we can calculate how many bits we need total, and generate enough integers that we've got enough bits.  For example, if we need a 64-bit integer, we could do
+If we don't need an exact multiple of 16, we'd need to mask the last generated integer, but this lets us fairly generate a random integer that's as large as we could ever need.
+We probably don't want to swap to using Python's built-in random module, because that will make reproducibility a bit harder, since that would use two separate bit generators.
+Hi @deeksha-singh030, did @jakelishman answered your question?
+Hi @1ucian0  I would like to work on this issue. Can you please assign it to me?
+Sure! Assigned!
+I tried the way suggested by @jakelishman and found that the issue gets resolved if we do this:
+I have done typecasting on parts (numpy int) and created iparts (python int) so that the condition_int value is in int. This ensures that condition_int has no upper limit like Numpy int.
+We can see that for num_qubits > 63 (80 in my case) we get no error and the issue is fixed
+
+According to a suggestion by @mtreinish, I included number of qubits in the code so that the code is not hard coded to generate a random integer:
+Here, for any number of qubits this code generates a random number with maximum value of 2**num_qubits - 1. For example, if num_qubits is 70, then the loop runs 4 times generating a random number upto 2^64 and then that number is shifted bitwise by 6 bits (70-64) and another random number of 6 bits is added to it. Kindly let me know if this approach is correct.

@@ -1,0 +1,12 @@
+The documentation mentions that SED can change lanes when the current lane is full to help maximize FIFO usage. 
+This is correct, but with some important caveats.
+1 - DRTIO Satellites
+Satellites do not currently enable event spreading: 
+This is because (from https://forum.m-labs.hk/d/404-rtio-event-submission-if-lane-fifo-is-full/3)
+DRTIO takes a pessimistic estimate of the available space in a satellite which is used by the master to know when it can push more data without having to wait for an acknowledgement from the satellite. This is done for latency reduction reasons. The estimate reported by the satellites is the space available in the fullest FIFO (see what report_buffer_space=True does). So enable_spread=True would have very limited benefits there, since the previous FIFO would remain full.
+You could try to implement a variant of enable_spread that switches on a FIFO high watermark instead and let us know how that goes. Note that you only need to implement it for synchronous FIFOs because (1) this is what DRTIO satellites use (2) async RTIO FIFOs will be deprecated and removed in ARTIQ-8; so it should be fairly straightforward.
+2 - Master
+The logic for switching lanes when the current FIFO is full is 
+Importantly, we don't switch lanes when the FIFO is full, but only when it has been full and now has space again. This means that, for example, writing a long sequence of events in the far future will block when the FIFO becomes full until the first event plays back. Lane switching will only occur /after/ the first event has been played back from the FIFO. In other words, SED does not allow one to simply fill up more than one lane by scheduling events in the far future.
+This design choice seems to be related to what's going on in the runtime around writing RTIO events, but I haven't understood that enough to comment. See discussion in https://chat.m-labs.hk/m-labs/pl/gcrzm6owkigcxn3ns1znfsokyr for details
+Should be straightforward after synchronous RTIO changes.

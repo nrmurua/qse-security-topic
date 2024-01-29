@@ -1,0 +1,21 @@
+For some reason, the MaximumLikelihoodAmplitudeEstimation is giving a wrong answer when the problem uses a PhaseOracle created from a DIMACS file. Seems to work correctly when using a similar, hand-madeQuantumCircuit as an oracle.
+I've attached the DIMACS file (with a .txt extension so github will accept it): 3sat.dimacs.txt
+Replacing oracle with:
+behaves correctly.
+The final output should be close to 0.125.
+No response
+This is a strange behavior indeed! But it doesn't seem to be related to the PhaseOracle itself. Here is a more minimal example to recreate the same bug
+If we take a look at the log-likelood functions the MLAE minimizes, it does find the correct minimum, so the issue doesn't seem to be in the (volatile) minimization process. Rather the bug might be before, already in the calculation of the good and bad counts?
+Ok, so going through the math I'm getting the right result. Your state preparation operator is
+where x is a tensorproduct, and you identify a good state as all 3 qubits being one: |111>. Hence the probability of measuring a good state, which is the output of QAE, is 1/(2^3) = 0.125 -- as you mentioned.
+Now, you could just define the EstimationProblem with this information: the A operator and the index of the objective qubits:
+However you also want to specify the Grover operator. This operator implements
+where S_0 is a reflection about 0 and S_{bad} a reflection about the bad state (i.e. all states except the |111> here). You can construct it, by providing it the S_{bad} operator, which would implement
+This operation is implemented e.g. by the CC-Z gate. In your code however, you're providing the S_{bad} as CC-(XZX) gate! This doesn't implement the right reflection and thus doesn't match the good state you're looking for. If we run the code with this oracle, it does give the right result:
+Now your definition is coming from a dimacs file, where does that definition come from?
+@Cryoris thanks for looking into this! I see now I added some useless X-gates, but there still should be only one solution. If I run your second example I get:
+which is still wrong :/
+I took the dimacs file from the textbook and added a couple of lines to eliminate the other solutions.
+Hi Frank -- my bad! I posted exactly the wrong oracle. The oracle should be only a CCZ, so
+I'll adjust the snippet above.
+I believe this issue was addressed above and as such I am closing it.

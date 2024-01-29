@@ -1,0 +1,27 @@
+Clifford.from_circuit has a list of 1- and 2-qubit Cliffords that it knows how to handle via updating the tableau directly. https://github.com/Qiskit/qiskit-terra/blob/1fb00e628a73f960980648cf9c4db0dfecc936ca/qiskit/quantum_info/operators/symplectic/clifford_circuits.py#L331
+This list currently doesn't include some Clifford gates from the standard library like ECR and iSwap. For iSwap, this is not a problem because it's .definition is all Clifford, but ECR is defined in terms of RZX and so can't be converted directly. This partially covered by #9475 but requires falling back to the matrix form to reconstruct the tableau.
+There are two approaches here:
+The first is to add ecr to the clifford circuits _BASIS_2q using the following Clifford table:
+The second is to add an equivalent definition of the ECRGate() to the equivalence library (assuming that the Clifford class will handle equivalent definitions):
+Note that in the circuit library there are some Clifford gates that do not appear in the clifford_circuits.py file,
+but since their definition includes only Clifford gates, then they are converted automatically into  Cliffords.
+These gates include:
+Do we want to add them to clifford_circuits.py ?
+There are two approaches here:
+The first is to add ecr to the clifford circuits _BASIS_2q using the following Clifford table:
+...
+The second is to add an equivalent definition of the ECRGate() to the equivalence library (assuming that the Clifford class will handle equivalent definitions):
+...
+These both seem viable to me. Having a Clifford-only definition in the equivalence library would be useful in general, since the only path from ECR to CX now requires to RZXs, which in turn will generate two CX gates. I don't think clifford_circuits.py currently checks the EquivalenceLibrary though, only Instruction.definition, though I don't see any reason why it couldn't.
+Note that in the circuit library there are some Clifford gates that do not appear in the clifford_circuits.py file, but since their definition includes only Clifford gates, then they are converted automatically into Cliffords. These gates include:
+...
+Do we want to add them to clifford_circuits.py ?
+Having them in clifford_circuits.py should be moderately faster, but I think having them there would be beneficial for completeness and to guard against the case that their definition changes in the future to something like a QASM-style definition that isn't expressed in terms of Cliffords.
+Copying over context from @ShellyGarion 's comment on #9475 (comment) that we should discuss here:
+Gates that are Cliffords only for certain parameters (e.g. an integer multiplication of pi or pi/2).
+Perhaps they can also be added to the file clifford_circuits.py, defining new lists of gates:
+_BASIS_1Q_with_params and _BASIS_2Q_with_params, and check both the gate name and the gate params here.
+There seems several possible approaches for performance improvement of Clifford.from_circuit:
+In #9623 I added all the Clifford gates that are currently in the circuit library to clifford_circuits.py directly using _append_*
+(this is important for completeness in case their definition will change in the future).
+As for parametrized gates, that are Clifford only for certain parameters (usually for integer multiplications of pi or pi/2), adding more _append_* functions may not so scalable. One approach is to use #9475 to recursively define the circuit using Clifford and U or Rz gates with appropriate angles. Another option is to define an EquivalenceLibrary for Cliffords, that can also include parametrized gates.

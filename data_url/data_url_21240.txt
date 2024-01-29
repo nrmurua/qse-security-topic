@@ -1,0 +1,8 @@
+When assigning a large list to another large list in a kernel function and slicing the list being assigned, the new list is corrupted after a certain index.
+Either list_a is equal to list_b elementwise or an error is raised (as it is with self.list_b = self.list_a.copy()).
+list_b is equal to list_a only up to a certain index, afterwards there appear large semi-random numbers. This is an example output of the above experiment:
+This seems similiar to issue #1394 but there is no RPC involved.
+I think this is not list corruption, but a problem due to unsound escape analysis.
+It seems that the generated code is not copying the content of list_a[:] into list_b, but rather allocates a temporary list, store the slice result in the list, and assign the list to list_b. As the list is allocated on the stack, this is a dangling pointer after the function returns, and causes the corruption. It should be correct if you write list_b[:] = list_a[:] instead.
+The easiest way to fix this would be to forbid such assignment by fixing the escape analysis. And yes this is similar to #1394, both related to lifetime tracking.
+If I change the last line to the one you suggest (list_b[:] = list_a[:]), the error disappears. Increasing the length of the list (up to 10000 elements) also appears to be no issue then.

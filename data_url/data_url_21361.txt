@@ -1,0 +1,16 @@
+As far as I can tell, the hdf5 files are not written until the end of an experiment.  Is this correct?
+If not, how do I save to hdf5 before the experiment is complete?
+If so, I see this as a significant problem.  We don't want to lose all the data if our computer crashes in the middle of a run.  Also, we frequently run analysis scripts in the middle of experiment runs, which might be matlab or something else that doesn't play nice with artiq.
+Correct.
+You are free to open and write files to do checkpointing whenever you want.
+The code that does the hdf5 file writing is here: https://github.com/m-labs/artiq/blob/master/artiq/master/worker_impl.py#L230
+You should be able to open that same file and write to it before write-results happens. IIRC the scheduler device knows about rid.
+Be aware that, if you want to read from another process with the hdf5 file being written to, single-writer-multiple-reader requires a bit of special care in h5py.
+If you need automatic checkpointing in the background we'd need a full specification.
+http://docs.h5py.org/en/latest/swmr.html
+If you need automatic checkpointing in the background we'd need a full specification.
+May not be fully in the background. An API such as Experiment.write_results() that is called automatically after Experiment.analyze() and may be called explicitly at any time by the user may be a good choice.
+Yes. Or open the results file early (in prepare()) and expose the handle so that partial or intermediate things can be written without having to push all datasets.
+I think ideally I would like:
+If number 2 is too hard to implement, it might be OK if the user has the option to either write all the datasets or specify which datasets to write.
+#1464 should improve the situation considerably by always saving to HDF5 once the run stage is reached, i.e. even if it is finished with an exception. If the user crashes/deadlocks the worker process before the exception handler runs, data can of course still be lost, so further checkpointing might still be a good idea.

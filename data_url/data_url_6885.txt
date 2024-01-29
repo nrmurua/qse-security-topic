@@ -1,0 +1,22 @@
+I usually use macOS with Safari so I didn't see this until recently that on a Windows box there is a compile issue that it seems if I put any of gate on the circuit, for example this circuit on a "Version 61.0.3163.79 (Official Build) beta (64-bit)" on a Windows machine I will get this:
+Strange. The compile error is talking about the identifier webgl_286cc28ba4512e72 (and similar), but that doesn't appear anywhere in the shader.
+My uninformed guess is that the shader is hitting a bug in one your GPU drivers.
+What kind of GPU does your machine have? Does this also happen in other browsers (e.g. Edge)? Does updating drivers make the bug go away?
+Intel HD4600+[disabled] NVidia Quadro. Both Firefox and Edge work fine. It is fairly update but I should try updating that soon.
+The about:gpu logs contains lots of these, perhaps the webgl_d95d8e9804629e71 is injected by angle or something,
+Filed https://bugs.chromium.org/p/chromium/issues/detail?id=764036
+From the Chromium bug:
+This issue is related to global variable initialization. If a global variable is declared after main(), it's not visible where ANGLE tries to initialize it. Here's a simpler shader to reproduce the issue:
+void main() {
+gl_FragColor = vec4(0.0);
+}
+mediump float f;
+It should be pretty simple to fix, I'll try to have a fix for ANGLE ready for review today. While the bug exists in the browser, apps can work around it by declaring their globals in the beginning of the shader.
+I am not sure if this is the case but the issue will soon hit stable Chrome versions so I guess the solution worths to be checked.
+There aren't any post-declared variables in the generated shader source from the error trace.
+Could it be the function vec2 outputFor(float k)? Its declaration is before usage, but the implementation is after usage.
+Could it be that the variables can't come after any code? The shader is divided into separately generated parts that each declare their own uniforms.
+I applied this patch and Chrome beta, even on macOS which had issue before the patch, now works fine. Should I apply it as PR or you have better solution for it?
+It seems tail and the variables it initializes should come before main, what above patch/hack does.
+Feel free to make a PR. I'll likely do something slightly different, but it's good to have the alternatives ready to go.
+Great. Please consider putting the fixed version online. Thanks

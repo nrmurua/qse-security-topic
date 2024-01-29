@@ -1,0 +1,30 @@
+Adding a line trigger changes the behavior of the code after the trigger pulse.
+See the attached code to reproduce this issue.
+TTL4, Urukul channel 0 and 1 should all stay on 100 us, then turn off for 500 us, turn on for 100 us, and again turn off for 500 us.
+TTL4 behaves correctly. Urukul channel 0 and 1 does not turn off after the second pulse. See the oscilloscope screenshot below. CH1 (yellow) - Urukul channel 0, CH2 (blue) - TTL4, CH3 (magenta) - Urukul channel 1.
+
+Note that if self._use_line_trigger is set to False, everything is correct as shown below.
+
+In addition, if self._use_line_trigger is set to True, but only one of the two DDSes are switched on and off in the for loop, everything works as expected and the switched channel goes on and off with correct timing. This likely shows that the problem is not a hardware issue.
+I did more tests and found out that if I change the time in delay(100 * us) statement within the line trigger if block, I get different results. If the delay time is less than 10 ms, almost all times I get the wrong behavior (DDSes won't turn off with the switch pulses). If the delay time is between 10 ms to 20 ms, sometimes the behavior is correct. If the delay time is greater than 20 ms, I consistently get the correct behavior.
+I also tried to change the gate time in gate_finish_time = self.ttl1.gate_rising(20 * ms) to 10 ms, and get almost all wrong behaviors when the delay time is shorter than 5 ms, and get all correct behaviors when the delay time is greater than 10 ms.
+Since this problem relates to the delay time after the self.ttl1.gate_rising line, it seems possible that there could be unexpected behavior when timings of the DDS pulses overlaps with gate_rising period.
+Now I have a workaround for this problem. Adding a 8 ns delay between turning ttl4 and turning off the other two DDSes fixes the problem. Without solving this problem (or knowing the origin of the problem), I am not confident to run ARTIQ on our experiment though. ARTIQ should not output an incorrect waveform without any exception.
+I am a bit surprised that I did not find anyone else reporting this in either the repository or the forum. Line trigger and then an experiment seems like a common sequence for many different experiments. Maybe the problem does not exist in older artiq versions that I assume most of the groups are operating on?
+That's probably a sequence error, which could happen in this case if the trigger is faster than the "experiment" (you didn't say anything about the signal you applied to the trigger).
+Note that events keep being buffered during the whole duration of all gate_rising.
+Sequence errors should appear in the core device log. Is there anything there?
+Also, logging the trigger_time received (put them in some array because print() is slow) should shed some light on the issue and at least make the problem more reproducible e.g. by taking the external trigger out of the equation.
+@sbourdeauducq thanks for the help.
+That's probably a sequence error, which could happen in this case if the trigger is faster than the "experiment" (you didn't say anything about the signal you applied to the trigger).
+We are using a 60 Hz (16.7 ms cycle time) TTL signal with duty cycle 50% to trigger. I set the gate rising time to 20 ms so the gate time should cover 1 full cycle for a reliable trigger.
+Note that events keep being buffered during the whole duration of all gate_rising.
+Does it mean the input events from gate_rising is buffered and may occupy lanes, possibly leading to a sequence error?
+Sequence errors should appear in the core device log. Is there anything there?
+Yes you are correct. I got the following error ERROR(runtime::rtio_mgt): RTIO sequence error involving channel 18 (channel 18 is the switch channel for urukul0_ch0 based on device_db.py so it makes sense.
+Also, logging the trigger_time received (put them in some array because print() is slow) should shed some light on the issue and at least make the problem more reproducible e.g. by taking the external trigger out of the equation.
+That makes sense. I did some trials to remove the dependence on trigger_time and changed the line trigger part of the code to
+If the last delay time here is <= 19.3 ms, the output is incorrect. If the delay time is >= 19.301 ms, the output is correct. The remaining gate_rising time (20.0 ms - 19.3 ms = 0.7 ms) agrees with the time it takes to run the experiment below (100 us + 500 us + 100 us = 0.7 ms). After looking at the code more carefully and write out lanes for each event, I realized that issue is exactly what described in #1081.
+I think the solution I will use here is to repeat shorter gate_risings rather than using a long gate_rising for the trigger.
+I think the solution I will use here is to repeat shorter gate_risings rather than using a long gate_rising for the trigger.
+That's a good workaround idea. I think eventually we should have a gate that automatically closes (in gateware) when an event is received.

@@ -1,0 +1,65 @@
+Some MD benchmarks indicate that depending on the system and distribution, using COSMA as a drop-in replacement for ScaLAPACK's p?gemm may have a detrimental effect on the performance (2-10x slowdown). Being able to runtime-enable/disable COSMA might be useful to use the same binary (like in an HPC environment).
+Results from single runs of the QS H2O-64 benchmark on Alps/Eiger for different combinations of nodes/ranks-per-node/threads-per-rank:
+@kabicm, what do you think?
+I would first investigate these runs and see what the problem is.
+Taking another example, done by @marci73 .
+From what I can see, the problem is that the function in CP2K for Cholesky just explodes on the MC partition. Check the outputs at:
+/scratch/snx3000/mmi/TMP
+For example the two outputs:
+TiO2_oldmc18x18p2.out ==> w/ COSMA
+TiO2_oldmc18x18p2_noco.out ===> w/o COSMA
+The cp_fm_cholesky_invert function goes from 704.577s to 66.615s.
+It would be great to have an env variable that sets a threshold on the input matrix, such that we call PDGEMM (within COSMA) or COSMA given a minimum matrix size...
+Generally, COSMA should be in the best position to make these kind of switch-over decisions. Nevertheless, a tighter integration between CP2K and COSMA might be useful. Instead of environment variables we should add a section to the regular input. Furthermore, we could call COSMA upon exit to print a statistics.
+Generally, COSMA should be in the best position to make these kind of switch-over decisions. Nevertheless, a tighter integration between CP2K and COSMA might be useful. Instead of environment variables we should add a section to the regular input. Furthermore, we could call COSMA upon exit to print a statistics.
+I think we had this discussion with COSMA people, COSMA does automatic wrapping of the PDGEMM calls. Note that the function I'm mentioning above (Cholesky) does call COSMA under the hood (it is a PDGEMM within Cray Libsci), so having a section in CP2K will not help.
+I would first investigate these runs and see what the problem is.
+I used cmake -DCOSMA_BLAS=CRAY_LIBSCI -DCOSMA_SCALAPACK=CRAY_LIBSCI ../cosma to build COSMA.
+Generally, COSMA should be in the best position to make these kind of switch-over decisions. Nevertheless, a tighter integration between CP2K and COSMA might be useful. Instead of environment variables we should add a section to the regular input. Furthermore, we could call COSMA upon exit to print a statistics.
+Printing statistics and the configuration (COSMA has several tuning parameters and can have a different fallback for local-only data than the main program itself) could already be a good way to get some information on whether or not COSMA was called at all and how.
+At the moment it is impossible to determine whether an arbitrary CP2K executable is linked to COSMA (except when investigating the binary with readelf), which backend is used for local-only calculations, etc.
+And another issue with this transparent "overloading" of p?gemm arises when libraries called from CP2K issue p?gemm calls: whether or not those libraries will also use COSMA depends on the order the libraries were passed to the linker and/or whether they are shared libraries themselves and/or whether they are built with -fvisibility=hidden and/or the OS and/or other flags possibly passed to the linker (possibly transparently from the compiler). See the following for some analysis:
+This sounds increasingly like no fun and near impossible to debug when not directly involved (e.g. via a user error report).
+@kabicm I couldn't find any documentation wrt linker order in COSMA so far, did you look into this at some point?
+Sorry for the late reply, I am still on holidays and will get back to this issue next week.
+Gentle ping. Any news on this @kabicm?
+I am sorry for such a delay, now I am back on this issue. What is the minimum example that I can run to reproduce this problem? I also think it is probably related to the cholesky function.
+Thanks for taking a look @kabicm! The numbers above were obtained using our H2O-64.inp benchmark, which can run on a single node. If you need something smaller try H2O-32.inp.
+Thanks @oschuett for the fast response. After having another look at the H2O-64.inp results, it seems the slowdown introduced by COSMA are mostly on suboptimal configurations: when having over- or under-subscribed cores. So it seems to me that most of these are anyway irrelevant for the user? What @alazzaro mentions however (quoting: "The cp_fm_cholesky_invert function goes from 704.577s to 66.615s.") seems more relevant, so I will focus on that now.
+@alazzaro are these results also reproducible on daint? which configuration should I use?
+@alazzaro From the input file it seems to me the input file /scratch/snx3000/mmi/TMP/TiO2_BENCHMARK/TiO2_oldmc18x18p2.inp was run on 18 nodes (Piz Daint mc), with 18 ranks per node and 2 threads per rank. Is this correct?
+I would need the data file: @set data /project/s965/fbrandal/data.. mentioned in the input file /scratch/snx3000/mmi/TMP/TiO2_BENCHMARK/TiO2_oldmc18x18p2.inp, because it's missing.
+@alazzaro From the input file it seems to me the input file /scratch/snx3000/mmi/TMP/TiO2_BENCHMARK/TiO2_oldmc18x18p2.inp was run on 18 nodes (Piz Daint mc), with 18 ranks per node and 2 threads per rank. Is this correct?
+I would need the data file: @set data /project/s965/fbrandal/data.. mentioned in the input file /scratch/snx3000/mmi/TMP/TiO2_BENCHMARK/TiO2_oldmc18x18p2.inp, because it's missing.
+This is a question for @marci73 ...
+Hi
+I have copied the four needed data files in /scratch/snx3000/mmi/TMP/TiO2_BENCHMARK/
+Hence @set data /project/s965/fbrandal/data has to be modified accordingly
+Anyway these are the usual data files in cp2k/data
+Yes the run was on 18 nodes with 18 ranks and 2 threads
+Best
+Marcella
+I finally managed to reproduce this problem and it should be fixable. I ran RPA-RI for 128 H2O on 128 CPU nodes, 18 ranks per node and 2 threads per rank, as @marci73 suggested. I used the latest COSMA master branch which has some performance improvements (due to the integration of COSTA into COSMA) and also the latest master branch of CP2K.
+Timings on the CPU partition (total/chokesky_decompose):
+The reason for the performance drop in cholesky-related functions is because these routines invoke a lot of small pdgemms, which are almost vector-like. In each pdgemm, COSMA is using a lot of heavy-optimizations and heuristics such as e.g. ranks relabeling, strategy-adaptation and similar, which are an overkill for small pdgemms.
+We can easily turn off these optimizations for small pdgemms, but it's not so easy to define the criteria for considering the multiplication problem  -- small.
+I am still experimenting with different options and will update you on the progress. Afterwards, we can make a new release of COSMA.
+This conclusion comes to my proposal:
+It would be great to have an env variable that sets a threshold on the input matrix, such that we call PDGEMM (within COSMA) or COSMA given a minimum matrix size...
+I would leave to the user to decide what it is small.  Please, note also @dev-zero comment on having a way to log if COSMA is used (an env vars COSMA_VERBOSE=1?)
+It would be possible to call PDGEMM in those cases, but my proposal is to still run COSMA in those cases, just without these optimizations turned on. The reason I would like to still run COSMA in those cases, is bacause it gets complicated to call  the original PDGEMM after it gets overwritten by COSMA. It's possible, but then COSMA must be built as a dynamic library, afaik.
+Regarding the threshold: I am not completely sure how this threshold should look like: e.g. should the threshold refer to m*n*k/P or maybe some other criteria taking into account the actual shapes.
+Having COSMA logs is no problem at all! We can make it print the full statistics e.g. (m, n, k, P, throughput). Let me know if you have any kind of specific statistics/logs that you would like to be collected.
+OK, assuming that it depends on the shape, then I agree it gets complicated... Then, I would say, we need at least 2 vars:
+Of course, we can have the transpose cases...
+From the tests you did, do you see any good pattern?
+@kabicm, any news on this? We're planing a cp2k release for the end of April. Since this problem affects many of our users, do you think it could be fixed by then?
+@oschuett @alazzaro Thanks for letting me know. We are also planning a new release of COSMA soon, that will bring some performance improvements and should fix this. Now that I know your timeframe, I will try to fit in.
+Are there any news regarding this issue?
+@nilsholle This will be fixed in the next COSMA release that is coming soon. We will synchronize it with the new CP2K release.
+@kabicm Perhaps you remember my tests with common MPI/OMP-hybrid execution and rank-counts below the full core-count (before requesting at least the environment variables for more control of pdgemm). At that time, ScaLAPACK was faster and used less memory (I tested ScaLAPACK as included with MKL). I think COSMA made progress with default/internal parameterization/heuristics. Though, for a few ranks per node like for scale-out, COSMA was already leading (and perhaps memory consumption was in check as well).
+I wonder if you think there are (significant) gaps left when comparing current performance vs ScaLAPACK (for above hybrid execution cases)? Do you think it is useful/necessary to test this on CP2K's side? ( I guess this can be also tested using the stand-alone. )
+My understanding is that Cosma assumes pdgemm is always communication-bound and then trades memory for doing less communication. Hence, the performance degrades when this assumption does not hold, e.g. because the machine is either overloaded or the problem is very small and overhead-dominated. Furthermore, there might be situations where we can make better use of the memory, e.g. by storing four-center integrals.
+For monitoring I'd be happy to add a suitable run to the single node benchmarks that I've setup for CPU and GPU on the dashboard.
+@kabicm, since we have the release planned for this week, I wanted to check if COSMA is still on schedule?
+Yes, I am mostly wrapping things up :)

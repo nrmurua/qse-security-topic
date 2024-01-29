@@ -1,0 +1,17 @@
+#1213 did this for insert and append, but not for insert_into_range, insert_at_frontier, batch_insert, or batch_insert_into (and any other ones I might have missed). Note that Moments now satisfy the OP_TREE contract.
+To clarify what this means: OP_TREEs can contain sub-trees which are Moments. These Moments should be inserted into the Circuit intact instead of being flattened and mixed with other operations.
+@kevinsung : I am starting with the insert_into_range method. Let me state my understanding of the insert_into_range: It adds operations to the existing moments (between indices passed as args) until the method can do. We use can_add_operation_into_moment to check if it could be done for operations. I see that a similar thing is not available for the moments. As a general question, the way to deal with moments would also remain the same as of that operations expect that the moment (set of operations) should either fit together or not ?
+LMKWYT
+@iamvamsi Moments should be treated differently from operations. While you can attempt to insert operations into an existing moment, you should insert a moment all by itself. You should let flatten_op_tree with the preserve_moments flag set to True handle the logic of inserting moments intact. See the insert method for an example of this.
+From a brief discussion with @Strilanc : the proliferation of Circuit insertion methods indicates that instead of resolving this issue the way I stated it, we should instead somehow combine the insertion methods into a more general one. In any case, we should probably discuss here what the exact behavior of the insertion methods should be on encountering Moments before attempting any changes.
+I'm not sure that Circuit.insert currently does the right thing when the first one or more elements of  moments_and_operations is a Moment. Specifically, I suggest that the potential change from NEW_THEN_INLINE to INLINE be de-indented so that it's triggered after the first moment_or_op regardless.
+More generally, reasonable behavior would be that each Moment in moments_and_operations essentially resets the strategy to NEW_THEN_INLINE.
+For examples, circuit.insert(i, [op1, op2, op3], NEW_THEN_INLINE) would be equivalent to circuit.insert(i, [Moment([op1]), op2, op3], INLINE) and circuit.insert(i, [op1, op2, op3], NEW) would be equivalent to circuit.insert(i, [Moment([op1]), Moment([op2]), Moment([op3]).
+For cases where you want to generally do INLINE but don't want any new operations to be put into a particular moment, you could have that moment followed by an empty one.
+How important is it that we maintain the current names and signatures of the existing insertion methods?
+Combining the insertion methods could be helped by defining a new insertion strategy (maybe EXACT) that throws an error when you try to insert an operation into a moment that already contains conflicting operations.
+insert_into_range could easily be removed by giving insert an end argument.
+@kevinsung Was there something particular you wanted to do with respect to preserving the moment structure on insertion, or was this just something that had to be addressed once Moment satisfied the OP_TREE contract?
+No, there was nothing in particular; it was more for the second reason you mention. It is not a high priority for me.
+I am removing myself from the assignee, till we finalise the status of different kind of insert operations.
+Maybe we can use Subcircuits(#3235) to achieve this?

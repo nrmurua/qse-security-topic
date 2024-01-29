@@ -1,0 +1,71 @@
+Glad to hear you made some progress! I think I get what you're after now so I'll take a stab at it:
+If the goal is to have some circuit that encodes data into certain circuit symbols (potentially from a downstream model) that also incorporates learnable symbols that should be trained as the overall model is trained (symbols that are different from the encode symbols) you can do something like this:
+Note that I've switched to the Expectation layer for more explicit control over what I'm doing with the symbols.
+With this snippet I'm free to make encoder_params come from an input ( like you have in your snippet ) and also keep tunable_params as some learnable parameter.
+Was something like this more like what you were after ?
+Originally posted by @MichaelBroughton in #249 (comment)
+Thanks for your hint how to use PQC in the middle of a network !
+However, unfortunately I didn't manage to implement your snippet working :-(
+My use-case is quite simple:
+Input of classcical data --> use a classical NN with e.g. 10 parameters to extract eg. 3 angles --> prepare a Circuit with these 3 angles --> add a second circuit with three learnable angles ---> Measure and compare it with the class of the input.
+All about the model should have 10 + 3 parameters to learn.
+In your example I don't see how how the tunble_params should be handled.
+Any hint would be really appreciated !!!
+When one uses tf.concat this gives a "combining effect" in the forward pass and a "splitting effect" in the backwad pass. The problem you are describing fits exactly into the snippet above. If I do:
+When I concat the values from tunable_params and encoder_params together, I am combining them into a larger batch of vectors in the forward pass. In the backward pass they are split and gradients for some symbols are passed back into tunable_params. The gradients for the rest of the symbols are passed back into the output layer of the classical NN. Like the comments in the first snippet mention the gradient for "gamma" backprops into tunable_params while the gradients for "alpha" and "beta" backprop into encoder_params. In the forward pass these two tensors are combined into one larger tensor of 3 variables.
+If things still aren't clear I would suggest reading into the examples using tf.conat https://www.tensorflow.org/api_docs/python/tf/concat
+Thanks a lot for your clarification ! While the principle how it works is clear, I still struggle with the details. Following your suggestion I developed the following code:
+--> The  model looks really weird and the parameter of the QuantumCircuit (beta) is not trainable :-(
+Ok, taking a quick glance at your code. There are several areas I would suggest investigating:
+You are concatting along axis=0 which produces the shape (None, 1) which seems strange. My initial guess is that you would want axis=1 to produce shape (None, 2). Like I mentioned in the previous comment, check out : https://www.tensorflow.org/api_docs/python/tf/concat for more information on what you want for your use case.
+Mixing tensorflow and keras APIs when it comes to learnable variables doesn't always "just work" right out of the gate. If you want to stick with using strictly keras constructs like tf.keras.Model you will need a way for keras to manage the variable you made. In your case maybe the easiest thing to do would be to make a small custom layer (https://www.tensorflow.org/tutorials/customization/custom_layers) that manages tunable_params for you. Once you do that your variable would show up in model.summary()
+Thanks a lot!
+Sorry, of course! It should be axis=1. Unfortunately this doesn't help much. The network still looks. very weird.
+Not working with keras but with "pure" tensorflow would of course be very cumbersome and not really an alternative.... By making a small custom layer you mean starting from the exisiting class Expectation(tf.keras.layers.Layer) and modify it appropriately ? Or starting form scratch?
+Since I come from the Quantum Computing side and not from tensorflow-development for me it's not obvious what to do exactly, so that the custom layer manges the tunable-params for me.
+By the way - compiling the model (with axis=1 above) leads to the following error:
+It would be big advantage of QuantumTensorflow (as compared to PennyLane, Qiskit etc) for the Quantum Machine Learning Community if it is possible to combine classical and quantum layers and train them simultaneously in the way I am aiming to - of course scaled to larger networks. At the moment this seems to be prohibitive difficult :-(
+OK. I'm going to do my best to answer your questions and try to help things along. For starters here is a working snippet made from the one you posted above:
+Let's go over some key points. On line 30 of the snippet, you can see I've made my own little Keras Layer. This layer was made by following the guide here: https://www.tensorflow.org/guide/keras/custom_layers_and_models . In the constructor the SplitBackpropQ layer is told which symbols will be coming from upstream in the model through upstream_symbols. It is told which symbols it should look after with managed_symbols. It is also given the initial values for managed symbols via managed_init_vals. Lastly it is provided with the operators value to to indicate what operators we would like to calculate the expectation value with. When when the layer's call method is called, inputs[0] (containing circuits) along with the concatenation of values from inputs[1] with self.managed_weights from line 55 are used in order to calculate the tf.Tensor of expectation values.
+On line 80 I have followed the guidance of the large NOTE at the bottom of https://www.tensorflow.org/quantum/api_docs/python/tfq/layers/Expectation . The error you were getting was fixable and was caused by the quantum circuits you supplied not being traceable back to a tf.keras.Input. this is a deep rooted feature/issue of Keras and is something that the Keras team may or may not get around to fixing. In the documentation for Expectation we mention this for all of our layers where this might be an issue here: https://www.tensorflow.org/quantum/api_docs/python/tfq/layers/Expectation and https://www.tensorflow.org/quantum/api_docs/python/tfq/layers/SampledExpectation. Along with this change on line 80, I added another input on line 92, passing in identical copies of your circuit in order to circumvent this issue fully and provide a reference for circuits that was traceable back to a tf.keras.Input. Luckily this only comes up in some and not all TFQ workflows.
+I see from your error message that you might be using anaconda. If you are, I would recommend switching off of it when working with TFQ. Anaconda uses a different source build of tensorflow than the official pip release version of tensorflow. If you continue to run into errors with the above snippet (which I have tested works on my machine), it could very well be caused by the discrepancy in builds. To fix just pip install tensorflow and pip install tensorflow quantum.
+It would be big advantage of QuantumTensorflow (as compared to PennyLane, Qiskit etc) for the Quantum Machine Learning Community if it is possible to combine classical and quantum layers and train them simultaneously in the way I am aiming to - of course scaled to larger networks. At the moment this seems to be prohibitive difficult :-(
+There has been lots of code written in TFQ that has either made it's way into a publication or as examples in TFQ that demonstrate the kinds of hybrid modelling capabilities you are describing. For example we have made a hybridized version of the QCNN (https://www.nature.com/articles/s41567-019-0648-8) as a tutorial: https://www.tensorflow.org/quantum/tutorials/qcnn . Another example would be: https://arxiv.org/abs/1907.05415 , as one of the lead authors on that paper I can speak from experience that these experiments took only several hours to run in a carefully constructed TFQ environment where they would have otherwise taken us days to run using something like Qiskit or PennyLane where we found that the scaling was not nearly as favorable as TFQ.
+Does this clear things up ?
+Dear Michael,
+thanks a lot !!! I really appreciate your help and now it's working perfectly !!! I'm sorry that I am not a tensorflow expert (yet) so I was not able to fill the missing steps in beetween. Acually I studied the QCNN example in detail and (unsuccessfully) tried to transfer the code. Concerning PennyLane I totally aggree with so. It is cute to implement but unbelievable slow :-( Thats why I switched to QuantumTensorflow for a more scaleable framework.
+I will extend my toy example to a realistic use case with finance data. If your are interested I can keep you in the loop for the results.
+Again, many many thanks !! Gerhard
+Dear all !
+The solution suggested above by MichaelBroughton worked nicely all the time....But now, after updating tensorflow (2.7.0) and tensorflow quantum to the latest releases I got the following error message when running the code above.
+Does anybody have an idea what have changed under the hood of tensorflow-quantum and how to change SplitBackpropQ to make it run again ??
+Many thanks in advance !!!
+Gerhard
+TypeError                                 Traceback (most recent call last)
+ in 
+80 unused = tf.keras.Input(shape=(), dtype=tf.dtypes.string)
+81
+---> 82 expectation = SplitBackpropQ(['alpha'], ['beta', 'gamma'], [np.pi / 2, 0],
+83                              ops)([unused, encod_2])
+84
+ in init(self, upstream_symbols, managed_symbols, managed_init_vals, operators)
+45
+46         """
+---> 47         super().init(SplitBackpropQ)
+48         self.all_symbols = upstream_symbols + managed_symbols
+49         self.upstream_symbols = upstream_symbols
+~/miniconda3/lib/python3.8/site-packages/tensorflow/python/training/tracking/base.py in _method_wrapper(self, *args, **kwargs)
+528     self._self_setattr_tracking = False  # pylint: disable=protected-access
+529     try:
+--> 530       result = method(self, *args, **kwargs)
+531     finally:
+532       self._self_setattr_tracking = previous_value  # pylint: disable=protected-access
+~/miniconda3/lib/python3.8/site-packages/keras/engine/base_layer.py in init(self, trainable, name, dtype, dynamic, **kwargs)
+338             (isinstance(trainable, (tf.Tensor, tf.Variable)) and
+339              trainable.dtype is tf.bool)):
+--> 340       raise TypeError(
+341           'Expected trainable argument to be a boolean, '
+342           f'but got: {trainable}')
+TypeError: Expected trainable argument to be a boolean, but got: <class 'main.SplitBackpropQ'>
+It's an error in the class initialization. I don't know what changed in TF (or python), but if you change super().__init__(SplitBackpropQ) to super(SplitBackpropQ, self).__init__() it worked for me. You can also find more re-uploading information here (similar architecture to this): #672 (comment)
+Thanks a lot !!! That works indeed .... The SplitBackPropQ Class was provided by Michael and it worked all the time - until my recent upgrade. Anyway. Issue #672 is indeed related but I don't think this simple solution works in my case....

@@ -1,0 +1,11 @@
+Construction a quantum volume circuit, followed by a measurement of active qubits, followed by a transpilation to a backend, produces a barrier across all qubits in the device including the ancilla.
+
+This behaviour is stochastic depending on the circuit generated, but I expected transpiler to always keep the barrier on only the active physical qubits. I believe this issue is the root of Qiskit-Extensions/qiskit-experiments#845, though that issue could also be fixed in other ways.
+No response
+I believe that is intentional behavior, I ran a quick test of your code with a callback set:
+and the barrier is being added by the BarrierBeforeFinalMeasurements pass which is intentionally adding a barrier before all final measurements in a circuit: https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/transpiler/passes/utils/barrier_before_final_measurements.py
+The idea behind it is to prevent swap mapping from unintentionally inserting a swap after a measurement by inserting a barrier on all qubits. But that pass predates my involvement on the project, maybe @kdk can comment on this more as it looks like he made this pass insert a device wide barrier in #4054
+Thanks, and thanks for the debug callback trick. Do you know what makes BarrierBeforeFinalMeasurements get invoked for the QV circuit, but not for a circuit such as this?
+(where I've wrapped a circuit into an instruction to make it look as much like a QV circuit as possible)
+My guess is that there is no routing (the transpiler stage that adds swaps to make up for a lack of connectivity on the device to run the circuit) needed. The cnot circuit just needs a 3 nodes that have a path between them which the coupling map will have, while a quantum volume circuit needs routing to run because the device has insufficient connectivity. The barrier before measurement pass only runs when there is routing is run, because it adds the barrier as a guard against the pass adding a swap incorrectly (according to the comments).
+It's looking more and more like it should be qiskit_experiment.ParallelExperiment's job to trim back over-zealous barriers of transpiled circuits. Or QuantumVolumeExperiment._transpiled_circuits() for a more local fix.

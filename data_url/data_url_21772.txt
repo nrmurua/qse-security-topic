@@ -1,0 +1,108 @@
+Building in a fresh artiq-dev=4.0.dev conda environment with the latest master. Only change is to set the HMC830 reference frequency to 150MHz in the Sayma AMC target. Clocking at 150MHz from a synth.
+Building without sawg, I see glitches on the ramp generator's output
+
+Some channels look better than others, but all have some level of glitch. This could well be related to the synchronisation issues I see...
+@marmeladapk / @jbqubit are you able to reproduce this?
+Reproduced in a fresh conda environment with a current master, now clocking at 100MHz. Binaries are here, timing is met.
+UART log:
+Looking at all channels on a fast scope. Using an ac-coupled TCM2-43X+ and a 50Ohm scope. Channel numbers refer to the physical ordering of the SMPs, with the ones nearest the SATA connectors being 7 (I recall the mapping between SMPs and DAC channels being somewhat screwy).
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+So we have these odd glitches and channels 3/7 show some odd curvature...
+@jbqubit @marmeladapk @gkasprow can one of you look at your board with the binaries I posted and see if you reproduce this...
+The "odd curvature" (assuming you are talking about the low frequency deviation from the sawtooth) on 1,3,5,7 is your balun AFAICT. Do they worry you?
+There are glitches on 0,1,4,5: periodic on 1,5 and random on 0,4.
+Using @hartytp build I also see problems with the sawtooth pattern. When errors occur they don't occur with the same period as the sawtooth so I've done a single-trigger capture. sawg0...sawg7
+
+
+
+
+
+
+
+
+Is there an older version where that did not happen?
+Is there an older version where that did not happen?
+Not sure. Are you able to test this on your hardware? Or, is there some other issue blocking that?
+We could go back and check with the commit that we though fixed this. If you post binaries then maybe @jbqubit can test them (I won't be able to do that this week)? Since this issue only affects some channels, it's quite possible that we thought it was fixed when it wasn't. Or, it could be one of those PITA issues like an incorrect reset sequence or CDC or something that only causes issues with some builds.
+Generally lacking time + need to fix the power supply or microTCA.
+@sbourdeauducq Is there a way to get access to your MTCA crate?
+I mean MCH Ethernet, NAT MCH console, Sayma USB + MMC programmer + some mean to switch the power of the crate ?
+Given that the behavior differs between channels (where the ramp generator does not differ), this is likely something downstream and not the ramp generator.
+@hartytp to clarify what you were saying:
+Is it known whether or not this happens with SAWG as well?
+@jbqubit
+I haven't got enough data at the moment to give a definitive answer to that, although I can retest later if necessary.
+I only looked at one channel with SAWG and didn't see any evidence of this (see the shots I posted on the synchronisation issue). That same channel displayed glitches with the ramp generator.
+However, without knowing the cause of this issue, it's possible that the presence/absence of glitches depends on exactly what RF waveform is produced on the various channels, so my one observation doesn't necessarily tell us much.
+To frame this, when do you (or anyone) remember checking the outputs the last time? Before the synchronization/sysref work?
+This is not related to the SYSREF work. @jbqubit sees this on an unmodified Sayma using the current ARTIQ master. I see it both with master and with my sync branch.
+I did some tests looking at glitches shortly after the current JESD204B release (see the IRC logs). It's been a while now, so I can't recall if I verified that the glitches were absent on all channels, or if I just confirmed that after that release the channel I had been looking at no longer had glitches (i.e. I'm not sure if I can confirm whether the glitches disappeared after that release or if they just moved channels).
+Once the power supply issue is fixed, it would be great to know if @sbourdeauducq can reproduce this.
+@hartytp Did you try to supply other reference frequencies (100, 125 MHz?). Just as a sanity check. With @jbqubit we had very similar symptoms, which were caused by wrong reference frequency (even though hmc830 locked). Perhaps hmc830 freq isn't set properly?
+It's a wild guess, but it should be quick to check it.
+@hartytp Did you try to supply other reference frequencies (100, 125 MHz?). Just as a sanity check. With @jbqubit  we had very similar symptoms, which were caused by wrong reference  frequency (even though hmc830 locked). Perhaps hmc830 freq isn't set  properly?
+Good thought, but I was quite careful about this. I was also able to reproduce this issue with a variety of clocking options and reference frequencies.
+Note also, that @jbqubit reproduced my measurements, so he would have to be making the same mistake as me.
+The picture here looks suspicious, I don't see large glitches but that's perhaps just because of the limited scope bandwidth.
+
+I don't know what is causing this.
+Did you look at all DAC channels?
+That's the next thing I'm planning to do, but I ran out of time for today.
+BTW, this was taken with the board inside the µTCA crate and Ethernet also works (through the crate).
+BTW, this was taken with the board inside the µTCA crate and Ethernet also works (through the crate).
+🎆
+perhaps just because of the limited scope bandwidth.
+Your scope has enough vertical and time resolution to see the glitches that I saw. Looks like both @hartytp and I saw that only a subset of DAC channels had the glitches.
+#1166 (comment)
+Digging through the issue trackers to remind myself the history of this issue:
+Okay, now it won't boot anymore, panic at src/libcore/result.rs:945:5cannot load RTM FPGA gateware: "Did not assert INIT in reaction to PROGRAM"
+Maybe one of the reworks broke when I added more Allaki to look at other channels...
+Taking the RTM out of the crate and putting it back in again "fixed" the problem. You gotta love Sayma...
+There are glitches on some channels:
+
+
+Cleaning this up and categorizing the historic and current issues observed/fixed, we have the following:
+AFAIR since there were also significant changes to the test pattern generator (without-sawg) afterwards that could have and were intended to converted rare and low visibility glitches (like 4) into more dramatic glitches like (1).
+Ergo, let's focus on (1) first and ignore the rest for now.
+Since we do not suspect the ramp generator, we should look at JESD.
+Thanks for looking into this @sbourdeauducq and @jordens. Glad to hear you can reproduce the issue. If there are any specific tests you'd like me to do then let me know.
+The problem is not present with the DRTIO satellite target (@hartytp please confirm). So this looks like a clocking gateware/firmware bug, or more HMC7043 shenanigans (with DRTIO satellite, the JESD transceivers are clocked by the Si5324 and not the HMC).
+To test, compile the DRTIO satellite with the --without-sawg flag and then provide a DRTIO uplink on the SFP (with 150MHz RTIO clock, SFP0 labeled "Cage1" on the PCB) which can come from a Kasli or another Sayma acting as DRTIO master. Just establishing the DRTIO link is sufficient, no command has to be sent.
+Ha. The glitches are every 40 ns. That's an even 6 coarse RTIO periods and 5 periods of 125 MHz. That's why they look random on the 600/4/16 MHz ramp and periodic on the 600/4/3 MHz sine. There isn't that much (anything?) driven at 125 MHz in DRTIO satellites, but quite a bit in master bitstreams. This could be some fabric or external crosstalk due to the beat and thus PI/SI issues. Or a gateware/firmware bug that's always there and only exposed by the beat.
+The satellite has the CPU with satman + SDRAM at 125MHz.
+We can test this theory by changing the system frequency in the master bitstream. I'll try that tomorrow.
+Ack. The difference could still be due to the reduced amount of 125 MHz logic (kernel cpu and associated logic). But this is definitely at the beat. If this is PI, one might naively expect a significant "intermodulation" product on the power supplies at 25 MHz. If it is SI, then we should look at how the 125 MHz clock is getting into the 150 MHz/JESD domain. Could also be some 125 MHz hitting the DAC since its PClock is also at 150 MHz AFAIK (line rate/40).
+OTOH from the way the sine data is corrupted and from the almost clean 600/4/16/3 MHz periodicity of the ramp corruption it looks like it is predominantly taking "clean" data from some other/wrong group of four samples. I don't immediately see what that means but maybe EB/CDC or JESD gearbox/framing issue?
+Changed the system clock frequency using a patch similar to https://hastebin.com/nepilataje.rb, but with 21 instead of 19 (19 tickles a SDRAM bug), which yields 131.25MHz.
+Observed glitches (all on the same channel):
+
+
+
+I just did some tests with KCU105 / AD9154 + simple test design @10gbps linerate + pattern from Artiq, here is what i have:
+Channel0:
+
+Channel1:
+
+Channel2:
+
+Channel3:
+
+Channel 1 and 3 seem fine (83*600/1000 = 50MHz), but i was expeting to have the same pattern than with Artiq on Channel 0 and 2 but it does not seem to be the case. Otherwise, i don't seem to see the glitches.
+Please tell me if you want me to do more tests.
+@enjoy-digital thanks!
+Seems resolved with Vivado 2018.3. @hartytp please confirm.

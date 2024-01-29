@@ -1,0 +1,52 @@
+'qiskit-terra': '0.18.3', 'qiskit-aer': '0.9.1', 'qiskit-ignis': '0.6.0', 'qiskit-ibmq-provider': '0.18.1', 'qiskit-aqua': '0.9.5', 'qiskit': '0.32.1', 'qiskit-nature': None, 'qiskit-finance': None, 'qiskit-optimization': None, 'qiskit-machine-learning': None}
+A Transpiler Error occurs when executing circuits with dynamical coupling on real backends:
+TranspilerError: "This circuit None may involve a delay instruction violating the pulse controller alignment. To adjust instructions to right timing, you should call one of scheduling passes first. This is usually done by calling transpiler with scheduling_method='alap'."
+Whether or not these errors occur to be dependent on the type of circuit. For instance, the following circuit executes without errors:
+
+But the same test circuit FAILS  after adding one extra hadamard on qubit 0:
+.
+Commenting out the hadmard on qubit 0 will allow the circuit to execute without errors. Changing to backend = FakeMumbai()  also executes without errors. Changing optimization level =1 to other levels makes no difference.
+Code fails on multiple real devices (not just IBM mumbai).
+The code below
+fails with error:
+TranspilerError: "This circuit None may involve a delay instruction violating the pulse controller alignment. To adjust instructions to right timing, you should call one of scheduling passes first. This is usually done by calling transpiler with scheduling_method='alap'."
+Code should execute without Transpile errors irrespective of the type of circuit.
+No response
+The issue here is in your code, specifically the use of execute() (which combines transpile(qc, backend) and backend.run(qc) into a single function call). What is happening is that you're scheduling your circuit with your custom pass manager first but not adjusting it to the timing constraints on the backend. Then when you call execute() again that's the equivalent of running transpile(circuits, backend) again without specifying a scheduling method. That transpile() call is raising an error telling you you've got a circuit with delays that doesn't comply with the scheduling constraints on the specified backend target and it won't run correctly without scheduling. The suggestion there is that the easiest way to fix this is to use the scheduling method kwarg on transpile() to run the full set of scheduling passes which will adjust the scheduled circuit based on the timing constraints. You have 2 ways you can fix this, either update your code to do:
+or add the timing constraint passes to your custom pass manager. You can see the relevant passes here:
+https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/transpiler/preset_passmanagers/level0.py#L213-L244
+Thanks so much that worked!
+Ok, then I'll close this issue. But please feel free to reopen it if there is more to discuss on this.
+I am not sure if this is the same issue but the following code
+produces the errors on IBM mumbai and auckland but works on cairo
+Manually changing 'pulse_alignment': 1 and passing this as a dictionary setting intiming_constraintsin transpile doesn't help for auckland and mumbai
+The error coming back is
+Exception: Delays must be a multiple of 16 samples
+due to the delay of 712dt on q0
+
+Note that you cannot change timing constraints on your side. This is constraints from the control electronics. If your backend says pulse_alignment: 16 currently you cannot use DD pass. So far in all IBM systems this constraint has been 1 meaning you can place your instruction at arbitrary starting time. On the other hand, if this is not 1, the electronics will ask you to start every instruction at multiple of that value. Currently we only have such stretching pass for acquire_alignment 
+https://github.com/Qiskit/qiskit-terra/blob/d9ab98f2b3663b42ba354ed1cd2bc18b3f2cd19d/qiskit/transpiler/passes/scheduling/instruction_alignment.py#L29
+Even if you add scheduling pass, no stretching to satisfy the constraint will happen without such alignment pass. However, current implementation of the stretching pass is really inefficient, since quantum circuit is too lazy for the timing context (they don't have t0 and we always need to scan all instructions in DAG to find t0). This may cause non-negligible performance regression in transpilation.
+The best (or temporarily) solution for now would be asking the DD pass to check the constraints and insert delays that conform to the pulse alignment constraints. @ajavadia
+Yeah I think the DD pass should be enhanced to take into account pulse constraints, if a backend reports them. Right now it is agnostic to that, so it can produce delays which violate the control electronics' constraints.
+The issue here is in your code, specifically the use of execute() (which combines transpile(qc, backend) and backend.run(qc) into a single function call). What is happening is that you're scheduling your circuit with your custom pass manager first but not adjusting it to the timing constraints on the backend. Then when you call execute() again that's the equivalent of running transpile(circuits, backend) again without specifying a scheduling method. That transpile() call is raising an error telling you you've got a circuit with delays that doesn't comply with the scheduling constraints on the specified backend target and it won't run correctly without scheduling. The suggestion there is that the easiest way to fix this is to use the scheduling method kwarg on transpile() to run the full set of scheduling passes which will adjust the scheduled circuit based on the timing constraints. You have 2 ways you can fix this, either update your code to do:
+or add the timing constraint passes to your custom pass manager. You can see the relevant passes here:
+https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/transpiler/preset_passmanagers/level0.py#L213-L244
+I tried this on my VQE circuit but it still raised that error. Any suggestion please? (here ansatz_ = pm_dd.run(my_compiled_ansatz))
+
+This is the error:
+
+@nkanazawa1989 any progress to report here?  The above issue is a pain and hopefully we can squash it soon.
+Yes, this actually involves the refactoring of the whole framework in addition to the DD pass. I have updated the behavior of scheduling pass in #7655, and current stage is #7709 which upgrades scheduler pass and introduces BasePadding class which will be new base class of dynamical decoupling pass. Then, DD pass will be upgraded to consider the pulse alignment. Hopefully I can get reviews soon.
+this should be fixed with #7760
+Hi, Is this issue closed, I am still facing the same error
+
+steps to replicate the error.
+
+This circuit is a part of Iterative Amplitude Estimation procedure.
+
+qc is circ_ dd here, basically at the end I made qc = circ_dd
+From the above discussion, I get the key point that add the timing constraint passes to your custom pass manager, but how to do that? Since I can't fix it with simply by changing execute to backend.run,
+Do I have to use anything else than ALAPScheduler?
+
+Since Qiskit offers all these passes?

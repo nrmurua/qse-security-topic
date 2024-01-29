@@ -1,0 +1,45 @@
+Platform: Raspberry Pi 3B
+OS: Raspbian Stretch 9.4 armv7l
+GCC 6.3.0 20170516 (Raspbian 6.3.0-18+rpi1+deb9u1)
+GNU Make 4.1
+autoconf/stable,now 2.69-10
+automake/stable,now 1:1.15-6
+git/stable,now 1:2.11.0-3+deb9u4
+libssl-dev/stable,now 1.1.0f-3+deb9u2
+libtool/stable,now 2.4.6-2
+openssl/stable,now 1.1.0f-3+deb9u2
+zlib1g-dev/stable,now 1:1.2.8.dfsg-5
+git clone -b master --single-branch https://github.com/open-quantum-safe/liboqs.git
+cd liboqs
+autoreconf -i
+./configure --prefix=<path-to-install-liboqs> --with-pic=yes
+make
+Using the instructions on the README, building on armv7l yields two main issues:
+AES and SSE2 gcc flags are included
+gcc: error: unrecognized command line option ‘-maes’; did you mean ‘-mapcs’?
+gcc: error: unrecognized command line option ‘-msse2’
+Almost all makefiles return this error when running make.
+The architecture is not recognized (I think), giving unsupported architecture warnings when building. (Possibly causing also 1?).
+config.h:52:2: error: #error -- "Unsupported ARCHITECTURE"
+ #error-- "Unsupported ARCHITECTURE"
+For 1:
+Removing all AES and SSE2 flags on all Makefiles:
+for file in $(find . -name Makefile); do sed -i -e 's/-maes -msse2//g' $file; done
+For 2:
+Removing the #else clause in the preprocessor, in src/kem/frodokem/config.h:
+sed -i -z 's/#else\n#error-- "Unsupported ARCHITECTURE"//g' src/kem/frodokem/config.h
+Applying both quick fixes above results in a successful build. Have not tested further.
+Am I missing some steps or forgetting to set environment variables to properly configure the build?
+Hi Angel, thanks for reporting this.  I'd like to fix this but may not be able to get to it for a few days.
+The quick fix of removing all AES and SSE2 flags isn't what we'd want to do, instead we'd have to figure out how to get autoconf CPU detection features in config/cpu_features.m4 to set the appropriate compilation flags.
+As well, if we're going to make ARM a target platform, I'd like to have a continuous integration environment for it.  Do you have any experience with that?
+Is that in scope for v0.1 or are we pushing this to a subsequent point release?
+I was planning to push it to a subsequent point release. We'd have to both resolve the issue itself and figure out a continuous integration test that would exercise the build going forward, and the latter is what I don't know how to resolve at this point.
+Agreed; I'll spend a little bit of time tomorrow to see if we can build a minimal version of OQS that works on ARM (it used to); disabling some schemes might do the trick.
+I got the master branch to build and tests passing using:
+./configure --disable-aes-ni --disable-sig-qtesla --disable-kem-frodokem
+Should we add a note about that in the README.md, perhaps in an "Other Platforms" section.
+I've updated the README with your instructions, Christian.
+Thinking about testing ARM support in Travis/continuous integration going forward, could we do it on a standard x86_64 Linux instance but with a cross-compiler toolchain?
+Seems like people I've done this:
+Temporarily resolved by #443.  I've added #444 about setting up continuous integration for ARM to resolve this in a more robust way.

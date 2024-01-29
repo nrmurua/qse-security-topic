@@ -1,0 +1,34 @@
+When using the rhs_with_state=True with list func type time dependence the state is passed to the user defined func as a numpy vector. I think users would expect this to be a Qobj, as in:
+https://groups.google.com/forum/#!topic/qutip/BqUZQEQN1c4
+The question is whether this should be considered a bug, and hence whether we can fix this without worrying too much about how this will affect other users. My guess it that it is not a well used feature anyway @nonhermitian what do you think? There is no documentation on it's usage for instance, and I don't think there are any tests for it.
+This is perhaps related #824, insomuchas any fix we do here should be replicated in sesolve as well.
+The fix seems quite easy, as I think we can assume that the rho can be converted as
+@Ericgig how do you accommodate rhs_with_state in QobjEvo?
+QobjEvo have a with_state method QobjEvo.with_state(t, psi, args={}) which can be used instead of __call__ if needed. It compute the coefficient on the python side and send them to the cython part if needed.
+But I don't like it like this, using __call__ will raise and error if a psi is needed, and we need to treat it differently in solvers.
+How about having the state inserted in the args dictionary.
+So if the users have the key "psi_vec" or "psi_Qobj" in args and mul_vec (spmv)/ expect is used, it is automatically updated. With that definition most solvers could work without a special cases for  rhs_with_state=True. The present method could still be supported using decorator.
+Also it would be relatively simple to support expectation value in args in a similar way:
+if a specific key/value is found in the dictonary (args["_expect"+name] = Qobj/ QobjEvo ), it is replaced with the operator expectation value when possible.
+For the present case, we should document it more than change it, going back to Qobj will slow the simulation. Maybe rhs_with_state could be more than a bool and offer the option?
+Here  expect_rho_vec(data, vec, isherm) from qutip.expect could be used to skip the vec -> Qobj conversion.
+Also, the users should not need to know the matrix format and have to do the conversion themselves. They should never have to use dense2D_to_fastcsr_fmode. QObj((vec2mat(rho)) works and should be sufficient.
+@Ericgig yes, I like the args idea. Let's go with that.
+And you are of course right about the use of dense2D_to_fastcsr_fmode. Should definitely be avoided in users code
+I think this is addressed in the recent QobjEvo implementation.
+Yes, but the documention is missing a table making the explication confusing:
+http://qutip.org/docs/latest/guide/dynamics/dynamics-time.html#accesing-the-state-from-solver
+I ended up here while implementing a Lyapunov-based control algorithm that uses the state to generate time dependent controls as some thing like:
+f(t, args) = sin(args["A"]t)(args["current_state"]).tr()
+It was a bit difficult to understand how to setup the solver to use this feature. I kind of got it to work and have a nice example that I can make into a tutorial. Will post soon. But we should definitely write some documentation about it both in the Qobj evo part, options section as well as mesolve.
+Is there an agreement on how this should be handled? Are we happy with passing it as an "args"? I still am not sure why I have to use the "state_as_Qobj=Qobj" key in the args initialization to get this working.
+In any case this should be documented well. In future versions of the Solvers, I suppose this problem would be easier to handle with stepping through the solver.
+There is no agreement on how this should be handled yet. It's been removed from dev.major with the plan to restore it before the release, but the exact interface is not fixed. It certainly will not be some special keyword in args. It could be a special value, or a special parameter / method for the solver class.
+Idea: We could perhaps pass one extra argument called, e.g., "context" or "ctxt", that allows access to various strange things like the state. The "ctxt" object could then have properties or methods that returned the state upon request.
+There is no agreement on how this should be handled yet. It's been removed from dev.major with the plan to restore it before the release, but the exact interface is not fixed. It certainly will not be some special keyword in args. It could be a special value, or a special parameter / method for the solver class.
+Actually having a method in the solver class seems better, I suppose this is why we are going towards Solvers from the simple mesolve function. I am going to try and rewrite my example using the Solver class. We can probably get away with having this functionality only in the new Solver class --- benefit of a major release I guess.
+If you work only with solver, you can only update the args once per step.
+To have it apply each time the rhs is used it need to be inserted into QobjEvo.
+The method _prepare is there for that, it's called at the start of matmul, and expect.
+I was thinking of using it like this:
+The state will be column stacked Data object, so the function much reshape and restore dims, etc.

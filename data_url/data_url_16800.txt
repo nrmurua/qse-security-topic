@@ -1,0 +1,16 @@
+yields:
+I could not reproduce this issue. I probably missing some specifics...
+The following test passes.
+It is deep copy of a Job, not Qobj:
+I think it is maybe the backend stored in job that is the issue. I get this same error just from trying to deep copy the backend object.
+@nonhermitian
+I am keen to work on this as one of my first issues. I ran the exact code in your last comment which resulted in the following error for me:
+May I know in which python version did you get the ModelValidationError?
+It was probably 3.7
+Ok I used 3.7 but I am not getting ModelValidationError, I am only getting the TypeError
+Could you help to run your code snippet above and see if you still get ModelValidationError?
+ModelValidationError has been removed from qiskit-terra master when marshmallow was removed from all these objects so you won't see that as the error anymore. The problem back then was opened was likely that there was a mix of marshmallow and non-marshmallow objects mixing in an unexpected way on the reconstruction side of the deepcopy causing marshmallow to fail validation on construction of one of it's objects. If there is a still a problem with this now that marshmallow has been removed I expect that this is going to be similar to #4550 but in the case of job it's an object contained in the job object (like the backend, etc) instead of the job itself.
+The TypeError: can't pickle _thread.RLock objects error is coming from local simulators that are forcing themselves to try and act async by wrapping the execution in futures objects. Deepcopy can't pickle  RLock objects as part of the deepcopy and fails.
+Thank you @mtreinish. Could you give me some suggestions for me to get started solving this issue?
+@arunraja-hub  Sorry I missed your question until just now. I don't really have a good suggestion. The issue is that the AerJob class contains a ThreadpoolExecutor object that it wraps the actual simulation in (so it doesn't block while the simulation is running): https://github.com/Qiskit/qiskit-aer/blob/master/qiskit/providers/aer/aerjob.py#L79 This object is not pickleable (because it represents a handle to a thread which is bound to the current python process (and doesn't make sense outside the context of the current python process). My only suggestion would be maybe to deepcopy the result object returned by job.result() instead of the job. This will contain all the result data from the job but not have any issues with deepcopying (because it doesn't have the threadpool executor instance.
+I'm going to close this issue though, I don't think there is anything we can do here as long as we have AerJob as async we won't be able to deepcopy jobs. If there is more to discuss here please feel free to reopen this. Or alternatively open an issue with qiskit-aer (as this is specifically an issue with the AerJob class and how it does async execution).

@@ -1,0 +1,33 @@
+As part of the epic to support cancelling tasks and dispatches, this issue tracks the proposed changes to the DB schema, data access layer, and the core Data Manager.
+Canceling an electron that is actually a sublattice is a slightly subtle matter as one needs to consider several cases depending on when the cancel request arrives:
+Remark: In the third scenario, ****both query and sublattice dispatch creation are performed in the same DB transaction to ensure atomicity — if cancel_requested changes between the two steps, the sublattice dispatch could miss the cancel request.
+Database and data access layer
+ Implement DB schema V14:
+ Add a simple interface to the Jobs table in _db/jobdb.py:
+def txn_get_job_record(session: Session, job_id: int) -> Dict
+This method will be invoked within a broader Session context; see write_result_to_db.txn_insert_electrons_data below.
+def get_job_records(job_ids: List[int]) -> List[Dict]
+def update_job_record(session: Session, job_id: int, cancel_requested: bool = None, cancel_successful: bool = None, job_handle: str = None)
+def update_job_records(kargs_list: List[Dict])
+def to_job_ids(dispatch_id: str, task_ids: List[int]) -> List[int]
+ In upsert.py and write_result_to_db.py,    make use of DB transactions to avoid race conditions (see above remarks on handling sublattices) and also persist cancel_requested when creating each Electron record.
+write_result_to_db.py:
+Perform all DB operations using the provided session, but do not commit the changes.
+Rename the existing insert_electrons_data to txn_insert_electrons_data, and add the following keyword parameters: SQLAlchemy Session as the first kwarg; cancel_requested. Signature:
+This should perform the following operations using the provided DB session:
+Do not commit the changes since these methods will be invoked within a broader Session context.
+Rename the existing insert_electron_dependency_data to txn_insert_electron_dependency_data, and add an SQLAlchemy Session as the first kwarg:
+Perform the DB operations on the provided Session instead of creating a new Session. Do not commit the changes since these methods will be invoked within a broader Session context.
+Make upsert._lattice_data and upsert._electron_data accept an SQLAlchemy Session. Perform all DB operations using the provided session. Do not commit the changes since these methods will be invoked within a broader Session context.
+The methods in [upsert.py](http://upsert.py) should be updated to use the transactional methods in write_result_to_db.py :
+Create public wrapper methods upsert.lattice_data and upsert.electron_data that invoke the respective internal methods on a new SQLAlchemy Session. Update all external references to the internal methods _lattice_data and _electron_data to these new public methods.
+Rename upsert_electron_dependency_data to txn_upsert_electron_dependency_data; accept a session as a parameter.
+Add a upsert.persist_result method to persist lattice, electron, and edge data in a single transaction.
+Update update.persist() to use this instead of the private methods in upsert.py.
+Data Manager
+ Introduce a Job Manager module  _core/data_modules/job_manager.py:
+async def set_cancel_requested(dispatch_id: str, task_ids: List[int])
+async def set_job_handle(dispatch_id: str, task_id: int, job_handle: str)
+async def set_cancel_result(dispatch_id: str, task_id: int, cancel_successful: bool)
+async def get_jobs_metadata(dispatch_id: str, task_ids: List[int]) -> List[Dict]:
+ Add and adjust unit tests. Feel free to crib some tests from here.

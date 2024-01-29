@@ -1,0 +1,10 @@
+Kernel class variables of type bytes get corrupted between calls to different kernel functions when RPC's are involved.
+Value of self.blist changes with usage of RPC's. Variable turns out different depending on number of RPC's.
+For a class variable of type list(int), we get
+Is this error message just missing for the type bytes, and accessing class variables across different kernel functions not meant to work in general? For basic types (int, string, float), everything behaves as expected.
+ARTIQ version: ARTIQ v5.7111.5168b831
+This is #1497. bytes allocates a value on the stack, so assigning the result to a class attribute, where it outlives the function call, is supposed to be illegal (i.e. make_list is not supposed to compile). Because of #1497, this is not detected, however. The RPC only plays an indirect role here in that it overwrites the (released, but still in use) stack memory in a fashion not optimised out by the compiler.
+Thanks for clarifying.
+Are the basic types affected by #1497 as well (and it was just "lucky" that their memory location wasn't written to by the time we accessed them again), or is assigning those to class attributes legal for some reason?
+It's not assigning to the attributes that isn't allowed, it's the fact that the value that is assigned to it (the buffer pointer/length of the byte array) references stack memory (the actual buffer with the contents of the byte array).
+Primitive types don't have any indirections to other memory, so assigning them is fine. (And, thus, so is copying each element of an array of primitive element type individually, which can be a workaround if the array length doesn't change.)

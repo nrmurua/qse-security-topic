@@ -1,0 +1,30 @@
+somewhere in the 100 µs to 200 µs range.
+Depends on #315.
+Lower this dramatically when fixed https://github.com/m-labs/artiq/blob/master/artiq/test/coredevice/test_rtio.py#L263
+Ok, this is actually impossible to do right now. Baseline (f81930f) is 185us per one DDS batch. If I enable fast-math flags (is this safe? I don't know) it drops to 100us per batch.
+There are still two fdiv calls per DDS batch. The root cause is that LLVM cannot propagate DDS sysclk into the loop because it and core_dds are not stored in constant fields, and barring that, it cannot even hoist the load and fdiv out of the loop because sysclk can be aliased and there's a bunch of stores nearby.
+So, no improvement is possible before #322 is fixed.
+We should also look at adding TBAA metadata, which is potentially quite profitable.
+Actually #322 is only possible via TBAA, so no choice here.
+Ok. I've did everything I could. Unfortunately we won't be able to get rid of FP in this experiment while we're on LLVM 3.5.
+The crux of the issue is that the load of CoreDDS.sysclk,  while quite obviously constant and marked so, cannot be hoisted out of the loop and it holds up the entire computation and keeps it in FP domain.
+Let me demonstrate with a simpler equivalent example. Let's say we have this code:
+It translates (heavily reduced) to the following LLVM IR:
+Ideally, the following load...
+would be hoisted out of the loop and into the entry block by the LICM pass.
+After unfolding the irrelevant logic in the LICM pass, it turns out that the limiting condition for this hoisting is LICM::isSafeToExecuteUnconditionally, which requires either isSafeToSpeculativelyExecute or LICM::isGuaranteedToExecute to be true.
+The LICM::isGuaranteedToExecute check verifies that 1) the instruction lies on all code paths between the loop preheader and the loop exit (which is true) and 2) nothing will raise an exception in between (which is not true, since rtio_get_counter() is not marked as nounwind).
+In this particular case rtio_get_counter() could be marked as nounwind, but if we go back to the DDS issue, we have dds_batch_enter, and dds_batch_enter legitimately can unwind. Since the problematic load of sysclk lies after dds_batch_enter, this check fails. We cannot do anything here because dds_batch_enter actually can unwind.
+The isSafeToSpeculativelyExecute check for loads requires that the pointer be dereferenceable. So far so good--wouldn't want a trap on a NULL pointer access in a loop that's never actually executed. Unfortunately, this load depends on the following load:
+and LLVM does not see that self.x always loads the same x instance.
+Ideally, we could tell LLVM that the globals in the module are never modified before __modinit__ and __modinit__ is only ever called once, and propagate them as if these values were constant, which would eventually allow it to fold the entire computation. Unfortunately this isn't feasible because our attribute writeback machinery allows outside code to grab a pointer to any object in the graph, which is exactly what it's ought to do, and LLVM rightly bails out since it cannot prove that this external code will not modify the objects.
+Less ideally, we could tell LLVM that the load of self.x is never NULL, which is always true in ARTIQ, of course. Unfortunately, while this feature exists, it is only available since LLVM 3.6.
+So as it goes, on LLVM 3.5, the load can be neither folded nor hoisted.
+Thanks for the analysis. Generally speaking, would marking a bunch of methods and runtime functions nounwind be beneficial? Does that help with folding/hoisting for non batch DDS set()?
+nounwind is inferred for any code that LLVM can observe. Runtime code cannot, and marking it as nounwind, indeed, would provide a small benefit--it is small because any code that actually performs RTIO operations can unwind.
+A much higher benefit would be provided by marking some runtime functions with LLVM attributes ultimately declaring that they are safe to speculatively execute, but none of the ones applicable in our case are available in 3.5.
+I've upgraded to LLVM 3.6 and marked loads as !nonnull but LICM didn't take advantage of this. Need to investigate further.
+Ah yes, I see. We need not just !nonnull, but an entire !dereferenceable metadata for this, since (referring to the example code) %ptr.LOC.self.16.FLD.x.FLD.a.i points not to the first but to the second field in %val.LOC.self.16.FLD.x.i, and !nonnull on the load of %val.LOC.self.16.FLD.x.i itself doesn't imply that %val.LOC.self.16.FLD.x.i is not null.
+Unfortunately, !dereferenceable is only available since LLVM 3.7... you know the drill.
+I'll keep this open until it is actually fast.
+Okay, I upgraded LLVM to 3.8, added !unconditionally_dereferenceable metadata, marked some FP intrinsics as safe to speculate, avoided sinking FP compare operations in soft-float mode and now the inner loop has no soft-FP. This brings the pulse_rate_dds to 26us, i.e. ~13us per command.

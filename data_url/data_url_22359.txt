@@ -1,0 +1,27 @@
+Using 1.0 on Windows, if I run this experiment, it runs fine and it plots the data but I get an error message at the end.
+Am I doing something wrong with the datasets? I'm not sure what python object it's trying to save here.
+Shorter repro:
+np.array of a list of redefined ints also gives the wrong result.
+@r-srinivas As a workaround, write an intermediate function that sets photon_histogram passing the data through np.array([host_int(v) for v in hist])
+@whitequark Is there any way this can be fixed other than #424?
+@sbourdeauducq sure. we can make worker_db (or some better place, perhaps) recognize and convert ARTIQ ints into proper ints.
+meh, that will still break when the user does things like np.array(list_of_artiq_ints).
+Yes, you need a deep map.
+This is arguably a bug in hdf5, because host_int defines a conversion to regular int:
+Yes, you need a deep map.
+Yes, but even that is a half-baked solution. np.array(list_of_artiq_ints) is valid user code, and I reckon it will even be common until #424 is done.
+Okay, then we need to patch hdf5. I can look into it.
+Your int redefinition does seem to have unusual effects. hdf5 and numpy have problems with it, but can you really blame them? Won't similar issues creep up with other libraries?
+That's completely correct. It is emphatically not Python's infinite width int, and under no circumstances should be treated as such. It can be converted to one though, and these libraries ought to use the interface that Python provides for such conversion.
+Maybe it should not be called int then. And, to have at least compatibility with numpy: why not use np.int32 and np.int64?
+We can rename it to something else (fixed?), which will need to be done in both host code and ARTIQ Python. I don't like that it's called int either.
+I'm for replacing ARTIQ int with the actual NumPy types:
+almost
+Well, here's your problem. This will just result in inconsistencies in portable code.
+Although we could enable overflow checking in OR32 and kill that problem before it appears.
+The inconsistencies is not worse than with the current ARTIQ int IMO. Yes, overflow checking would be nice but low-priority.
+Okay, I'll look further into it.
+Why did you redefine round by the way?
+AFAICT doing this in int.__round__ would have been enough. And numpy already does it that way:
+So I don't see any major problems with a "numpy ints only" compiler.
+Also depends on #408.

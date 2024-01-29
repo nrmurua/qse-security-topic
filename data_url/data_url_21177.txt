@@ -1,0 +1,11 @@
+According to datasheet, the chip has 52-bits precision available, however set_frequency function doesn't allow sub-Hz values.
+Customer shared their way to use 38 bits:
+Thanks for opening this issue for this problem. To provide more context, we are currently on Artiq 7 and measuring the frequency output of the Mirny around 5 GHz on a frequency counter. We noticed that there was a Hz-level frequency error when operating at f = 5GHz, which is much larger than the specified 52-bit precision of the chip.
+
+Frequency was set using the artiq.coredevice.adf5356.set_frequency command. In this test, I am using a f_ref = 125 MHz, and get f_PFD = 125 MHz. At 5 GHz, from the fractional-N PLL formula, we get n = 40, frac1 = frac2 = 0, mod2 = 1 (mod1 = 2^24, fixed). As the set frequency deviates from the round 5GHz, only frac2 and mod2 change (frac1 only changes every 125MHz / 2^24 = 7.45 Hz).
+frac2 and mod2 are 28-bit integers nominally, which are each separated into a 14-bit MSB and 14-bit LSB and written to registers 2 and 13 on the ADF5356 chip. From the measured error, I guessed that the MSB on either frac2 or mod2 was wrongly bit-shifted by 1. After messing around a bit, it was only when I coerced them both to 14-bit (such that only the LSB registry was written) did that remove the frequency error (up to the new resolution of 38-bit).
+
+I'm not sure why writing the MSB register for frac2 and mod2 (REG13) is problematic.
+(Also note that the native artiq.coredevice.adf5356.set_frequency command rounds the set frequency to the nearest Hz, but it seems like it can be set to a float and that works fine as well)
+More details:
+Our frequency counter was referenced to 10 MHz from our maser, and the Mirny is clocked externally to a 125 MHz DDS which is also referenced to the 10 MHz maser. The device_db entry:

@@ -1,0 +1,23 @@
+Our current folding techniques for Cirq build the folded circuit from an empty circuit. Circuits in Cirq can be tied to a device which tells information about qubits, connectivity, and gate operation times. As such, I think it's more appropriate to copy the input circuit and insert gates to do the folding. Thoughts?
+I think it's a good point. Moreover the same problem probably exists also for PyQuil circuits (e.g. num_shots can be a property of a circuit).
+I agree with your solution, otherwise a simple alternative is also this one:
+empty_circuit = input_circuit[0:0]
+which creates an empty circuit with the same properties of the input and should work for both Cirq and PyQuil circuits.
+Good point about pyQuil circuits and properties.
+I tested
+and it didn't copy over the shots.
+I'll update the name of this issue to reflect the importance for pyQuil as well.
+It is true that empty_circuit = input_circuit[0:0] doesn't copy num_shots. But I also noticed that  circuit_sum= input_circuit +  input_circuit doesn't copy num_shots to  circuit_sum !
+So I wonder if this is a bug or a feature.
+An empty circuit in PyQuil can be correctly created in this way
+empty_circuit = input_circuit.copy_everything_except_instructions()
+however, even in this case, num_shots would be lost as soon as we start making simple operations (e.g., additions).
+I will make a PR (#11 ) to improve the creation of empty circuits in PyQuil using copy_everything_except_instructions(). I am also adding some tests associated to this issue.
+The problem with num_shots and similar properties remains. But I am quite sure that this is a bug of PyQuil. See, e.g., the  __add__ and __getitem__ method of the Program class where it is evident that properties are not retained (https://github.com/rigetti/pyquil/blob/master/pyquil/quil.py).
+@andreamari does the issue appear specific to num_shots instructions? If so, perhaps dedicated code should exist to pop off this instruction?
+Alternatively, we could code for with the assumption that the user does not choose numshots for things to be mitigated. When you run a given Program through mitigation it isn't clear what the numshots should do as the Mitigator will have discretion to choose optimal amounts of shots to take etc
+Of the two approaches I just suggested. I think I prefer stripping num_shots from an input program and emitting a warning to the user that it is being ignored.
+It is not just self.num_shots, there are also other properties like: self._defined_gates and  self.native_quil_metadata, which are lost when using the + operator or slicing a circuit [ ].
+I think I got what is the solution: one should only append instructions (or circuit slices) with the inst method or equivalently with +=. In this way all the properties of the input circuit are preserved. In other words: a = a + b is bad, while a +=  b should correctly preserve the properties of a.
+ah gotcha. This is an unexpected idiosyncrasy indeed. Does that mean that replacing all a=a+b with a+=b will fix the issue? If so, it is likely time for a pull request :)
+This issue is now solved by #11 .

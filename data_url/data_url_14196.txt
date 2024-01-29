@@ -1,0 +1,14 @@
+I've been working with qiskit and attempted  to use a genetic algorithm to choose a better layout for the transpilation of a circuit. To improve the execution time of the genetic algorithm, I wanted to evaluate a population of layouts in parallel. Doing so lead to some errors I can't quite fix. It seems the classes used by qiskit aren't thread-safe. Note that a serial version works perfectly fine.
+Here is a (not so) minimal example to reproduce the error.
+After some iterations (the number many vary) of this dummy for loop, I get the following error
+Investigating the issue, we have come to assume that the pm.run(qc) isn't thread safe (which may not be the actual reason for this problem if we're wrong). Is there anything I can do to fix this ?
+For information, I've been using qiskit-terra 0.24.1 and python 3.8.10.
+Thanks for reading through that.
+Hello,
+The run function is, as a matter of fact, not thread safe from what I could experience (I had the same issue). A workaround for the time being would be to use copy.deepcopy() to create a completely independent qc object !
+Your line would become QC=pm.run(copy.deepcopy(qc)), or something of the kind depending if you want to reorganize your code around that.
+I used python 3.11 and qskit 0.45.1 in a venv and that worked for me ;) (At least for a couple tens of runs with multiple threads).
+Hope I could help !
+While this isn't directly related to your problem, it's worth verifying if you're actually getting a speed-up from running multiple transpilations with threaded parallelism.  Transpilation is a mostly CPU-bound problem, and most of Qiskit's transpilation routines don't release the CPython GIL because they were never really intended to be fully re-entrant.  You might not be getting as much speed-up as you expect from this, even without the issue you're seeing because of non re-entrancy in BasisTranslator.
+You might have an easier time using PassManager.run's built-in parallelism, which you can achieve by constructing a single PassManager and then passing a list of circuits to run.  This will use multiprocessing based parallelism if available (see the Python standard-library documentation on it for some information on the setup needed in one-off scripts to make this safe, if it helps).
+On the subject of the issue itself: Qiskit's built-in transpiler passes have not generally been designed with re-entrancy in mind, because threaded parallelism is quite unlikely to help transpilation workflows.  In some cases, like in the BasisTranslator here, there's a cost to making the method re-entrant - we have to copy the graph object on each run.  I don't know how much runtime cost that has, but there's definitely a trade-off in it, and it would be good to know if doing that can actually be offset by threaded execution.

@@ -1,0 +1,20 @@
+QFT simulation ends unexpectedly with SIGSEGV (Segmentation fault) when using MPI, and the full statevector is larger than the memory available on one node.
+I had been hoping to run some scaling tests using a QFT circuit but currently the code segfaults as soon as I increase the number of qubits beyond the size that can fit on a single node, which in this case is 33. The same issue occurs independently of the number of nodes, and all runs have been attempted using 1 MPI rank per node, and as many OpenMP threads as there are physical cores. I have reproduced this problem on two of our machines, ARCHER2 (128 cores and 256GB RAM per node), and Cirrus (36 cores and 256GB RAM per node). I have set blocking_qubits=28, and the full script can be found here: qft.py. It is invoked with srun <srun options> python qft.py <number_of_qubits>.
+Backtracing the core dump yields the following:
+(on a machine with 256GB RAM): Attempt to run a 34-qubit QFT simulation across 4 nodes using MPI.
+QFT script can be found here: qft.py
+Program is invoked with: srun --nodes=4 --tasks-per-node=1 --cpus-per-task=128 python qft.py 34
+Simulation runs to completion.
+From the backtrace I gather this is an error in the for-loop in QubitVector::zero(), but it may be that I am attempting to do something unsupported in my script!
+The initialization routine at line 331 in statevector_state_chunk.hpp looks to be doing the right thing, and the outer frames of the stack trace are openmp calls, so I gather it's hitting the right code path.
+If I get time I'll try to determine which initialisation function exactly is being used, and what the values of things like num_local_chunks_ and BaseState::chunk_bits_ are.
+Okay, having dug a bit deeper, the issue seems to be down to StateChunk::set_distribution() being explicitly called with nprocs=1, causing the communicator to be split. So now I just need to work out why that's happening...
+...and the answer is in Controller::run_circuit_helper at aer_controller.hpp:1875. state.set_distribution() is called with the argument get_distributed_num_processes(shots == circ.shots). As far as I can tell shots == circ.shots always evaluates as true (with both equal to 1), at least with the QFT circuit I've been running. get_distributed_num_processes then always returns 1. If I explicitly call it with false then the code runs as I'd expect (in the sense that num_local_chunks != num_global_chunks  and distributed_procs_ is set correctly.
+It's worth saying that what I've actually been doing when running srun --ntasks=X python qft.py <n> until now is running X copies of the same simulation, rather than distributing it across X nodes, as I intended. 😅
+From looking at it, I assume the intention here is to make a sensible choice between distributing the emulation across MPI ranks, or running multiple shots in parallel, but I'm not sure that's being achieved.
+This error occurs because saving statevector does not support when whole statevector can not be stored on the memory space of single node.
+I will add raising exceptions when there is not enough memory space to store statevector for large qubits.
+Also I found some issue in setting parallel configuration. I will also add fix for them.
+Thank you.
+I did wonder about the statevector saving -- it didn't make a difference when I removed it, but that would be because of the parallelisation issue causing qreg initialisation to fail. Thank you for letting me know, and for working on the MPI fix @doichanj 🙂
+I found that cache blocking transpiler does not block diagonal matrix and this causes multiple copies of circuit is simulated on each process. I will also include fix in PR #1278

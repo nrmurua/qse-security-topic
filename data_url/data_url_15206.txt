@@ -1,0 +1,27 @@
+Creating and evaluating a Trotter evolution circuit for certain operators raises an error. The error message indicates that the ParameterExpression has unbound parameters, even though this is not the case.
+This issue has similarities with #7507, but it's not the same. The proposed solution in there (forcing the parameter to a float in PauliEvolutionGate.validate_parameter) does not work in this case.
+The problem seems to arise in the _apply_operation method of ParameterExpression. When our (yet unbound) param is multiplied by the numeric coefficient (1j * 0.5j, simplified to 0.5 + 0j), the values of the relevant local variables inside that method are as follows:
+Later when the parameter θ is bound to -0.1, the attribute _symbol_expr associated with the ParameterExpression is -0.1*(-0.5 + 0.0*I). Casting this to a float is what gives an error (RuntimeError: Not Implemented). The error doesn't occur if _symbol_expr is -0.1*(-0.5).
+Naively, doing
+in _apply_operation fixes the issue.
+Alternatively, the error doesn't occur if we change the code the reproduces the problem into
+i.e., if the coefficient is real to begin with. However, this seems a bit rigid, as we might want to define operators with imaginary coefficients.
+I'm agreed that the error message from ParameterExpression could be better.  For handling of complex numbers, note that in raw Python float(1 + 0j) is a TypeError as well - it's always forbidden to pass things that have complex type, even if they're representing reals, to float converters, so Symengine is being consistent with Python here.
+In general, if you introduce complex numbers into your parameters as a user, you're the one responsible for handling the potentially lossy cast back to reals.  In your case there's no floating-point fuzziness, but if you use your parameters more, you can easily end up in the case of having something like 1 + 1e-17j, and only the user has the context to know how small epsilons should be handled, really.
+Hello,
+Thanks for the answer.
+I understand your point. However, as a user I feel like this could be handled better, and it doesn't seem very consistent with other parts of Qiskit.
+Here, Qiskit has no problem discarding the null imaginary part and effectively treating the coefficient as a real number. The only difference is I added (0j * I^I^I^I) to the operator, which does nothing. It just results in the operator being a PauliSumOp, the coefficient of which is treated differently (when I see no reason why it should).
+The coefficient is exactly the same as in the code that raises the error, yet here it was converted to a float. In this case, the user doesn't get to decide how the complex number is handled. I don't see why the same shouldn't happen for the exponentiated version.
+raises CircuitError: 'Bound parameter expression is complex in gate PauliEvolution'.
+In my view, it doesn't make sense to raise an error when the imaginary part of the coefficient of the Hamiltonian is non-null (thereby recognizing that the imaginary part shouldn't exist), but expect the user to handle it when the imaginary part is zero (or very close to it). If the fact that the coefficient is complex (even with null imaginary part) will cause problems later on, then maybe the error should be raised here, as happens for coefficients with non-null imaginary parts.
+E.g., this works:
+But if we change the first line into
+we get CircuitError: 'Bound parameter expression is complex in gate PauliEvolution'
+I inadvertently fixed this in #10183. There I changed QuantumCircuit._assign_parameter to replace a fully bound ParameterExpression with its underlying data during assignment. Initially, I did this by calling int, float or complex on the parameter as appropriate, but that caused this test to fail:
+https://github.com/Qiskit/qiskit-terra/blob/174b661d57f4b888796c0895ac6b1ba79db11d52/test/python/circuit/test_parameters.py#L1379-L1398
+because ParameterExpression.is_real() would evaluate to True and cause my change to call float on the parameter and trigger the error described here. Based on the test description ("Test a complex parameter expression can be real if bound correctly") and the behavior of ParameterExpression.is_real returning True for complex values with zero imaginary component, I interpreted casting complex values with zero imaginary part to float to be the desired behavior and switched my float(param) to complex(param).real following a param.is_real() check.
+I did not intend to fix this and I think there are still some outstanding issues (__float__ will still raise an exception when called directly rather than handled through circuit assignment), so I don't know that this issue should be closed yet. I think it would be good to review Parameter current usage and intended usage and see if it could be made more consistent in general.
+I accidentally opened a dup. It might lay things out clearly though: #10191
+It may be inadvertently fixed. But it should be fixed at a lower level. Like ParameterExpression itself.
+The issue still persists when building a controlled-version of a parameterized gate.

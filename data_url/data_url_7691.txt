@@ -1,0 +1,37 @@
+I am trying to use "quimb" for calculating the ground state of an extremely large scipy sparse Linear operator, which is generated using the package "quspin". (We are using Linear operator instead of a matrix because it takes lesser time to build and has OpenMP support.)
+We are using "quimb" to convert the linear operator to a PETSc matrix, which is then diagonalized using SLEPc.
+However I am having a little difficulty in understanding how to run it in parallel.
+Let me share the relevant part of the python code
+This runs successfully using 1 processor (for a smaller system size of HH), using the following command"
+quimb-mpi-python file.py
+But I wish to run it in 16 processors(say).
+Then according to the documentation of  "quimb", I think the syntax to run it should be:
+quimb-mpi-python --syncro -n 16 file.py
+The breaking up of the job will automatically be done whenever it encounters a SLEPc process and all the processors run the rest of the main script.
+However, it shows the following error:
+Then how can I do the eigenstate calculation of this large operator in parallel ?
+Yes syncro means the usual SPMD mode that MPI usually is - everything runs the same file, but depending on calls to the MPI communicator and objects you usually construct different ranges of the operators etc. Does the script run fine without MPI?
+Part of the problem is most likely that quimb does not support MPI for LinearOperators ('shell' matrices) at the moment. It has no way to automatically infer how to perform the matrix-vector product in parallel across the distributed vector.
+For that you might have to work out two things:
+Currently quimb just calls:
+basically you would need to augment the mult method essentially so that you work out the local vector range and only apply the operator to that part. It might be as well to ask in the petsc4py or slepc4py repos.
+The script runs absolutely fine without MPI, although for a smaller size system.
+Part of the problem is most likely that quimb does not support MPI for LinearOperators ('shell' matrices) at the moment. It has no way to automatically infer how to perform the matrix-vector product in parallel across the distributed vector.
+Regarding this, I thought the command quimb.linalg.slepc_linalg.convert_mat_to_petsc(HH, comm =PETSc.COMM_WORLD) does the job of converting the Linear operator to a PETSc.Mat() and also takes care of distributing to different processors using communicator comm =PETSc.COMM_WORLD. It is because of this part of the function quimb.linalg.slepc_linalg.convert_mat_to_petsc() in the main source code
+I think I am completely wrong here.
+I have to do this distribution into different processors myself by looking at PETSc.Mat().getOwnershipRange
+Does quspin support only acting on a subrange of a vector, e.g. rows 1024-2048 out of operator of size 4096 etc. (how big is your vector space?) you can get this range from PETSc.Mat().getOwnershipRange.
+I don't think quspin supports this.
+What interface (if any!) does petcs4py use for distributed linear operators? This is slightly tricky to work out, as I mentioned in the email, there are not a huge amount of docs for petsc4py and slepc4py - the one example seems to be this https://gitlab.com/petsc/petsc/-/blob/main/src/binding/petsc4py/demo/poisson2d/poisson2d.py.
+If I understand correctly, it uses MPI.
+I will look at this example and try to do the division of the matrices and vectors into different processors manually.
+Yeah the thing is that a LinearOperator by design doesn't expose any of its internal structure, it only defines its action on a vector, meaning the distribution can't be done automatically by any library. Mentioning this could be added to the docs probs.
+I don't think quspin supports this.
+I think if quspin doesn't support this, or functionality can't be hacked, then this particular route (quspin linear operator + slepc + MPI) is going to be tricky!
+If I understand correctly, it uses MPI.
+I will look at this example and try to do the division of the matrices and vectors into different processors manually.
+Yes sorry to clarify by interface I meant how petsc tells the local shell matrix / linear operator, what range of subvector to act on, and whether just implementing that is sufficient.
+Are you totally sure building the actual sparse matrix in parallel (each process just builds its own local slice) is not possible? Do you have an estimate for the size and density (non-zero elements) of the operator?
+Yes sorry to clarify by interface I meant how petsc tells the local shell matrix / linear operator, what range of subvector to act on, and whether just implementing that is sufficient.
+I think I really need to dig into the documentation of PETSc and SLEPc to know the interface.
+Regarding the size of the sparse matrix, I can tell that the dimension of the Hilbert space is ~126 million, of which only about a few thousand elements are non-zero.

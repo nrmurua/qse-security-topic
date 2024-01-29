@@ -1,0 +1,99 @@
+EDIT This issue was previously about using generalized Schur to re-implement F-D-I-E-B, but it turned out to not be e a working approach. As such, I'm changing this issue into a discussion about how we might approach doing so.
+I'm mostly interpreting some things @kilimanjaro told me (so credit goes to him), though errors I may have below are my own.
+find-diagonalizer-in-e-basis aims to diagonalize a symmetric unitary matrix gammag = u u^T in terms of an orthogonal matrix of eigenvectors. Normally, all that the spectral theorem gives you (in this context) is that you can do this in terms of a unitary matrix of eigenvectors. In this case, however, the real and imaginary parts of gammag commute, so it's sufficient to simultaneously diagonalize them. They are real, symmetric matrices, their eigenvectors will be real and will give an orthogonal matrix
+To simultaneously diagonalize a pair of commuting matrices, it's not quite enough to just compute eigenvectors and eigenvalues of one and then hope that this works for the other (consider that the identity matrix, which commutes with anything, but we need to write its eigenspaces as spanned by eigenvectors of some other matrix.) The current QUILC approach is to try to diagonalize a linear combination of the real and imaginary parts. Since there could be some relationships between them that we don't know, the current code tries to pick a random combination, and just repeats until we get something that works
+This problem has a standard solution that linear algebra libraries implement, called the generalized Schur decomposition. LAPACK documents it here
+A Python implementation (which uses NumPy's qz) supplied by @kilimanjaro is here:
+I was wrong about this. The real QZ decomposition A,B = Q*AA*Z^h, Q*BB*Z^h given by dgges (cf. here) can and does result in 2x2 blocks in AA on occasion. In fact, this appears to be quite sensitive to small perturbations of A,B. For example, consider the following
+Note the significant divergence between the factorizations, despite the small difference between u1 and u2. In this case, u2 gets 2x2 blocks in the "diagonal" part of the factorization.
+You can see how deceptive the above can be. For some reason I was under the impression that, because UU^T is symmetric, that when you compute Q*AA*Z^h and Q*BB*Z^h, then UU^T = Q*(AA+i*BB)^2*Q^T would have the (AA+i*BB)^2 turn out to be diagonal due to symmetry. This is also not true in general.
+The Python code I had (by the way, qz was not even my idea, I found it from some stackexchange post somewhere) was half baked and not thoroughly tested. It did work on the examples that I tried, but that's not enough in this case.
+The broader approach of this orthogonal factorization is that we are trying to take advantage of the commutation of the real and imaginary parts of a unitary matrix U, by instead simultaneously diagonalizing these. According to random strangers this is a hard problem, but there may be some algorithms (e.g. the mentioned one using "Jacobi angles") which can tackle this. On the other hand, there seem to be some strings attached, and these algorithms are not standard lapack routines.
+For what it's worth, I spent a couple of hours scouring LAPACK to see if I could spot an easy routines for what we want, but to no success. It's still not clear to me whether there's something clever that we can do here that I'm missing.
+qutip has a simdiag function, though others have noted some numerical instability.
+There's also NUMERICAL METHODS FOR SIMULTANEOUS DIAGONALIZATION, which this rando Matlab file claims to implement.
+Since U U^T is symmetric, Golub and Van Loan (pg. 500 in the 4th edition) may have what we need (though I don't know if B = Im{U U^T} would be positive definite):
+
+Compute the Cholesky factorization B = G G^T using Algorithm 4.2.2.
+Compute C = G^{−1} A G^{−T}.
+Use the symmetric QR algorithm to compute the Schur decomposition Q^T C Q = diag(a1, . . . , an).
+Set X = G^{−T} Q.
+Since U U^T is symmetric, Golub and Van Loan (pg. 500 in the 4th edition) may have what we need (though I don't know if B = Im{U U^T} would be positive definite):
+I think U U^T can be basically any symmetric unitary, so we're not going to generally have positive definiteness of real or imaginary parts. For example, UU^T = np.diag([1, -1, 1j, -1j]]) or any conjugate of this.
+Sure, but I think we can modify the above approach since we don't need X^T B X to be I. Replacing the Cholesky decomposition with an eigenvalue one (np.linalg.eig uses "the _geev LAPACK routines"), I think we may be in business:
+
+Untested, but I think this should do in Lisp:
+@genos Looking into this now.
+@genos  I implemented this in #850; I don't have more specific feedback but I'm finding the following.
+First, for random unitaries, it seems to work. I'm essentially running your code verbatim, except I'm orthogonalizing after and ensuring determinant = 1.
+This includes passing a couple math tests. However, when running within QUILC, I get errors, namely:
+These are similar errors to what we were getting with @kilimanjaro's approach. It seems that low-dimensional subsets of the unitary group are particularly troublesome.
+Continuing the last message, we see that $M$ is essentially the matrix for $\mathtt{CNOT}\;0\;1$ with an extra factor. If we plug this in directly, we get some cleaner results.
+Disregard, had a typo.
+Continuing the last comment, it may be tempting to think that this is because we were simultaneously diagonalizing a real matrix with a zero matrix, which seems like bunk, but we'll get the same problem even if we pass a complex diagonal matrix in, such as $\mathtt{CPHASE}(\pi/2)\;1\;0 = \mathrm{diag}(1,1,1,i)$, which (1) ought to not need diagonalizing, but (2) is in turn is diagonalizing $\mathrm{diag}(1,1,1,0)$ and $\mathrm{diag}(0,0,0,1)$:
+Maybe the real and imaginary parts each must be non-singular for this to work?
+Of course!
+It's pretty scrappy. We could try to improve things here.
+Yes! Though it's still a little rough (e.g. sometimes needing to double escape, sometimes not).
+Continuing with the $\mathtt{CPHASE}(\pi/2) 1 0$ example, I think there's a typo in your definition @stylewarning; the second row has an extra 1 in it. Switching the definition to be $\mathtt{diag}(1, 1, 1, i)$ looks to work in both Python and Lisp:
+The $\mathtt{CNOT}$ example still fails, as taking b_vals, g = np.linalg.eig(np.zeros((2, 2))) ensures that g is the identity matrix, so $g^{-1}ag^{-T}$ is still $a$ i.e. $\mathtt{CNOT}$, which isn't diagonal. Maybe we need only check that the input matrix isn't in fact real?
+Apologies for getting Python all over your QUILC, but I'm still quicker there.
+Hacky Lisp attempt
+Python is OK, and good catch on the CPHASE typo. My bad. I'll look into your proposed change.
+I suppose we’d probably need a second special case for if the matrix is purely imaginary.
+I handled the real=0 and imag=0 cases, and this is the next failure I get:
+In this case $UU^T = I\otimes\frac{1}{\sqrt{2}}\begin{pmatrix}1 & -i \\ -i & 1\end{pmatrix}$.
+Sorry for so much whack-a-mole on this one 😞
+I think the issue here is that $a = Im\{UU^T\}$ is already diagonal, in which case we can just take the eigendecomp of $b$.
+So:
+Nope, that just fails another test. In trying
+we fail
+with
+I think whack a mole is the only way for me, a lowly software engineer, to figure this out. (:
+I'm just going to call it experimental mathematics to save face. :)
+Is there a general problem for unitary matrices of the form $SU(2)\otimes SU(2)$ (which is the vast minority of $SU(4)$ )? I haven't tested yet.
+Oh, we could have $A$ or $B$ not be diagonal but skew diagonal or some other permutation matrix.
+Oh, we could have $A$ or $B$ not be diagonal but skew diagonal or some other permutation matrix.
+I did write a function to detect whether something looks like $\pi\cdot\mathrm{diag}(a,b,c,d)$ for a permutation $\pi$, I could dig that back up.
+Pushed that here: 5473335
+Just found out about Takagi's Factorization, which I think is what we're looking for. Math Overflow has a Python version, as does Strawberry Fields.
+@genos good sleuthing! looking into it
+Here's hoping some randomized testing will give us confidence…
+
+@genos just added magicl:schur in quil-lang/magicl#182
+Will try to add the above algo and see how it goes.
+@genos, the line
+Is this saying that if the $k$ th eigenvalue is positive (presumably there will be $n$ of them), then p[n:, ...] is an $n\times n$ matrix whose rows are the last $n$ rows of $p$, and whose columns are the positions (e.g., $k$) of positive eigenvalues?
+Are we guaranteed the number of positive eigenvalues is $n$?
+@genos So, as is sometimes typical with me, I started implementing things without thinking about it too deeply first. Only after quilc tests started failing did I think about it. :S
+Don't we have a problem with Takagi? It just says that if we have a symmetric matrix $A$, then it will produce a unitary $V$ and a diagonal $D$ such that $VDV^{T} = A$. But if $A = UU^{T}$, then just set $V := U$ and $D := I$. Indeed, we see this immediately:
+We need a $UU^{T} = ODO^{T}$ with special orthogonal $O$.
+@stylewarning
+Wait, if we're looking for a decomposition of a symmetric unitary $UU^T$, won't the eigen-decomposition suffice?
+No, of course it's not that easy
+@stylewarning I'm having trouble understanding why the following doesn't set the determinant of the returned $X$ a.k.a QUIL::EVECS to 1:
+consider for example the diagonal matrix $M = \mathrm{diag}(\lambda_1, \ldots, \lambda_n)$, then $\det M = \lambda_1\cdots\lambda_n$, so simply dividing each entry is going to lead to $\det (M/k) = \frac{1}{k^n}\lambda_1\cdots\lambda_n$. I think you'd need $(\det x)^{-\dim x}$, if your sole goal was to normalize the determinant.
+Suppose we have a different matrix $O$ which is presumed $OO^T = I$. Then $(O/k)(O/k)^{T} \neq I$.
+We need both that $\det O = 1$ and $OO^T=I$.
+Ugh, the (many) professors who tried to teach me (numerical) linear algebra are very disappointed in me
+@genos Maybe it's good to take a step back and re-evaluate what we might be solving by avoiding calculating eigenvalues in the current way. We've at least removed all non-determinism. I think the only benefit could be that we might get more numerical stability, but even for that I don't have a good argument.
+There are other things which show that we have some misunderstandings in the code, which may be good sources for fixing. For instance, when testing, we get:
+which is something the code is expecting, yet we don't see follow-up failures from this violation.
+Some stats:
+Running the test suite in full, it takes find-diagonalizer-in-e-basis
+So it seems the current state of affairs might be OK, at least in terms of it doing what it's supposed to.
+Sorry for going at this in a rather headstrong fashion, I was under a deadline and wanted to try to squeeze out a result beforehand.
+Glad you’re taking a fresh look at things @stylewarning! When you say “the current state of affairs,” is that the PR branch or master? What ultimately brought me here was master failing to compile on ARM.
+@genos ah yeah, I forgot about ARM completely. What's the state of ARM on master?
+I haven’t fuzzed the random state of the programs I was trying to generate, compile, and run, but #842 was uniformly throwing violent errors my way.
+@genos If I had an ARM machine, I would be happy to do some spelunking. Unfortunately I don't. :/
+Actually, the last error you posted in the thread is somewhat hopeful, it's talking about a diagonal matrix of $1/\sqrt{2}$ which seems "tame" enough to find the root of the issue.
+If I had to put money on a particular thing being a problem, I'd say it might be a different in how eig behaves on each platform (?).
+@stylewarning I’d charged ahead on this so hard, I hadn’t focused on the thing that brought me here in the first place! Though I’d be embarrassed if it turned out to be that simple a fix, if all we needed was some special case handling around “is this already diagonal?” I’d be much obliged (and humbled)
+After my myriad false starts I hesitate to be even cautiously optimistic, but: using the Schur decomposition of $U U^T$ to find a diagonalizing $X$ and then normalizing by its eigenvalues to ensure $\det(X) = 1$ might do a thing.
+
+Though I run into problems when trying to make a similar change in the genos-diagonalos branch. With this diff:
+I receive the following complaint with make test:
+The Gram-Schmidt process in orthonormalize-matrix! looks correct, so I suspect the check should be about $E E^\dagger$ instead of $EE^T$, because we want evecs to be unitary, not necessarily orthogonal (i.e. all real). However, adding the change
+leads to a different failure later on
+So perhaps we do in fact want evecs to be a (real) orthogonal matrix rather than simply a (complex) unitary one.

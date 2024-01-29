@@ -1,0 +1,19 @@
+STATE_VECTOR_LIKE exists.  We likely need an equivalent for density matrices (should be different, though, right?)
+This has not been added to fidelity in measures.py
+In general, there is no way to distinguish between a density matrix and the state tensor of a pair of qudits (a type which is encompassed by STATE_VECTOR_LIKE). For example, consider the matrices
+Both are valid density matrices for a single qubit, but they are also valid state tensors for two qubits. In the first case, their fidelity is 0.5, while in the latter, their fidelity is 0.25. Therefore, if we want functions like cirq.fidelity to accept both kinds of inputs, they will need additional information in order to distinguish these two cases when the inputs are two-dimensional arrays with the same shape. I can think of two solutions:
+Discussed on Cirq Cynq:
+A final idea we came to as a conclusion to explore further: type system + a central utility function to interpret numpy arrays (by default as a density matrix).
+More details on discussion: Kevin's example shows that in some contexts numpy array is insufficient to describe a quantum state. In such contexts, the additional information must be specified somehow. Below are a few possible approaches we discussed:
+Very extensible in the sense that if in the future we find out we want to attach more information to states, the types would offer a natural place to do it. Also, type signatures would help document the code. However, users are burdened by having to wrap their states, so this is considered a "high friction" approach.
+Continue to use numpy arrays, but in a few places where ambiguity exists use keyword arguments, e.g.:
+Put the extra information in function names instead:
+Have functions in which ambiguity arises accept an additional parameter:
+Use types, but mostly internally and implement inference so that wherever a state is expected users can pass in either a numpy array or even a python list (for low friction) or cirq's special type for representing quantum states (for resolving ambiguity in cases where inference fails), e.g.:
+I like using types to solve problems and specify APIs, but I accept the "high friction" argument. Function names solution leads to proliferation of functions and pollution of cirq's namespace which would make autocomplete annoying (scrolling/searching through more names).
+I think the real contenders are kwargs, shape and inference. Among these I think inference is the best because the other two make it harder to pass states between functions (you need to pass qid_shape or the right kwargs along).
+@viathor thank you so much for capturing the details of the discussion - awesome notes.
++1 for "inference" as well
+I also like inference. If I understand correctly, this is how it would work:
+There is still the question of how the function density_matrix should infer the qid shape of its input. For example, a 4x4 density matrix could have qid shape either (2, 2) or (4,). For an nxn matrix, if n is a power of 2, we should probably assume qubits. If n is not, the only "natural" generalization I can think of is to use the prime factorization.
+For JSON serialization of the QuantumState data type it would be nice to have #2742.

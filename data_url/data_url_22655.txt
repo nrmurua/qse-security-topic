@@ -1,0 +1,64 @@
+Let's start with item 1. What types do you need in the HDF5 output? What types do you need for broadcast?
+Data type/class considerations involve where the data resides and where it can move.
+core device <--> master <--> HDF5
+core device: I gather that @kernel methods on the core device only support native python data classes right now: int, float, bool, str. That's fine.
+master: Full python so any data type is possible. Fine internally, but for transport to/from core/hdf5 need to test for restricted set of data types.
+HDF5: Requires mapping between master-supported types and HDF5 types.
+Ok, some clarification is needed here. There are three places where type-related problems may appear in datasets:
+So the actual questions are:
+Regarding 1, in Sept we discussed one option for giving users greater flexibility in specifying plots in the GUI. One option was sending matplotlib code from the Master to the GUI. If RPC is to be used for this it would need to support sending code-type objects. The alternate approach was putting custom plotting code in the local storage of the GUI computer. I prefer the former approach as it stays true to the emerging ARTIQ tenant that "the Master PC defines state" and has all user data, code, etc.
+Regarding 2, in Neutral atom and Penning trap experiments one real-time observable is atom/ion images. So we'd want to broadcast and real-time plot 2-dimensional datasets for images. Device -> Master -> GUI
+Regarding 4, in support of experiment browsing and replay there needs to be some way of mapping HDF5 back to the python world. Not sure if HDF5 permits inclusion of a per-record comment. If so this could be used to not the original python type in the HDF5 file when it comes time to map HDF5 -> Python.
+"What Python types should map to HDF5 native types and how?" I think the following would cover most needs. Includes up to 2d arrays. Plus pickle arbitrary stuff. Does anybody need UTF-8 support?
+IMHO the current type support in PYON is sufficient.
+sync_struct's ability should remain very limited. The only thing beyond list and dict ops, that I would like to see is the ability to update elements in an ndarray. If -- beyond single element updates -- slices and fancy indexing are difficult, scratch those.
+PYON-HDF5: the mapability should be limited to the "natural" cases: homogeneous n-dim arrays of the following: intersection of the numpy and hdf5 numeric types, strings.
+List of strings are slightly problematic, as all list elements need to have the same type and the maximum length of the string is part of the type in HDF5 (similar to C). That can be solved by examining all elements in the list and allocating the largest size, but this can be inefficient and do you need lists of strings in the first place?
+For n-dimensional arrays, should we support lists of lists, or only numpy arrays?
+Sure. ndarrays of strings are also fixed element length. I would just enforce/expect that datasets to be saved in hdf5 are ndarrays. Trying to come up with yet another mapping of a certain subset of python objects to hdf5 seems pointless to me. Especially since I suspect that they are all converted to numpy stuff anyway.
+What about converting lists of scalars to numpy arrays implicitly? That would cover the frequent (I believe) case where points are added one by one to a plot, and the data is saved later.
+Or should we enforce that a numpy array be created from the start? The advantage of the latter approach is that the rule is simple, but it transmits at least twice the data to the clients (once for initialization, and then each element is mutated) and the data has to be (typically zero-) padded while it is generated.
+I would prefer to see ndarrays used widely (I have tried to make that point a few times). There are a few things i don't like about lists as pedestrian replacements for ndarrays: the elements might need type checking/coercion, the math and analysis would be done on ndarrays anway, with arrays you get useful "missing-data" handling, you can assume that the "results" array has the same shape as the full "scan points" array even if the scan was not completed...
+Zero-padding is rather unphysical. There is nothing special about zero. You would usually initialize it "empty" with all points masked as missing data.
+Also, appending to a list as a way of communicating incremental results does not really sound like the natural thing to do. Would you not rather do something like broadcasting "(x,y)" pairs and then track those where needed (on the GUI and on the worker)?
+And ndarrays as the only data format also seems likely since that is what would come out of a hdf5 on restore/browse. Distinguishing ndarrays from list on restore/browse would be absurd.
+And I don't see the need to unittest h5py's ability to do what it is designed to do (store ndarrays).
+Ceterum censeo (off-topic here) that h5py might not be the right level in the stack for us. In a few months we will find h5py as the lowest abstraction layer below pytables and pandas. People will generally want to use pandas for wrestling these data out of mere convencience.
+Masked arrays are nice, but they cannot take a round trip through HDF5:
+So it seems an additional storage convention on top of HDF5 would be needed for those.
+Pandas deals with the problem by using NaN and silently converting ints to floats upon insertion of NaN:
+So you can get funny problems:
+http://pandas.pydata.org/pandas-docs/stable/gotchas.html#nan-integer-na-values-and-na-type-promotions
+ACK. There is some stuff in HDF5 about default values but that doesn't look very useful.
+The NaN/missing data/invalid data/masked thing has been going on for years. I remember a lot of discussion and proposals at the numpy level. Don't know what happened there.
+What about going numpy-only and supporting missing values for floating point arrays only, using NaN? It seems to me that in a lot of cases, missing values come from measurements that return either floating point numbers, or integers small enough to be represented exactly by a double (e.g. photon counts).
+If pandas is used to generate or analyze the data, this should match its behavior too.
+Sounds good.
+How do we deal with booleans? They look good in the GUI (when broadcasted), but they need to be converted to integers before they can be saved to HDF5.
+I think it should be OK to convert them implicitly to int8 before saving. When the experiment analysis is replayed, it will get an int instead of a bool, but Python should grok that in most practical cases. Or we can add HDF5 metadata to indicate that the value is boolean, and the replayer will convert to bool.
+Converting to int8 sounds good to me.
+Confirmed that the following runs without error.
+The log output is distressingly long in the event of using an unsupported type. A try block in pyon could have caught this and terminated processing of the experiment is a less verbose fashion. Ideally there would be 1-2 lines of log output.
+2015-10-28 12:29:05,907 INFO:worker(26):print:KeyError: <class 'complex'>
+artiq.master.worker.WorkerError: Worker ended
+Here's what I see instead.
+40b4129 does not include a unit test or update to ARTIQ documentation. Regarding former, we care very much about data integrity. A nice unit test:  Generate random data for each of the supported types, call set_dataset(), read back from HDF5 and then compare.
+From the commit:
+"If the dataset is saved, it must be a scalar (bool, int, float or NumPy scalar) or a NumPy array."
+What is unclear about this?
+The unittest will be updated with readback as part of experiment replay, there is no point in doing it now. If you are worried, you can look at the output of the test manually using h5dump.
+Your trace would already be shorter if a) you were running the latest version b) it didn't include two experiments.
+From the commit:
+"If the dataset is saved, it must be a scalar (bool, int, float or NumPy scalar) or a NumPy array."
+Commit comments are not user documentation.
+This is in the docstring for set_dataset.
+OK
+
+I was looking here.
+m-labs.hk/artiq/manual/core_language_reference.html?highlight=set_dataset
+On Thu, Oct 29, 2015 at 10:11 AM, Sébastien Bourdeauducq <
+notifications@github.com> wrote:
+This is in the docstring for set_dataset.
+—
+Reply to this email directly or view it on GitHub
+#145 (comment).

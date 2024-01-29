@@ -1,0 +1,86 @@
+We wanted to set some variables in machine units in an experiment subcomponent. It seems like the place to do this would be in the build method. However, as mentioned in #493 calling it in the build raises a ValueError as the get_device call for the core returns None. Is there a better way to do this? It seems like all this conversion needs is the ref_period. I've attached the subcomponent we want to use it in below.
+What would be required for this is a "light" mode for creating device drivers, where they do not attempt any expensive operation (e.g. controller clients shall not attempt to connect to their controllers) but give access to cheap attributes like the RTIO frequency which is necessary for seconds_to_mu.
+For now, if you need this, you can just implement your own version of seconds_to_mu with the RTIO frequency hardcoded. Not nice and it will need to be kept up-to-date (like the meaning of the values in your fields), but functional.
+In prepare() (or run()) you have all the devices.
+Yes, but he wants to set GUI defaults that depend on driver attributes. GUI defaults are determined in build.
+He is not doing that in the example at hand. But yes, if that is really what he wants to do it needs to be early or it needs to be in SI units early and converted to machine units in prepare() or build() later. What's wrong with the last options apart from it being a bit verbose? Also originally, this was intended to be kept in SI units almost all the way to the end. Is the runtime penalty still that large?
+He is doing that:
+seconds_to_mu requires attributes of the driver self.core.
+If we implement this "light" driver creation, the browser will need to create light drivers as well.
+self.t_pi_3p3_2p2_e1 is neither a GUI default nor used to create one as far as I can tell.
+Ah, right. So why are you doing that @r-srinivas ?
+We had that in SI units but ran into underflows. Switching to machine units
+helped resolve that which is why we want to do this.
+On Jul 28, 2016 01:21, "Sébastien Bourdeauducq" notifications@github.com
+wrote:
+Ah, right. So why are you doing that @r-srinivas
+https://github.com/r-srinivas ?
+—
+You are receiving this because you were mentioned.
+Reply to this email directly, view it on GitHub
+#529 (comment), or mute
+the thread
+https://github.com/notifications/unsubscribe-auth/AKsxTIVj8eKxqI79ODvCqmLS8GocCcFjks5qaFgOgaJpZM4JWtmq
+.
+I should add that we have other subcomponents that call those functions like,
+In that sense it would be nice if the microwaves subcomponent could be self-enclosed without having to call an additional function in the prepare or run stage that would do the seconds to mu conversion. Is there a better way to do this otherwise?
+@whitequark would kernel_invariants on the SI unit variables help here?
+@sbourdeauducq No, that'd make no difference. The SI unit variables, just like any other quoted variable from the host, is already embedded by value, because there is no way for the kernel to change its value in the scope from which it was embedded. So, in kernel code, 4*ms is exactly equivalent to 4*1e-3 (assuming ms is 1e-3). Similarly, the seconds_to_mu function is not translated to a function; it is a builtin that expands directly to arithmetics and the entire expression of seconds_to_mu(4*ms) must always expand to the appropriate integer constant during compilation (this will be done by LLVM, in this case).
+So why is there a difference when the variables are explicitly converted to machine units before compilation?
+What difference? I don't see any reference to that in this issue.
+#529 (comment)
+@r-srinivas Can you show a specific testcase where converting operations on SI units to operations on machine units helped with underflows? That shouldn't happen.
+I have the exact experiment we ran in #530, but this simple example here also seems to show the difference. On 1.2 on windows, I ran
+And using machine units,
+Looking at the slack on the core_analyzer, using SI units, the slack was 2.67 ms during the first pulse and 1.52 ms during the last pulse. With machine units, it was 2.67 ms during the first pulse and 2.64 ms during the last pulse. It seems like there's a much larger penalty on the slack for machine units compared to the SI units which explains the behaviour we observed. I've attached the vcd files.
+If you just type in the values of the pulses instead of using self.x, there doesn't seem to be a difference in the loss of slack per pulse.
+Edit: 100ns here is 80 machine units as our ref_period period is 1.25ns.
+rtio_traces.zip
+Ah, yes. The difference here comes from the fact that the compiler is unable to prove that self.x never changes, and so it performs the calculations every time. You need to mark x as kernel invariant.
+@whitequark can any type be marked as a kernel invariant?  For example, let's say I have the following code featuring an array of pulse times to be stepped through.  It seems that if we don't declare self.times to be a kernel invariant, we will pay this timing penalty as above, so we should declare self.times as a kernel invariant.  However, would we also need to declare t as a kernel invariant?
+However, would we also need to declare t as a kernel invariant?
+Why do you think you should? t is supposed to change during execution of the kernel, so there's no way it could possibly be kernel invariant. In this case, the calculation becomes function-local after pulse (and its callees) are inlined, and LLVM is very good at optimizing such local calculations, so there is no need to give any hints about t either. It is only the attributes that present this problem, because LLVM cannot make any assumptions about aliasing, and so it takes the conservative route, and treats all attributes as if they may change after any call, or in some cases any write to another attribute.
+But also to answer your original question,
+can any type be marked as a kernel invariant?
+The type of the attribute makes no difference. What you are saying by marking an attribute as kernel invariant is that the value of the attribute on any instance of the class will never change, and so any read of an attribute is as good as any other. In other words, it is an explicit permission to do this transformation:
+to
+because, since the attribute can never change at all, bar() cannot change it. By itself the transformation is almost worthless, but it enables further optimizations, because e.g. if a needs to be converted from floating point to integer through some expensive calculation (probably inside foo, which gets inlined), then this calculation can be performed only once, instead of on every iteration of the loop. This has significant effects, especially with soft FP.
+So for the case where we're scanning a variable, it is still advantageous to explicitly convert it to machine units outside the kernel, right? So for,
+It's making that calculation for t every loop instead of converting the list to machine units outside the kernel. Right?
+Yes, if you have a list then even adding kernel_invariant = {"times"} would not help, because lists are mutable and knowing that which list is used is kernel invariant is not enough to do any useful optimization.
+@whitequark Can we do better than that?
+@sbourdeauducq It is quite nontrivial to implement a robust optimization for this pattern. There are generally two issues:
+Instead, why don't we introduce some explicit class for SI units, that will indicate to the embedding subsystem that it should convert everything to machine units during compilation? This will completely avoid any soft-FP associated with timing calculations.
+I had implemented such a class in the very early versions of ARTIQ, but then scraped it, because anything other than bare floats causes problems when interfacing with any library (remember the int redefinition mess?), including serializers and numpy.
+Also, conversion between SI and machine units is not always linear, there may be some cases where e.g. to_mu(a) + to_mu(b) != to_mu(a + b).
+Well, with the present float situation, avoiding soft-FP becomes a whack-a-mole game, and the optimizations aren't cheap to implement or run. What about hard-FP? Might that actually be easier to do? We probably need just adds and multiplies; adding these to LLVM is very little work, but I'm not sure about mor1kx.
+Hard FP sounds good. There will still be a performance hit in this case but it will be much smaller.
+This also avoids a problem where some of our existing optimizations rely on an !unconditionally_dereferenceable LLVM marker, which was rejected from upstream because it's unsafe.
+Hard FP would definitely be a good way to solve this problem, and would have many side benefits as well for fast-feedback-type calculations.  From previous discussions, though, it seemed like there would substantial work in implementing it, no?
++1 vote for hard FP.  I also think it would be very useful for feedback calculations.
+It's unclear whether we even have an FPU of sufficient quality for mor1kx. And the rest of the compiler+toolchain would probably need to see some work as well.
+@jordens I've looked into it before. The work to enable enough hard-FP in LLVM for timeline calculations consists of about three LOC, and no changes to the frontend (since it already emits floating-point operations, relying on LLVM to translate them to soft-FP). A full implementation is harder but not by a lot.
+@whitequark thanks. In this case it would need to be full FP.
+@jordens my understanding from previous discussions would be that someone would have to write an FPU for mor1kx, and my question about workload involves this as well as the LLVM work.
+For the mor1kx FPU, I would roughly estimate a couple months, at most.
+@whitequark Are setattr_arguments automatically declared as kernel_invariants if they are single valued?
+I tried running
+And looking at the slack, it didn't seem to matter whether x was kernel invariant or not.
+Are setattr_arguments automatically declared as kernel_invariants if they are single valued?
+They are not.
+And looking at the slack, it didn't seem to matter whether x was kernel invariant or not.
+So reading the LLVM IR, the reads of self.x are in fact hoisted out of for j; the inner loop only contains manipulations of the now variable and calls to rtio_output. I assume in this case you are concerned about the outer loop however (with a higher trip count, perhaps, not just 1?),  and the problem there would be that rtio_log acts as an optimization barrier. There is no way to tell LLVM 3.8 to hoist reads of self.x across it, but there is such a way in LLVM 3.9. (cc @sbourdeauducq)
+@r-srinivas If there is any problem with your code, please open a new issue.
+I haven't had any new issues, I was just curious about the slack behaviour using setattr_arguments.
+Are setattr_arguments automatically declared as kernel_invariants if they are single valued?
+They are not.
+I find that a little strange because I didn't see any change in the slack when I set it to kernel invariant. Is that expected? Before if we didn't convert to machine units or call kernel invariant you can see a significant difference to the slack behaviour (that each pulse would consume more slack).
+I find that a little strange because I didn't see any change in the slack when I set it to kernel invariant. Is that expected?
+LLVM is built to provide opportunistic optimization and it provides no strong guarantees on the outcome. In general, declaring something as kernel invariant (which only really carries that information over to LLVM) will not cause any change, however in certain special cases it provides additional information that guides the optimizer.
+In general, declaring something as kernel invariant (which only really carries that information over to LLVM) will not cause any change, however in certain special cases it provides additional information that guides the optimizer.
+But in the case we're primarily concerned with, where we have a pulse for some length specified by a variable, if that variable does not change in an experiment, does calling it a kernel invariant always reduce the impact it has on slack? I'm worried as to whether we should try to convert all pulse times and variables to machine units or just using kernel invariants is sufficient. It's easier for us to see those pulse times in SI units but if machine units helps us avoid underflows then that's what we should do.
+But in the case we're primarily concerned with, where we have a pulse for some length specified by a variable, if that variable does not change in an experiment, does calling it a kernel invariant always reduce the impact it has on slack?
+Declaring an attribute as kernel invariant primarily lets LLVM hoist any soft-FP arithmetics out of loops. There are more barriers to this than attribute reads and writes; for example, even kernel invariant attributes would not be hoisted over a (non-inlined) function call, or a system call, including such system calls as rtio_log.
+I would advise converting variables involved in delays to machine units only if inner loops become too slow.
+@whitequark I found in the release notes for 1.0rc4 that setattr_argument and setattr_device add their key to kernel_invariants. That would explain the behaviour I saw.
+https://m-labs.hk/artiq/manual-release-2/release_notes.html

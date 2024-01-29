@@ -1,0 +1,59 @@
+I am trying the new version of the VQE class (implemented in qiskit.algorithms.minimum_eigensolvers) and I found to be much slower and much more imprecise than the old one (implemented in qiskit.algorithms).
+My code is the following:
+OLD VQE
+NEW VQE
+The results from both implementations of VQE should be similar and close to the actual optimal result. However, only the old VQE gets something that is close to the actual optimal eigenvalue. What I obtain is the following:
+Old VQE: -1.8523881305065442
+New VQE: -1.8175462265165616
+What is more, the new VQE gives different results every single time, despite using the same initial values for the parameters. The old VQE always returns the same result.
+Also, the execution time should be similar also, but I obtain the following:
+Old VQE: 2.7136223316192627
+New VQE: 42.337207078933716
+No response
+As a first step towards debugging, I believe a big part of the difference you're seeing is because of the use of the BackendEstimator. That class is purposely generic and doesn't do any optimizations because many of those are backend/provider specific. In the case of Aer in partilcular the old path with the QuantumInstance has a ton of hard coded optimizations to use special instructions, handle parameterization, etc which would improve the overall experience there. I think ideally the Estimator class defined in Aer would be the better choice: https://qiskit.org/documentation/stubs/qiskit_aer.primitives.Estimator.html#qiskit_aer.primitives.Estimator. As in general the provider specific primitive implementations are supposed to bake these types of optimizations in as part of their operation (which is why the release note calls this out (https://qiskit.org/documentation/release_notes.html#new-features the second note there). Unfortunately in this case because of large breaking api changes (which I'm not personally happy with) made to the primitives api in 0.22.0 the aer implementation won't work with VQE. There is a pending 0.11.1 bugfix release to fix compatibility (this PR Qiskit/qiskit-aer#1598 will fix it) to address the api changes made in terra 0.22.0.
+That all being said I'm not sure the aer native primitive will completely match the performance gap you're seeing, but it at least should recover some of it hopefully. Maybe @woodsp-ibm or @Cryoris can comment more.
+From the looks, although a statevector backend was chosen, I think the BackendEstimator is doing counts based measurements. Even with grouping of paulis this is going to be slower than statevector, even discounting all the customized Aer support that was targetted at performance - and it also would explains the differences in values since the counts will vary (simulator sampling/shot noise). The latter should be solvable by using a simulator seed for the backend I think.
+I would hope shots=None for the Aer Estimator, when its compatible, would internally leverage the same sort of optimizations done in the past. Performance is likely something that will get scrutinized and improved over time just as it has been for the now old way things were done.
+In the meanwhile you can also try the reference Estimator from qiskit.primitives here in Terra. By default it has shots=None and will give an ideal outcome.
+Thanks for the quick replies. Using Estimator from qiskit.primitives certainly helps. The result is now (close) to the correct value and the execution is faster, although still 3 or 4 times slower than the old VQE.
+What I am not sure I understand is what Estimator is doing. From the docs, about "shots":
+"If None, it calculates the exact expectation values. Otherwise, it samples from normal distributions with standard errors as standard deviations using normal distribution approximation."
+So I guess that with shots=None it uses the exact state vector |psi(theta)> and it computes the matrix product <psi(theta)|H|psi(theta)>. Is that right?
+But then, what does it do when shots is not None? I would expect it would measure |psi(theta)> in the different bases needed to estimate  <psi(theta)|H|psi(theta)>. Is that correct?
+Thanks!
+You can see what it does if you look at the source. It basically computes a std dev figuring in the shots and then randomly samples from the distribution around the ideal value it computes. https://github.com/Qiskit/qiskit-terra/blob/c34e0b93dc8a6b3e0e1134616c4a092f61dadb12/qiskit/primitives/estimator.py#L134-L148
+Thanks, I see. Just another question: is there any estimator that uses samples measured in different bases to estimate the expectation value?
+Are you meaning code like this where we have to alter basis to do the measurement? https://github.com/Qiskit/qiskit-aer/blob/90a29293b41e3d8aa16b47c4ea93b55ec967ba7f/qiskit_aer/primitives/estimator.py#L302-L310
+Yes, exactly that, thanks. So I see that it is included in the qiskit_aer Estimator that @mtreinish mentioned. Looking forward to its compatibility with the new VQE.
+Ok, that is also in the BackendEstimator too https://github.com/Qiskit/qiskit-terra/blob/c34e0b93dc8a6b3e0e1134616c4a092f61dadb12/qiskit/primitives/backend_estimator.py#L262
+It would also be there for runtime primitives working on real devices. It handles measuring the paulis when running circuits. That was not used for the statevector simulator, such as your example, though it would have been had you chosen qasm_simulator.
+Thanks for the info.
+One more question, if you don't mind: is it possible to do error mitigation with the new VQE? With the old one, it was possible to set the measurement_error_mitigation parameter when creating the quantum instance. Anything similar with the estimators?
+Thanks once again
+Oh, and another question: is VQD also getting a new version, with estimators instead of quantum instances?
+Nevermind: I've just seen that it is.
+There is more expected to come to the primitives - error management among the capabilities. This, like other capabilities, will depend of the particular estimator/sampler you select.
+All the algorithms (bar Shor and HHL which have been deprecated and will later be removed) have been changed to support primitives. Some like VQE in new folders since the change was more extensive. Others like AE and Grover were done in-place in the existing algos and support both the old QuantumInstance way and the new primitive way with the old way being phased out,
+OK, thanks. Any idea on when error mitigation will be available for the estimators/samplers? I am writing a book that includes Qiskit code (the chapter I am currently working on is about VQE) and I would like to include the most up-to-date way of executing the algorithms. But one of the sections is on noisy simulation and readout error mitigation, so that would be a problem if the new versions do not support them.
+Thank you very much for your time and your explanations once again.
+Any idea on when error mitigation will be available for the estimators/samplers?
+Sorry no. Estimators will come from providers like Aer and IBM provider and allow to leverage capabilities/backends they offer. You should still be able to do noisy simulation with Aer as far as I know. But I do not know the timeline for introduction of noise mitigation for primitives.
+"You should still be able to do noisy simulation with Aer as far as I know." -> You mean now or in the future?
+The Aer primitives - at least as they are now and I did not think this aspect was changing - allow a backend_options dictionary to be passed, which includes a noise_model as far I know, among many other things.
+Ah, OK, I see, thanks. But the Aer Estimator is not currently working with VQE, right? And error mitigation is not available for that Estimator either way, is it?
+Sorry for all the questions and thanks so much once again for your patience.
+Yes, as Matthew mentioned the primitives API was changed in the latest Terra release, which included the new primitive-based algorithms, but Aer has not yet released a version where the primitives are compatible with that new API, which is needed for these algorithms. I do not know whether any form of error mitigation will be done for Aer primitives.
+Thanks so much, Steve. If you do not mind my asking one more question... will the Estimator/Sampler objects also be used eventually with Runtime? I am referring to QAOAClient and VQEClient, for instance.
+Not presently - the expectation is that the performance when using the runtime primitives with say local VQE should be comparable to using a complete VQE runtime client. Things are still being worked on as you see.
+Thanks so much. This gives me a more detailed picture of what will change and what will stay the same. Now. I need to decide what to include in the book. It will be difficult, but I will try to do my best.
+Thanks once again
+I checked the performance of estimators.
+VQE OLD: 1.7 sec
+VQE NEW: 11 sec
+Aer main (ddcb17e)
+1.9 sec
+Reference implementation:
+2.5 sec
+One of the reason is: bind_parameters for
+is faster than ansatz.bind_parameters. (surprised...)
+Performance has changed with the primitives since this issue was created and things have been improved. Since this is rather outdated now I am going to close it.

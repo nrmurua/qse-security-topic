@@ -1,0 +1,25 @@
+The keys for Counts are bit-strings corresponding to observed measurement values.  However QuasiDistribution and ProbDistribution are returning int keys.
+gives
+The keys should be bit-strings as that is what is needed for computing expectation values and allows users to work with distributions in the same manner as Counts
+No response
+I like the idea to store keys as bitstrings. We can then handle bitstrings with blank spaces. QuasiDistribution currently raises an error with bitstrings with blank spaces.
+output
+So I talked with @mtreinish a bit about this and it is really a design decision at the end of the day.  The data is really only useful in bit-strings, but the most efficient representation is as int.  As the systems get larger this will become more and more important.
+Because we use QuasiDistribution as a generic object for both real- and true quasi-distributions one just needs to make sure that they can be used in place of Counts in places like visualizations etc.  That the same object can also have negative values makes that a bit more tricky though.
+For mitigated Sampler results, the only useful thing one can do is to compute expectation values and #8748 does the casting internally, so bit-strings or not should be fine there.
+I am curious how we could still enable multiple register output from int storage though.  That seems to be nice to have for parity with Counts
+I'm leaning towards something like this for counts/distribution/quasi-prob distributions. (I wrote some of this in another issue, but I can't find it at the moment.)
+The data is really only useful in bit-strings, but the most efficient representation is as int
+We can then handle bitstrings with blank spaces
+I guess that storing information about register sizes, for example "1010 0101" for two registers each of length four, is better done as meta data. This should be more efficient for storage and processing. For example outcomes ["1010 0101", "1010 0000"] would be stored as [165, 160] and reg_lengths = [4, 4]. I also guess code would be more maintainable.
+Of course it makes sense to make the storage and code for Counts, ProbDistribution, and QuasiDistribution as close as possible. In fact, they can probably share quite a bit of code. There are a lot of differences currently.
+You need a bit of abstraction to make this work elegantly. In Python, it would come at a cost.
+Would our own integer type, which you could convert to string (in the correct Qiskit-order 😉) solve the issue? We could store our_int type as key and if you want to use it as bitstring just do our_int.to_binary() or so?
+our own integer type ... just do our_int.to_binary()
+Yes, that's what I'm talking about. Something like this:
+It works like this:
+with output
+But, this is not a good solution as is. For example:
+We need to store the number of bits in the outcome. But, in a container of Outcomes this would be wasteful and inefficient to store the same length for all outcomes, and/or compute values on the fly when you manipulate them. It may be better to store this information on the level of a collection of outcomes, for example a dictionary of counts. You could use a class containing a dict with int keys. The number of bits in the outcome (and other metadata) would be stored just once.
+Trying to implement these things is instructive. Some problems arise because Python is interpreted. But, other design problems, like where to store the length, would be the same in Rust or Julia.
+Looking at things like bitstring might be useful, too.

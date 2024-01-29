@@ -1,0 +1,46 @@
+Using 3.0 on windows, I've been running some basic experiments like the one below,
+Twice today I've ran into the situation where communication with the core device just fails altogether. I try running the experiment above and nothing seems to happen. On the gui it just lists the experiment as running.
+I can't reproduce this reliably. The second time it happened I deleted the experiment and tried running another experiment and got the following error message,
+Running another experiment again after this produced a different error message,
+After this it reached the situation I described where an experiment runs perpetually without actually doing anything. I'm not sure if this is a separate issue from #599, but I'm using artiq 3.0.dev py_245+git95c885b which has that fix presumably.
+The solution seems to be to reset the core device and then things work again.
+When such an error message fails, please run artiq_corelog and post the output also. (@jordens, do we have a "writing bug reports" doc page somewhere?)
+I managed to reproduce this by running
+And just deleting it while running. That seems to prevent it from reconnecting to the core device. I tried running artiq_corelog and it doesn't produce anything until I reset the core device. Then the error message is,
+Can you connect to the serial port and post the output?
+By serial port do you mean the UART? That is connected, as is the JTAG. Should it produce the output automatically?
+Yes. In case where the core device crashes, there will almost certainly be some useful output.
+While the core device is working, I get the following output
+But if I disconnect the ethernet cable but have the UART connected it doesn't do anything but produce a socket time out error. Is there something I should be doing to produce an output through the UART?
+I tried flterm just to check the UART connection, it connects but the output is different to what it is usually,
+and I can't seem to get to the test mode.
+@r-srinivas This is normal output from the new (Rust) runtime. It does not have the test mode anymore. If you crash the core device now, the flterm output should contain useful information.
+I tried that but it produces the same output. I need to reset the core device after initialising flterm which I guess destroys any of the useful information?
+@r-srinivas You can just leave flterm running.
+Aynway, I'll try reproducing this locally later today.
+do we have a "writing bug reports" doc page somewhere
+https://github.com/m-labs/artiq/blob/master/CONTRIBUTING.rst#reporting-issuesbugs
+So it's fine to leave flterm on while the master is running? Then if I can reproduce the problem, the console with flterm should hopefully have the useful information?
+Yes.
+I've reproduced the bug. Here is the relevant core log section:
+Thanks for fixing it. I tried again on flterm to see if I could get the log but it seems to get stuck when the core device fails.
+Is the output on the UART. Did that work for you to get the core log?
+Edit: I have misoc 0.1 installed, would that be an issue?
+Is the output on the UART. Did that work for you to get the core log?
+Yes, this is the correct output (and the same as I get). I thought the core device crashed; it isn't, that was just a logic bug. I had to enable debug output and run artiq_corelog locally to diagnose.
+Okay, thanks. Has flterm's test mode been replaced in someway? We found it pretty useful for debugging, dds' especially.
+Seems like this problem still happens even with the latest commit. It doesn't happen as easily as before: instead of deleting the experiment 1 or 2 times I had to try maybe 4-5 times but the symptoms seem the same.
+Looking at flterm,
+There ERRORs are when I deleted the experiment and at some point the kernel stopped communicating and I had to reset it. It looks like it's using the version with the fix as well.
+Edit: The experiment I'm running is the same as before,
+And I'm just deleting it before it completes.
+It seems to matter when you delete the experiment. What reproduces it quite reliably is when you delete the experiment such that it still prints test. If test is printed and the experiment was deleted it results in not being able to communicate with the core device anymore.
+Edit: The log on the gui looks like something like this
+Strangely if I try running this from the virtual machine, the experiment never works and always triggers this problem.
+On flterm, I can see that it connects,
+But then gets stuck. Curiously, I can still ping the device while it's stuck.
+I had to enable debug output and run artiq_corelog locally to diagnose.
+Would it help if I tried to do this to get the log? How do I do that exactly?
+@sbourdeauducq This is not a runtime bug but rather another lwip bug:
+Either way this needs fixing, as it makes ARTIQ unusable.
+The remaining bug is a manifestation of #637, let's discuss it there.

@@ -1,0 +1,51 @@
+i'm building a Docker version of SimulaQron with Qrack, after a couple of weeks of work in Qrack it was time to test the SimulaQron part.
+Install goes well, takes Dockerfile settings from the Dockerfile from SimulaQron. Running the make verify however fails ( spectacularly )
+
+Before I do a deep dive into this anyone got an idea what failed here ?
+@twobombs I haven't let SimulaQron know that we're officially supporting them (via ProjectQ) yet. Depending on which of my test systems I use, I sometimes have to build Qrack with double accuracy, to satisfy the SimulaQron unit test float error expectations.
+The unit tests do pass on my test machines, and the examples work, but the issue still might be in the interface with Qrack, which we would be responsible for.
+Additionally, though, I don't think this is an issue with Qrack. "Alice" and "Bob" are virtual and logical node names. It looks like it's saying, it's comparing nodes, and it's expecting "Alice" and getting "Bob," or vice versa. You might want to check your configuration files for node identities, for a mismatch between node name and host definitions.
+Maybe the SimulaQron team recognizes the issue, if we're lucky and they get a chance to respond. (Thank you, folks.)
+I'm trying to get SimulaQron/ProjectQ/Qrack running on a Raspberry Pi 3, right now, and I get this same "Bob != Alice" error at the same point, intermittently. I don't get the "Illegal instruction (core dumped)."
+If you're in a Docker container, make sure you have all the appropriate ports open for SimulaQron. Note that there are several types of nodes to expose, each labeled as "Alice," "Bob," etc., and each have their own sets of ports.
+I'm looking at the file responsible for this test, and I don't think the ProjectQ back end is even invoked, for that test that fails. I don't think this can be an issue with Qrack, in that case. We could use some guidance from the SimulaQron team, if they get a chance.
+You mentioned you only support it via the ProjectQ backend? The test failed when another backend was running
+Namely the Log backend. I made that almost a year ago when I started developing just to get comfortable with the SimulaQron backend. It doesn't do anything other than take the CQC message and log it to a file. It might be an idea to remove that backend, @AckslD thoughts on removing it? It causes some confusion and isn't really useful.
+I wonder why it fails though. How exactly is it tied in with Qrack @WrathfulSpatula ?
+Leon, over at the organization page for Qrack ("vm6502q") we maintain a branch of ProjectQ that optionally builds with our Qrack simulator. The primary point is, Qrack runs on GPUs, and any OpenCL device, and I get a significant speed boost for ProjectQ on my machine, in addition to a number of other benefits. @twobombs and I have been going over some issues on the Qrack repo, as he tries to make Docker container images with Qrack, and apparently he's trying to make an image with a Qrack/ProjectQ/SimulaQron stack. I've been able to build and use this stack, myself, on various test machines, but I just wanted to jump into the issue in case the problem was with Qrack's integration into SimulaQron, rather than an issue in SimulaQron itself.
+Yeah, Qrack supports your SimulaQron project via ProjectQ, by the way. I've successfully clustered two of my home test machines with this stack, already! I'm trying to get the whole stack running on a Raspberry Pi 3, by the way, which Qrack already supports, and ProjectQ (mostly) seems to work on top of it. So, I'll be watching, for anything on the Qrack end that I can help with, here.
+I don't think this is a Qrack issue, so sorry for the confusion. If and when an issue with the Qrack integration comes up, though, I'll be ready to help.
+@twobombs I have never seen this issue before. Could you try to isolate this issue by going to the folder tests/auto/cqc and typing sh testAll.sh. If you still get the same error could you share the current config files in the folder config.
+@LeonWubben Do you have any idea why this could happen? Yeah, it might be an idea to remove the Log backend. What do you think?
+@WrathfulSpatula Thanks for your response and your offer to help with Qrack issues.
+Thank you ppl. for taking the time to look at this 👍
+Okay, tested this twice on the AMD rig.
+( the AMD rig because the Kalindi/Pitcairn cores both support fp64 as advised by @WrathfulSpatula )
+Saw this :
+
+Also; the coredump does not appear on the AMD setup as it does on the Intel Cherrytrail machine with Intel compute.
+However: the EPR test hangs on the make verify.
+
+Ports are opened:
+
+The config ( not touched by me; created by make )
+config.tar.gz
+It seems the OpenCL stack influences the ( make verify ) tests. For the sake of simplicity I'll stay away from fp32 only hardware at this time until the happy trail is there and one can diversify to other OCL devices.
+@twobombs To be sure, are you building ProjectQ --with-qracksimulator, as a global setup option, from the vm6502q fork? Usually, I get Qrack's OpenCL "banner" with the device list, when I run anything based on ProjectQ or SimulaQron, with Qrack in the build. I don't see it anywhere in your outputs.
+@WrathfulSpatula nope, haven't done that. Could you point me to documentation and/or sourcecode on how/what/where to do that so I can implement this ? tnx :)
+@twobombs This is the fork, and I've updated the README with instructions for building with Qrack. (We have a pull request open on the master project.)
+https://github.com/vm6502q/ProjectQ
+But, it looks like Qrack isn't directly involved in your issue, because I don't think you were building with Qrack, when you ran into this.
+For sanity purposes I've forked the vanilla simulaqron docker files ( https://github.com/twobombs/SimulaQron ) put it in the auto build environment of ye ole Dockerhub. https://hub.docker.com/r/twobombs/simulaqron
+When deployed in default configuration that environment also hangs at make verify, yet at an earlier phase ( the cqc tests )
+
+Running the cqc script manually does work though.
+
+So, I don't know if the vanilla version of make verify is actually sane.
+The environments I've tested are Docker 18.06 and 18.09 on Ubuntu 18.04
+I'm going to ignore the results of make verify, continue the work on building the container image with the Qrack CL interface with SimulaQron. Will also look at executing separate tests@buildtime, a working make verify at this point is a nice to have though :)
+Thanks for the pointers, all.
+@twobombs I just want to point out that I've recently made some major changes which are currently in Develop and in the pull request #150 which will probably make the make verify and in particular make tests more robust since all tests are now unittests and there are no shell scripts anymore. I still need to update the docs before I merge but feel free to look at the code already now if it works better for you.
+Check out the CHANGELOG.md to see an overview of the changes.
+@twobombs Can this issue be closed?
+@AckslD yeah, the whole install and make verify  checks changed anyways.

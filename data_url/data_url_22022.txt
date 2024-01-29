@@ -1,0 +1,140 @@
+I've paused to myself about how this Sayma subsystem is setup. @gkasprow please correct me if any of this is wrong.
+There is a single outward-facing Ethernet interface on Sayma_AMC.
+Broadcom BCM5396 is Gigabit Ethernet Switch on NAT MCH
+MAX24287 is Ethernet interface chip on Sayma
+LPC1776FET180 is MMC uP on Sayma
+Role of MAX23287 in Sayma:
+Interfaces between outward-facing 1000BaseX and inward-facing MII or RGMII.
+for 1000BaseX: RDP, RDN, TDP, TDN are connected to AMC Port0.
+inward-facing interface can be exposed to either MMC (LPC1776 ARM uP) or the FPGA (Ultrascale).
+A digital mux (SN74CB3Q32245ZKE) selects which of the two chips is connected to the MAX24287 under the control of trace SEL_RGMII driven by the MMC.
+The FPGA uses a parallel RGMII-1000 type interface.
+There was discussion of white wire modifications in a Sinara Issue. sinara-hw/sinara#327
+@gkasprow Please edit your previous response to add additional line breaks between quote carrots '<'.
+a card edge adapter from WUT that provides power and RJ45 breakout
+it provides SATA connector
+OK. The MAX24287 1000BaseX serial interface is connected to both AMC Port0 and SATA connector J10. But 1000BaseX and SATA are not easy to use; most Ethernet hubs are 1000BaseT with RJ45 plug. So to test Ethernet on bench top a different adapter is needed.
+Exactly. By default the PHY is routed to the FPGA
+When you say "by default" do you mean a combination of a) defined by components on PCB and b) defined by MMC after it's booted. Do you have a list of power-on steps taken by the MMC and what the state of various lines is? Or is there an annotated source file that I should read?
+@gkasprow some Q&A that might help with trouble M-Labs is having.
+Toggling MAX24287 from MMC to FPGA is pretty complicated as it involves resetting the chip. Table 6.1 of the datasheet describes the value of the 15 configuration pins. These pins have different roles after the reset phase is finished, so many are driven by multiple sources.
+From the SPD annotation on sheet 6 of the Sayma_AMC layout it looks like you're configuring MMC for 100 Mbps. LPC1787 data sheet says that there's an integrated MAC so using MII DCE mode. Did I get that right?
+Is FPGA acting as MAC or PHY? This dictates how GP02 should be pulled upon reset.
+I see some odd looking things comparing Table 6.1 and sheet 6 of the Sayma_AMC layout for the MAX24287. Here's a comparison for the two modes. Odd things are noted.
+select MII for use with MMC
+select RGMII for use with FPGA
+@sbourdeauducq What do you mean by "RGMII Ethernet + MiSoC core does not work on Sayma"? What have you tried?
+Guys, I will work on it very soon, hopefully tomorrow.
+No packet can be transmitted or received. When the PHY is clocked, and my cable is not broken (the SATA hack is very fragile), then autonegociation succeeds.
+@gkasprow Any findings? Now that the clocking and DACs are mostly working, Ethernet seems to be the major blocker to get RF output using ARTIQ.
+@sbourdeauducq Today I built setup to test Ethernet and there is partial success - it does not work at all. I'm quite happy with it because in this case I can find and solve the problem.
+Moreover, I used same board that was used to test Ethernet. So it seems something changed since that time and probably the same issue emerged on other boards.
+@gkasprow Glad there's now something tangible that looks wrong on your side too. Progress comes in many colors. :)
+Debugging this is top priority. The Sayma hardware and lots of M-Labs gate ware is ready to test. Getting Ethernet up and running is the bottleneck to forward progress right now.
+I think I know where the problem is. I implemented simple condition in MMC firmware that resets the PHY chip after FPGA gets configured and DONE goes low.
+But in fact the PHY is hold in reset state when DONE is LOW, which is wrong.
+Corrected piece of code is here
+Here is the binary file:
+lpc1776_ethernet_I2C.zip
+I will test it on Monday.
+Why do I still get autonegotiation to work, then? Is that PHY chip still doing autonegotiation while in reset?
+In my media converter it shows LINK state when I plug SFP, even with AMC power supply off.
+Is there any form of autonegotiation in 1Gbit Ethernet over SFP? There is only link state when valid symbols are decoded.
+The reset line also disables the PHY clock generator so its impossible to have any activity. The PHY also needs Tx clock from the FPGA to send something, that's why I release the reset after the FPGA gets configured.
+In my media converter it shows LINK state when I plug SFP
+Yes, that was a problem with one of my media converters too. Some of those just use (and require) the EEPROM and/or the LOS signal, which was one of the problems with the cable you gave me, since you had removed its chips entirely. Some other media converters show the status of the autonegotiation instead.
+https://ssl.serverraum.org/lists-archive/artiq/2017-November/001165.html
+Is there any form of autonegotiation in 1Gbit Ethernet over SFP?
+Yes, see section 36.2.5.2.7 "Auto-negotiation process" of IEEE 802.3-2008. The autonegotiation is optional and can be disabled with a switch on some media converters.
+There is only link state when valid symbols are decoded.
+No, there is more (optionally).
+The reset line also disables the PHY clock generator so its impossible to have any activity.
+In this case this is not the problem on my boards, since another of my media converters is sensitive to whether the SATA side of the cable is plugged or not.
+@sbourdeauducq I don't have access to AMC board right now, I simply found this issue looking at the code. University is closed right now.  I will test it on Monday. Is the MII LED on?
+What is the MII LED?
+It is a LED on the front panel which is connected to the CPU
+Its original role was to signal who is talking to the PHY chip, at the moment it shows if PHY is in reset state or not. So when the led is lit, the PHY opearates normally.
+@gkasprow Have you been able to get RGMII Ethernet to work again with your demonstration code?
+If so, can you share a minimal Vivado project?
+I just noticed that I was wrong, DONE pin when high indicates correct FPGA configuration. So the MMC code you have is correct.
+So far no success. I tested 3-pin mode and 15-pin configuration mode. I observe PHY transferring data and Rx data on PHY pin. But there is no activity on DV line at all.
+I will access MDIO registers to see what's really going on.
+@sbourdeauducq @jbqubit I found!
+The PHY works in  SGMII mode instead of 1000BASE-X
+My media converter that I used before works in both modes and it detects it automatically.
+Now I use media converter that works only in 1000BASE-X mode.
+Funny thing, I wrote little piece of code that dumps PHY registers
+Register, ADDR, DATA
+BMCR 0 0x1000
+BMSR 1 0x7969
+ID1 2 0x0
+ID2 3 0x0
+AN_ADV 4 0x20
+AN_RX 5 0x41a0
+AN_EXP 6 0x2
+EXT_STAT 15 0x8000
+And the value 0x20 in the AN_EXP register means that we operate in 1000base-X mode! So the PHY setting is OK
+
+So it seems my media converter is simply broken.
+With another media converter I get reasonable data on Rx lines and observe them with chipscope
+There could be yet another issue which is dependent on particular chip. The datasheet says:
+
+I will add it to the MMC and see what happens.
+We have revision B of the chip
+Link up - no Ethernet, link down - Ethernet works
+@gkasprow That's no longer true. One sfp converter doesn't work. I swapped it and in all cases I get transmission. (but still sometimes
+I don't get link up led with direct SFP connection on Kasli (not with SFP-ethernet converter).
+It seems it defaults with SGMII interface...
+OK, I discovered that PHY on the board that works with Kasli is not configured by MMC but only by pin straps. Another one that shows link up but no traffic is configured by MMC. The PHY gets configured from time to time once per a few power cycles so it looks like floating pinstrap that is normally conntected to the FPGA.
+@sbourdeauducq thanks for yak shaving tools, they are really helpful here.
+I made Kasli transmitter and Sayma sniffer to test transmission in other direction.
+It doesn't work only in one case: kasli -> sfp -> sfp-sata -> sata -> sayma. If there is any media converter in this chain transmission works.
+@gkasprow It's the board on which phy is programmed.
+ed: PAUSE is off.
+So we have quite intriguing situation.
+The PHY that is not initialized using MMC and by pinstraps only sends packets correctly without the media converters.
+And the PHY that is correctly initialized sends the packets with media converters only.
+At least we see where we can dig later on :)
+Ok, this is getting ridiculous. I need a table to keep track of working configurations. These are Kasli -Sayma connections.
+Sayma with not init. phy - with heatsink
+Sayma with init. phy - without heatsink
+PAUSE off:
+Have you tried Sayma_AMC -> SATA -> SATA-SFP -> SFP ------> switch? If this works what are the components so I can reproduce?
+@jbqubit It seems now we only have communication in one direction, we didn't try to plug it into switch.
+lack of PHY configuration means that the Rx clock is generated and two clock sources are fighting.
+That's why without init you won't be able to get the Rx working.
+funny thing is that the only registers the MMC modifies are:
+which disables the Rx clock and fixes silicon issue described in the datasheet
+There is no other way of setting this register
+
+Maybe there is some issue with this CDR power up?
+The datasheet says
+
+What we discovered  with @marmeladapk today:
+@gkasprow How did you get on with this? Any progress?
+I prepared simple design that simply forwards RGMII data to the IO header. It is really strange why I see really nice RGMII signals on FPGA vias but the Microscope tool does not detect any traffic.
+I will test it tomorrow. I can spend only 3 days per week in a lab so it take some time to test all ideas.
+Today I connected logic analyzer to the DIO header where RGMII Rx port was forwarded.
+And We get nice RGMII packets.
+But we don't see them using Microscope...
+
+@sbourdeauducq any idea why microscope don't see any packets?
+funny thing, with RGMII pins forwarded to DIO, the Microscope sees some packets...
+What is the code you are using for Microscope?
+How are you forwarding the pins to DIO? It's a bit tricky since those are DDR signals. Can you connect a pin to both the IDDR input and combinatorially to the fabric with Ultrascale?
+If the behavior changes when you are forwarding the pins to DIO and you are sure you did not make other changes to the code, this looks like another Ultrascale/Vivado bug. Considering the design of the new Ultrascale I/O cell, that would not be very surprising.
+no, U cannot connect it directly, At the moment the Microscope samples only rising edge data.
+With IODDR primitive you don't have access to IO pin anymore.
+This is the observation we did:
+RGMII Rx -> GMII converter -> Microscope works on one Sayma board, don't work on second one
+RGMII_Rx -> Microscope and -> DIO, works on second one
+We are investigating it right now with @marmeladapk
+@marmeladapk added RGMII converter and it works 😀
+@sbourdeauducq I think it was my fault - I wrote (or more like copy-pasted) it second time and it works. Code looks like it was duct-taped together.
+Here is short instruction how to modify the TRST connection.
+
+And the photo
+
+Isn't it simpler to remove the capacitor, put it somewhere else, and solder on its pads?
+Is this a decoupling capacitor? Does the board work without it?
+According to Greg, ARTIQ Ethernet is also working on the WUT board.

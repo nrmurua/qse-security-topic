@@ -1,0 +1,46 @@
+On Windows 7, using ARTIQ version 3.6, trying to set a dds frequency using:
+Fails with the following error:
+root:Terminating with exception (IndexError: index 72 out of bounds 0:6)
+Core Device Traceback (most recent call last):
+File "C:\users\pdk1\work\artiq\repository\experiments\testing/test_dds.py", line 15, in artiq_worker_C:\users\pdk1\work\artiq\repository\experiments\testing\test_dds.TestDDS.run(..., ...)
+(RA=+0xe90)
+self.dds0.set(1*MHz)
+File "\coredevice/dds.py", line 249, in ... artiq.coredevice.dds.DDSChannel.set<artiq.coredevice.dds.DDSChannelAD9914>(...)
+(inlined)
+self.set_mu(self.core_dds.frequency_to_ftw(frequency),
+File "\coredevice/dds.py", line 243, in ... artiq.coredevice.dds.DDSChannel.set_mu<artiq.coredevice.dds.DDSChannelAD9914>(...)
+(inlined)
+self.core_dds.set(self.bus_channel, self.channel, frequency, phase, phase_mode, amplitude)
+File "\coredevice/dds.py", line 124, in ... artiq.coredevice.dds.DDSGroup.set<artiq.coredevice.dds.DDSGroupAD9914>(...)
+(inlined)
+self.program(ref_time,
+File "\coredevice/dds.py", line 365, in ... artiq.coredevice.dds.DDSGroupAD9914.program<artiq.coredevice.dds.DDSGroupAD9914>(...)
+(inlined)
+pow += self.continuous_phase_comp[phase_comp_index]
+File "\coredevice\dds.py", line 365, column 46, in ... artiq.coredevice.dds.DDSGroupAD9914.program<artiq.coredevice.dds.DDSGroupAD9914>(...)
+pow += self.continuous_phase_comp[phase_comp_index]
+^
+IndexError(0): index 72 out of bounds 0:6
+Traceback (most recent call last):
+File "C:\Users\pdk1\AppData\Local\Continuum\anaconda3\envs\artiq-3.6\lib\site-packages\artiq\master\worker_impl.py", line 273, in main
+exp_inst.run()
+File "C:\Users\pdk1\AppData\Local\Continuum\anaconda3\envs\artiq-3.6\lib\site-packages\artiq\language\core.py", line 53, in run_on_core
+return getattr(self, arg).run(run_on_core, ((self,) + k_args), k_kwargs)
+File "C:\Users\pdk1\AppData\Local\Continuum\anaconda3\envs\artiq-3.6\lib\site-packages\artiq\coredevice\core.py", line 133, in run
+self.comm.serve(embedding_map, symbolizer, demangler)
+File "C:\Users\pdk1\AppData\Local\Continuum\anaconda3\envs\artiq-3.6\lib\site-packages\artiq\coredevice\comm_kernel.py", line 603, in serve
+self._serve_exception(embedding_map, symbolizer, demangler)
+File "C:\Users\pdk1\AppData\Local\Continuum\anaconda3\envs\artiq-3.6\lib\site-packages\artiq\coredevice\comm_kernel.py", line 595, in _serve_exception
+raise python_exn
+IndexError: index 72 out of bounds 0:6
+Parameters in your device_db incorrectly set?
+The core_dds::dds_channel_count argument was set to 3 in device_db (copy/pasted from the examples).  I've increased it to 12, since we are using 12 dds cards but it still throws an IndexError.  Is there documentation available for the new DDSGroupAD9914 class that gives a description of it's arguments such as first_dds_bus_channel?
+c.f. #823
+ok to close?
+@philipkent so what's the meaning for core_dds::dds_channel_count  and first_dds_bus_channel ? Since I've got the same error, could I ask how did you solve your problem?
+@KaifengC I thought you were using ARTIQ 4? it doesn't have this parameter anymore.
+No, In fact we have a system running aritq 3.6 these days. It worked after I changed the dds_channel_count. But I'm still curious about the meaning of these two parameters.
+BTW, I also see a dds_bus_count and don't know what did this mean?
+It's for systems that have a lot of DDS channels, and are using more than one bus for the AD9914s.
+@KaifengC I am not 100% sure on the meaning of each argument, but looking at artiq/coredevice/dds.py it looks like setting a dds is ultimately performed by the core_dds device's program method (line 351).  There is an array named self.continuous_phase_comp in that method that needs to be accessed by a relative bus index instead of it's absolute channel number.
+So I think first_dds_bus_channel is the absolute channel number of the first dds bus, bus_channel is the  absolute bus channel number used by the dds card, dds_channel_count is the number of dds channels per bus, and channel is the relative channel number on any given bus with numbers starting at zero.  That seems to imply that dds bus channels must be sequential as well.

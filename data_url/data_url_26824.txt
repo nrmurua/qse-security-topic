@@ -1,0 +1,41 @@
+When I build the toolchain from scratch and select OpenMPI:
+and build the current dev version of CP2K, I get a number of tests that fail:
+Most of these are timed out (presumably in communication), but there is a couple of segfaults, too.
+There is no issue with the default MPICH. I tested it on two different machines (Intel CPU, Ubuntu 18.04.2 and RYZEN CPU, Debian 9) and got the same results. I intentionally do the whole toolchain from scratch to remove the possibility of problems with independently installed software.
+The stack traces from the segfaulted vibrational analysis look similar. Here is one:
+We have seen this problem in DBCSR with OpenMPI (see cp2k/dbcsr#141)
+The problem seems something broken in the creation of the cartesian subcommunicator (MOD_mp_cart_sub in the above stacktrace).
+We think this is a bug in OpenMPI. The problem is that it is hard to debug, sometimes it is not reproducible...
+For the record, the problem doesn't appear with OpenMPI 3.0.2.
+Is it possible for you to test OpenMPI 4?
+Thank you, I did not notice that issue. As far as I can tell, the list of failed tests above is reproducible. It is the same on the two machines and when I cherry pick one of the segfaulting tests and run it by hand, it always fails.
+I also asked a colleague to check and so far he seems to be getting the same failed tests.
+Should the toolchain perhaps stick to OpenMPI 3.0.2, then?
+I will try with OpenMPI 4.0.1 and let you know.
+Great, thanks!
+Two points to clarify:
+a) When I say that 3.0.2 works, I meant for DBCSR. Don't know if it is the case for CP2K
+b) "reproducibility" was not the right term. What I meant that it is not easy to make a small reproducer of the error, it seems that it is something that gets dirty inside OpenMPI after some calls to mp_cart_sub
+I tried to naively bump up the version (and checksum) of OpenMPI in the toolchain to 4.0.1, but get errors related to "symbols removed in MPI 3.0":
+https://gist.github.com/OndrejMarsalek/d0de6bcd67cbbddda9581c3ebb734b29
+Unfortunately, I don't have the capacity to dig deeper into this at the moment.
+Well, I think the problem is that the linked doesn't find
+BI_imvcopy
+No idea why...
+I applied this as a patch to ScaLAPACK and it compiled, together with the rest of the toolchain (well, I skipped PEXSI):
+Reference-ScaLAPACK/scalapack#10
+CP2K compiled too, so I'll see what the tests have to say.
+Everything looks good with OpenMPI 4.0.1, at least on my side:
+Additionally, this provides some clarity and suggests a configuration switch that should make the patch unnecessary: open-mpi/ompi#6114 (comment)
+Should the toolchain perhaps switch to OpenMPI 4.x with --enable-mpi1-compatibility?
+That's really good news! Thanks for the test.
+Concerning your request with OpenMPI 4.0.1, I leave to @dev-zero and @oschuett to decide on that...
+Just to confirm - the toolchain builds fine with OpenMPI 4.0.1 configured with --enable-mpi1-compatibility and no patch applied to ScaLAPACK.
+I see no reason for holding back. Unfortunately, we are currently not testing the toolchain with openmpi.
+I would favor the patch for ScaLAPACK and no MPI-1 compat, especially since the ScaLAPACK project already accepted the patch.
+I agree in principle, but ScaLAPACK has not had a release in a while and it is not clear if/when there will be another one. Do you just want to get a fixed revision from Github? Will this be a bigger complication for users who use separate libraries, not from the toolchain, compared to adding a configuration switch to OpenMPI?
+Would it be worth it to add a CI test that uses OpenMPI and can be triggered, at least?
+Ok, I now have an OpenMPI psmp test ready. With version 3.1.3 I also see those timeouts. With version 4.0.1 all tests pass. How should we proceed? Should I just merge my #448 and we close #445? Or should I remove the upgrade to version 4.0.1 from my PR and we merge them separately?
+I think you can merge #445 first (because it makes sense on its own) and then #448 to add CI for OpenMPI, but I am fine with whichever order of operations you think is best.
+Ok, both PRs are merged. I kicked off a dashboard run in between for documentation purposes.
+Looks good, thank you.

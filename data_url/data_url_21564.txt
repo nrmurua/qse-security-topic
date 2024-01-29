@@ -1,0 +1,32 @@
+Inside a with parallel block, the order of access to Sampler and Zotino seems to unexpectedly matter with nist3 hardware.
+Save and submit with artiq_run.
+run = run_ok and run = run_fail should have identical behavior. The only difference is the order of the self.sampler0.sample_mu() and self.zotino0.write_dac_mu() calls inside a with parallel block where the order of the statements should be irrelevant.
+run = run_fail gives an RTIOUnderflow, while run = run_ok does not:
+I am not one of the main developers of ARTIQ, but I think I can explain it.
+The short answer is: the sample_mu() function reads values back, and therefore leaves no slack.
+Now let's look a bit deeper into the decomposition of the parallel statement.
+Function run_fail() is you failing function. If we unroll that parallel statement, then the machine will execute something like run_fail_unrolled() (the CPU is still sequential). Now due to the order and with the knowledge that sample_mu() leaves no slack, it is clear that the operation on the zotino will cause an underflow.
+If you now switch the order of the two function calls, like you do in run_ok(), then the operation on the zotino will be called first. This function does leave slack for the sample_mu() function to work correctly.
+Hope this helps!
+@lriesebos thanks, that's correct.
+Thank you for the explanation, that makes sense. I would argue that it is still a bug, semantically[1], but the explanation makes it clear that WONTFIX is a reasonable answer since it would take a much smarter compiler to do anything about it.
+[1]: Because if with parallel means anything semantically (rather than being defined by its current implementation), the order of operations within such a block should be unimportant.
+with parallel has a clearly defined semantic meaning, just not the one you apparently expected.
+Here's a documentation patch which corrects the description of with parallel's semantics, since the current behavior is stated above to be correct, but does not match the documentation: https://gist.github.com/bks-nist/69f379e63e7e058adecaf6a58b31ce92
+If you cut down on the bashing and submit a PR with accurate statements, we'd be happy to discuss and update the docs.
+@bks-nist Let's take a step back here for a minute.
+Firstly, it's not helpful to jump to labelling things as bugs because they don't meet your expectations. Secondly -- while I think that everyone agrees that there are subtleties around the with parallel language feature which trip newcomers up regularly and should be documented better -- I don't think that the PR you filed does much to improve on the situation. If we strip out the things like "illusion" which are pretty unhelpful, much of what remains (e.g. how sequence errors behave) is not specific to parallel blocks, but rather just how ARTIQ works.
+AFAICT the broader issue here is that the real-time guarantee provided by ARTIQ is a bit subtle and takes a while to get one's head around. Maybe more worked examples in the docs would help here.
+IMO the real point here is that
+compiles down to something like
+Stating that explicitly would probably do more than anything to clear this up.
+The issues around sequence errors etc are encountered in many contexts and not part of the parallel design
+The fact that the ordering of statements can affect whether or not a program runs without errors is a general feature of ARTIQ that's a common gotcha again not related to parallel blocks. The real-time guarantee ARTIQ is that everything will be deterministic or that there will be an error. So, for example, the function foo may work really reliably when run in isolation, but if bar is run before it then it may deterministically fail for a number of reasons (e.g. sequence errors since the previous function filled up all FIFOS). This kind of behaviour is pretty fundamental to the approach taken by ARTIQ. See e.g. delta-flow for a sketch of a different way of doing things.
+The should I file a bug against Sampler that it doesn't have an asynchronous fetch function
+Finally from me on this: I don't understand the question here. What would an asynchronous fetch function be? How would that work? Is this really a Samper feature request (it's definitely more a feature request than a "bug"), or a feature request for an invasive change to the RTIO interface.
+The should I file a bug against Sampler that it doesn't have an asynchronous fetch function
+Or, maybe what you're after here essentially boils down to adding extra API to Sampler to have separate convert and read functions? i.e. splitting acquire into two pieces? If that's what you're after you can certainly do it (i.e update the DAC and pulse CNV simultaneously and then read the sample from the RTIO FIFO later on)...
+
+I agree that Sampler would be a feature request, and possibly a rather invasive one. I apologize for calling that a bug; I used "bug" instead of the more generic "issue" (using GitHub's terminology) that I meant. One possible high-level implementation would be to asynchronously capture the SPI read into a large shift register (with RTIO events for the SPI clock cycles, but those are output events and can be scheduled in parallel with other things), then have a separate call which is only the (blocking) RTIO read of that shift register. That would allow (e.g.) SPI reads from multiple Sampler cards to execute in parallel rather than be fully serialized as they are now.
+hmm...that sounds not a million miles away from my previous post, but I'm still not fully sure I understand what you're after. e.g. how many events you want to capture, can you do this within the current framework of the RTIO input FIFOs, etc.
+I feel like there is maybe a bit of a misunderstanding here about how some of the basic ARTIQ RTIO infrastructure works (microprocessor writing to FIFOS, etc). Much as we all like to moan about ARTIQ documentation (and there is plenty of room for improvement) it's actually about the best documented open source project I've ever seen. There is quite a bit of discussion about how this all works and it might be worth a refresher on that.

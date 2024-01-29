@@ -1,0 +1,23 @@
+Works just fine except that Kasli resets the connection after 1-30 seconds.
+Might be a keepalive being lost.
+kasli-reset.dump.zip
+Making port8 always tagged (vlan1 and vlan4) and having the linux machine use two child vlan interfaces (eth0.1 and eth0.4) stabilizes it.
+Current ARTIQ as of now.
+Could be related to smoltcp-rs/smoltcp#253 (comment).
+@whitequark Still happening with current master.
+Capture file:
+artiq1125.zip
+Easily reproduced with a low-quality WiFi connection (e.g. create some Bluetooth interference). Is it simply overly aggressive keepalive settings, or is there some other bug?
+It's a bit hard to say from the capture. Can you acquire a core device log? It should clearly state why the connection was reset, at least.
+Aside: I wonder if it would make sense to broadcast core device logs via UDP so they are associated with captures. This would make tracking down TCP issues much easier.
+Dumps showing the problem with port mirroring on a switch as per @whitequark's request:
+netdrop.zip
+The connection is via Wifi through an OpenWrt router, which is then connected to a Kasli through a switch, and another port on that switch is used for monitoring the Kasli port.
+Interestingly, I couldn't reproduce the problem when sending a lot of traffic to/from the device (but there are a lot of dup ACKs in the dumps).
+@sbourdeauducq That is very clearly the combination of extremely aggressive timeout plus packet loss. The current settings mean that, when the link is idle, losing just one keepalive packet causes connection drop. And, of course, on WiFi packet loss is not determined solely by congestion, but there is also a stochastic component in it. (This is well known to cause issues with TCP congestion control algorithms.) As you can see from the trace_host2dev.pcap, for some reason host→dev packets get lost fairly often (but not dev→host).
+The solution is to either raise the timeouts or to send more keepalive packets. Also, you really shouldn't use a timeout that is a multiple of the keepalive interval.
+I couldn't reproduce the problem when sending a lot of traffic to/from the device
+Because each sent packet resets the keepalive timer.
+(but there are a lot of dup ACKs in the dumps).
+Those look useless but benign. A log at TRACE verbosity would explain why they are being sent.
+@whitequark thanks

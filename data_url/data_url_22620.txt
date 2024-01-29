@@ -1,0 +1,33 @@
+This should be valid code for the compiler:
+Instead it results in a type unification error.
+Well, there's not really any reasonable way to support this, so a workaround will be needed.
+To elaborate, the best solution I can envision right now is something along the lines of...
+If the compiler can itself insert dynamic automatically on all RPCs, LGTM.
+No, it cannot, which is the exact issue here.
+Specifically, the problem is that the compiler does not allow automatic coercion during argument passing. If it did, it would require mandatory annotations on every function and every variable, because then it would be impossible to infer the type of variable from its usage or, conversely, the type of formal argument from the passed formal arguments.
+Since automatic coercion is not supported, the only option I see is manual coercion.
+Can't you detect RPCs early, mark them as such and disable some of the type system for them?
+Unfortunately not, because any function can be an RPC, even a deeply nested method, and unification-based inference is not directional: we may well infer the types of arguments before the type of callee, or vice versa.
+There is a further problem; let's say I hypothetically add a Dynamic type for these. This type would behave just like any other during unification, which means it would propagate out from its usage, i.e. a variable passed to an RPC will gain this Dynamic type. But we cannot represent dynamically typed values at runtime because at runtime, types do not exist--we don't have an RTTI or equivalent facility! So it is not possible to actually have (allocate storage for, etc) a variable with the Dynamic type.
+Ok, I think I know how to solve this. Every time a type is instantiated for an RPC function, every Dynamic in the signature is replaced with a fresh type variable. This way, we will have the following types:
+After that, once the types for a and b are know, this is refined to e.g.:
+The LLVM IR generator only really cares about argument types, and the RPC number itself is encoded in the RPC type, so this should not cause any problems during code generation.
+This sounds cumbersome... Here's my understanding of the intended set of
+types supported by set_dataset().
+On Tue, Nov 24, 2015 at 1:44 AM, whitequark notifications@github.com
+wrote:
+Ok, I think I know how to solve this. Every time a type is instantiated
+for an RPC function, every Dynamic in the signature is replaced with a
+fresh type variable. This way, we will have the following types:
+self.set_dataset("a", a:'a)self.set_dataset("b", b:'b)
+After that, once the types for a and b are know, this is refined to e.g.:
+self.set_dataset("a", a:str)self.set_dataset("b", b:int(width=32))
+The LLVM IR generator only really cares about argument types, and the RPC
+number itself is encoded in the RPC type, so this should not cause any
+problems during code generation.
+—
+Reply to this email directly or view it on GitHub
+#180 (comment).
+@jboulder the precise set of types doesn't matter as long as it is larger than one.
+Alternatively, couldn't you do this varargs-style?
+@jordens That's more complex than implementing polymorphism for methods.

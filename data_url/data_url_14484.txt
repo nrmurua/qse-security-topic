@@ -1,0 +1,15 @@
+When I transpile this circuit with optimization level 2, it strangely fails if the register is larger than 10 bits, but with 10 or less bits it works as expected.
+Run this script:
+Output:
+Then transpile it (with OPTIMIZATION LEVEL 2):
+Output
+To rule out possible problems with the configuration of Numpy, I tried to run the same script in a brand new Colab environment with the same Qiskit version and it still fails with the same error.
+The transpilation should terminate without errors, similarly to what happens when using 10 or less bits.
+Thanks to the stacktrace and the interactive debugger, the bug happens in the CommutationAnalysis(AnalysisPass).
+In particular you should step in the _commute function below, when the two arguments are:
+In particular, to reach the problematic point in code, you should step in the _commute function below, when the two arguments are:
+Then the problem should be in quantum_info/operators/operator.py in _einsum_matmul as suggested by the last part of the stack trace.
+It seems very strange, I would be very interested in getting others' opinions about this...
+This can only happen while you don't have a coupling map set, either directly or by setting a backend argument.  This is because if a coupling map is set, we decompose large operators down to at most 2-qubit operators before trying anything else.  The immediate workaround is just to set a backend, then this will work.
+It happens because we use Numpy's einsum to do generalised matrix-matrix multiplication on higher-order tensors during the commutation analysis pass, and it shakes out that once your operators have 11 qubits in them, we would use 33 indices to represent the tensor-reduction summation we want.  Numpy has an upper limit on the number of indices it can use in an array (or any description of an array iterator), which is numpy.MAXDIM and is 32 in my installation (and presumably yours).
+This would mean that this pass will always fail for commutation analysis of two 11+ qubit operators.  We could possibly handle that by just assuming that if two operators are that large and have overlapping qubit inputs, then they don't commute - the cost of the matrix multiplication is so high it hardly matters anyway, and 11+ qubit operators are very rare.  In this particular case, where there's one very large operator and one very small one, there's possibly a little trick we could play in CommutationAnalysis to ensure that the larger operator gets passed in the correct slot to trigger a smaller einsum - it's quite possible the pass is currently using Operator.compose the wrong way round for that.  But in this particular implementation of commutation analysis, the best solution is probably just to give up and say "they probably don't commute" if the operators are too large.

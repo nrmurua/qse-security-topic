@@ -1,0 +1,55 @@
+Traceback (most recent call last):
+File "SBQRL/models/QNN.py", line 164, in forward
+quantum_output = self.qpreds_batch(inputs, params) # only return single value
+File "~/lib/python3.6/site-packages/tensorcircuit/interfaces.py", line 128, in forward
+x = general_args_to_numpy(x)
+File "conda/envs/my_torch/lib/python3.6/site-packages/tensorcircuit/interfaces.py", line 32, in general_args_to_numpy
+res.append(tensor_to_numpy(i))
+File "/envs/QM_torch/lib/python3.6/site-packages/tensorcircuit/interfaces.py", line 20, in tensor_to_numpy
+return t.numpy()
+TypeError: can't convert cuda:0 device type tensor to numpy. Use Tensor.cpu() to copy the tensor to host memory first.
+srun: error: compute-0-2: task 0: Exited with exit code 1
+It seems that the hybrid model cannot well be executed in CUDA device. In interface file, t.numpy() is not consistent with t.cpu().numpy().
+=============
+pytorch version: 1.10 and cuda 11.3
+The same code runs normally in cpu device.
+aha, I am not that familiar with pytorch, but the "return numpy array" method of pytorch seems to me so limited and not automatic, tensor requires grad, tensor with complex value, tensor on gpu all cannot directly return numpy array and need different pipelines  :(
+Anyhow, I'll fix this soon, should be a line add here: https://github.com/tencent-quantum-lab/tensorcircuit/blob/master/tensorcircuit/backends/pytorch_backend.py#L285
+basically the same place you met the last bug ~
+If in tensorflow keras model with QuantumLayer warpper, the problem may not occur since tensorflow pipline does not need to process the data type transformation in different device and mode. Is my guess correct?
+If in tensorflow keras model with QuantumLayer warpper, the problem may not occur since tensorflow pipline does not need to process the data type transformation in different device and mode. Is my guess correct?
+It is ok to use torch layer with torch interface, (tf for quantum + torch for neural, on both CPU and GPU), just after I fix this numpy conversion bug.
+If you use tensorflow for the whole pipeline without torch interface, it should works fine now on both CPU and GPU
+Thanks, I get it. Please let me know when the bug is fixed. Thanks.
+Thanks, I get it. Please let me know when the bug is fixed. Thanks.
+Very quick fix, I have pushed it right now :) You can try whether the new github version support hybrid torch pipeline on gpu
+ModuleNotFoundError: No module named 'tensorcircuit.interfaces.tensorflow'
+When installing, the error occurs.
+ModuleNotFoundError: No module named 'tensorcircuit.interfaces.tensorflow'
+When installing, the error occurs.
+Very sorry, new commit fix this. I by accident add some lines for development
+It has the same error. I think the problem locates at the below function:
+def tensor_to_numpy(t: Tensor) -> Array:
+return which_backend(t).numpy(t).
+I see that you add the code a = a.cpu() but it seems that the program was terminated before it got there.
+Note that I use a tensorflow backend and torch warpper in my code.
+By the same error , you mean the same exception as the main post?
+this one?
+File "/envs/QM_torch/lib/python3.6/site-packages/tensorcircuit/interfaces.py", line 20, in tensor_to_numpy
+return t.numpy()
+TypeError: can't convert cuda:0 device type tensor to numpy. Use Tensor.cpu() to copy the tensor to host memory first.
+srun: error: compute-0-2: task 0: Exited with exit code 1
+The logic is that
+firstly the code finds which backend(t), and then convert it into numpy. My input is torch tensor and whch_bankend(t) should convert it into tf tensor and then convert it into numpy. The reason of the error may be that torch tensor cannot be successfully converted into a tf tensor. Subsequentially, direct use numpy() function has the error of GPU device without using .cpu().
+It seems that you understand I use the numpy function in pytorch backend. Actually, I do not use any function in pytorch bankend you provide.
+When I run my code, I find that using tensorflow backend, the inputs in quantum circuit function e.g.
+def my_circuit(inputs, params):
+pass
+Although using torch warpper, the inputs is a tf tensor and any pytorch operator cannot be used for inputs tensor. But in hybird model, the inputs in forward() function is a pytorch tensor. Therefore, here needs a conversion.
+The pipeline is like we have to transform torch tensor to tf in the interface, where we go with two-steps, first we transform torch tensor to numpy array where torch backend numpy method is implicitly called, and the second step is transform numpy array to tensorflow tensor
+And if you prefer, you can send me an email (see my email on GitHub profile) with your wechat id, we can communicate better via wechat
+Alright, I get it. I misunderstood the steps. But the same error still exits.
+And if you prefer, you can send me an email (see my email on GitHub profile) with your wechat id, we can communicate better via wechat
+Your email cannot be identified in my computer. Please seed me your ID via tailong.shaw@gmail.com. Thanks.
+Based on private communication, the problem now is tensor on two devices problem in pytorch. where I guess the output tf tensor after transmation may locate at cpus, to be checked and solved
+Have implemented in v0.2.2. Two approaches (via dlpack, via numpy but watch on tensor devices) on tensor transformation are implemented. The former one has less overhead but requires higher version of these ML libs. See example: https://github.com/tencent-quantum-lab/tensorcircuit/blob/master/examples/hybrid_gpu_pipeline.py

@@ -1,0 +1,31 @@
+If you use measure_all rather than measure the count values returned by get_counts have
+extra data in the key values. This seems to be directly related to measure_all inserting a
+barrier before the measurement, as this is the only difference in the resulting circuits.  See section on reproducing the bug for the exact behavior
+The following code will reproduce the problem
+When run on ibmq_almaden it generates the following output
+As can be seen from the counts object in the result, the values returned from the backend are correct, but the keys in the dictionary returned by get_counts have an extra set of 00s in them. That spurious field is as long as the number of qubits in the circuit (e.g. if we do the same thing with 3 qubits we would see 000 included at the end of each key).
+measure_all or any measure with a barrier in front should return counts correctly.
+This is because measure_all/measure_active add a new creg to the circuit, so the returned results are over 4 cbits instead of the expected 2. This is documented in the docstrings, but even still may be unexpected behavior.
+What would the expected behavior be here? If no creg is present? If a creg exists? But its size is larger/smaller than num_qubits/num_active_qubits?
+ping @sportwagon
+I observed similar behavior in a 2 qreg, 2 creg circuit using the circuit below:
+Output when run on qasm_simulator:
+If this circuit is declared without a creg and relies on the one in measure_all, it behaves no differently than if it were explicitly measured.
+Both versions' outputs when run on qasm_simulator:
+As stated earlier, the discrepancy is definitely not the result of the barrier but instead the arbitrary addition of two classical registers.
+If a QuantumCircuit is declared with a creg size not equal to num_active_qubits, the behavior of measure_all does not change. It continues to add a creg of the correct size and outputs measurements larger than expected.
+Output on qasm_simulator:
+I think a possible solution is to give measure_all an option to include the extra creg, but exclude it by default if one is already declared in the QuantumCircuit. The elongated binary data may be confusing to beginners, but it may have functionality that we are unaware of here.
+Measure_all adds its own classical register, so you should not define one in QuantumCircuit.
+Am aware, but there ought to be error checking for those who aren't.
+Would this solution be acceptable?
+If same size:
+If smaller size (or maybe just error?):
+If larger size (or maybe just error?):
+Default is new_creg=True to keep current behavior.
+ping @sclang16 @sportwagon ?
+Yes, this looks to be a good solution.
+Changing to feature request and renaming it. Thanks!
+I like the proposed solution by @1ucian0 and I'd be willing to fix this bug if it's possible. Can I get assigned to it?
+Thanks!  I've assigned you (after a false start...).
+Given that the last discussion didn't seem to finish completely, I'd suggest that it might be best just to implement the behaviour of new_creg=False be to work if the number of clbits in the circuit is exactly equal to the number of qubits, and raise CircuitError if not, at least at the beginning.  If others further respond in this issue or your forthcoming PR, you could always add extra functionality. After a very quick read over the discussion, this only seems to make sense to me with new_creg=False if there's an exact match, and maybe if there are more clbits than qubits, but then you could easily argue about which clbits you should use.  Better just to raise an error in those cases, since the original issue was about "why is the number of clbits different after this function"?

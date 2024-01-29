@@ -1,0 +1,61 @@
+gory details: https://irclog.whitequark.org/m-labs/2018-06-28
+Summary:
+So, this is either some obscure HMC7043 issue or some obscure FPGA issue.
+I'm away until Monday. @marmeladapk could you see if you can reproduce this on your board, both with current master and with current master with de7d64d reverted.
+@hartytp I'll try to test this today remotely, but tommorow and next week I won't have external clock reference for RTM.
+Thanks @marmeladapk (although I'm not sure how much you can do on this without an external clock).
+The thing we need to know is whether these phase jumps occur on the HMC7043 outputs, or if there is some issue inside the FPGA. As far as I can tell, it's the latter, but I may be wrong. If you can reproduce this and do some probing, that would be a massive help -- beyond testing this with that commit reverted, there is not so much else I can do on it right now.
+One other comment: it's worth getting an eye scan with 
+replaced with
+and changing the FPGA system frequency to 150MHz.
+That allows us to simplify the example and check there isn't some issue with the RTIO counter.
+Ok, applied patch linked in op against 0483b8d, board produced this beefy (almost 1 MB) log.
+@hartytp Building with de7d64d reverted against 0483b8d. Check here if these are the changes you intended me to make.
+Edit: log
+Ok, applied patch linked in op against 0483b8d, board produced this beefy (almost 1 MB) log.
+Hmm...that looks okay AFAICT. And, you don't get any alignment errors.
+Will have a more detailed look at this all on Monday.
+The results on my board are not deterministic, it just "works most of the time".... maybe run it a few times.
+move the SYSREF by one cycle of the 1.2GHz clock, so 34 delay taps (25ps each tap)
+@hartytp Note that due to the combination of the analog and 1/2 CLKIN digital delay (which is made necessary by the limited range of the analog delay), some "taps" are not 25ps. The average is about 24.5ps per tap.
+The results on my board are not deterministic, it just "works most of the time".... maybe run it a few times.
+Okay, I didn't realise that.
+Do you see any of the bad eye scans that I see? Here "Bad" = hysteresis between the eye scan and the value we measure at the "default phase" after the scan, or slips moving the transition by significantly more than 34 taps.
+@hartytp Note that due to the combination of the analog and 1/2 CLKIN digital delay (which is made necessary by the limited range of the analog delay), some "taps" are not 25ps. The average is about 24.5ps per tap.
+Yes. But should be very close to 34 taps.
+Okay, I didn't realise that. Do you see any of the bad eye scans that I see? Here "Bad" =  hysteresis between the eye scan and the value we measure at the "default  phase" after the scan, or slips moving the transition by significantly  more than 34 taps.
+@sbourdeauducq ping...
+Updated to the latest ARTIQ and applied @sbourdeauducq's patch. Here is a log of eye scans over a few reboots: https://drive.google.com/open?id=1XISSM9aPlzmweKNJxhf10-zSkfHIoZAQ
+This definitely shows some issues. e.g. look at the way the first trace jumps from a transition here [    26.579247s]  INFO(board_artiq::hmc830_7043::hmc7043): 124: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] to all 0s in a single slip. Then, later on we go from all 0s directly to a transition here: [    41.853690s]  INFO(board_artiq::hmc830_7043::hmc7043): 52: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]. Again, that's not consistent with a slip being approx 34 taps.
+Again, we see the hysteresis where during the eye scan we get [    30.325097s]  INFO(board_artiq::hmc830_7043::hmc7043): 35: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] but, going back to the default phase after the eye scan, we get [    31.152607s]  INFO(board_artiq::hmc830_7043::hmc7043): 35: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+So, this does not work on my board at the moment.
+After reverting de7d64d I no longer see this: https://drive.google.com/open?id=1fYrKuaXlRAZLdYwOmTLM0nqOYlmeDFoc (NB should have left more time between reboots in my script).
+So, it seems likely that this is a symptom of the same issue that's breaking JESD when the GTP_CLK2 is used.
+@gkasprow did you have a chance to look at SI on the GTP_CLK1/2 AMC FPGA inputs yet? @sbourdeauducq other than that, any ideas how we investigate this. Currently ARTIQ master is unusable on my Sayma, and IIRC the ones in WUT.
+other than that, any ideas how we investigate this.
+Output the clock as seen by the FPGA (output ODIV2 of the IBUFDS_GTE3 in jesd204_tools) on another FPGA output pin (e.g. the SMA), connect it to a scope and check for problems.
+@sbourdeauducq or @marmeladapk can you have a go at that, please?
+@hartytp Sorry, I won't be able to test this, I won't be in uni for at least three weeks.
+@marmeladapk no problem, thanks for letting me know.
+@gkasprow when will you be able to check the SI for the GTP_CLK{1,2} AMC inputs?
+Provisionally, I do not believe that this or #1080 are due to errors.
+@sbourdeauducq what is your plan for tracking this down?
+@gkasprow it would be good if you could repeat that measurement and also probe the GTP_CLK{1,2} FPGA inputs on a board that's not working...
+NB I'm building without SAWG and still see this and the PBRS issues.
+@sbourdeauducq what is your plan for tracking this down?
+Can this be narrowed down further, i.e. just use the IBUFDS_GTE3 as a clock buffer to the fabric, remove transceivers and all JESD204 stuff, and simplify the SYSREF logic into the minimum code that would demonstrate a problem?
+Can this be narrowed down further, i.e. just use the IBUFDS_GTE3 as a clock buffer to the fabric, remove transceivers and all JESD204 stuff, and simplify the SYSREF logic into the minimum code that would demonstrate a problem?
+Yes, that could be done. If you send me a patch that does it them I'm happy to test.
+Alternatively, we could look at the PRBN issues first, as that removes any uncertainty over the HMC7043...
+I'm also happy to post you the non-working board if you want to investigate this locally.
+@sbourdeauducq It would probably be worthwhile to look at #1055 before spending more time on this. If the phases statuses bit behaves differently on the working and non-working bits, then that would be a smoking gun that would be easier to track down...
+PRBS is a lot more complicated than a minimized repro of this issue.
+Fine, however you want to approach it. I'll leave it to you. But, this is a high priority issue for me since it currently prevents me from using Sayma at all.
+@hartytp Can you test again with the latest code?
+@gkasprow I just tried to test the latest firmware, but my AMC has developed an issue. When I power it on, I hear a hum and only the 12V0 and 0V9 LEDs come on. The 0V9 LED is flashing and the current from the PSU is bouncing between a couple of hundred mA and close to 0A.
+Any ideas what could be wrong, or should I send this back to you (I'm shipping other boards to TechnoSystems right now, so could combine shipments).
+Please discuss this bug in the hardware tracker.
+@sbourdeauducq #1055 is now closed. Please return to this issue. Have you located an oscilloscope scope to do basic tests like this in HK?
+Things are working correctly on the hk board.
+@hartytp Please close if there is no more problem after the hardware fix.
+When I get my board back, I'll retest and close this issue if all works okay.

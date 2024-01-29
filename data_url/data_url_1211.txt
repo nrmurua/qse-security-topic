@@ -1,0 +1,75 @@
+Description of the issue
+Lately the CI coverage and pytest checks slowed down and can take up to 1 hour on GitHub actions.
+The duration times fluctuate and may depend on the random seed used in the test.
+pytest is already run in parallel and distributes test cases over available CPUs.
+Example durations from check/pytest --durations=50 --durations-min=10
+Cirq version
+1.2 at e16fbf4
+Ideas
+cc: @nafaynajam
+@pavoljuhas Hi, I have forked repo recently, slowly learning about the project. Ran the tests for cirq-ft for different number of n. It appears to me that parallelization is not implemented for local unit tests as changing number of n is not changing execution time, I had expected it would distribute loads to multiple CPUs. For 0, it gave 413.17 seconds execution time, and gave 413.65 for n=8. Am I lacking any dependency such as xdist (problem is on my side?)? Or is parallelization not implemented at all?.
+If No, Is there any limitation due to which its not implemented such as a need for state isolation for tests?
+In my case I see a different durations: 344s for -n0 and 130s for -n6.
+This is for a Linux Python 3.9.16 at 43d0372 using
+The option -n count is provided by the xdist plugin so pytest -n ... should not even start if xdist were not installed.
+The times you observed are effectively the same so it looks like your tests are just running on a single CPU for some reason.  Note that the start of pytest output should show how many workers are running when in parallel mode.
+Also to be able to compare different test runs, you need to provide a fixed --randomly-seed=VALUE because test durations and ordering depend on the seed.
+To be sure you are using comparable dependencies as in the CI, I'd recommend to do the test in a dedicated virtual environment for Python 3.9 and install dependencies with
+PS: I am not sure why the 130s total time for pytest ... cirq-ft/cirq_ft is smaller than the longest individual test in #6211 (comment).  Those tests were run on entire cirq so perhaps their duration was more prone to be affected by resource usage of parallel workers.
+As a temp measure, I would suggest we move the code coverage section to CI-daily?
+As a temp measure, I would suggest we move the code coverage section to CI-daily?
+Coverage is actually helpful for the PR to see if the changed lines are tested.
+@tanujkhattar - the first 2 slowest tests in #6211 (comment) happen for a few parameters of state_preparation_test.py::test_state_preparation_via_coherent_alias_sampling -
+can you please check if that test can be optimized or limited to parameters that run quickly?
+I feel that for common unit tests we should only exercise all code lines (and branches) and collect coverage in a cheapest way possible.  If we need to test correctness of some expensive calculations, we should move such tests to ci-daily;
+(we can add a new test marker daily for such purpose).
+If we need to test correctness of some expensive calculations, we should move such tests to ci-daily
+This sounds like a good plan to me. We currently don't have a test maker daily to mark expensive tests that should be excluded from the CI, right?
+@pavoljuhas Can I reach you through your email to discuss the issue?.
+@nafaynajam Pavol is currently out of office but will be back in a couple of days. Feel free to ask your questions on the issue in the meantime.
+@tanujkhattar Allow me some basic questions as I am getting to know the framework. I see in the issue that pavol is only running Cirq-ft tests in the screenshot, why not others as well. I have seen that we have tests for every algo in all directories. Do we only intend to only cut Cirq-ft tests?.
+Secondly I see in the CI file that we are excluding Cirq-core tests as we have this command: "--ignore=cirq-core/cirq/contrib --rigetti-integration" in the yml file. Why is that?.
+Thirdly I have been running Cirq-ft tests locally using this command: "pytest ../cirq-ft/cirq_ft" when inside check directory, what is the command to run the whole project tests and the commands as if I try to pick up all directories I get errors. I am running windows 11, PyCharm venv environment.
+If we need to test correctness of some expensive calculations, we should move such tests to ci-daily
+This sounds like a good plan to me. We currently don't have a test maker daily to mark expensive tests that should be excluded from the CI, right?
+Yes, that is correct.
+... I see in the issue that pavol is only running Cirq-ft tests in the screenshot, why not others as well. I have seen that we have tests for every algo in all directories. Do we only intend to only cut Cirq-ft tests?.
+@nafaynajam - the output in my initial comment shows 16 tests with the slowest duration. All but one happen in the cirq-ft package.  check/pytest ran all tests in the cirq repository, they are just sorted by execution time.
+Secondly I see in the CI file that we are excluding Cirq-core tests as we have this command: "--ignore=cirq-core/cirq/contrib --rigetti-integration" in the yml file. Why is that?
+--ignore=cirq-core/cirq/contrib excludes tests in the cirq.contrib subpackage.  That package is for experimental functions that are not production ready so their failures should not block PR.
+On the other hand, --rigetti-integration activates tests decorated with @pytest.mark.rigetti_integration which are otherwise skipped. The option is only effective for the cirq-rigetti package.  The CI Python environment is setup with required dependencies so these tests can run.
+Thirdly I have been running Cirq-ft tests locally using this command: "pytest ../cirq-ft/cirq_ft" when inside check directory, what is the command to run the whole project tests and the commands as if I try to pick up all directories I get errors. I am running windows 11, PyCharm venv environment.
+I would recommend to use a Linux-like development environment, for example WSL, and then run tests with the check/pytest shell script.
+@pavoljuhas Thank you :-)
+@pavoljuhas @tanujkhattar
+I propose the following solution to the issue. I will add the tests to ignore in the excluded_text.txt file which will only be excluded at local level, with echo, the excluded tests will also be printed out before test execution. The following code can be added to the Pytest file: 
+The daily CI file can be edited this way to reflect the changes in Pytest.
+I am debugging some problems I am having, let me know if the route I am taking is correct & if you have any insights.
+We already have a slow marker defined here - 
+It is only provided for the dev_tools subpackage.
+TODO
+Hi @pavoljuhas @tanujkhattar , I propose the following solution:
+Make the following changes to ci.yml line 170-171:
+      - name: Pytest check (without slow tests)
+        run: check/pytest -n auto --ignore=cirq-core/cirq/contrib -m "not slow"
+Make the following changes to ci-daily.yml line 38-39:
+      - name: Pytest check (Include slow tests)
+        run: check/pytest -n auto --rigetti-integration
+Exclude the tests with the following marker:
+@pytest.mark.slow  # Add the slow marker before the test function
+To run locally without the slow tests:
+check/pytest -k "not slow"
+Let me know if this solution is feasible or there is an issue with it in your experience.
+Hi @nafaynajam, apologies about a slow response.  First the -m "not slow" expression is not necessary, because slow-marked tests are already skipped.  To enable both slow and other tests one could do -m "slow or not slow" but that looks confusing.  A better way is to add a custom option to pytest, say --enable-slow-tests which would tell pytest to run (ie, not skip) the slow-marked tests; this can act similarly as the --rigetti-integration option here.
+The pytest setup could be cleaned up.  As it is the custom markers rigetti_integration, slow, weekly, are defined in 2 different conftest.py files as are the pytest_collection_modifyitems hooks that select/deselect marked tests.
+I suggest to
+@pavoljuhas I have the following tests coming up as slowest which seem to differ from your list, which ones should I mark slow for test purposes? .
+
+which ones should I mark slow for test purposes?
+Test durations may depend on random seed which is different from run to run because we use pytest-randomly.
+I ran all tests on my box several times in a single cpu mode (with -n 0) and then picked tests that took over 20 seconds in some of the runs.
+Please see the list below.  You may want to check https://docs.pytest.org/en/stable/example/markers.html#marking-individual-tests-when-using-parametrize if only some of the parametrized tests below need to be marked slow.
+@tanujkhattar - are you OK with skipping these in PR checks?
+The tests will be included in a daily-scheduled CI runs.
+Yes, this is a good list. Although these tests will go away soon since we'v migrated all the Cirq-FT code to Qualtran. But as a proof of concept, let's mark these as slow for now. Thanks!
+Found 3 more tests that took well over 20 seconds (depending on random seed)

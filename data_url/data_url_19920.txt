@@ -1,0 +1,41 @@
+Describe the bug
+Both Falcon-512 and Falcon-1024 variants return a variable length signature. This is observed in the test_sig correctness test by
+printing the output variable signature_len  after the sign() function is called:  https://github.com/open-quantum-safe/liboqs/blob/main/tests/test_sig.c. The test will pass because signature_len is an output computed internally by the sign() function specifying the length of the generated signature returned and the same length signature is verified by the verify() function.  signature_len is given as input to verify().
+sign() and verify() should be updated to fixed length signatures.
+rc = OQS_SIG_sign(sig, signature, &signature_len, message, message_len, secret_key);
+rc = OQS_SIG_verify(sig, message, message_len, signature, signature_len, public_key);
+for pqclean_falcon-512_clean, internally that would be:
+PQCLEAN_FALCON512_CLEAN_comp_encode()
+in https://github.com/open-quantum-safe/liboqs/blob/main/src/sig/falcon/pqclean_falcon-512_clean/codec.c
+called by:
+static int do_sign(uint8_t *nonce, uint8_t *sigbuf, size_t *sigbuflen, const uint8_t *m, size_t mlen, const uint8_t *sk) ()
+in https://github.com/open-quantum-safe/liboqs/blob/main/src/sig/falcon/pqclean_falcon-512_clean/pqclean.c
+which is called by:
+PQCLEAN_FALCON512_CLEAN_crypto_sign_signature()
+in https://github.com/open-quantum-safe/liboqs/blob/main/src/sig/falcon/pqclean_falcon-512_clean/pqclean.c
+To Reproduce
+Steps to reproduce the behavior:
+Expected behavior
+./test_sig Falcon-512
+sig->length_signature = 666
+signature_len = 654
+./test_sig Falcon-1024
+sig->length_signature = 1280
+signature_len = 1277
+Environment (please complete the following information):
+Additional context
+cross-compiled for aarch64.
+sign() and verify() should be updated to fixed length signatures.
+IMO fixed length sigs are just one option in the Falcon specs; for the NIST competition--which OQS tracks-- variable length sigs have been spec'd (see algorithm specs, section 3.11.6): the siglen size thus is a maximum value not a guaranteed one and the APIs operate as designed (and desirable from a "small is better" perspective; what advantages for longer, fixed sizes do you see?).
+I do recall reading/hearing somewhere (yes citation needed, but sadly I don't have one :-() that the "final" version of Falcon will be fixed length. It just hasn't made it to pqclean and thus liboqs.
+@baentsch might it be worth exposing the different falcon modes through liboqs somehow?
+Looking at the codebase on the falcon website vs the pqclean codebase makes it look like pqclean only supports the variable length version... So I guess it would be a non-trivial amount of work to bring the PADDED and CT falcon formats into liboqs
+So I guess it would be a non-trivial amount of work to bring the PADDED and CT falcon formats into liboqs
+Cross-referencing to #1561 (comment)
+do recall reading/hearing somewhere (yes citation needed, but sadly I don't have one :-() that the "final" version of Falcon will be fixed length
+A reference would be good. @dstebila Are you aware of something? Otherwise it seems, Falcon will go the same way as Kyber: Not updateable due to differences between authors and NIST (competition).
+do recall reading/hearing somewhere (yes citation needed, but sadly I don't have one :-() that the "final" version of Falcon will be fixed length
+A reference would be good. @dstebila Are you aware of something? Otherwise it seems, Falcon will go the same way as Kyber: Not updateable due to differences between authors and NIST (competition).
+I don't know off the top of my head what the intentions are with respect to the NIST version of Falcon.
+It was mentioned on the pqc forum. I've been trying to find the original quote, but it seems generally accepted that falcon signatures will be fixed length: https://groups.google.com/a/list.nist.gov/g/pqc-forum/c/3Cu70s0doYY/m/i55BTiGgBwAJ
+Closing as this is currently being tracked by #1608.

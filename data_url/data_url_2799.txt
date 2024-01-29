@@ -1,0 +1,48 @@
+Based on my testing, einsum is twice as fast as the multi-processing based code in XmonSimulator. See #656 (note: need to reduce precision from complex128 to complex64 to see comparable results).
+Awesome.  Will investigate more...we should check how #cpus impacts this especially for larger #of qubits.
+I'm not seeing the improvement you were seeing on my box.  Here is benchmarking for circuits made up of 100 random gates selected from ExpW, ExpZ, Exp11 gates selected uniformly at random.  These are repeated 10 times (uses 2 prefix qubits = 4 shards).  This is with the unitary action downgraded to complex64
+(cirq) [dabacon:cirq:~/git/cirq]$python dev_tools/profiling/benchmark_unitary_simulator.py
+num_qubits,seconds per gate
+4,0.0001551498129265383
+5,0.0001504874409874901
+6,0.0001410450179828331
+7,0.00014529275393579156
+8,0.00015137688000686466
+9,0.00016527387697715313
+10,0.00018549127597361804
+11,0.00021360345208086074
+12,0.000289885765989311
+13,0.0004153466949937865
+14,0.0007009846249129623
+15,0.001091724153026007
+16,0.0018393511360045522
+17,0.0035192482969723642
+18,0.00644861755205784
+19,0.012350965660065412
+20,0.02310755885404069
+(cirq) [dabacon:cirq:~/git/cirq]$python dev_tools/profiling/benchmark_xmon_simulator.py
+num_qubits,seconds per gate
+4,0.0002477412990992889
+5,0.00024116984999272972
+6,0.00022343630704563111
+7,0.0002296600310364738
+8,0.0002298013960244134
+9,0.00024218150600790979
+10,0.00025756666297093036
+11,0.00027730463002808393
+12,0.0003192071299999952
+13,0.0004105045989854261
+14,0.0005838360510533676
+15,0.0008769478329923003
+16,0.0015365603070240468
+17,0.0029610610279487445
+18,0.004647299336036667
+19,0.006038484486052767
+20,0.01025167882500682
+Could you test this on a few more machines to get some idea of the distribution? Ideally some no-special-prep machines, no custom BLAS, etc.
+Oh! Also you need to make sure you're comparing equivalent precisions. I think the version in Circuit is using double precision at the moment, so you should change that to single if you want to compare against XmonSimulator properly.
+In any event, we need a simulator that works for any gate with a matrix without decomposing it into smaller gates. For typical circuits in OpenFermion-Cirq, apply_unitary_effect_to_state works 5-10x faster (with double precision) than the XmonSimulator.
+@Strilanc  yes I compared using the  same precisions (that was in note above)
+I'm going to proceed with the refactoring to make a simulator that uses the einsum as default but also keeps the xmon simulator around until we understand the differences better.  This will mean better defining the simulator interface anyways which I think is good.
+Is the xmon simulator still comparably fast after the _apply_unitary_to_tensor_ changes that have made it in?
+Fixed by #1082

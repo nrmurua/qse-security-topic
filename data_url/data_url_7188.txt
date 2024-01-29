@@ -1,0 +1,16 @@
+As it currently stands convert() does not take tolerances into account, but as the implementation makes clear, the routine depends on the tolerances to decide whether a complex matrix is near a Pauli/Clifford or not.  These tolerances will depend on how the matrix was generated, so assuming something based purely on eps() is not sufficient, and leads to breakage in some instances.
+It is unclear to me if it is OK to augment the signature of convert() to take an optional argument for the tolerances, but that is what I'd propose.
+@blakejohnson @caryan I am looking for you guidance on how to address this in the Julia-way.
+Since you own Pauli, defining a method for convert with more arguments is not type squatting (or more precisely, number-of-argument squatting), so in this sense it's okay. Still, it's not clear whether optional arguments for tolerance fit  the semantics of convert.
+There are two choices, adding a constructor or a method for convert. One test offered for whether convert makes sense is the following^1. When calling push!(A, x) and the type of x is not a subtype of the eltype of A, then x is automatically (generically) converted to the correct type, if an appropriate method can be found. So, if you want to support automatic conversion in cases like this, then defining a method for convert makes sense. Otherwise, use a constructor. But, there is no way to adjust the tolerance when convert is called by push!, etc. So, defining and using a constructor rather than convert appears to be the solution that best agrees with the semantics of both.
+^1 https://discourse.julialang.org/t/convert-vs-constructors/4159/35,
+https://docs.julialang.org/en/v1/manual/conversion-and-promotion/#Conversion-1
+So, @jlapeyre, maybe the right way to go about it is to define something like a round method, with parameterized tolerance, and let the user "round" the floating point matrices before converting to Cliffords?
+I would do the following. A user converts matrices to Paulis with a constructor, which is defined like this
+So the user does Pauli(m) or Pauli(m; tolfac=1e-13), etc.
+Then convert would only be used when Julia performs an automatic conversion, eg inserting a matrix into an array of objects of type Pauli. (This might never occur in practice.) This method would be
+There is no tolerance here, because Julia's automatic conversion has no mechanism for supporting such a thing. We might want to omit the parameter N, or include another method.
+@marcusps, I think the following is a better solution. It doesn't require a tolerance. It just chooses the closest element.
+If the matrix is really noisy, then the phase_index won't be in the dictionary, and this will fail. One could add a check that abs(phase_index)==1.
+(Also, there is a Julia package ILog2. It's much faster than log(2,size(m,1)). Not so important here, since the rest of the calculation is much more expensive. But, it's useful in general in quantum information code.)
+I believe this is taken care of now in #25.  @marcusps we can close this issue?

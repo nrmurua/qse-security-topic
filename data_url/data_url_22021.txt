@@ -1,0 +1,83 @@
+This occurs on the Sayma1 board we have on the HK server.
+Sometimes the initialization fails in a loop and this is resolved by reloading the RTM FPGA:
+...RTM FPGA reloaded by JTAG...
+Thanks. I look at that today.
+The following change to MiSoC breaks serwb 100%:
+migen 775572ea7, misoc f509de0cb, artiq 2b01aa2
+Hmm ok, at least this can help me understand what is going on.
+Also the RTM design doesn't meet timing...
+I'm looking at that.
+@sbourdeauducq: i should have fixed timing on RTM design (a false path was missing). It seems I'm not able to reproduce easily the issue.
+I tried adding self.specials += DifferentialOutput(ClockSignal(), si5324_clkin.p, si5324_clkin.n) to my design but serwb is still working. Can you always enable debug on serwb while we still have the issue? It could help me understand what is going on.
+For the case where RTM is reloaded by JTAG, how was it loaded initially? from flash? I'm just trying to understand because RTM should automatically be reseted by AMC when retrying. Are you sure RTM was correctly loaded?
+Try on the HKG boards with SSH?
+RTM is always loaded with JTAG, there is currently no other way.
+What's the status of this?
+Try it on your board. Could be another hw problem. Tom and Florent are not experiencing it.
+Built .bit this afternoon from master.
+Sayma_AMC TS190717-7
+Sayma_AMC TS190717-2
+This AMC has different behavior. It hangs...
+Hangs here.
+@jbqubit hmm...interesting.
+For the logs just reported I built .bit for RTM and amc stand alone. And flashed using ~/github/m-labs/sinara$ artiq_flash --srcbuild ./misoc_standalone_sayma_amc -t sayma.
+are all power supply lights on both boards on?
+Yes.
+Can you try with the current sayma amc standalone and sayma RTM condo packages, please?
+OK. I installed artiq-sayma_amc-standalone and artiq-sayma_rtm  from conda and flashed after fixing some typos in artiq_flash (cf #890).
+You need to load the rtm manually.
+https://gist.github.com/sbourdeauducq/f323a10f0a8306bd531769f89d25f5ea
+Ok. Here's what I'm now doing.
+You have the 1.8V and/or jtag bugs. Power cycle boards, replug USB connectors, until there are no errors.
+The 1.8V is fine. I'm watching it on a scope.
+I've applied the JTAG white-wire fix sinara-hw/sinara#463
+artiq_flash --srcbuild ./misoc_standalone_sayma_amc -t sayma was working just fine on this board a couple days ago. But looks like @whitequark made some changes  (f77aa9b#diff-23ef9b8c7f366ae0fd8efc4411bdc7a8) to artiq_flash. And now artiq_flash doesn't work for want of bscan_spi_xcku040-sayma.bit. @whitequark should I expect to be able to use artiq_flash now for Sayma?
+@whitequark should I expect to be able to use artiq_flash now for Sayma?
+Sure, I use it for Sayma.
+And now artiq_flash doesn't work for want of bscan_spi_xcku040-sayma.bit.
+What exactly is the error message here?
+It's an old openocd. @whitequark
+Considering:
+...it is possible that this is simply another consequence of the 1.8V bug.
+Yes. The "Open On-Chip Debugger 0.10.0 (2017-02-03-06:53)" Joe installed won't help even with those issues resolved.
+I've been successfully flashing this board for several weeks now using artiq_flash. See here. Pending #898 I'll try again.
+By reducing serwb linerate from 1.25Gbps to 625Mbps, it seems to be reliable on at least a board that has the 1.8v issue. (it's difficult to say if it's related or not). Let's use 625Mbps for now.
+Note on sayma1 (that had 1.8v issue), when restarting AMC with artiq_flash, RTM is no longer alive and need to be reloaded by JTAG (this is not the case with the board i bring with me). This is maybe another issue.
+@enjoy-digital once you restart AMC you may toggle config pins so RTM gets unconfigured...
+@enjoy-digital IT's indeed odd that 1.25 Gbps worked some time ago but now doesn't. Is serwb now working reliably at 635 Mbps?
+@jbqubit: i don't think serwb 1.25Gbps has a different behaviour than before. Just that it seems not reliable with some of the boards at 1.25Gbps and seems to be reliable with all boards we tested at 625Mbps.
+Note that there are 2 problems here:
+Ok So problem 1 relates to #813. Agreed that 625 Mbps is fine for getting started. :)
+@enjoy-digital Sometimes when the RTM FPGA is not loaded, it prints:
+and sometimes it just waits for it to be loaded. Why is that?
+Serwb also appears to hang randomly on sayma-3, mostly when waiting for HMC830 lock. This happens with current master as well as spi2. And @hartytp also sees this (with a slightly older master).
+My board as well. No flashing errors.
+Did you even load the RTM gateware?
+Yes, I'm flashing the RTM. I neglected to paste it -- now included below.  Booting fails with Memory test failed or serwb bridge initialization failed. Once it advances to the point where the failure was "HMC830 lock timeout".
+Did you even load the RTM gateware?
+@jordens Starting the informal etiquette manual: AFAICT, the word "even" here serves no purpose other than to make a helpful comment come across as somewhat rude/condescending.
+@jboulder AFAICT you need to be a little careful over the timing of loading (not flashing if we want to be pedantic -- if we could flash it, life would be much easier) the RTM FPGA. At some point during startup the AMC restarts the RTM FPGA, and loading must be done after that point. If find that if you get the timing right this all works reliably.
+At some point during startup the AMC restarts the RTM FPGA
+It doesn't. I don't know why it looks like it does, there is probably another bug somewhere.
+hmmmm...well it certainly behaves a lot as if it does.
+@hartytp Reading undue rudeness into that question is thin-skinned IMHO. Especially in the light of past experience with negligent and careless treatment of advice and instructions and the frustration associated with it. You yourself are confirming that by suggesting that Joe personally may not have been careful. The "rudeness" seems to be already healed by the purely technical rephrasing "Is the RTM gateware even loaded?". Would you consider that condescending?
+But yes. Until the RTM is loaded automatically people need to be extra-careful when testing this.
+@hartytp Reading undue rudeness into that question is thin-skinned IMHO. Especially in the light of past experience with negligent and careless treatment of advice and instructions and the frustration associated with it. You yourself are confirming that by suggesting that Joe personally may not have been careful. The "rudeness" seems to be already healed by the purely technical rephrasing "Is the RTM gateware even loaded?". Would you consider that condescending?
+I don't understand your argument here. You seem to be acknowledging that your comment was phrased in a way that was deliberately rude, but arguing that this is appropriate given the history. Or, is your point that you could easily have been ruder, so we should be thankful for the relatively restrained level of rudeness you chose to adopt for your post?
+In either case, the work "even" here adds nothing to your point on a technical level, but to any native English speaker it implies an element of rudeness. Given the current tensions, it shouldn't be a surprise if that rubs people the wrong way.
+@sbourdeauducq, @hartytp: serwb is reseting the RTM FPGA at startup:
+https://github.com/m-labs/artiq/blob/master/artiq/gateware/targets/sayma_rtm.py#L158
+Thanks for confirming that (I knew it does, because I've experience it many times when working with Sayma).
+serwb is reseting the RTM FPGA at startup:
+Yes, I know, but that's not touching the bitstream.
+@hartytp My points are, that it wasn't meant rude, that I don't consider it rude if I am asked that question by you, that "even" is not an insult (just search through your own usage of it on artiq or sinara), that I wouldn't recommend considering it rude for the etiquette rules you are writing, and that I claim on the basis of the general level of rudeness by Joe that even if you as a third person would consider it rude, Joe is not in a position to complain about it.
+The reason for my post that prompted your rude comment is that booting didn't hang at the usual point when waiting for RTM FPGA. What I expected:
+What I saw:
+This precluded interaction with the RTM FPGA which is why I didn't post about it.
+Today I see similar behavior but after a longer delay.
+@jordens I'm trying to communicate what I see to assist M-Labs in debugging this Issue. Your frequent use of language that implies that I am lazy and careless does little to encourage this type of constructive feedback.
+Since this is an Issue on something not working it didn't occur to me to post an example of success. Perhaps doing so will help others know what to expect. Following the instructions on the mailing list, I wait for [     0.028264s]  INFO(board_artiq::serwb): waiting for AMC/RTM serwb bridge to be ready... and then load the RTM FPGA I see the following.
+I interpret this to mean that the HMC830 is blocking, an unrelated Issue.
+serwb has been refactored (architecture and clocking). An issue has aslo been found with un-initialized HMC7043 (sinara-hw/sinara#541) that could explain the issue. To prevent un-initialized HMC7043 to introduce noise in AMC FPGA, clock buffers are now disabled at startup. (8212e46).
+Closing this since content if this issue is probably no longer relevant.
+Thanks @enjoy-digital, @gkasprow  !

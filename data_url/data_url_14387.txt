@@ -1,0 +1,88 @@
+Informative reprs are very helpful, especially for debugging purposes. Ideally, repr(obj) should yield executable code that reconstructs obj, and we could test this. Good reprs are defined inconsistently across the library. For example,
+The following classes require attention:
+There's a limit on how much we can do for QuantumCircuit, because we can't really output something that can eval back to the input, but we could definitely do better than the pyobj pointer.  Perhaps it could move to
+or something?  QuantumCircuit.draw is really the debug view, but that's not really suitable for a repr.
+I don't know anything about Sampler to offer an opinion on that.
+There's a limit on how much we can do for QuantumCircuit, because we can't really output something that can eval back to the input
+@jakelishman could you elaborate on this point? What are the obstacles to defining a repr for QuantumCircuit that can eval back to the input?
+The repr() function (and by extension the return from __repr__) is expected to return a string representation that can be passed to eval() which python will execute and create an object with the same value. That's basically the difference between __str__ and __repr__ is that __repr__ has this other expectation. See: https://docs.python.org/3/library/functions.html#repr
+So for something like QuantumCircuit it's not realistic to have something of this form because we can't realistically return a string that python can eval to build an arbitrary quantum circuit in a single string output isn't a straightforward output here. The suggestion from @jakelishman to change the output to put high level details (number of qubits, etc) instead of the address makes sense to me as the best path for this.
+So for something like QuantumCircuit it's not realistic to have something of this form because we can't realistically return a string that python can eval to build an arbitrary quantum circuit in a single string output isn't a straightforward output here.
+@mtreinish could you elaborate on this point? Why is it not realistic to define a repr for QuantumCircuit that can eval back to the input?
+The design means that there's no overload of the constructor that allows a single-statement reconstruction, which is what's needed for eval, while looking like a single object. You have to make an object qc and then call a bunch of methods on it.
+We could potentially add an overload to QuantumCircuit that takes a data array (that's a different design decision), but even with that, I think the amount of output needed for a full reproducer would be so large that it might not so useful. It's tricky, though, because repr is a weird halfway house between "what's the type of this object" and "show me a complete visualisation", so it's naturally very subjective what people want from it.
+I think maybe type, name, number of bits and number of instructions might be a decent display. That's enough to distinguish two obviously different circuits, which I think is the ideal for reprs of very complex objects.
+I've tagged this "good first issue", though we wouldn't want one PR to add reprs to every class - that would be too much work, and a good repr needs a little bit of thought, so it's not an entirely mechanical process.  Instead, a good first community PR would be to add a __repr__ method to QuantumCircuit that returns a string like
+@jakelishman @mtreinish Thanks for the useful comments here. @kevinsung suggested this as a QAMP project so the contributions will be guided by Kevin.
+Repr QAMP project
+To help the advocate  QAMP project forward, we would like to have an overview of the classes which can benefit from a repr() function. This classlist will be work in progress and we can sort them by perceived importance.
+Target (transpiler)
+<Target '<description>' with <x> qubits and <y> (dt) time>
+Backend
+caller
+repr(Object)
+An executable repr for QuantumCircuit could be made possible with #8709
+Given that it's an alternate class method constructor, I'm still not sure it would be appropriate for a repr (and Instruction, Qubit and Clbit don't general have a evalable reprs either, which would be required).  The point of repr is to give a human-readable indication of what the object is, rather than to implement a complete serialisation to text - it's just that for small, simple objects, an evalable string is a very legible description of the object.
+For QuantumCircuit, there's loads of internal attributes like global phase, metadata, scheduling information, stored internal layout, etc etc that would make a "complete" textual serialisation super long and really hard to read.  The simplified version I suggested above I think is still good.
+List is updated on 18 september
+Quantumcircuits
+Primitives
+DAGcircuit
+Quantuminformation
+Transpiler Target
+Transpiler Passmanager
+Quantuminformation
+DAGcircuit
+QuantumCircuitData
+Transpiler Target
+A it late to the party. However, I strongly agree with @jakelishman and @mtreinish . A QuantumCircuit__repr__ that can be evaled is not practical.
+I believe we went through this discussion before and the people in favor of following Python code styles won.  I advocated for much the same at that time because the scientific Python ecosystem is full of similar functionality.  Eg. NumPy:
+SciPy,
+that makes things useful to understand at the expense of making the PEP gods upset.  For circuits, I think something like @jakelishman posted above, perhaps with the circuit name added, would be nice to have , and is scalable.
+Demanding that a repr be evaled can also lead to unwanted large outputs.  Eg. the Result  repr easily blows up.  Try:
+The repr function implementation as it is now being developed is of the style that  @jakelishman proposed like this:
+However there are already classes that have a repr function. So I try to have for all the classes the same sort of setup.
+If this issue still needs work, I would like to contribute.
+@rrodenbusch this is a long-term project. Feel free to open pull requests that improve the reprs for any classes in Qiskit Terra.
+class_repr.xlsx
+Here is a listing of all the classes in qiskit-terra main branch as of 2022-10-03. If the linenum column is blank, that class is missing a repr.
+Is there a way to prioritize and/or group the list for the PRs?
+Here is how I would prioritize a few classes based on Bram's list (highest priority at the top):
+I recommend removing Qubit from this list since:
+In particular these two tests require eval(repr(Qubit)) and eval(repr(QuantumRegister)) result in an equivalent class instances.
+QuantumRegister should also be left as is for now since:
+I would tend to agree on removing Qubit - there's not really anything sensible we can provide for it at the moment.  I do also agree that its repr doesn't look good, but I'm not so sure there's much we can do about it, since a Qubit in our current data model is a zero-data struct.  The only thing the objects are used for is for arbitrary valid pointers in Python space.
+I think that when Kevin wrote that list, he hadn't realised that Bit.index and Bit.register were deprecated, which is our (internal) fault, because the deprecation and shift in the data model wasn't handled very well.
+Attached is a zip file with a notebook and html file with some examples of Gate, ControlledGate and QuantumCircuit representations.
+Thoughts on additions or deletions?
+
+<QuantumCircuit 'Hadamard' with 2 qubits, 2 clbits, 2 instructions, 0 calibrations, and global_phase=0>
+<HGate 'h' labeled 'None' with 1 qubits, 0 clbits and params=[]>
+<CXGate 'cx' labeled 'cx label' with 1 control qubits, control state = 1 and params=[]>
+
+<QuantumCircuit 'Inner' with 2 qubits, 2 clbits, 4 instructions, 0 calibrations, and global_phase=0>
+
+<QuantumCircuit 'Unbound' with 1 qubits, 0 clbits, 1 instructions, 0 calibrations, and global_phase=ro>
+<RXGate 'rx' labeled 'None' with 1 qubits, 0 clbits and params=[Parameter(phi)]>
+
+<QuantumCircuit 'Bound-92' with 1 qubits, 0 clbits, 1 instructions, 0 calibrations, and global_phase=1.4142135623730951>
+<RXGate 'rx' labeled 'None' with 1 qubits, 0 clbits and params=[ParameterExpression(3.14)]>
+
+<QuantumCircuit 'circuit-95' with 2 qubits, 0 clbits, 3 instructions, 2 calibrations, and global_phase=0>
+<CCXGate 'ccx' labeled 'None' with 2 control qubits, control state = 3 and params=[]>
+<RXGate 'rx' labeled 'None' with 1 qubits, 0 clbits and params=[ParameterExpression(3.14)]>
+<HGate 'h' labeled 'None' with 1 qubits, 0 clbits and params=[]>
+Qubit(QuantumRegister(2, 'q'), 0)
+QuantumRegister(2, 'q')
+circuit-reprs.zip
+Primitives Sampler and Estimator repr to include:
+< Sampler with 1 circuits ('Hadamard',) parameter counts (0,) and Options(shots=16, seed=345682) >
+< Sampler with 2 circuits ('RealAmps 2','RealAmplitudes',) parameter counts (6,8,) and Options() >
+< Sampler with 3 circuits ('Hadamard','RealAmps 2','RealAmplitudes',) parameter counts (0,6,8,) and Options(shots=16, seed=345682) >
+< Estimator with 1 circuits ('RealAmp psi1',), 1 observables ('SparsePauliOp(['II', 'IZ', 'XI'], coeffs=[1.+0.j, 2.+0.j, 3.+0.j])'), parameter counts (6,) and Options(shots=16, seed=345682) >
+< Estimator with 2 circuits ('RealAmp psi1','RealAmp psi2',), 3 observables ('SparsePauliOp(['II', 'IZ', 'XI'], coeffs=[1.+0.j, 2.+0.j, 3.+0.j]),SparsePauliOp(['IZ'], coeffs=[1.+0.j]),SparsePauliOp(['ZI', 'ZZ'], coeffs=[1.+0.j, 1.+0.j])'), parameter counts (6,8,) and Options() >
+Start with the repr of QuantumCircuit and add:
+
+< DAGCircuit 'Bell-Rotation' with 4 operations ('h','cx','measure','rz'), 6 wires, 16 nodes, 15 edges,  0 calibrations, and global_phase=0 >
+Includes:
+<PassManager with 2 sets, 3 passes, 200 max iterations, and 5 properties ('final_layout','node_start_time','clbit_write_latecy',...,) >

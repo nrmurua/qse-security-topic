@@ -1,0 +1,31 @@
+The circuit_to_dag function used in the PassManager sets the constructed dag metadata to be exactly the circuit metadata, not a copy. This means any transformation passes which might modify the DAG metadata will end up mutating the same object for multiple circuits if transpile is invoked with something like pm.run(3 * [circuit]) (which is a common case in primitives if you want to run same circuit with multiple observables).
+Pseudo code
+circuit_to_dag should make a copy (shallow or deep?) of the metadata so if its mutated it doesn't effect the input circuit, and so the returned transpield circuits have distinct metadata objects (ie tqc[0].metadata is tqc[1].metadata  -> False in above)
+Replace the line
+with
+for a shallow copy (which is probably sufficient). If you want to be more cautions (but possibly with performance effects) you could also make it a deep copy.
+I also think that a shallow copy with the proposed change should be enough.
+I could make the change, add the appropriate tests and make a PR if you'd like. :)
+The same holds for the calibrations I would expect, as they are also just assigned. Instead of always copying, we could use the existing copy_operations arg in to indicate whether the calibrations and metadata properties should be deep-copied.
+Thanks for offering the help @Andir16, I'm assigning you.
+Thank you. I will look and write again about the arg and the calibrations so we can define that before I create the PR.
+I would love to discuss this further and get more feedback on how to proceed. I can see two approaches:
+I'd suggest both against overloading copy_operations and against excessive deep-copying.  From Chris' use-case, I don't think deep-copying is appropriate, and is likely just to introduce performance bottlenecks.  If somebody puts mutable state in a value in the metadata, it's up to them to deal with clones, and they may want the shared mutable state.  I think a shallow copy of the metadata dictionary is fine, and doesn't have the performance hit.
+For what it's worth, the reason all the circuits have the same metadata here is the line pm.run([circuit] * 3); this is actually what causes three separate objects.  Further, this comment:
+Make a transpiler pass that modifies metadata.
+is a very non-trivial step.  The definition of circuit metadata is:
+Transpiler passes are not currently supposed to touch metadata; I think if there's a use-case for that that can't be handled by writing into the property_set to go between passes, then it's something we need to look at more generally.
+Thank you very much for elaborating.
+So, that would mean we would go back to the initial proposal?
+Replace the line
+with
+Or should this not be changed at all?
+I am sorry for the long delay with this issue.
+Is it still desired to make the change?
+If so, I would do the following:
+Replace the line
+dag.metadata = circuit.metadata
+with
+dag.metadata = circuit.metadata.copy()
+and create the corresponding tests.
+@Andir16: sorry for the delay, December was a busy/holiday-ish month.  Yes, I think changing to dag.metadata = circuit.metadata.copy() is an acceptable change here.

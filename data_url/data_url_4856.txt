@@ -1,0 +1,59 @@
+Minimal code:
+`import time
+import numpy as np
+import tensorflow as tf
+import torch
+import tensorcircuit as tc
+K = tc.set_backend("tensorflow")
+(x_train, y_train), (x_test, y_test) = tf.keras.datasets.mnist.load_data()
+x_train = x_train[..., np.newaxis] / 255.0
+def filter_pair(x, y, a, b):
+keep = (y == a) | (y == b)
+x, y = x[keep], y[keep]
+y = y == a
+return x, y
+x_train, y_train = filter_pair(x_train, y_train, 1, 5)
+x_train_small = tf.image.resize(x_train, (3, 3)).numpy()
+x_train_bin = np.array(x_train_small > 0.5, dtype=np.float32)
+x_train_bin = np.squeeze(x_train_bin).reshape([-1, 9])
+y_train_torch = torch.tensor(y_train, dtype=torch.float32)
+x_train_torch = torch.tensor(x_train_bin)
+x_train_torch.shape, y_train_torch.shape
+def qpreds(x, weights):
+c = tc.Circuit(n)
+for i in range(n):
+c.rx(i, theta=x[i])
+for j in range(nlayers):
+for i in range(n - 1):
+c.cnot(i, i + 1)
+for i in range(n):
+c.rx(i, theta=weights[2 * j, i])
+c.ry(i, theta=weights[2 * j + 1, i])
+return K.stack([K.real(c.expectation_ps(z=[i])) for i in range(n)])
+qpreds_vmap = K.vmap(qpreds, vectorized_argnums=0)
+qpreds_batch = tc.interfaces.torch_interface(qpreds_vmap, jit=True)
+qpreds_batch(x_train_torch[:2], torch.ones([2 * nlayers, n]))
+class QuantumNetV3(torch.nn.Module):
+def init(self):
+super().init()
+self.q_weights = torch.nn.Parameter(torch.randn([2 * nlayers, n]))
+net3 = QuantumNetV3()
+Class linear_layer(torch.nn.Module):
+def init(self):
+super().init()
+self.l1 = torch.nn.Linear(n, 20)
+def forward(self, x):
+out = self.l1(x)
+return out
+clayer = linear_layer()
+predict_q = net3(inputs)
+predict_c = clayer(inputs)
+criterion = torch.nn.BCELoss()
+opt = torch.optim.Adam(model.parameters(), lr=1e-2)
+loss_q = criterion(predict_q, labels)
+loss_c = criterion(predict_c, labels)
+loss = loss_q + loss_c
+loss.backward()`
+The error message is below:
+
+It seems OK.

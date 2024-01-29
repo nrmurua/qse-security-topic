@@ -1,0 +1,20 @@
+Many times we are required to run simulations of many qubits but shallow quantum circuits. We typically perform a state vector simulation taking into account the whole circuit and the total number of qubits. This, however, could be avoided in practice.
+Would be great to have an automated Qibo tool to perform simulations with a large number of qubits (e.g. tens or hundreds) and shallow quantum circuits. This could be done by using a strategy related to the light-cone propagation of correlations in the circuit.
+
+Imagine we want to compute the expectation value of a Hamiltonian composed of two-body operators O, i.e. <\psi | O | \psi > = < 0 | U^\dag O U | 0 >, acting on different qubits. The idea is to split the computation focusing on each operator O individually, noticing that most of the unitary U will annihilate with U^\dag. We then can compute < \psi | O | \psi > using the smaller quantum circuit inside the light cone.  Finally, we can compute the expectation value of the Hamiltonian by simply adding all the individual < O > values.
+This indeed can be done by the user by constructing the smaller circuit inside the light cone for each of the operators O individually. However, it would be interesting to have an automated tool in Qibo that given the whole quantum circuit and operators O, performs the above computation. I think this may useful for many projects where the number of qubits is a bottleneck (as long as the circuit is shallow).
+Nice one.
+Thanks for proposing this, sounds good to me. Here is a function that could serve as a starting point:
+This calculates the "light cone" circuit corresponding to a given big circuit and the list of qubits that O acts on. For example for a typical variational circuit with one layer:
+the light cone for an O acting on qubits 4 and 5 would be
+which is a 6-qubit circuit (regardless of how big the original circuit is).
+If we follow this approach, we could add this as a circuit method, eg. one would do circuit.light_cone([4, 5]) to get the reduced circuit. We still need think of an API to combine this with Hamiltonians and expectation values, so that it is fully automatic from the user perspective.
+Thanks, @stavros11! I played around with it, it works perfectly except for 1 detail. The circuit in the light cone it indeed has the number of required qubits, however, there are some gates that do not need to be included. We have to discard as well the gates outside the light cone, even if they pertain to the qubits inside. Let me put an example using your function:
+The final RY gates in sc on qubits 0 and 3 are not needed, since they are outside the light cone. That is, we do not have to simply cut the larger circuit into a small one, but also exclude the gates outside the light cone that are affecting those qubits.
+perhaps it is clearer with this image (orange cone)
+
+Also I believe it would be great to attach the old qubit labels to the new qubits labels of the light cone circuit so that one knows which qubits survived.
+@bpcarlos thanks for checking. I believe the redundant gates issue is solved in the following:
+Please check that this works as expected in your examples as it is not rigorously tested.
+I also return the qubit_map which is a dictionary mapping the qubit numbers of the original circuit to the numbers in the light cone circuit. I believe this is what is needed to calculate the observable, but if you need to invert this, you can do:
+Works perfect, thanks @stavros11

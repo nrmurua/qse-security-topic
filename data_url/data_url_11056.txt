@@ -1,0 +1,31 @@
+In grover.py, the line
+      sampled_bitstring = cxn.run_and_measure(self.grover_circuit, self.qubits)[0]
+works ok when cxn is a SyncConnection, but when cxn in a JobConnection I get
+TypeError: 'JobResult' object does not support indexing
+It worked when I replaced it with this code
+Either that, or perhaps the SyncConnection and JobConnection objects should be redesigned to have the same structure to avoid having to check the type of connection (a requirement that likely will not scale well)
+-As an aside, both Sync and Job Connections can at most execute Grover's algorithm for a 7 bit number. When I try 8 bit string e.g. '10001000', I get a
+HTTPError: 413 Client Error: Request Entity Too Large for url: https://job.rigetti.com/beta/job
+Why doesn't the Job connection (with 25 qubits) have a higher capacity than the sync (with 16)?
+Thanks for reporting @ogamel . We'll have a look!
+Great suggestions! We've seen this issue a couple times and will be changing PyQuil to make it easier to work with: rigetti/pyquil#161
+Thanks @jotterbach and @stevenheidel
+Any idea why the second issue occurs? Namely getting the following error anytime I use a string of more than 7 bits:
+HTTPError: 413 Client Error: Request Entity Too Large for url: https://job.rigetti.com/beta/job
+In theory I should be able to search 16-bit and 25-bit strings on Sync and Job Connections respectively, but both crash as above for 8+.
+How big is the circuit that you're sending? Can you print the results of .out() on the program before you send it to the QVM?
+The program is whatever is created by grover.py. I am executing the provided Jupyter example for Grover's algorithm, slightly generalized for a target_bitstring of any length:
+when the target_bitstring is 8+ bits I get the aforementioned error, whether with a Sync or Job Connection. Otherwise it works fine.
+The program that gets sent to Forest is almost 5MB which won't be supported by any server. I think the circuit that Grover() is generated is simply too big, it's also quite inefficient (I don't think this is your fault, I think the problem is in the library itself). For example, the circuit contains hundreds of copies of these lines:
+First, CNOT is already in the standard gate set and second, there's no need to define a gate more than once. Here's the code I used to print the circuit:
+@jotterbach - could you take a look at the above?
+Will take a look @ogamel @stevenheidel
+Hey @jotterbach and @stevenheidel , any luck with this?
+Thanks
+@ogamel I attached a link to the plain quil code that is coming out of you example code above. As you can see you try to degate a 256x256 matrix which is too big (also there a lot of other defgates). This is a result of the implementation of Grover we have right now, which does not support too many qubits as it's meant to be educational.
+large_grover.quil
+@ampolloreno can you have a look why we are DEFGATEing so many CNOTs? Let's figure out why we have so many gates (apart from the oracle).
+Hello folks, sorry for the delayed response. I'm looking into all of this now. Likely the defgate are arising from decomposing a many-qubit-controlled gate (I think in this case, the diffusion operator probably is being decomposed). This isn't necessary if we're not actually running on hardware, so I'll figure out where this is happening, and replace it a single defgate.
+On the other hand, this isn't going to help anything if just defgate-ing a single matrix for 8 qubits is too large, in fact then it seems we should be recursively defining these gates into circuits of smaller gates.
+For anyone interested, the reason it is defined CNOT is because it's just recursively defining controlled gates to compose a larger gate. It wasn't checking to see if any were defined already. This could/should be smarter.
+I'll see what  I can do.

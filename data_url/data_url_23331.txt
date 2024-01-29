@@ -1,0 +1,26 @@
+#1301 Fixes a number of commands that were passed incorrectly to the instrument, but it does also highlight a different problem with the driver. If a parameter is set to an out of bounds value an error message is displayed but this is not reflected as a return code.
+This could be resolved by reading the error count before and after a write and then reading any error message back. E.g replace write with something along the lines of.
+But that would probably be significantly slower.
+One would need to benchmark this to see if that is an issue. It might be possible to combine the multiple write commands in one for better performance
+this sounds like a bad API from the manufacturer. Do they discuss this situation in their manual/SDK? :)
+is it not easier to define the parameter bounds in the driver? and also just implement a method that returns the last errors from the queue (probably something like that is already in the driver)?
+Regarding combining commands, if you combine multiple commands, you might not know which command resulted in an error and which one went successfully, right? how useful/verbose is errorqueue command?
+Regarding combining commands, if you combine multiple commands, you might not know which command resulted in an error and which one went successfully, right?
+I think the suggestion was to concatenate one potentially-failing command with known and understood commands to query the error queue about the success of the unknown command,.
+is it not easier to define the parameter bounds in the driver?
+This is always the preferred way, fail fast and fail in software. But this is only possible to the extend that the driver author understands the internal workings of the instrument. I think @jenshnielsen is bringing this up because of undocumented and unexpected inter-connections between parameters that make him question the validity of his mental model of the instrument and thus seek a safe fallback solution.
+is it not easier to define the parameter bounds in the driver? and also just implement a method that returns the last errors from the queue (probably something like that is already in the driver)?
+Yes as @WilliamHPNielsen suggested we already try to do this as much as possible but how would you proof that you protect against all combinations of all parameters including the ones that have not been added yet. It would be much more safe to also error out on any invalid command.
+Regarding combining commands, if you combine multiple commands, you might not know which command resulted in an error and which one went successfully, right?
+Obviously you need to know if a command returns any thing and then count to do this correctly but Visa is intended for use this way. In this case the errorqueue.count will return a string + termination char and the set command will return nothing. But a command like print(errorqueue.count) should not fail "silently". This happens when you set something out of bounds but not if the command is invalid or gives a time out. That will result in a real visa error as normally. I would expect something like?
+To work with suitable error handling added.
+how useful/verbose is errorqueue command?
+errorqueue.count returns the number of errors in the query and errorqueue.next() will contain the error code, message and so on.
+ok, thanks for clearing this up.
+i agree, but i dislike this for two reasons:
+well, ugliness is inevitable; and to avoid things being slowed down, the error handling mechanism can be made optional, right?
+well, ugliness is inevitable; and to avoid things being slowed down, the error handling mechanism can be made optional, right?
+Yes that was the point I tried to get across originally and why i raised the issue and not a pr, any fix for this needs to be benchmarked for the impact
+Actually VISA gives the possibility to add a listener callback function that gets called if the status register of the instrument indicates an error.
+I played with that some time ago. If its of interest I can try to find my example code.
+@jenshnielsen Finally managed to find my example and make it nice: https://github.com/StefanD986/VISA_Event_handling_example

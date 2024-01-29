@@ -1,0 +1,23 @@
+In aqua>components>qfts>standard.py, it seems that the qubit ordering convention when calling the 'vector' mode and the 'circuit' mode aren't the same. Since the function does not include the final swaps, I would expect this behavior:
+if one compares the matrix obtained with the "vector mode", and the one obtain by "circuit mode + unitary simulator processing", the second one should have two ROWS switched compared to the first one. Instead two COLUMNS are switched. This means that the swaps should be applied before the QFT to obtain identical matrices. This can be confusing.
+from qiskit import Aer, execute
+from qiskit.aqua.components.qfts.standard import Standard
+QFT = Standard(num_qubits)
+qft_vec_mode = QFT.construct_circuit('vector')
+circuit_qft = QFT.construct_circuit('circuit')
+simulator = Aer.get_backend('unitary_simulator')
+result = execute(circuit_qft, simulator).result()
+qft_circ_mode = result.get_unitary(circuit_qft)
+print(qft_vec_mode)
+print(qft_circ_mode)
+expect to have a qft+swaps unitary that is identical to the vector mode of qft.
+change ordering of the qubits in the circuit definition of qft:
+for j in range(self._num_qubits-1,-1,-1):
+for k in range(self._num_qubits-1,j,-1):
+@polline thx for reporting this! I tried as you suggested and also got different results from 'circuit' and 'vector' modes. I did try your suggested solution but unfortunately couldn't get things to work.
+Aqua's circuit construction for qft was actually adapted from Terra:
+could you use this method instead for the 'circuit' mode and verify your suggested solution?
+@hushaohan Thanks for your reply
+Indeed we also need to switch the indices in the power of 2 in the qft. Here is my suggested solution, I run some tests, seems to work:
+I think the same should also be applied in the standard iqft method.
+@polline could you take a look at this PR #447 and let me know if it works for you? I basically added the swaps (before qft and after iqft, without having to change the indices j and k) and the options to toggle them on/off.

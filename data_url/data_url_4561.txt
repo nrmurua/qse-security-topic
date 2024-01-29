@@ -1,0 +1,43 @@
+As we aim to tackle more complex quantum algorithms we will need to upgrade our system of performing measurements during the execution of a circuit.
+Until now, measurements do not alter the wave function of the quantum state, and in order to fix that, the Collapse gate was introduced. This can be used to simulate measurement but requires to start a new Circuit object every time a measurement is taken (see Shor example).
+Collapse also appears to have issues when trying to collapse a state into a non-existent output, try:
+where nan values appear in the wave function.
+Ideally one would want to add measurements during a circuit, and then add gates or make alterations to the circuit conditioned to the result of the measurement result. This approach would make sense in a setting where every circuit execution yields one result, as keeping track of all options at the same time would require exponential memory.
+This would not only be useful for the semi-classical Shor example, but on future simulations of quantum error correcting codes.
+Thanks for this summary. When I read this approach, which let me call it "conditional circuit", I think that we should reconsider the circuit queue as a DAG  instead of a simple list of operations. The DAG can contain conditionals based on output of other nodes. I see 2 possible approaches, emulate a dag sequentially in the code, e.g. keeping the queue of gates and updating the circuit execute method, or replace the queue with a dag object (custom made or from other libraries) which will conditionally apply gates to the state.
+I wanted to add some information here. I think that the best possible way to do this is to emulate what quantum computers do. That is, when we measure one qubit, the rest of the wavefunction collapses in some way, what can be as Stefano said a conditional action. However, as it is now, I see two problems:
+The topic is very interesting and I would like to contribute. From my point of view we should split this issue in two problems. The first one is obvious, we should develope a simulator that simulate exactly what a quantum computer can do (and probably develope a version to simulate  the hardware devices we are creating at TII).
+The second one (as Sergi, I think,  was suggesting) it would be to create some debugging tools to help the programmer writing (complex) quantum algotirhms. I think this is something missing in most of quantum frameworks and I do not know if a debugger is part of the Qibo roadmap.
+@AdrianPerezSalinas @igres26 let me try to understand better the primitives needed to make this thing work. The current Qibo layout accepts a "eager" model computation model, e.g. we could already retrieve results step by step for all gates:
+Is this approach sufficient to provide the needed flexibility?
+I guess so. Can this <condition> encode something like the 0-th qubit is in the state |0> ? This could happen in this case with probability 50%
+I don't think we should be conditioning on the state. The condition should be on a measurement result as one would on a real device. This should probably begin with a rework on how measurements work when they appear inside the circuit.
+An example of the ideal usage that is already present in qibo is the one found in the quantum_order_finding_semiclassical(N, a) function in the shor example functions.py file.
+The ideal functionality would be not creating and running a new circuit for each measurement, but still controlling on the previous measurement results.
+I don't think we should be conditioning on the state. The condition should be on a measurement result as one would on a real device. This should probably begin with a rework on how measurements work when they appear inside the circuit.
+yes, I think it is possible do adjust my example by replacing H with the M gate.
+I think in terms of implementation this can be simplified to two steps:
+but there are at least the following challenges associated even with just (1):
+Also some comments on Adrian's remarks regarding what is currently implemented in Qibo:
+This is correct, it is not possible to do measurements during execution because of the following limitations:
+The collapse gate performs the collapse according to the result you specify, however this has the nan issue Sergi explained in the first post. With that in mind I am not sure if keeping the collapse as it is now is a good idea.
+In principle combination of these features is possible if you use different circuits:
+which is the method used in the semi-classical Shor example.
+A physics question independently of Qibo: Is it correct that the Hadamard acts this way? If you start from the composite |0><0| (rho) and you apply H to the first qubit you get:
+H |0><0| H (rho) = (|0> + |1>)(<0| + <1|) (rho) / 2
+which is different than |0><0| (rho) + |1><1| (rho) because it also has non-diagonal terms |0><1| and |1><0|.
+and a conditional X gate (a CNOT somehow). We would have (0)(rho) + (1)(X rho X).
+This is possible to do in Qibo using the CNOT, assuming you properly create the (|0><0| + |1><1|) (rho) state:
+Here I created the proper initial state as an array, because just adding an gates.H(0) before the CNOT will not work because of what I wrote above (will create non-diagonal terms). You can check that in this example final_rho is indeed the density matrix of (0)(rho) + (1)(X rho X). For example you can create this using just numpy:
+and check that target_rho is the same as final_rho.
+Now we measure and obtain either (0)(rho) or (1)(X rho X) with different probabilities. Is there any way to keep track of everything as a single density matrix? I do not see the manner.
+Currently you can only do one of the following:
+A possible API for the controlled by measurement gates could be the following:
+This would apply the X gates only if qubit-0 is found 1 when measured. This should also be easy to implement as the measurement result can be cached within the m0 object and used in the controlled gates.
+Following is an example on what the semiclassical function in Shor would look like with a possible new API.
+Do you think that is intuitive? We can use this as a reference to build up from.
+Just to be sure, the only new thing is
+isn't it?
+In my opinion this is the class of syntax we should look for. Something quick, intuitive, and as a matter of fact it is what it is, a measurement gate. My question is: now we keep the result (0, 1) and the rest of the quantum state behaves to keep that result, so there is only some loss of coefficients and terms. I think this can be done both for density matrices and statevectors, do not know what you think, @stavros11
+That line, and the fact that no new circuit need to be created, and there is no need to save the final state after each circuit execution.
+This is coded so that each pass only provides a single sample. And if statistics are required the circuit has to be executed again from the top.

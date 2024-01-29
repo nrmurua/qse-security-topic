@@ -1,0 +1,52 @@
+The CP2K Dashboard shows a drop in performance of tests H2O-64 LS and H2O-64 MD on CRAY_XC50_GPU between CP2K commits f4ed3f9 and 53314e2. Notice the est. peak process memory drops significantly as well.
+Do you have any idea what this performance drop might be due to ?
+I tried to find out whether this was due to an update of DBCSR, but have trouble figuring out which DBCSR version is used in each one of these commits  because of issue #154 and because of the following lines in the result log of commit f4ed3f9:
+Which DBCSR version was used in commit f4ed3f9 of CP2K if the compilation log indicates that the DBCSR submodule wasn't present?
+OK, the run you are referring was without the standalone DBCSR. We were in a kind of hybrid situation, where there was the old DBCSR directory + the submodule, that's why you get the error message, but the old DBCSR was used.  Therefore I would suggest going back to a previous run, for instance:
+https://dashboard.cp2k.org/archive/cray-xc50-daint-gpu-psmp_perf/commit_e9292bad59189b5ead01538e28d715d2fecaf486.txt
+The H2O-64 LS is the number 5. I have copied one of the output and put in the directory
+/scratch/snx3000/alazzaro/CP2K_AUTO_PERFTEST/DAINT/CRAY_XC50-gfortran_gpu/psmp/178d9318647ffb272a46a4ac5e23bd39b3b7446d_performance_tests/5
+where we have also the output of the latest CP2K run.
+If I do compare the outputs with my script, I get (second/third colum is new/old DBCSR):
+So, there are around 10 seconds of difference in the total time. More or less, they are due to MPI (see mp_waitall_1 and mp_sum_l). This is can be due to a fluctuation.
+There is a large difference in
+which are the part that you touched. Yes, the new implementation is by far slower and this is not clear...
+Thanks a lot for your detailed answer. I will look into this ...
+I see how the difference in timings could be an MPI-fluke, but I do not see how this would explain the differences in memory consumption.
+OK, memory is something different...
+In the pre-submodule era, there was a single counter to check the memory used by DBCSR and CP2K. Unfortunately, in the current era, there are two counters:
+CP2K: e.g.
+MEMORY| Estimated peak process memory [MiB]                                4016
+DBCSR: e.g.
+max memory usage/rank               4.955787E+09
+(these are bytes)
+Therefore the plot on the dashboard is not consistent anymore... The drop you see is artificial...
+Now, it turns out that the new DBCSR consumes more memory for DBCSR, for instance (previous example, second/third column are new/old DBCSR):
+At this point, I'm not sure if we should mix the output from CP2K with the output from DBCSR. I will leave things as they are...
+BTW, the same pattern is for the MC partition run, however the DBCSR memory consumption is the same (and the total time too). Therefore it seems something specific for the GPU implementation (more memory, higher total time). At this point, I don't know the reason, but I would suggest to focus on the performance problem first... Likely a run with the two implementations on a single node will give more details. In particular, I don't understand why we spend more time on the transpose...
+I have analyzed a bit more the transpose part. The only meaningful difference is inside the function libcusmm_transpose_d (file src/acc/libsmm_acc/libcusmm/libcusmm.cpp). In the old DBCSR the code calls a template version of the kernel, while in the new DBCSR we look at the jitted version. It can be that, given the very fast kernel (23x23), the overhead is dominating the execution of the function, however I'm not sure...
+Looking at the code, I see that in the next DBCSR we have the following call:
+which points to the kernel call, i.e.
+where threads==128.
+The old DBCSR has the call:
+kern_func_74<<<nblks, 128, 0, *stream>>>(trs_stack+offset, nblks, buffer);
+Note that the kernels in both cases are identical...
+Anyway, it requies a detailed profiling. I hope @shoshijak will clarify the difference...
+I didn't suspect github would pick up on this automatically ... but here you go, this performance issue is fixed in DBCSR: cp2k/dbcsr#140
+It seems this issue got resolve in DBCSR. Should we then update the submodule in CP2K?
+Yes, we should.
+I am wrapping up a few fixes for minor glitches here and there, so if updating the submodule can wait 2-3 days, that would be great.
+@oschuett I just merged the aforementioned minor glitch fixes in the DBCSR repo (PR). As far as I'm concerned, the the DBCSR submodule in CP2K can be updated now.
+Thanks @shoshijak , I will do it tonight!
+Great! @shoshijak, thanks for following up.
+Yesterday I finally did a RC for DBCSR and included in CP2K on Daint performance tests. I'm a bit confused, I don't see any performance improvements...
+Old v1.0.0 DBCSR: https://dashboard.cp2k.org/archive/cray-xc50-daint-gpu-psmp_perf/commit_90340ba0cde1d9e13257eb0e349e75c63ef950b3.txt
+New v1.1.0.rc0 DBCSR: https://dashboard.cp2k.org/archive/cray-xc50-daint-gpu-psmp_perf/commit_48dde32056ef2add6f6cace3763971efa65d1e90.txt
+For instance, the tests 5 (H2O-64 LS, test 5 in the logs, look for 5/result.log) takes ~118 seconds in both cases. Is this expected? I thought the v1.1 should improve performance... @shoshijak
+Hi @alazzaro, thanks for following up!
+I'm confused by what you say as well ... let me take a closer look this afternoon.
+I ran the dashboard test 5 again (tests/QS/benchmark_DM_LS/H2O-dft-ls.inp with NREP=3 on 8 nodes, 2 ranks/node, 12 threads/rank) and obtained following runtimes (values averaged over 3 runs):
+The new DBCSR version does improve performance. But for a reason I have yet to find, both of these runtimes are slower than the values I reported in the description of DBCSR's PR#140 (see last table).
+Well, these tests are pretty bound by communication times... I'm definitely happy with the current version of the code, so, unless we find a "smoking gun", I propose to proceed to release v1.1 now. Anything else can go in v2.x. Ok for you?
+Yes, perfectly ok for me.
+Closed via #290

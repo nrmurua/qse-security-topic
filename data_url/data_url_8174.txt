@@ -1,0 +1,38 @@
+Describe the bug
+Running Qutip on an M1 MacBook Pro on import I can get the following error:
+File "/Users/otanan/miniforge3/envs/main/lib/python3.9/site-packages/qutip-4.5.0-py3.9-macosx-11.0-arm64.egg/qutip/init.py", line 144, in 
+info =  qutip.hardware_info.hardware_info()
+File "/Users/otanan/miniforge3/envs/main/lib/python3.9/site-packages/qutip-4.5.0-py3.9-macosx-11.0-arm64.egg/qutip/hardware_info.py", line 123, in hardware_info
+out = _mac_hardware_info()
+File "/Users/otanan/miniforge3/envs/main/lib/python3.9/site-packages/qutip-4.5.0-py3.9-macosx-11.0-arm64.egg/qutip/hardware_info.py", line 48, in _mac_hardware_info
+results.update({'cpu_freq': int(float(os.popen('sysctl -n machdep.cpu.brand_string')
+IndexError: list index out of range
+Copyright (c) QuTiP team 2011 and later.
+Original developers: R. J. Johansson & P. D. Nation.
+Previous lead developers: Chris Granade & A. Grimsmo.
+Current admin team: Alexander Pitchford, Paul D. Nation, Nathan Shammah, Shahnawaz Ahmed, Neill Lambert, and Eric Giguère.
+Project Manager: Franco Nori.
+Currently developed through wide collaboration. See https://github.com/qutip for details.
+QuTiP Version:      4.5.0
+Numpy Version:      1.19.4
+Scipy Version:      1.5.3
+Cython Version:     0.29.21
+Matplotlib Version: 3.3.3
+Python Version:     3.9.0
+Number of CPUs:     8
+BLAS Info:          Generic
+OPENMP Installed:   False
+INTEL MKL Ext:      False
+Platform Info:      Darwin (arm64)
+Installation path:  /Users/otanan/miniforge3/envs/main/lib/python3.9/site-packages/qutip-4.5.0-py3.9-macosx-11.0-arm64.egg/qutip
+Additional context
+I was able to "fix" the issue by simply commenting out lines 48 and 49 in Qutip's hardware_info.py.
+Thanks for reporting this.
+This is actually a bit of a concern - as far as I know none of the developers have the new ARM chips (or even macOS 11) and I don't know how long it'll be until CI servers have them, so there may be more bugs lurking for you.  Please let us know if you have any more problems, especially building from source or string-format time-dependence - I'd expect those to be the most fragile to new kernel and hardware changes.
+@ajgpitch This is actually going to be a nuisance for distributing wheels too.  I think GH actions will have the necessary Xcode 12 support, but I'm not sure the multi-wheel tool I'm using does - the new Apple silicon is ARM not x86 so it needs different compilation.  We may not be able to support M1 macs in binary releases initially.
+By the way, please could you run the command sysctl hw in the terminal (not python, just bash/whatever) and post the output here?  We can make the code run as intended if I know what format the new macs output their info in (though I'm not entirely sure what we use that information for...).
+Hardware info is only used to get the number of cpus... It may hve been used for benchmark in the past, it also fetch the cpu frequency and memsize... I would be for simply removing it in the next version.
+Knowing the number of CPUs in the system may help in the future in debugging OpenMP code and setting sensible OpenMP thread counts - we may want to keep that part of the detection.  I don't see any need for CPU frequency or memory size, though.
+That said, we should probably switch to using a library (like psutil) if we're going to keep it - it'll be a lot more reliable.  For example, I've no idea why the current mac hardware detection in QuTiP ignores the hw.ncpu entry in sysctl, but the FreeBSD version explicitly uses it...
+Because things worked a bit differently 10 years ago. However, psutil does do everything QuTiP needs these days. They can also come up with a smarter M1 detection method.
+@nonhermitian: yeah, that's why I wasn't so keen on changing the code as it is - I can see from the git log that it went through a few iterations due to old versions of mac os breaking it, and I don't want to introduce regressive bugs.  I didn't know why there was a difference, and I couldn't find what the output of sysctl was on mac 10.9 or whatever it was in 2013 (or when/if it changed).

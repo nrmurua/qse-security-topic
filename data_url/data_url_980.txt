@@ -1,0 +1,28 @@
+Filing this as both a slight-annoyance we plan on tackling and a 'buganizer Wonderbug' for @dabacon since I can't bug him on buganizer for real anymore ;)
+Cirq uses unparseable ASCII characters in its serialization format for IonQ. This is not actively causing issues, but it has broken us in the past. We would like to stop using them, and this bug tells the story of why.
+It's explained in a comment here: https://github.com/quantumlib/Cirq/blob/master/cirq-ionq/cirq_ionq/serializer.py#L241-L246
+Okay, cool, we're using some ASCII control point characters (Unit Separator, or the 31st/1F-th ASCII character, and Record Separator, the 30th/1E-th). These are characters that don't ever occur in any normal text, they're part of ASCII, so they work even if they're being serialized into a non-unicode-safe storage layer. What could go wrong?
+"Modern" languages really don't like those characters in JSON. Here's an example, using vanilla python 3.9
+You get similar results in other languages (in javascript for example).
+That's a bummer, the trick to use valid ASCII breaks parsing of JSON, and since we want to embed these strings in JSON, that's a problem.
+But wait, it's like this, right now! Which brings us to
+
+Cirq requires these characters when it splits the metadata on a returned job to get the measurement keys out.
+If this is true, how does it work? The character is needed here, but /can't/ be returned by the API, or browsers/clients everywhere will choke on the data!
+The answer is implicit unicode conversion!
+If you dump the response you get from api.ionq.co you'll see
+Ah, so it's using escape sequences \u001f and \u001e, not chr(31) at all!
+When python serializes to json, it handles this properly:
+And that's how we see it at the API itself.
+However, we've now lost the original motivation for using these characters! It's not ASCII at all. And if a change were made to support only ASCII, it might even be reasonable to encode the string as '\x1f', and, well, bad things result.
+So this is the story of how we ended up trying to use ASCII, fell backward into unicode without realizing, and are now in the uncomfortable position of requiring the client and server to be unicode-aware.
+Anyway, we found this one day when our server-side serializer got a little less smart, and started returning '\x1f' without encoding it.
+This is called out in https://www.rfc-editor.org/rfc/rfc7159#page-8
+but you'd have to unicode to know that :)
+Wonderbug indeed!
+There is no reason to not use another character, as far as I remember.  This is a hack to get around that the IonQ api doesn't have a concept of measurement key IIRC.
+xref #5151
+Adding comment so this can be assigned to me
+@Cynocracy Done.
+@Cynocracy What is the status of this issue?  Do you need help implementing this?  (or does it rely on coordinated changes server-side as well?)
+I'm not sure if this is needed for pre-1.0.  Changing this to a new delimiter should work transparently given that the API maintains the "we send you this, we get it back".  There may need to be something done on the API side if things are introspected, but that's a separate issue.  Going to move to after-1.0.

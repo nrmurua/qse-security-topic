@@ -1,0 +1,33 @@
+Currently if you make a call like sampler.sample(circuit, params={'t': range(5)}) it doesn't work, because it expects e.g. a list of dictionaries instead of a dictionary containing lists. For convenience we should just support both cases. Check if the input is a dictionary with list values (and possibly singletons too), and if so take the cartesian product of the various entries and turn it into a sweep.
+Test cases:
+Could you please assign it to me?
+The following code still doesn't work:
+I think we decided not to do this so that you can resolve list-valued parameters (we have use cases for this internally). Also, there's an ambiguity if you have multiple parameters; given {'a': [1, 2], 'b': [3, 4]} should that do a cartesian product sweep over a and b or a zip sweep? Instead you need to make the sweep explicit at the top level, either as [{'t': 0.3}, {'t': 0.5}] or using actual sweep objects: cirq.Points('t', [0.3, 0.5]).
+If that's the case, then we need to roll back #2786. That PR already partially implemented this feature, using the Cartesian product definition.
+Should we put this on the list of issues to discuss at the next cirq cync, @balopat ?
+We can, I added the label - also I should remember next time to actually discuss the triage/discuss items, please remind me if I forget again :D
+In the meantime:
+Here are the discussion notes we had about a related subject (#2975) at the May 6 Cirq Cynq.
+There we agreed on explicitly representing cartesian products with a new expression: cirq.Cartesian
+My opinion: This definitely needs rework. I'm tending towards keeping the functionality, making it explicit via a parameter in to_sweeps and wiring it up to the other Samplers.
+I find these levels of paramresolver / sweep / sweepable and the conversion functions to_sweeps, to_sweep, to_resolver a bit confusing. Maybe it's just me and I just need to stare more at it to let it sink in.
+@kevinsung's observation is because to_sweeps is not used in any of the samplers, only in EngineProgram.
+Problems with current solution:
+Both @maffoo (above) and @dstrain115 (https://github.com/quantumlib/Cirq/pull/2786/files#r387207833) pointed out the ambiguity between zip and product which I agree with. I would vote making the "explicitness" present in a parameter for to_sweeps(sweepable, param_combiner: Union[study.Zip,study.Product]=study.Product) and anything that uses to_sweeps should expose this parameter. Thoughts?
+iterables are not supported due to the confusion with the cartesian shorthand: Generalize resolve_parameters to allow resolving to custom datatypes #2975 - this still should be fixed somehow it seems
+the implementation is creating a bunch of unnecessary objects:
+While this could be simply cirq.Points('t', [0,1,2]).
+or
+Which should be instead: cirq.Zip(cirq.Points('t':[0,1,2]), cirq.Points('s':[3,4,5]))
+Note that Sampler.sample actually does use to_sweeps, so it does work with this feature. So as it stands, this feature is inconsistently implemented.
+Cirq Cynq:
+Verdict: we'll keep the dict shorthand but with explicit methods
+Two new methods
+And then the "inconsistency" will be resolved via removing this functionality from to_sweeps.
+Deprecation logic:
+I just caught up with the thread this morning. When I first implemented it, not familiar enough with types, I wasn't aware that the tests should logically extend to the use case of to_resolver method. It's great someone brought it up.
+For the benefits of our future new contributors, how do we enforce consistency of functionally parallel methods?
+I just found #3018 which is exactly the deprecation issue for this.
+@crystalzhaizhai That's a difficult problem in general. You definitely implemented the feature satisfactorily as it was requested. The inconsistent behavior actually results from how we already inconsistently use to_sweeps versus to_resolvers so it definitely wasn't your fault.
+@kevinsung It's great you pointed out the bug. Motivated me to think about the problem in general context. If I recalled correctly, you had a related pull request. Do you still plan to work on this? If so, I will change the assignee to you. If not, I can continue to fix it.
+@crystalzhaizhai I have opened #3333 to fix this and would appreciate your review.

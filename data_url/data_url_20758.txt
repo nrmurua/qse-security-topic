@@ -1,0 +1,17 @@
+The bug iin crypto_kem/hqc-rmrs-128/avx2/reed_muller.c is found in liboqs—the tests suddenly fail when compiled on GCC-12, because for GCC this use of tmp is violating C aliasing rules and producing undefined behavior (thus not even showing correct compile warning):
+
+It seems such indexed access to tmp is producing garbage. See this small discussion for details: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=106470
+Okay so it seems we need to replace that with _mm256_extract_epi16(tmp, i)? This probably happens in a bunch of places...
+Yes it happens in three places:
+_mm256_extract_epi16(tmp, i) will not work because i should be immediate value. So Andrew Pinski (at the GCC bugzilla discussion) recommended this wrapper instead:
+Or just a proper cast.
+_mm256_extract_epi16(tmp, i) will not work because i should be immediate value.
+ugh, this is why we can't have nice things.
+Not sure what you mean by "proper cast"; we don't want to use __aligned__ or other GNU compiler extensions in PQClean. (This does make AVX2 code horribly messy...)
+Andrew suggested to use
+This should be gcc and clang compatible. Don't know about other compilers you want to support, though (if they support vector types).
+Also, I found that avxintrin.h have __v16hu type which should work too, but also I don't know how much other compilers support it (icc? msvc?). Nor I know performance impact of such cast (what if it copies whole register to a memory).
+Using extract_epi16 seems most portable. Performance impact is unclear but at least it's not buggy.
+It works in Clang because it implements all(most?) of the GNU extensions. __attribute__ isn't part of the C standard afaik and not supported under MSVC.
+Now, I know that all of the assembly that we have also isn't supported on Windows; but we ban __attribute__ because a) it makes migrating code to MSVC harder and b) it breaks pycparser which we use in CI.
+Another option, it seems, is to unroll the loop manually like this:

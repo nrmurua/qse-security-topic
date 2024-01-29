@@ -1,0 +1,15 @@
+It seems there is a (unintentional?) change to what the controlled interface does before and after the 8179aa2d678bcce480c0ce14bd2852068657abf6 commit in certain cases, possibly related to how the global phase is handled.
+Running the following circuit (and inspecting the states at each moment):
+gives the following output before the 8179aa2d678bcce480c0ce14bd2852068657abf6 commit
+and this output after:
+The output I would expect to see is the former one, as it matches other implementations of the same circuit.
+@dstrain115 could you give an opinion about this when you get a chance? This is an issue for one of our EAP projects and it seems you merged the PR that @stasja claims introduced the problem.
+But if this is really an issue with a global phase then maybe it isn't really an error, per se. I know that, at least previously, we did not make any promises that the Cirq simulator would do predictable things with the global phase.
+PR in question: #2597
+@dstrain115 is out for a bit.  I can take a look.
+Thanks for the detailed report!
+What is happening here is that the current code constructs a CXPowGate, but uses the global phase of the gate.  Since Rx gates have global phase, that phase ends up in the "identity" part of the gate.  That is not at all what users expect, they expect that the gate is a CRx gate.  I think the solution here is if the global shift is not 0, use the old way to construct a controlled not.
+Alternatively we could add CR* Gates. This is one of the "features" on the roadmap that needs to be decided, so I think for now the "don't do it when the shift doesn't work" is the right path
+@smitsanghavi or @Strilanc any comments since you were involved in the bug leading up to this change.
+Agreed, ideally we would construct a CR* gate as Dave said. But until then, if this CXPowGate construction is proving confusing, I don't mind changing it to only happen when there is no global shift.
+The bug is that the code is not checking the global phase (self._global_phase_shift) before performing the substitution.

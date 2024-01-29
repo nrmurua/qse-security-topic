@@ -1,0 +1,48 @@
+When measured and set parameters are added to a DataSet, a unique array_id is created, based on the name of the parameter, and the index in the measurement, and sometimes if the parameter is a setpoint.
+This can lead to rather confusing situations, if you have many instruments with parameters of the same name. I guess it will be rather typical to have many parameters called i.e. volt.
+In the example here I sweep some voltage channels, and I read some others:
+The DataSet looks like this:
+Basically all of these parameter names are volt and some are converted in another parameter which returns 'volt' and 'volt_raw'.
+You see that the id's get additions of the index in the loop, the setpoints get another addition of _set which they only do, if a volt is present in the measured values.
+So If I were to remove the voltage measurements, and do current measurements, the _sets would disappear.
+I find this whole behavior rather confusing, as it changes when only changing small things in a loop, And I have no Idea which array_id belongs to which parameter I measured.
+In the metadata #93 branch the snapshot contains the information of the parameter and instruments, so it is possible to extract the info, but that doesn't help if I want to add a plot right with the data. Without every time checking the naming of the ids and trying to relate it to what exactly I measured.
+Even though I'm a big fan of less typing, I'd like to change this behavior so that the array_ids get a clearer naming.
+what about
+Even with this scheme there might be confusion, it would be ugly to always add the index, as it would only be needed when the same parameter is measured several times.
+Also names could become very long. And also we can have non-unique instrument names (different topic, but that we should also force to not be allowed).
+Another way to go about this, is to add a Get(param, array='Vbg') there is actually a discussion on Get() in #26. However, I see this as an optional addition, with a fallback to clear names if it is not used.
+I cannot really come up with a very neat solution, and would like to hear from others and @alexcjohnson how you think about this!
+edit: Measure -> Get as per #26
+In my testing I also ran into this (amplitude was changed into amplitude_0). The suggestion by @MerlinSmiles seems too complicated though. I would suggest:
+One of the main things I have noticed when working with the dataset is that I was missing an indication of what parameters were set and which ones were get.
+As I mentioned in #179 I am a big fan of replacing the dictionary like structure with an ordered dict like structure. Such that even when the names of the parameters are unknown we can just pass it to a plotting function and it plots it the way we expect.
+@alexcjohnson, what do you think of an Ordered dict like structure for the dataset?
+I think having clearer naming of the array_id is a good idea. I think this should be automated for sure so that the extra typing should not be a real issue. I do think some of the things you propose are an overkill.
+I think array_id = <instr_name><param_name> is a good minimal description of a parameter and can be assumed to be unique in all cases (as params in instruments are enforced to be unique and instr names can be enforced to be unique). Params that don't have an associated instrument should just be array_id = <param_name. I think this is sufficiently simple that it should not add any confusion.
+I am a bit confused by your example @MerlinSmiles , You have Volt as a recurring parameter name, is that not the unit of the parameter instead of the name?
+Also did you add a new repr to the datset? The thing you print looks a bit better than what I tested with, but I can be mistaken.
+One of the main things I have noticed when working with the dataset is that I was missing an indication of what parameters were set and which ones were get.
+@MerlinSmiles added this in the metadata branch #107 - which I still have some work to do on but it's getting close to ready. Close enough that it would be great if you want to take a look at it for functionality while I work on the loose ends.
+As I mentioned in #179 I am a big fan of replacing the dictionary like structure with an ordered dict like structure. Such that even when the names of the parameters are unknown we can just pass it to a plotting function and it plots it the way we expect.
+@alexcjohnson, what do you think of an Ordered dict like structure for the dataset?
+👍  We will need to figure out how to encode this in the formatters, so you get the same order on reload, but that would definitely be nicer.
+I think array_id = <instr_name><param_name> is a good minimal description of a parameter and can be assumed to be unique in all cases (as params in instruments are enforced to be unique and instr names can be enforced to be unique). Params that don't have an associated instrument should just be array_id = <param_name>.
+Make it array_id = <instr_name>_<param_name> and we have a deal. That will indeed cover many cases, but there will still be times you measure the exact same Parameter object more than once within one loop. There are many examples but one simple one is data2 in the main example notebook - where we are essentially measuring conductance vs two gate voltages, both at zero source-drain bias and finite source-drain bias. But you could also measure the same thing with the same outer loop but different inner loops, or even measure exactly the same thing twice for repeatability, or in opposite directions to make a hysteresis loop...
+Also did you add a new __repr__ to the datset? The thing you print looks a bit better than what I tested with, but I can be mistaken.
+Yes, @MerlinSmiles added that to #107 as well.
+@peendebak
+The suggestion by @MerlinSmiles seems too complicated though. I would suggest:
+Keep the default naming as is (or with minor changes)
+I dont suggest too much, add an instrument_name and a _set, what is complicated about that?
+@AdriaanRol
+One of the main things I have noticed when working with the dataset is that I was missing an indication of what parameters were set and which ones were get.
+Me too, constantly, which is why I changed the __repr__ in #107
+But the __repr__ is not enough from my perspective, as I also want to type data.<tab> and clearly distinguish between setpoints and getpoints, hence my suggestion to add the set whenever something is a setpoint.
+...and instr names can be enforced to be unique...
+How? Can we do this currently?
+the array_id = <instr_name>_<param_name> isn't unique enought, but @alexcjohnson already explained that.
+I am a bit confused by your example @MerlinSmiles , You have Volt as a recurring parameter name, is that not the unit of the parameter instead of the name?
+Volt is the parameter name of that two keithleys and two dmms I use there. Its the unit too, and it is recurring because all parameters vsdA, vsdB, currA, vdrpA all have a volt parameter.
+On top of that, if I were to do a sweep up and down, there would be even more volts, that's when additionoal _x_y_z... values are added.
+Closed by #234 - please play with this and make a new issue if you would like something to change.

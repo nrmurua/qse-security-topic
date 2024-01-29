@@ -1,0 +1,13 @@
+qasm simulator may return a result that has 'status': COMPLETED and an error in results as follows:
+According to Issue 49 in qiskit-ibmq-provider, the result schema does not allow this format. Some alternatives are being proposed.
+The issue here is that ibmq-provider converts the job result into a qiskit.Result object. The qiskit.Result object expects each item in the results list to have data and shots, as specified by the schema.
+Test with partial result (a slight modification of this test)
+Note that the .result() call today would just raise a JobError. But if I comment out the code that raises the error and print the result, I get a mixture of successful and failed results (as seen above). The end goal here is to be able to present to the user both the successful experiments and error messages for the failed ones when they invoke job.result().
+I've added schema-valid support for partial results in #365, but to properly implement without hacks this would require modifying the Result object itself to handle validating success of individual experiments, and removing this validation from the AerBackend class.
+The main problem is that the Result object checks that "success": True at the top result-schema level when you call a method like result.data or result.get_counts etc, and if success is False it raises an exception showing  the status string message from the top level.
+If any individual experiment fails, this top level success should remain False, so we would need to change it to check for the success value at the ExperimentResult schema level when you say get_counts(j), and raise an exception if experiment j was unsuccessful.
+Related Terra PR Qiskit/qiskit#3217
+I was under the impression qasm simulator would always return results of individual experiment, successful or not. In other words, the results list would contain an entry for each experiment, along with its success and status.
+The test job with partial success (see above) failed today with an empty results list:
+I'm not sure why the behavior changed, as it got partial results just few days ago. For cases where results is empty, can we get an error message/code? This is related to the effort to make job.error_message() more informative. I can open a separate issue but wanted to verify the behavior first.
+This was added in Aer 0.3.1

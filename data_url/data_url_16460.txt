@@ -1,0 +1,44 @@
+A way to obtain Operators and evolve Statevectors in the qiskit.quantum_info module where some parameters are unknown. Example:
+
+This would be a 4x4 matrix whose parameters are mathematical expressions of θ.
+Hi, I'd like to work on this if possible - would it be OK to use eg SymPy to perform symbolic calculation?
+Cheers @ajavadia I'll update here once I've got something working
+Hi @ajavadia ,@a-kapila  are you still working on it?
+I took a look at this issue and i realized that now the code crashes after calling to_matrix() method of standard gates since the method expects the Parameters of the Gate to be binded. You can make this work but you will not be able to return a numpy array with complex entries. (the entries will be of dtype=object). The issue is that the Operator class strongly assumes that the _data field will be a numpy array with complex entries. So, i think it's better to make a new class rather than to mess a lot with the existing one. Any thoughts?
+Hi @georgios-ts sorry, not working on it any more - found a workaround for what I needed so feel free to go for it yourself.
+@georgios-ts @a-kapila sorry for the late response. this is still a good issue if you are interested to work on it. I was hoping we could make the Operator more flexible to consume unbound parameters (i.e. sympy values). But I haven't dug into much. @chriseclectic thoughts?
+@ajavadia Yes, still interested. Though i think it's possible only after #4854 and #5192 merge, since they are necessary to express, for example, the entries of a rotation matrix with unbound parameters.
+As @georgios-ts  says you can't just swap the numpy array for sympy as many things will break. I think it would be better to make a new parameterized operator class that matches the Operator API but can also be initialized from sympy array or parameterized quantum circuit and has extra methods for setting parameter values and converting to numeric operator.
+One issue I would like to point out is whether it is if it is even worth doing something like this symbolically in the first place. One you try and convert a parameterized circuit to a symbolic matrix the expressions are going to blow up very fast.
+To take the circuit from the example and evaluating it symbolically in Mathematica, the U[0, 0] entry is:
+@chriseclectic Good point. I think it's only valuable in circuits with a small number of qubits and parameters. For example, it's annoying when i have a 2q-circuit with a single unbound parameter and cannot inspect the unitary.
+✅ Issue still valid! Statevector class and operators are not flexible enough to evolve parameterised operations. No PRs linked to this issue that have solved it completely as per OP's description. Issue is open to solve!
+Will update comment/add more comments if cause is found/fixed!
+Python version 3.9.7
+qiskit-terra version: 0.19.1
+If we implement this we might add a very big warning about the performance of this (and the nasty results). If a user starts looking at the unitary of some variational circuit for instance, this feature might create more frustration than it is useful 😅
+Hmm interesting problem. Here is what I'm thinking about on how to do this programmatically.
+or something more direct
+Even if you are able to figure out the inheritance problem so that the parent classes of Gate decide to use the sympy library instead of math library for math.cos and math.sin functions (by doing something equivalent to math=sympy somewhere) , you still get problems for gates like RZGate, that cast self.params as float. I tried making a wrapper class on sympy.Symbol which overrides the float method to return itself, but python throws a type error and doesn't allow this.
+Now a really ugly solution I'm thinking about is to use inspect.getsource() to grab the array definition from the parent class, but rewrite it so it removes calls to float and replaces math. with sympy.. I'm surprised there is no easier way to do this, but all the type-checking is making it tough. I'd very much like to be able to multiply operator matrices together without needing to instantiate gates with parameter values.
+Ugly code but proof of concept:
+Outputs:
+Another option might be that we do not allow the symbolic evaluation of circuits, but instead allow casting parameterized gates to a matrix. Then, the user would have to use SymPy directly to construct the parameterized unitary.
+What about defining a specific "sub-library" for the symbolic representation of each quantum gate by using sympy? Do you think this would be a viable solution? What I mean is something like the following (limiting to the implementation of some basic single-qubit gates only):
+Then it would be possible to get the gate symbolic representation by implementing the method to_sympy() to the class qiskit.circuit.Gate:
+$$
+\begin{bmatrix}
+\cos\left(\frac{\theta}{2}\right) & -i \sin\left(\frac{\theta}{2}\right)\\
+-i \sin\left(\frac{\theta}{2}\right) & \cos\left(\frac{\theta}{2}\right)
+\end{bmatrix}
+$$
+Once this is done, in principle it would be possible to get the symbolic unitary matrix (or the final full statevector) representation out of any given parameterized quantum circuit.
+A very raw but working implementation of this transformation (considering again single-qubit gates only) could be:
+Proof-of-concept example:
+
+get_sympy_operator(qc)
+I'm very hesitant to add any further symbolic capabilities to Terra - even the quantum_info base probably wouldn't have hurt if it were managed as a separate package that's a dependency of Terra rather than inside it.  Terra now is most properly the owner of various API interfaces, and of circuit descriptions, manipulations and compilation, and quantum_info is kind of a part we'd rather somebody else could manage.
+The way you're describing here sounds like it would be quite separate even to quantum_info.  That does sound like the most sensible way to implement something like this.  That also means, though, that it doesn't necessarily need to be in Terra - you could work on packaging it up yourself using Terra as a dependency, and consider submitting it to the Qiskit Ecosystem.  If it does become something that we think is good to merge into Terra, it's easier to go from a separate package into Terra than it is to deal with code that's merged to Terra when we don't have the manpower to maintain it.
+Thank you for the suggestion... I started to work on that as a separate package: SimoneGasperini/qiskit-symb including qiskit-terra as a dependency. If anyone wants to help, please feel free to leave some suggestions here or open a new issue/pull request on the repo itself.
+Thanks Simone - if you're interested in submitting it to the ecosystem I linked above, please feel free to do so, and one of the team there will help you out with the process.
+I'll close this issue for now, because we don't really have a clear vision on whether the team as a whole wants to accept / maintain a PR to this effect in Terra.  We may re-open it in the future, but for now I think it's misleading people into thinking we're more willing to accept this than we actually are.

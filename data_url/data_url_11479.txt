@@ -1,0 +1,23 @@
+Code is running with the following simulation:
+backend = BasicAer.get_backend('qasm_simulator')
+backend_options = {"max_parallel_threads": 0}. # RHEL has 8 CPUs, I can see 4-5 being used in parallel.
+quantum_instance = QuantumInstance(backend, shots=1024, seed_simulator=_seed,
+optimization_level=3, backend_options=backend_options)
+feature_map = ZZFeatureMap(feature_dimension=feature_dim, reps=2, entanglement='linear')
+qsvm = QSVM(feature_map, train_data, test_data)
+result = qsvm.run(quantum_instance)
+kernel_matrix_training = result['kernel_matrix_training']
+kernel_matrix_testing = result['kernel_matrix_testing']
+example: train 250x10 (10 features), test 300x10, then returned train matrix: (250, 250) which is ok, but returned test matrix is (300, 199); that prevents using returned train/test kernel matrices to be used in downstream SVM sklearn modeling.
+It does not happen with every data set, just some.
+returning correct test x train kernel matrix
+Hi, Aqua code is now deprecated and only critical fixes are being considered. The QSVM algorithm has been superseded by the QSVC algorithm in machine learning here https://github.com/Qiskit/qiskit-machine-learning/blob/main/qiskit_machine_learning/algorithms/classifiers/qsvc.py It likewise uses a QuantumKernel but is a more direct integration with sklearn in that the quantum kernel is passed to the sklearn SVC; looks like that might be useful to you. You might also like to look at this tutorial https://qiskit.org/documentation/machine-learning/tutorials/03_quantum_kernel.html. The integration with sklearn has other advantages such as access to other tools etc of sklearn that work with the SVC etc.
+Thank you, in the meantime it was confirmed that the call:
+kernel_matrix_testing = result['kernel_matrix_testing']
+returns [test x n_support_vectors], not [test x train], and in debugger it could be seen too, so our assumption of being able to extract both train  and test kernel matrices from prior version of QSVM would not work.
+In the new version it seems that if one wants both train and test kernel matrices, then those need to be calculated individually and cannot be extracted from the QSVC:
+adhoc_matrix_train = adhoc_kernel.evaluate(x_vec=train_features)
+adhoc_matrix_test = adhoc_kernel.evaluate(x_vec=test_features,
+y_vec=train_features)
+For the QSVM you can see the code and what it produces when it runs here - https://github.com/Qiskit/qiskit-aqua/blob/main/qiskit/aqua/algorithms/classifiers/qsvm/_qsvm_binary.py#L133
+The QSVC is just really just a very simple sub-class of sklearn SVC with the QuantumKernel. Using the QSVC is the same therefore as using the sklearn SVC. And as that tutorial I linked above shows you can use the QuantumKernel directly with sklearn SVC and you do not even need to use the QSVC if you don't want to.

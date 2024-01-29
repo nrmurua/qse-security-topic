@@ -1,0 +1,28 @@
+For reference:
+Now doing
+gives the error that gemm! is not defined for LazyTensor and LazyProduct. Instead one has to work-around by passing Hfull = sparse(full(H)) instead of H to timeevolution.
+As a remark, the issue you are having can actually be traced back to the fact that no form of tensor product (lazy or normal) is implemented for the FFTOperator type.
+To explain: While it is true that gemm! is not implement for a LazyTensor of LazyProduct, it is always possible to rewrite such an instance to a LazyProduct of LazyTensor which gemm! can handle.
+As an example, say you have two LazyProducts, X = LazyProduct(x1, x2) and Y = LazyProduct(y1, y2). Forming the LazyTensor of these will give you the above error. However, you can rewrite X ⊗ Y = x1*y1 ⊗ x2*y2. So essentially you can rewrite LazyTensor(b_comp, [1, 2], X, Y) (which gives the error) as LazyProduct(LazyTensor(b_comp, [1, 2], [x1, y1]), LazyTensor(b_comp, [1, 2], [x2, y2])).
+The problem in your example now is, that x1, x2, y1, y2 are of type FFTOperator for which LazyTensor is not defined. This means, though, that the actual issue is not the combination of LazyTensor and LazyProduct (you just have to rewrite those as shown above). What you need is an (efficient) implementation of a FFTOperator on a composite basis and the corresponding tensor product defined accordingly.
+I have implemented a first working version of the FFTOperator in more than one dimension here https://github.com/qojulia/QuantumOptics.jl/tree/FFTOperator-ND. This already works for your example in the PR here qojulia/QuantumOptics.jl-examples#11.
+If you change the Hamiltonian as follows, everything works fine with the time evolution:
+Note, that instead of Txp ⊗ Typ you could equivalently write transform(b_position ⊗ b_positiony, b_momentum ⊗ b_momentumy).
+A first quick round of benchmarks already looks quite promising:
+As compared to the very inefficient case that was previously used here:
+But also when comparing it to a more elegant implementation that was already possible, namely:
+we see that we have a huge speed-up.
+@Datseris Please have a go at this and let me know if everything works fine for you as well.
+There are still some open issues here, that I have to address though:
+Do any other things come to mind?
+EDIT: One more thing for the list:
+Hi David,
+I have to say that your latest post blew away my mind.
+Unfortunatelly at the moment I have been extremely busy with other projects (involving Husimi functions) and that is why I haven't made any moves yet.
+I really hope I can get to this on Friday, else I will do something over the weekend.
+The benchmarks keep giving me inconsistent results on different runs, even though I am reserving a CPU core for them. I am not sure why this is happening. Sometimes the new implementation is even faster than the old one in 1D, which is quite surprising. In any case, I think the difference is negligible.
+
+Here, the blue line is the new implementation.
+Basically, we can now move on the remaining points raised above. I will look into it.
+@Datseris No worries, I know that time is always a very limited resource.
+The FFTOperator is implemented for composite bases by now. In regard to the title of this issue, namely the combination of lazy products and tensors in gemm!, you simply have to keep in mind the order, i.e. the LazyTensor needs to remain the lowest level (you can always rewrite products and tensor products so this is the case). A corresponding comment was added to the documentation, which is now online.

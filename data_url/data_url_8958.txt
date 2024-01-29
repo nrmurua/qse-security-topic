@@ -1,0 +1,46 @@
+Currently, to rebuild the matrix from an instance of a Tableau it requires multiple calls to .x_output() and .z_output(). Would it be possible to have a call that would return all rows of x/z either as PauliString or in GF2 form?
+I'm not sure I want to add this method. Typically I've added methods because it's complex to implement from python, or actually impossible to do from python because there's some time complexity advantage (e.g. the inverse output methods).
+For this method it seems like the only benefit is it turns these two lines:
+into one line like this
+But the original two lines aren't that complicated, and they're much clearer about the format of the result. Is there a benefit to this method besides making those two lines into one expression? This seems like it's not paying its weight in having-to-write-documentation.
+Also, what is GF2 form?
+into one line like this
+But the original two lines aren't that complicated, and they're much clearer about the format of the result. Is there a benefit to this method besides making those two lines into one expression? This seems like it's not paying its weight in having-to-write-documentation.
+I'm in agreement with you if it were only about syntax. It's more about the overhead cost of the calls. I found that the following hack shaves off 1 ms, which is important to us because it is called in the innermost loop. I'm figuring that if we could get all outputs together that it would reduce this overhead and might even be better than below.
+Also, what is GF2 form?
+Binary symplectic matrix form
+Could you describe more about what your innerloop is for? Maybe we can find a better place to make a cut to improve the performance.
+Could you give an example of the GF2 form of a tableau? E.g. what's the GF2 for the CNOT?
+Innermost loop is for calculating single qubit error spread.
+Perhaps I'm not using standard terminology. Here's an example:
+NOTE: The layout is different than Stim:
+# -----------
+# | XX | XZ |
+# -----------
+# | ZX | ZZ |
+# -----------
+# where ZX is (to)(from)
+where CX is:
+I'll give you a little more to work with. Initially I had:
+but this was too slow, so then I went to:
+still too slow, so then I went to:
+which is a bit of a hack
+Ah, okay, you mean (roughly) the bit table format used in Scott Aaronson's paper. And it looks like it's not just the tableau getting in your way but also the pauli string.
+I think it's reasonable to add a method to Tableau and to PauliString that serializes their contents into numpy arrays. Something like this:
+Note that's a 2d array with first axis "X vs Z" and second axis "qubit index".
+The tableau method could be similar, except it would return a 4d array with first axis "input X vs Z", second axis "output X vs Z", third axis "input qubit index", fourth axis "output qubit index"? Maybe an option to flatten the XZ axes into the qubit axes since that's common? Would also need a way to get the signs out. And probably want reverse methods for going from numpy arrays back into the tableau/pauli string.
+Sounds good to me. If you prefer to use the bit table format used in Aaronson's paper that would be okay, too. The reason why the format I showed above is column-oriented is somewhat arbitrary. Either way, if it is possible to get the full array I think this will help considerably.
+@amirebrahimi Okay, here is the method I am going to implement:
+@amirebrahimi  This is now merged and available in the dev release 1.10.dev1663805381 (use pip install stim==1.10.dev1663805381).
+Let me know if there are any issues, so they can be fixed before it gets into a stable release.
+Thanks for making a dev release. I tried it out and while the method is useful for getting numpy arrays out it unfortunately isn't as performant as using the repr hack:
+NOTE: it makes no difference to performance whether I use bit_packed=True or not
+vs
+Any ideas how we could shave this time down? Less arrays? Perhaps only returning two arrays with [I=0, X=1, Y=2, Z=3]?
+Also one, small typo in the docs for to_numpy:
+Oh. I was imagining you were working with substantially larger tableaus. The optimizations I made are very helpful for those:
+For tiny tableaus all the overhead is going to be coming from python itself. I'm not sure how much I can do to make it faster than slicing the repr, because that does very few python operations. I'm tempted to recommend that you use the C++ API.
+Yes, eventually will be working with much larger Tableaus, so that's good to know gains will come with those.
+@amirebrahimi Okay, I looked more into how to return numpy arrays using pybind, and found out how to do it much more efficiently. Once #359 is merged the runtime of the method should improve 10x from 20-40us to ~2-4us.
+@amirebrahimi give pip install stim==1.10.dev1664114306 a try.
+Rockin! Confirmed that this is super fast now.

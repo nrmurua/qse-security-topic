@@ -1,0 +1,13 @@
+This will break (or just give incorrect results, if the device is large enough) when the number of the qubits in the program and the number of qubits on the device do not start with the same number.
+What do you mean "do not start with the same number"? Do you have an example program? (CC @ecp-rigetti)
+"do not start with the same number" is wrong - I should have said "when program qubits and device qubits do not match, run_and_measure will break during compilation". It's not an issue with the compiler, it's an issue with how the measurement commands are applied.
+Suppose I want to run the following program:
+Via qc.run_and_measure(prog, trials=1000) on a QPU with the following qubits: 1,14,15,16
+The measure component of this function uses the device qubits, and will yield the following program:
+So here, the program and measure qubits do not match. Then, it's sent to be compiled, and breaks because 5 qubits are in the program and the device only has 4.
+Fastest solution for me is to not use run_and_measure, and to just write my own version, where I pull only the relevant (program) qubits from prog.get_qubits(). But I anticipate that this will come up again as many users probably default to this method. Additionally, I believe it was very intentional that we decided to measure every available device qubit using this method. It's just a question of how to map things in the best way, before it is compiled.
+The fix here would be to add a MEASURE ALL quil instruction or quil_to_native_quil-compile the program sans measurements and add afterwards
+I don't think the solution is to further obscure what qubits are what by couching that decision in ever CISCy instructions. Folks will still write programs acting on qubits 0 and 1 when in fact the qubits are named 24 and 68. It seems the MEASURE instructions should be added (and processed) before, using the qubit numbering present in the program (say the program uses k qubits q1, q2, ..., qk), and add the remaining N - k qubits of an N-qubit lattice, numbering them canonically as qk + 1, qk + 2, ..., qk + N - k. So your program would be, after adding MEASURE and before being compiled:
+Sounds good.
+The semantics of run_and_measure measuring all qubits on a device gets pretty dicey when you want the compiler to arrange things for you. We can do the above, but should probably encourage users to use explicit measure instructions so their bits don't get scrambled unwittingly. ie, with the above scheme qubit reindexing will be consistent but the user won't actually know what the mapping is.
+Maybe would be good to throw a warning if program and device qubit numbering doesn't match. I pushed a bit on this issue because I think this will be a common mistake.

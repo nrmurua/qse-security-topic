@@ -1,0 +1,18 @@
+Currently the nvq++ driver is a skeletal bash shell script that runs the various components that comprise the logical, piecewise steps of a nvq++ compilation. The bash script is very easy to update and experiment with, since a shell language is convenient for running subprocesses, assembling strings into command line option lists, etc.
+There are alternatives:
+Port the existing bash script to C++. nvq++ would become a more opaque process that drives the various components. This would have all the pros/cons of writing any sort of process manager in shell vs. C/C++, of course.
+Port the bash shell script to some other scripting language. This is the pick your favorite scripting language option.
+Not really worth pursuing.
+Graft all the nvq++ functionality into clang itself, renaming the clang executable, and using clang as a huge, jack-of-all-trades driver+compiler. Consequential drawbacks exist here for recurring labor and resource costs.
+A mitigating factor is that nvq++ is already a C++ compiler, just with CUDA Quantum extensions (only), and dependent on LLVM, MLIR, and clang, though in a shrink wrapped sense, resp., cudaq-translate + llc, cudaq-opt, and cudaq-quake.
+Convert the nvq++ functionality (cudaq-quake bridge, cudaq-opt passes, cudaq-translate code generators) into a (set of) plugin(s). This would avoid tight integration issues. It would likely still require some sort of "wrapper script" to alleviate the end user from having to type plugin .so files and plugin options.
+Need to investigate if multiple plugins would be needed, if plugin dependent command-line options would be sufficient for a full nvq++ implementation.
+Thanks for all the details, @schweitzpgi  :-)
+Some comments w.r.t. the first bullet point.
+It's fairly easy: we just need to construct a clang::driver::Command and ask the clang::driver::Compilation instance to execute it.
+Fiddling around the nvcc compiler, there is a feasible workflow to compile a single source file containing both __global__ and __qpu__ kernels, as follows:
+(1) Perform CUDA compilation phase (--cuda option)
+We add CUDA Quantum compile options (C++20, include dirs, etc., as usual)
+The result of this step is a .cpp.ii file which has all the CUDA kernels (__global__) resolved + fatbin embedded (intended for further processing by a host compiler).
+(2) Perform usual nvq++ compilation of this file (e.g., with the bridge)
+(3) Add necessary link options (e.g., -lcudadevrt,  -lcudart_static, etc.) for CUDA along our CUDA Quantum link flags.

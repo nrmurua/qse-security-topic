@@ -1,0 +1,40 @@
+Observations on Windows:
+Removing python limitation installs python 3.9 but leads to a shiboken2 error when importing pyside2.
+Observations: the pip install of qiskit-metal overwrites the conda pyside2 install
+Tests:
+Todo:
+One thing to also consider about version 3.9.  We can see deprecation warnings about some stuff that will go away in version 3.9.  These are easy to find -- just run the tests.
+One example, but there may be others besides collections.abc
+
+ready for PyPI? (will enable: pip install qiskit-metal)
+python versions 3.7, 3.8, 3.9
+OS: windows
+Documenting findings (will eventually need to added this info to the README.md, not to faq). Two use cases: pip in python venv or pip in conda env
+Main issue: a direct pip install of qiskit-metal causes an error regarding fiona that goes something like this: A GDAL API version must be specified..... There is no long-term solution to this, just workarounds, described below.
+python venv:
+before trying to pip install qiskit-metal, download and pip install the gdal and fiona wheels, in that order: https://www.lfd.uci.edu/~gohlke/pythonlibs/#gdal
+https://www.lfd.uci.edu/~gohlke/pythonlibs/#fiona
+then pip install qiskit_metal. For example:
+conda env:
+With this approach you will not need to install wheels because conda has the correct gdal/fiona dependencies. However, you will still need to pre-install fiona (not gdal) in the conda env before installing qiskit-metal. Additionally, in this case you will need to pre-install shapely with conda, since the pip package 1.7.x is incompatible with conda windows and will cause an error saying it does not find the file geos_c.dll (1.8.x will be compatible). For example:
+conda python 3.9 (differently from previous post, here we assume the user has run the environment.yml that comes in github)
+Root cause: pyside2 5.15.1 and 5.15.2 from PyPI are incompatible with conda (but are the only versions available for python 3.9), causing NameError: name '_init_pyside_extension' is not defined. Also conda does not have 5.15.2, so that is why the pip install overwrites the installed packages. This is likely not to have resolution, just workarounds as described below:
+In requirements.txt, either:
+----finally:
+requirements.txt has contrasting requirements. On one hand (PyPI packaging) we can let python and pyside2 versions free. On the other hand (conda packaging) we want to not have the pyside2 in the requirements.txt, but only in the environment.yml
+Final considerations on Windows. notice that the GUI looks different from a python venv installation versus a conda env installation. The difference is the text size.
+python venv:
+
+conda env:
+
+Repeated the README.md install python 3.9 test on linux:
+Result: same as windows (has to remove pyside2 from the requirements.txt to avoid the violation, or make it <5.15.1 and accept python 3.8)
+Repeated the pip install tests on linux:
+Result: for both python venv and conda env, fiona is not a problem here, but kernel dies on import of qiskit-metal. Further analysis is needed to determine a workaround
+new info for FAQ:
+During qiskit-metal installation (either during venv generation or around gdspy) you might get a gcc or python related error. To fix this error run something like this (specify the python version as needed): sudo apt-get install gcc g++ python3-dev python3-venv
+Here are some things I noticed while looking into this:
+I tried removing the version constraint on PySide2 in environment.yml and the version constraint on Python in environment.yml and in setup.py. Then conda env create -f environment.yml installs Python 3.9 and PySide2 5.13.2. pip install -e . still leads to pip reinstalling PySide2 5.13.2 (I left the <5.14 constraint in requirements.txt) even though the wheel name does not list 39 (PySide2-5.13.2-5.13.2-cp35.cp36.cp37-abi3-manylinux1_x86_64.whl). I did not check if this version of PySide2 actually works in Python 3.9. I think the reason PySide2 gets reinstalled is because of a packaging metadata problem -- pip does not recognize the conda PySide2 install. There are a couple ways to deal with this:
+I noticed that pip install -e . was also modifying other conda packages. jedi and ipython were being modified because the version constraints in requirements.txt do not match those in environment.yml. These should be kept in sync. docutils, MarkupSafe, and Jinja2 were also modified because the conda sphinx package does not specify the proper version constraints. I opened Use upstream constraints for Jinja2 and Markupsafe conda-forge/sphinx-feedstock#99 about that.
+Decisions after 5/13/2021 meeting:
+All the changes related to this issue are in the branch: dependencies-cleanup-ext

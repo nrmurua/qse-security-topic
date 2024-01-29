@@ -1,0 +1,38 @@
+Using 3.1, nist_qc2, Windows 7 64bit.
+Procedure to reproduce the error:
+For a while, the FPGA just sends each packet twice. At some point (seems always shortly after the FPGA sends a fresh ARP request for the host's IP), both just keep sending each other the same acknowledgments repeatedly, at about 1kHz. This second part didn't occur with a 50kHz input signal; I didn't narrow it down any further.
+Trying to start new experiments in that state results in a timeout (the FPGA doesn't even reply to the host's ARP request) and the only solution I found was to reboot it.
+I'm attaching two logs.
+The one recorded on the host was started before doing the following:
+The IP ending in "107" is the FPGA, "...117" the host.
+logs_TCP_issue.zip
+Right.  Here's what happens here:
+
+[snip]
+
+Looks like smoltcp got stuck in a challenge ACK loop.
+At some point (seems always shortly after the FPGA sends a fresh ARP request for the host's IP)
+This should happen every 60 seconds, as per RFC.
+Trying to start new experiments in that state results in a timeout (the FPGA doesn't even reply to the host's ARP request) and the only solution I found was to reboot it.
+This seems very odd; the symptoms match the core device crashing. Can you please take a look at the serial console?
+In any case, I have ran moninj for a fairly long time and have not observed this issue. It also seems to match smoltcp-rs/smoltcp#62.
+I tried reproducing the error today. In 3.1 py_35+git3ba82cf1, only the duplicate TCP packets appeared, but it never entered the ACK loop. So maybe this is already fixed.
+Reverting to 3.1 py_6+git231bf77b, it did enter the loop and prevented me from starting new experiments, but contrary to what I described above, there was no ARP request without response (maybe that was a coincidental occurrence of #877 ?) - sorry about the confusion.
+Instead, I got two different errors this time:
+The core device hadn't crashed, but just in case, here's its log (with two failed attempts to start an experiment at 156s and 174s):
+On a separate occasion, I've also seen a timeout error:
+Corresponding to the end of this log:
+In 3.1 py_35+git3ba82cf1, only the duplicate TCP packets appeared, but it never entered the ACK loop.
+By "only the duplicate TCP packets appeared", which packets do you mean specifically? And do you think these are problematic?
+Reverting to 3.1 py_6+git231bf77b,
+That version uses smoltcp with known severe TCP bugs, so problems with it are expected and reporting them is not really useful for anything.
+By "only the duplicate TCP packets appeared", which packets do you mean specifically? And do you think these are problematic?
+I'm referring to the upper part of the capture you show in your first reply to this issue. It's probably not an issue, I'm just mentioning the symptoms without making any judgement.
+That version uses smoltcp with known severe TCP bugs, so problems with it are expected and reporting them is not really useful for anything.
+If this means that this issue has been caused by a known bug, I guess that resolves it. If that is also true for #877, please let me know so I don't waste any time. We currently can't switch to the newest 3.1 version, however, due to #885. Is there an intermediate version that includes the smoltcp fixes that you don't expect to have this bug? And if so, can you please let me know how to get your build bot to use a specific commit?
+I had no idea #885 is a blocker for you, you should have mentioned it. It is of course very easy to fix, and I will do so.
+Regarding the buildbot, force build --revision=HASH ... does the job.
+Great, thanks! Until then, I'll stick with 3.1 py_6+git231bf77b and just not use moninj.
+So since I couldn't reproduce this with the newest version, it looks like this issue can be closed.
+Oh and please do try to reproduce #877; while it probably was caused by a known bug, it could have been caused by anything (unlike this issue) so the report would be useful, if any.
+@jonaskeller FWIW #885 has been fixed.

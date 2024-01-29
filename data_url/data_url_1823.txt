@@ -1,0 +1,24 @@
+It used to be that you could check whether an operation had a gate using a type check
+isinstance(gate_op, cirq.GateOperation)
+But if you tag an op it loses that signature.
+isinstance(gate_op.with_tags('you are it'), cirq.GateOperation) == False
+Note that there are a lot of these checks throughout Cirq that will presumably break when you tag an operation.  For example look at cirq.EjectPhasedPaulis().
+does the correct optimization
+Put if you tag the Z, it doesn't do the optimization
+prints
+Thanks for opening this!
+Given that this breaks the optimizers I consider this a bug.
+Also cross ref #2536 - could be that a generic pattern matching will be the solution here.
+cirq.Operation has a gate property of type Optional[Gate] so you can check it against None on any operation:
+Note that TaggedOperation delegates gate to the underlying operation (https://github.com/quantumlib/Cirq/blob/master/cirq/ops/raw_types.py#L534) so it also works fine to access the gate of a tagged operation directly without going through the sub operation.
+If there are still places that do isinstance checks against GateOperation we should change them to use the gate property instead.
+A similar issue exists for CircuitOperations (#3580), which do not populate the gate field but instead have a circuit field not present in the base Operation class.
+A similar issue exists for CircuitOperations {...}
+Opened #3678 to track this. As noted on that issue, I think we should remove the gate field from the base Operation class, since not all Operations are GateOperations.
+We had not-that-long-ago added gate to Operation because the proliferation of isinstance(op, GateOperation) was annoying
+We had not-that-long-ago added gate to Operation because the proliferation of isinstance(op, GateOperation) was annoying
+Acknowledged - my recommendation on the linked issue is to replace the gate field with a more generic get_operator method that accomplishes the same purpose, but with flexible support for other Operation subtypes.
+Marking this as triage discuss, so that we can decide on a strategy for what to do with this (change everything to .gate or use get_operator)
+As noted on the (now closed) #3678, I've given up on get_operator. If there are still operation types that don't have a gate field we can track that here, but otherwise I think it's fine to close.
++1, I think op.gate should be the way to go. We tracked in #4683 that all operations (except circuit operations and ccos) should have an underlying op.gate; so we can close this issue now and open a new issue if we find operations that should but don't have an underlying gate property.
+As per above comments, we should use op.gate and all operations should have a gate.  Closing this issue.

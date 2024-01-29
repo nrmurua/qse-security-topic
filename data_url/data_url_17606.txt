@@ -1,0 +1,27 @@
+As a spin-off from #1617 (thanks @Exferro!) , during that PR it was detected that the same QuantumCircuit produces different visualizations between Python 3.5 and 3.6/3.7 - the order in which measures are drawn is different.
+Digging a bit deeper, it seems it might be a mixture of two issues:
+Ideally, we should be able to at least guarantee a "consistent" order (same visualization is produced regardless of Python version), and hopefully one that respects the original instruction order.
+The main flow when producing a visualization is through _get_instructions(), which in turn ends up invoking node_nums_in_topological_order(). A possible solution might involve ensuring that the topological sorting always return the same solution, for example "tagging" or adding extra information to the DAG for allowing it to restore the order in which gates were added to the circuit (@ajavadia can ellaborate into the idea).
+I am actually tagging this as good first contribution, as I believe is an interesting change to explore both the circuits/dags and the visualization sides of Terra - and with a cool end result!  If somebody is interested, please ping us by replying to this issue 🎉
+As an example, the following circuit:
+has the following instructions in circuit,data:
+and produces the following output (ie. the order of the boxes):
+For reference, the original circuit showing the symptons in #1617 is:
+Hi @diego-plan9 I would like to work on this issue. I will try and familiarise myself with the visualisation code and get back to you if I have any questions!
+That would be awesome, @maddy-tod , thanks! Don't hesitate indeed on pinging us as much as needed (specially as in this particular issue, part of the work is finding out the extent of problem and exploring a bit, and being able to reproduce it in your environment), and looking forward to your contribution!
+So there are two issues:
+We can solve both issues by forcing an order on the DAG topological sort.
+In the DAGCircuit class, we can assign more fields to the nodes, as a sort of metadata. So we can tag each node by the place of that gate in the original circuit.data list. Then have to force networkx.topological_sort() to take this into account when two nodes have equal priority. I don't know how to do this last part, but I think it should be doable.
+networkx.lexicographical_topological_sort supports a key function to resolve ambiguities in topological sort order.
+I have looked at this, and you are correct different Python versions give different orderings.
+It seems that simply changingtopological_sort() to lexicographical_topological_sort() has sorted most of the issues, thank you @kdk ! However this has changed the order gates applied to registers appear in. This circuit would previously return the output below :
+Whereas now it returns :
+It is now respecting the order the gates were declared in but the order the gates appear on q1 is reversed. I just wanted to check if this is an issue? I think it makes more sense to have it the new way round but I am happy to work out how to return it to how it was previously.
+Thanks, this looks good. The new order makes more sense. So let's go ahead with this.
+Afterwards, I would like to see if we can make the visualizers left-justified (in your example all 3 H gates in the same layer). But that has to be done at the level of individual drawers (latex, mpl, text). Instead of drawing gate-by-gate, they have to get dag.layers(), and draw layer-by-layer.
+@ajavadia would you like me to open a separate issue for left justifying the visualizers? I have started to work on it for the text drawer.
+@maddy-tod sure that'd be good.
+It is a little tricky though because something like this can be left justified:
+but this one, even though logically the cnots are in the same layer, should be spaced out in different columns visually:
+but i think checking qubit ranges for 2/3 qubit gates should work.
+I agree that the text drawer is the best place to start due to simplicity, followed by the matplotlib.

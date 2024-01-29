@@ -1,0 +1,71 @@
+The removal of BasicAer is under discussion.
+#4443
+There are some Aqua modules that use BasicAer, e.g., CircuitOp.
+It would be good to discuss how to deal with the removal.
+I checked c1375ff and found following lines that use BasicAer.
+There are two types
+quantum_info.Operator's way is as follows. I think we can replace BasicAer in Aqua except quantum_instance by making utility functions, e.g., get_unitary_matrix(qc), get_statevector(qc), and get_count(qc).
+What do you think?
+Output:
+I tried to replace BasicAer in Aqua and found quantum_info.Operator does not handle reset and measure instructions. Some circuits generated in Aqua contains reset due to initializer.
+We need to think how to deal with such circuits with BasicAer.
+I was more thinking that QuantumInstance would support using QuantumInfo in the absence of any specific backend being passed in, in a way that allowed the algorithms to still perceive a counts based (qasm simulator) type output or statevector one. Algorithms already only include measurements when using backends such as qasm simulators or real devices. This would then allow any algo to run on Aer and or real backend and if none were provided would use QuantumInfo via the QuantumInstance (maybe with a flag on QuantumInstance to say counts versus statevector). This implicit use of QuantumInfo in QuantumInstance would thus replace the explicit passing of BasicAer as a backend since it will no longer exist.
+For other components that directly used the BasicAer backend to access certain function then directly switch to QuantumInfo since they know what they are using.
+I think it's possible to fallback to QuantumInfo if no backend is specified. My PoC code to generate statevector and counts is simple. https://github.com/Qiskit/qiskit-aqua/blob/895d968371c45cea6e44f7a03e3beb8174bd8695/qiskit/aqua/utils/circuit_utils.py#L85
+But, we have to deal with reset instruction included in Initialize. I'm not sure how it is difficult to simulate reset in QuantumInfo.
+My take would be that we do not attempt to add extra logic to support function that is not there in QuantumInfo. If we can avoid using such specifics it might be good. But if not then we could either detect these and alert via an error, which may be unnecessary overhead, or just let them pass through which presumably will result in a different error. Depending on the error we might want to catch/augment it suggest use of Aer etc to run the algorithm in this case.
+I would hope it was not too much code to support use of Quantum info - getting statevector or counts looked simple enough. Things just need to be transparent to the algo so it can, like it does already, pass a set of circuits to QuantumInstance and get the results back in a consistent way that it can handle them no matter what 'backend' is being used.
+I agree. Extending QuantumInfo is not a good strategy. We have to discuss whether Aqua should depend on Aer or not. What do you think of including Aer in requirement.txt?
+Internally in the couple of places where Aqua relies on doing some conversion can we not just always use QuantumInfo. For running an algo, when the user passes a QuantumInstance, if they explicitly give it a backend we would use that, otherwise QuantumInstance would use QuantumInfo (with a flag to choose counts/statevector). I do not see why we would need to include Aer as a hard dependency.
+As for QuantumInstance, your idea makes sense. I'm thinking of circuit_state_fn because it uses execute and initializer, that contains reset. We need Aer or BasicAer to execute it. Do you plan to replace execute in opflow with QuantumInstance?
+https://github.com/Qiskit/qiskit-aqua/blob/fe2ce8e554123dcfd9ff26e3db3af75e91fae7e8/qiskit/aqua/operators/state_fns/circuit_state_fn.py#L116
+https://github.com/Qiskit/qiskit-aqua/blob/fe2ce8e554123dcfd9ff26e3db3af75e91fae7e8/qiskit/aqua/operators/state_fns/circuit_state_fn.py#L235
+https://github.com/Qiskit/qiskit-aqua/blob/fe2ce8e554123dcfd9ff26e3db3af75e91fae7e8/qiskit/aqua/operators/state_fns/circuit_state_fn.py#L336
+I agree with Steve in the above, if we can avoid adding objects on our side then that would be great (and no hard Aer dependency).
+As for reset: The initializers shouldn't use reset in the beginning I think, they are applied at the beginning of a circuit anyways. And there's currently a discussion going on to tell the circuit instance that it should start in zero. Is there another place where this is used?
+Measurements could probably be taken care of inside the QuantumInstance: figure out which registers are measured and trace the rest out.
+Another case we need to keep in mind, is that the operator cannot handle Barriers, but I think we can just remove them before simulation.
+I think we should talk to Chris to see if that's how the Operator is intended to be used. In principle there are also non-unitary constructs such as the SuperOperator which can do reset, but they are more complex than just the Operator.
+Perhaps the issue of the Initialize needs to be brought up then in the Terra Issue that is discussing the BasicAer removal. Clearly that extension will then not work with Terra alone as it is, and require Aer or some other backend having reset, unless something is done. Terra itself treats Aer as optional.
+If it turns out that the circuit_state_fn has to end up dependent on Aer then we can always still treat Aer as an optional pkg and raise an exception that this logic cannot be used without Aer being installed.
+The comment of Initializer explains as follows. So, I think it is as intended.
+Note that Initialize is an Instruction and not a Gate since it contains a reset instruction, which is not unitary.
+https://github.com/Qiskit/qiskit-terra/blob/ad11f087dee21de3dd762647d2790b9ff7e3b63c/qiskit/extensions/quantum_initializer/initializer.py#L40
+I found that circuit_state_fn is the only module that uses the initializer.
+In my local env, test.aqua.operators.test_state_construction fails, but, there seems no failure in Travis. I'm wondering what is happening... (lint should fail because I didn't write docstrings yet)
+https://github.com/Qiskit/qiskit-aqua/pull/1009/checks?check_run_id=706308592
+In my local env, test.aqua.operators.test_state_construction fails, but, there seems no failure in Travis. I'm wondering what is happening...
+Do you have a different version locally that you would expect it to fail the lint for you (lint being run via make lint of course). The version I see checked in (its not updated by the your PR you refer to) has docstring comment on each test function. The build is failing on circuit utils in lint though.
+I remembered that transpile removes reset in initializer if possible. I tried it (qiskit-community/qiskit-aqua@83c90b1), but it results in bunch of unit test fails. I will look into them.
+I found that some gates are converted into another that is equal to the original one up to global phase, e.g., X -> U3(pi,0,pi), and some unit tests fail due to the global phase.
+The following gates have this issue: ID, X, H, Hamiltonian.
+I managed to pass all unit tests related to operators by disabling unrolling of these gates.
+See ba7cde5
+As a side effect, my PoC finishes unit tests faster than master.
+master
+qiskit-community/qiskit-aqua#1009
+Just talked to Chris, the removal of the functionality of BasicAer.get_backend('qasm_simulator') is not definite yet, it might be kept because otherwise there's no easy way to include classical logic, measurement etc. with the quantum info module. If that's the case, and I think we are in a position to argue in favor of keeping it, that would make the switch a lot easier.
+Note: that just concerns the qasm_simulator, not statevector or unitary.
+It's a good news. As far as Terra keeps BasicAer, it would be nice keep BasicAer in Aqua too.
+But, quantum_info-based replacement is almost ready. We don't need to worry it for a while.
+What do you mean "just concerns the qasm_simulator"? It is easy to generate counts from statevector.probabilities_dict.
+E.g. how would you run this with quantum info?
+The main restriction of the Statevector object is that you cannot handle all instruction Qiskit offers, but the Aer/BasicAer simulators can.
+You are right. Statevector and Operator cannot deal with conditionals. Are such circuits used in Aqua? I think CircuitLibrary contains such circuits maybe, right?
+We had not used conditionals in circuits we created in Aqua in the past. Unless any circuits had these introduced when they became part of the library, from where we now use these, and I do not think they did, I do not think we use these.
+There were no conditionals introduced with the move to the library, so I think no algorithm currently uses them. But in future there might be algos that do, so we probably shouldn't add any restrictions on what can be run or not
+If algos choose to use this in the future it would need to be based on whether the backend supports them or not, as appropriate, since conditional is presently not supported by actual devices. So in that regard there are restrictions that need to be catered to.
+Thank you for all information. As far as real devices don't support conditionals, Aqua don't have to support it either. Otherwise, such quantum algorithms can run with only Aer/BasicAer.
+I think of the following strategy.
+So, how about putting this issue on hold?
+As far as real devices don't support conditionals, Aqua don't have to support it either.
+I don't agree. Only because our hardware isn't quite there yet that doesn't mean we cannot test more advanced quantum algorithms. After all, we've been testing large qubit number and circuits w/o decoherence, which hardware doesn't support (yet) 😉
+After all it's about testing what quantum algorithms could do.
+We can always tell users that this won't yet run on actual hardware -- which happens right now already if you try to run conditionals.
+The strategy sounds good. As such we have a plan ready, if we need it.
+So, how about putting this issue on hold?
+Sure, we do not need to act until we know it will be removed. It was good to get an understanding of what this might entail so that we can add to the discussion.
+In terms of support of various backend capabilities (conditionals or whatever) ideally the algorithms should be built to run and leverage, potentially optionally, any capabilities that would improve their performance/behavior but arguably not at the expense of limiting their ability to run on any backend including real devices where people want to try them out albeit on smaller problems that may fit. Algos currently adapt to qasm or statevector modes and the goal has been to made algorithms more hardware (backend) aware/adaptable in order to improve their outcome.
+Yes, the implementations of the algorithms in Aqua should be able to run on hardware, if possible. We shouldn't introduce artificial limitations by default (like adding conditionals). But if users come up with an algorithm that uses these features that we are able to simulate and will be able to run in future, I don't see why we should disallow this.
+I am not saying to disallow as such. More that it would be preferable if such an algorithm would optionally run, in some alternate manner, such that one can target more backends. Maybe it runs less optimally. If it were such that even for small problems some alternate mode is unrealistic then it maybe that it could only run on certain backends until some future time. I would not see us rejecting such an algo, just preferring that it be more adaptable until that point if possible.
+Algorithms have been refactored over to use primitives - this is no longer relevant at all. As such I am closing this issue.

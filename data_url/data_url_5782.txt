@@ -1,0 +1,20 @@
+Importing AerSimulator gives a Numpy warning.
+No warning.
+None yet.
+I guess this is not related to Aer if this warning is called via the following path:
+https://github.com/numpy/numpy/blob/5b9b9395036702a23275592293c6501f423269ba/numpy/__init__.py#L225
+https://github.com/numpy/numpy/blob/5b9b9395036702a23275592293c6501f423269ba/numpy/core/getlimits.py#L158
+https://github.com/numpy/numpy/blob/5b9b9395036702a23275592293c6501f423269ba/numpy/core/getlimits.py#L490
+https://github.com/numpy/numpy/blob/5b9b9395036702a23275592293c6501f423269ba/numpy/core/getlimits.py#L499
+It's at least somewhat related to Aer because other Qiskit imports don't trigger the warning.
+I'm not able to reproduce this with qiskit-terra from pypi. But when I install qiskit-terra from source and qiskit-aer from source I am able to reproduce the warnings. My guess is something in quantum info is being called on import of aer and a recent change to quantum info is causing the warning to be emitted by the aer usage. But I'm not sure what or where this is being done so it's just a guess
+The order of imports could be playing a role here - it's possible that in some paths something modifies the CPU floating-point mode to "zero" rather than "use subnormals" before Numpy is imported.  We'll probably need to bisect various import paths to work out what is actually responsible here, because it might not be an actual recent change that triggers the warning, but just a change in the import order.
+I'm getting the same warning messages in a totally different context, but maybe my fix can provide a clue.  I am using calling some custom C code using ctypes, and I get these warnings when I read in my custom library using CDLL().  I can turn on/off the warning by turning on/off -ffast-math when compiling my custom library in gcc.
+Thanks for the info!  What you've said is largely what I was expecting here - a library compiled with -ffast-math very likely sets the CPU mode to "flush to zero" mode or "do not use subnormals" when it's loaded.
+The Numpy warning here is a cryptic way of saying that the current CPU mode is set to round denormal floats to zero.  In a lot of senses it's a correct warning - there are various cases where your results will not be as precise as they could be, but if you hadn't heard of subnormal numbers before, you're probably not running into them.
+Aer shouldn't be compiling with -ffast-math in any circumstances (I hope), so it might be a dependency that's doing something odd.
+I'm still experiencing this issue with
+It immediately triggers the warnings
+I have Qiskit 0.35.0 and Numpy 1.22.3.
+The release which included this fix was released a few hours ago and is on pypi now. You'll need to update to qiskit 0.36.0 which includes qiskit-aer 0.10.4 (which has the fix for this).
+This is a symptom of problematic handling of ffast_math, this is a great writeup on the matter: https://moyix.blogspot.com/2022/09/someones-been-messing-with-my-subnormals.html

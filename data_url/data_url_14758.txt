@@ -1,0 +1,30 @@
+I encounter a problem using Aer in combination with the multiprocessing package. There is no problem as long as Aer is exclusively called from within a pool. However, a single Aer evaluation outside the pool makes it impossible to run a multi-process calculation afterwards.
+The problem occurs if another pool is defined, the calculation does not run:
+The second pool evaluation should run without problems, as is the case if "function_evaluation" is a generic function not using Aer.
+Note that the problem does not occur if you
+(i) remove the single evaluation outside of the pool
+(ii) use the same pool ,i.e., remove "p=Pool(8)" in the last cell.
+Note that in my use case the function "evaluate_state" is called by a third-party program that uses multiprocessing. I thus cannot use the workarounds indicated above.
+Yep, this is mostly because we are using multiprocessing as well on Terra, so in the end there's a heriarchy of pools that seems to conflict eachother... Pyhton stuff.
+I can think of a fix, that will be a feature for next releases that consist in letting the user disable our multiprocessing logic and use their own, as this is not the first time someone tries to use multiprocessing on top of Aer.
+Thanks for reporting @mkiffner !!
+Actually, the multiprocessing part is Terra responsability (jobs management), so I'm going to move the issue there.
+@atilag where is the multiprocessing coming into play on this from terra? Looking at the code example the pieces that get run by terra should not cause a conflicting pool from terra or anything to block the establishment of an additional pool. The only thing called at all in the above example that has a multiprocessing pool from the terra side is transpile() which uses the parallel_map function to build a pool to execute the passmangers in parallel for multiple circuits. However, that pool gets terminated after it finishes executing. So that pool will no longer exist by the time the new pool is established to call evaluate_state and backend.run in the above example. Nothing in the terra base job, or provider/backend code is explicitly parallel. (assemble is not parallel, it's a todo to add this). Any use of parallelism will be an implementation detail in the provider itself, which in this case is Aer. Nothing in terra should be interfering with the above code example from working, so I'm not sure what the bug here is for terra.
+@mkiffner I had the exact same problem, using python.multiprocessing in a combination with Aer and BasicAer. After a sleepless night trying different solutions, I resolved the problem by using python.ray  instead.
+@mkiffner , @mtreinish ,
+I'm not too sure if this is related to Aer, but I had issues with using multiprocessing and BasicAer together. Since everything worked fine on Mac but not on Linux, I simply changed the line 51 in https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/providers/basicaer/basicaerjob.py
+from
+if sys.platform in ['darwin', 'win32']:
+to
+if sys.platform in ['darwin', 'win32', 'linux']:
+Now everything works fine.
+Is this still an open issue?  I'm using contextlib and
+what happens to me is that if I do a single excecute call outside a pool then my calls to execute inside the pool never finish.
+I encounter a problem using Aer in combination with the multiprocessing package. There is no problem as long as Aer is exclusively called from within a pool. However, a single Aer evaluation outside the pool makes it impossible to run a multi-process calculation afterwards.
+The problem occurs if another pool is defined, the calculation does not run:
+The second pool evaluation should run without problems, as is the case if "function_evaluation" is a generic function not using Aer.
+Note that the problem does not occur if you (i) remove the single evaluation outside of the pool (ii) use the same pool ,i.e., remove "p=Pool(8)" in the last cell.
+Note that in my use case the function "evaluate_state" is called by a third-party program that uses multiprocessing. I thus cannot use the workarounds indicated above.
+Hi, I'm trying to use pool to run several circuits simultaneous with a program similar to yours, key difference being I'm also declaring qc,transpile etc inside the function and it is very slow/not working compared to simple loop over different arguments. Any suggestions?
+I'm experiencing the same problem, in that I'm trying to parallelize Aer, only for all of my calls running the circuit to hang. None of the solutions suggested here have fixed my issue. Is there any update to this?
+Some fixes for this issue was suggested in #3425 and was added as "To Do" in Backends, Qobj, and Result. But people are still facing the problem, so this requires a thorough review. The issue is also being discussed in #6966.

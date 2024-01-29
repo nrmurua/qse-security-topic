@@ -1,0 +1,22 @@
+After upgrading to OQS-OpenSSH-snapshot-2021-08 ssh-keygen crashes failing sshd.service.
+Run in valgrind does not crash but produces multiple warnings::
+Can you please share more information as to how to reproduce this issue? Platform? build options? liboqs version?
+Edit: Just rebuilt everything on a local Linux machine (Mint 19/Ubuntu Bionic, x86_64, liboqs current main (0.7.0-dev)) and everything works just fine (after explicitly deleting only the already successfully built Dilithium3 key):
+--> If the issue persists for you, please share output of the same commands in your environment.
+I think I found the cause of problem. (I build OQS packages for ALT Linux).
+It seems, when I installed new openquantumsafe-openssh the liboqs package is not updated to latest and there is subtle ABI difference causing crash for DILITHIUM.
+So, this is seems my fault. We have automatic dependency resolver which is was depending upon, but it works by comparing list of the library symbols and cannot detect ABI difference. I will set dependency to liboqs by the version numbers to make this not happen in the future.
+Thanks for the patience and your work!
+I try to think over this problem, and I think it's partly because of incorrect library versioning of the liboqs. Currently, it just mirrors it project versioning, but library versioning (or 'API versioning') is a different thing and should be maintained separately. See https://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
+Cmake have SOVERSION attribute for this too.
+liboqs library versions change like 0.5.0, 0.6.0, 0.7.0 which meant (in all these releases) that in its API only new functions are added and no backward incompatible changes happened. Which seems incorrect.
+More links on the subject:
+https://stackoverflow.com/questions/12637841/what-is-the-soname-option-for-building-shared-libraries-for
+https://cmake.org/cmake/help/latest/prop_tgt/SOVERSION.html
+There is tool to compare ABIs (it may not catch all subtle changes though):
+Certainly, functions removal is backward incompatible change to the library, so major library version should have been incremented.
+Thanks very much for the pointers and education. I tend to agree that we're indeed not following reasonable practices.
+Certainly, functions removal is backward incompatible change to the library, so major library version should have been incremented.
+Personally I tend to agree and we'd need to improve. The function removal pointed out above also comes a bit as a surprise to me.
+--> Would you want to rename (and re-open) this issue or create a separate new one only highlighting this library versioning issue? Edit: Disregard: This belongs into liboqs as a separate issue.
+JFYI. To fix the problem with our package I just increased SOVERSION of liboqs to 1 (see the patch below) and rebuilt both liboqs 0.7.0 and OQS openssh 8.6p1.202108 so they get linked properly and would be updated in accord. (That solution looked better than manually setting version dependency).

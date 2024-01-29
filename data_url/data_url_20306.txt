@@ -1,0 +1,51 @@
+OQS_STATUS (in common.h) defines the following error codes:
+I don't think we should have alg-specific error codes in there, and these seems too low-level to propagate to the OQS dev caller.
+@dstebila?
+Hi Christian,
+I do think that OQS developers would like to understand the "low-level" type of error, when such happen s (and not just get a vague OQS_FAILURE). This will help in debug/reproduce the error later. This also follows the model exists in other open source projects such as:
+However, I do think like you that a change is needed here. In my opinion we should follow the model in OpenSSL/BoringSSL where the last error is reported (set) globally. Here, the developer only gets the vague OQS_FAILURE (ERROR) message, but he can query the relevant OQS (error) API in order to get the exact error.
+Note that one of the reasons that originally led to the current paradigm is that it was simpler. Handling errors in the global space require the mechanism to be thread-safe. Such a mechanism wasn't available at the time of adding BIKE.
+To summarize: in my opinion the solution for this issue should be:
+Thanks
+Do you know how to do a thread-safe global error mechanism?  Would we have to presume a particular threading implementation?
+I agree we could improve our error reporting, but since this is a significant task, I suggest we punt that to the next release. I suggest that for v0.1 we go option 3, and that we take the time needed to come up with something better.
+It will require some design, but the simplest think that I can think of, is for example, to use pthread (on Linux with GCC) then we can define something like (in a new file named oqs_err.h):
+#ifdef OQS_ERR_SUPPORT
+#include <pthread.h>
+typedef enum {
+OQS_NO_ERR,
+OQS_ERR1,
+OQS_ERR2,
+...
+OQS_ERR_MAX
+} OQS_ERR_t;
+//Define some Thread Local Storage:
+__thread OQS_ERR_t last_err = OQS_NO_ERR;
+#define OQS_ERR(err) last_err = err
+OQS_ERR_t get_last_error() { return last_err; }
+#else // OQS_ERR_SUPPORT
+#define OQS_ERR(err)
+int get_last_error() { return 0;}
+#endif
+Then, inside the OQS library do something like:
+OQS_STATUS foo()
+{
+if (some bad condition)
+{
+OQS_ERR(OQS_ERR1);
+return OQS_FAILURE;
+}
+return OQS_SUCCESS;
+}
+and in case some developer want to query the error he can do
+printf("Error number is %d\n", get_last_error());
+Need to make sure that this works the same on Windows/MacOS.
+Following Nir's suggestion (separate email thread), I'll add the follwing to  src/kem/bike/upstream/{additional/reference}/bike_defs.h:
+#define OQS_ERR_KEM_BIKE_DECODING_FAILURE OQS_FAILURE
+#define OQS_ERR_KEM_BIKE_AES_SET_KEY OQS_FAILURE
+#define OQS_ERR_KEM_BIKE_WEIGHT_IS_NOT_T OQS_FAILURE
+#define OQS_ERR_KEM_BIKE_AES_CTR_PRF_INIT OQS_FAILURE
+#define OQS_ERR_KEM_BIKE_AES_OVER_USED OQS_FAILURE
+and delete the errors from common.h
+Fixed in PR #425 (nist-branch) and #426 (master).
+Resolved by #425 and #426

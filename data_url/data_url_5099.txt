@@ -1,0 +1,38 @@
+By running a small code snippet shown below I noticed that TNQVM initializes/finalizes ExaTN server upon each expectation value calculation, which of course introduces additional overhead. The TNQVM-ExaTN visitor should only be initialized once when we create it (getAccelerator) and then finalized at the very end, when we finalize XACC. Currently, it looks like ExaTN is initialized every time we instantiate/execute a circuit inside the loop, that's not right.
+===============================================================
+#include "xacc.hpp"
+int main(int argc, char** argv) {
+//Initialize the XACC runtime:
+xacc::Initialize(argc, argv);
+//Choose the desired quantum accelerator:
+//auto qpu = xacc::getAccelerator("tnqvm");//, {std::make_pair("tnqvm-visitor", "exatn")});
+auto qpu = xacc::getAccelerator("tnqvm", {std::make_pair("tnqvm-visitor", "exatn")});
+//Choose the desired quantum programming language:
+auto xasmCompiler = xacc::getCompiler("xasm");
+//Compile a quantum kernel into the quantum IR:
+auto ir = xasmCompiler->compile(
+R"(qpu void ansatz(qbit q, double theta) {
+X(q[0]);
+Ry(q[1], theta);
+CX(q[1], q[0]);
+H(q[0]);
+H(q[1]);
+Measure(q[0]);
+Measure(q[1]);
+})", qpu);
+//Get the generated parameterized quantum circuit:
+auto circuit = ir->getComposite("ansatz");
+//Perform quantum/classical computation:
+auto angles = xacc::linspace(-3.1415, 3.1415, 20);
+for (auto & a : angles) {
+auto evaled = (*circuit)({a});
+auto qubits = xacc::qalloc(2);
+qpu->execute(qubits, evaled);
+auto exp_val = qubits->getExpectationValueZ();
+std::cout << "(" << a << ") = " << exp_val << "\n";
+}
+//Finalize the XACC runtime:
+xacc::Finalize();
+}
+I could not assign Thien because github does not identify him for some reason ...
+@tnguyen-ornl

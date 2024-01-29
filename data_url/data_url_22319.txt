@@ -1,0 +1,33 @@
+Using 1.1, we wanted to communicate with some AD9914s using SPI. For the AD9914 driver, we have
+If I try to run just using this,
+On the scope you can see 2 sets of 20 bits being written with about 30 ns between them.
+
+As suggested in the spi.py file, I tried adding a negative delay to chain the writes. I added a delay of delay_mu(-self.bus.write_period_mu) which is 16 mu, corresponding to 20 ns as we're using a 100 MHz clock.
+There's no delay between each of the 20 periods of the sclk, but the second set of bits to be written disappears.
+
+I've tried changing the delay to -8 instead, but I get the original behaviour with no change in the delay in between the 2 sets of 20 bits. Changing it to -10 triggers the second case. How should I chain them together?
+I've placed the full AD9914 driver below.
+Could you try the following as your write sequence:
+This is supposed to work according to my notes (It's also equivalent to delay(-self.xfer_period_mu) in this case but that doesn't matter)
+Did you mean,
+?
+The sign at the end doesn't seem to matter. I've changed the bits being written to self.dds0.write(0x03, 0x03010101) so it's clearer which sets of bits are being written. The second set of 20 bits aren't written at all.
+
+Playing around with the delays, self.bus.xfer_period_mu is 20*self.bus.write_period_mu which is -320 mu. self.bus.write_period_mu is 16 mu and self.bus.ref_period_mu is 8 mu for clarification.
+For a delay of -8 mu or greater, the signal on the scope is,
+
+For a delay less than '-8 mu', down to about '-320 mu', (in this case 10 but I've tried up to about -310 or so)
+
+You have 40 clock cycles but lose the second set of 20 bits written.
+And for -320 mu and below there only seem to be 20 clock cycles.
+
+I also added more documentation for chaining transfers. Any (additional to what bus.write() applies) delay between -ref_period_mu and - self.bus.xfer_period_mu - self.bus.write_period_mu + 3*self.bus.ref_period_mu (both inclusive) should do it.
+It's only gateware\spi.py that has changed, right? I tried patching that and still get similar behaviour.
+Did you flash that gateware?
+That was it, oops. Seems to work now, thanks!
+In the documentation that you added, what does the 2*self.bus.ref_period_mu refer to? I've found that a delay more negative than -2*self.bus.ref_period_mu seems to result in timing errors for anything that happens subsequently. For example, if you have an IO update pulse after a couple of writes it happens during the write sequence. Keeping the delay at -2*self.bus.ref_period_mu seems to prevent that from happening.
+I can only see that happening if you are generally low on slack. Do you have code and/or an artiq_coreanalyzer trace?
+If "a couple of writes" refers to more than two, then is what you saying equivalent to chained transfers can happen every xfer_period_mu?
+Possibly, it depends what you mean can happen. The bits being written seems correct but the timing of the io_update pulse gets messed up and it pulses during one of the write sequences.
+No. Being low on slack would result in an exception.
+You have to look at how the xfers are scheduled and what happens to the timeline with all the delays that are applied to understand why that pulse happens during an xfer.

@@ -1,0 +1,114 @@
+Please add that an optimization algorithm should check whether a solution is feasible and change the status to INFEASIBLE if not. This should also be part of the interpret of the equality to penalty converter.
+This would likely require to add a is_feasible(x) method to QuadraticProgram, but given the evaluate(x) we already have that should be straight-forward.
+Hello, I am new to Qiskit contributions and would like to contribute, Is this a good issue which I can work on?
+OptimizationResult already has the status. You can check it by OptimizationResult.status == OptimizationResult.Status.INFEASIBLE.
+https://github.com/Qiskit/qiskit-aqua/blob/854bd820b43a0c3f981fae588d1a0323a6e3486d/qiskit/optimization/algorithms/optimization_algorithm.py#L92
+LinearEqualityToPenalty checks the feasibility to set the status when interpreting the result.
+https://github.com/Qiskit/qiskit-aqua/blob/854bd820b43a0c3f981fae588d1a0323a6e3486d/qiskit/optimization/converters/linear_equality_to_penalty.py#L201
+What do you think still missing?
+I think nothing's missing, I am trying to find issues which I can work on and saw this as an open one but it already has a solution. Thank you for pointing it out
+I got the point now. It would be convenient if QuadraticProgram can check the feasibility of OptimizationResult.x and point out violated constraints.
+E.g.,
+@t-imamichi is right in general, but the idea is to explicitly check feasibility in optimizers/converters and change the status accordingly:
+Now we may get a result with the SUCCESS status that is infeasible.
+@KahanMajmudar this is not a tough issue but may require quite a lot of changes in many files.
+Yes, it does so already. The following line applies QP.subsitute_variables(OptimizationRestuls.x)https://github.com/Qiskit/qiskit-aqua/blob/854bd820b43a0c3f981fae588d1a0323a6e3486d/qiskit/optimization/converters/linear_equality_to_penalty.py#L192
+and checks substituted_qp.status is VALID or not. VALID corresponds to feasible.
+https://github.com/Qiskit/qiskit-aqua/blob/854bd820b43a0c3f981fae588d1a0323a6e3486d/qiskit/optimization/converters/linear_equality_to_penalty.py#L201
+https://github.com/Qiskit/qiskit-aqua/blob/854bd820b43a0c3f981fae588d1a0323a6e3486d/qiskit/optimization/problems/quadratic_program.py#L888
+Given values of variables, QP.substitute_variables can check the entire problem is feasible or not, but it cannot report whether each constraint is feasible or not currently.
+I understand that this idiom is not intuitive, so I agree to add QP.is_feasible. It will be more efficient to use LinearExpression.evaluate() and QuadraticExpression.evaluate() than QP.substitute_variables.
+@t-imamichi @adekusar-drl  If the issue is solvable, can I help with it? Even if it requires changes in many files, I would like to help and with the help and guidelines of others, the feature might be added
+@KahanMajmudar I don't know to what extent you are familiar with Aqua and the optimization stack in particular, so I'll try to summarize what should be done here. Anyway, this writing is nice to have to be sure that everybody is on the same page.
+where detailed=False means return just a boolean, otherwise return a boolean and a list of violated constraints. Looks complicated but this the first thing that came up to my mind.
+Right now it's easy to spot that optimizers (may be not all of them though) just return OptimizationResult with the found solution without checking the status. And by default the status is set toSUCCESS.
+We also have two wrappers of SciPy: CobylaOptimizer and SlsqpOptimizer, so these are different, you may analyze what is returned by the underlying code and provide even more insights(well, don't know how, anyway).
+In overall I'm not insisting that this is the only one and exhaustive way to cope with the issue.
+@t-imamichi Imamichi-san, please correct me if I wrong or if I missed something.
+@adekusar-drl Thank you for summarizing the details.
+@adekusar-drl , you are correct, I don't have much familiarity when it comes to aqua and optimization stack but I am ready to put the effort of going through the docs and reading the necessary code and I think I would catch up as it moves along :) .
+As for the summary, I think it would be great to work in chunks, like completing the 1st and moving along, so that we can track the problem as we move along, but it's just a suggestion
+For the parameter name, I think return_violations could work as well, but it can be figured out as this moves along if it's not an issue.
+Fine! Welcome aboard!
+Thank you so much, excited to work on this. So should I start with documentations(would be great if I knew what to pay attention to) or do you have something which needs more attention first?
+To get started with the optimization stack please take a look at the documentation:
+A couple of blog posts:
+Yes, report_violated_constraints looks too long... Let's use detailed.
+Hello, I have started to work on the issue after reading the resources provided by @adekusar-drl . I would like to know how to start the implementation of Step-1. For e.g.: What input cases would be infeasible for a given problem and how the output should correspond to? Also, is infeasible only used while substitution? Inside the code of Quadratic Program the error is thrown when there is substitution of some kind. Feel free to add points which might be missing. Thank you
+Hi,
+What input cases would be infeasible for a given problem and how the output should correspond to?
+If a solution violates a constraint defined in the problem then it is infeasible solution. So, on step1 we want to add a method that checks feasibility given a potential solution.
+Also, is infeasible only used while substitution? Inside the code of Quadratic Program the error is thrown when there is substitution of some kind. Feel free to add points which might be missing. Thank you
+I think SubstituteVariables class is slightly a different story if you talking about it. Not sure I got what you mean here
+If a solution violates a constraint defined in the problem then it is infeasible solution. So, on step1 we want to add a method that checks feasibility given a potential solution.
+So that will be different as per the problems? If so, can I have one problem which produces infeasible solution?
+I think SubstituteVariables class is slightly a different story if you talking about it. Not sure I got what you mean here
+Correct, while defining a problem also, we can get the infeasible error and so is that included in our problem scope?
+If a solution violates a constraint defined in the problem then it is infeasible solution. So, on step1 we want to add a method that checks feasibility given a potential solution.
+So that will be different as per the problems? If so, can I have one problem which produces infeasible solution?
+Here feasibility is a product of a problem and an optimizer. You have a problem definition as a QP instance and you have an optimizer. You try to solve the problem with the optimizer. In some cases you may get infeasible solution. As an example you may get any problem from the tests and change a correct solution to an infeasible one by making it violate a constraint.
+I think SubstituteVariables class is slightly a different story if you talking about it. Not sure I got what you mean here
+Correct, while defining a problem also, we can get the infeasible error and so is that included in our problem scope?
+Likely not, I still don't get the point. But we are not talking about infeasible problems for sure.
+Here feasibility is a product of a problem and an optimizer. You have a problem definition as a QP instance and you have an optimizer. You try to solve the problem with the optimizer. In some cases you may get infeasible solution. As an example you may get any problem from the tests and change a correct solution to an infeasible one by making it violate a constraint.
+If I understood correctly, we are worried about what will happen after a problem is been given to solve to a optimizer. We need to know what is causing those violations and report back. Thank you for the heads up on the test folder.
+Yes, almost right. We do care of what we get as an output from optimizers, whether it is a sort of correct output or not.
+@adekusar-drl @t-imamichi  I have looked at the code of all optimizers and every one of it contains a method named get_compatibility_msg. So can our is_feasible function make use of that to find out which are not compatible and then perform various steps to return the violated constraints? This is just one flow according to me and better suggestions are appreciated.
+One problem might be that different optimizers check the compatibility in different ways and so it might be difficult to create a general is_feasible method using this approach.
+No, since those are in optimizers, but is_feasible must be in QuadraticProgram.
+As far as I understood:
+Is this the correct general flow or did I miss/misunderstood something?
+Totally correct!
+https://github.com/Qiskit/qiskit-aqua/blob/358874b825eec135a4c5316009e312c5129f01f6/qiskit/optimization/problems/quadratic_program.py#L969-#1021
+Any ideas on how this function differs from what our step-1 is trying to achieve?
+Well, this function is a part of the variable replacement algorithm. I don't think it is related to this issue.
+This is a quick sketch what the method should do. It is not finished, just a part of it, quadratic constraints are left behind and likely more checks are required.
+I hope it is clear.
+Looks good! Well, the problem is not fully specified, but in this case it does not matter.
+I do have a couple of questions:
+I don't get it. What do you mean here?
+In general as a solution you may expect to have any value from an optimizer. Actually that's why we decided to implement such checks. So, constraints and variable bounds(sort of constraints also) are to check.
+I don't get it. What do you mean here?
+I mean, after the function is implemented, there has to be some tests needed to be performed so that it can be confirmed that the function is indeed doing the required task and there are no bugs
+In general as a solution you may expect to have any value from an optimizer. Actually that's why we decided to implement such checks. So, constraints and variable bounds(sort of constraints also) are to check.
+Alright
+I don't get it. What do you mean here?
+I mean, after the function is implemented, there has to be some tests needed to be performed so that it can be confirmed that the function is indeed doing the required task and there are no bugs
+Yes, there should be unit tests for new features.
+I don't get it. What do you mean here?
+I mean, after the function is implemented, there has to be some tests needed to be performed so that it can be confirmed that the function is indeed doing the required task and there are no bugs
+Yes, there should be unit tests for new features.
+Correct, so how to decide these test cases?
+Well, you choose scenarios which will cover all possible execution flows in your code, e.g. if you have an if statement, then you have two scenarios, one when the if statement is true and another one when it is false. Basically, this is a common way how to write unit tests. Or I missed the point?
+Absolutely on point, I meant that do we unit test with random inputs or is there a procedure that needs to be followed. I guess the procedure can be as you mentioned
+e.g. if you have an if statement, then you have two scenarios, one when the if statement is true and another one when it is false
+Given a problem:
+does this achieve our objective?
+For the same problem
+Looking for feedback @adekusar-drl @t-imamichi . Thank you
+Looks correct.
+What should be the next steps now? @adekusar-drl @t-imamichi .
+If is_feasible(x) works then pick an optimizer, probably CplexOptimizer is an easiest one, and try to add a a few lines in the end where you check feasibility of the solution obtained by the optimizer. Then pass the correct status to OptimizationResult or to a sub-class of it.
+@adekusar-drl I implemented as suggested, so if the solve functions returns a result it will be checked using is_feasible(x) and then depending upon the result, the status would be SUCCESS or INFEASIBLE set inside the OptimizationResultStatus class. Now which files need the same changes? I saw different optimizer files but they are using different methods to implement the solve function itself.
+Basically you look through all optimizers in qiskit.optimization.algorithms and just in the end of each solve you add this check. Not sure what exactly you've implemented. If it is better than I write down below that's great.
+Here an example:
+https://github.com/Qiskit/qiskit-aqua/blob/7931f1df115c8f1cb7ce0d5f13824e907f8d2929/qiskit/optimization/algorithms/minimum_eigen_optimizer.py#L178-L182
+before constructing the final result the verification procedure should look like :
+and then pass this status to the result constructor:
+Pay attention that sometimes the original problem passed to the solve is modified in the beginning by applying a converter and then the optimization result x is translated back. So, feasibility check should be against the correct problem.
+Basically you look through all optimizers in qiskit.optimization.algorithms and just in the end of each solve you add this check. Not sure what exactly you've implemented. If it is better than I write down below that's great.
+Here an example:
+https://github.com/Qiskit/qiskit-aqua/blob/7931f1df115c8f1cb7ce0d5f13824e907f8d2929/qiskit/optimization/algorithms/minimum_eigen_optimizer.py#L178-L182
+before constructing the final result the verification procedure should look like :
+and then pass this status to the result constructor:
+That is exactly how I have implemented the flow. I am not sure if there is a better way to achieve it so I am open to suggestions as well.
+Pay attention that sometimes the original problem passed to the solve is modified in the beginning by applying a converter and then the optimization result x is translated back. So, feasibility check should be against the correct problem.
+Exactly, different optimizers inside their base class also use other classes to solve the problem. One example would be cobyla_optimizer or others like admm_optimizer use the technique mentioned by you. That is why I was looking for some feedback on how to tackle this type of situation. So after implementation I will post the implementation of all optimizers so that something is not missed.
+Should not be a problem, just once you reach a point in an optimizer where you have x you may add this check. These places may be different across optimizers but in general somewhere in the end.
+Hi. Do you have a draft pullreq?
+@KahanMajmudar could please reply to @t-imamichi ?
+Sorry for the late replies @t-imamichi @adekusar-drl . I am caught up on work. Sure I can create a PR but what are the requirements of a draft PR? Currently as discussed earlier with @adekusar-drl , the task to add the function to all optimizers in WIP. I can try to complete it today or max tomorrow if required. Thank you 😄
+When you make a PR, you have two options "ready for review" or "draft". If you choose "draft", the pullreq won't be merged. It means that the PR is working in progress. Even if it is a draft, we can review the code, so it is easier for us to give you comments on your code. For example, #1196 is a draft.
+So if I make a draft PR, then it will display the changes I made and then as I keep working, I will keep pushing the changes until it is ready to review?
+Yes. If you push a commit to the branch you used to create a PR, then this commit will be visible in the PR also.
+You may also add [WIP], work in progress, in the PR title.

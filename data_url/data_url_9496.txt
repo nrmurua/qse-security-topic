@@ -1,0 +1,57 @@
+Many symbols that are effectively exported by pulser are not discovered by pyright.
+This is the case for pulser.Sequence or pulser.Register for instance.
+I suspected that other static analyser may experience the same problem. This is inconvenient when developing, as one looses autocompletions and suggestions.
+I am unsure on the reason of this, but
+Any update in this direction? This heavily cripples the developper experience when using Pulser as a dependency. VSCode is impacted as well, so it's very unfriendly to beginners.
+My apologies @lvignoli, it seems we have somehow forgotten about this issue.
+In fact, I'm a bit puzzled because I think neither of us (ie @a-corni  and I) has encountered this problem before and we both use VSCode and rely heavily on autocomplete.
+To start, I would like to try and replicate this issue but I haven't managed so far (if I do what you did above, VSCode identifies Sequence just fine, for a standard and a dev installation). So, is it at all possible that this issue is unique to your setup? Do you know anyone else who has encountered the same issue?
+This is just speculation on my part, but part of the Pyright error message you are getting seems to imply that VSCode cannot access the directory where pulser is installed. Could it be a question of access rights?
+Hey @HGSilveri, thanks for answering so quickly.
+I have just installed a fresh pulser version on my personal device and experienced the same issue.
+Using python 3.12 on macOS 12.7.1 on a 2015 Intel MacBook Air, in a fresh python venv with only pulser installed,
+for the following snippet
+Sequence is marked as a symbol that is not exported by pulser module.
+This is not limited to Sequence.
+Maybe this is not a problem when working in the Pulser repo, or for a venv where pulser is declared as a local dependency with an absolute path.
+But on my side, for any fresh project where I grab pulser from pip, I have experienced ill-exported symbols.
+Note: for some symbols, I get argument completions. For instance, even though Sequence is dubbed as not exported out of the pulser module, autocompletion and type hints work for the arguments of pulser.Sequence(…).
+It's seems like the LSP is able to find the not-properly-exported symbols and still provide hints.
+Sorry for the dumb question but I still need to ask: is your VSCode interpreter pointing to your venv folder where pulser is installed?
+
+Ok, if I manually install pyright and execute it, your error pops up. This should be enough for me to work on this.
+I still wonder, is pyright enabled by default on VSCode? I might have personalized settings for this, I'm not sure, but I can't find any mention of pyright on my installation and everything seems to work fine. I'll still try to fix this but it makes me wonder if this is not a pyright issue... TBD, I guess
+Sorry for the dumb question but I still need to ask: is your VSCode interpreter pointing to your venv folder where pulser is installed? 
+Yes I am working in the correct venv 😉
+In VSCode the default out-of-the-box python experience is provided by Pylance, which builds on top of pyright.
+So any default VSCode setting actually make use of pyright.
+It is possible that pyright implements an unorthodox way for deciding what symbols is actually exported. Maybe by implementing a PEP that no one actually respect?
+It is possible that pyright implements an unorthodox way for deciding what symbols is actually exported. Maybe by implementing a PEP that no one actually respect?
+It does look to be that way, aparently pyright uses redundant imports to identify which symbols should be exported. Take a look at #630 , it fixed the errors locally for me at least.
+I was not able to install your branch as a deps locally, but reproducing your changes does correctly expose the symbol.
+This is apparently the intended verbose way to tell type checkers what is exported, this or using __all__,see https://github.com/microsoft/pyright/blob/main/docs/typed-libraries.md#library-interface.
+https://typing.readthedocs.io/en/latest/source/libraries.html#library-interface-public-and-private-symbols [EDIT: better link]
+Another fix is simply to remove py.typed, marking the library as not typed. I have tried and it works out of the box. I don't understand the rationale of making it harder to export when you declare your library as typed, but okay…
+For reference:
+As much as I'd like to just remove py.typed and avoid the hassle of using __all__, I can't do it in good conscience...
+Ok, I have question on this: how much do we want to expose? It's clear that the symbols directly imported (eg Sequence, Pulse, ...) should be exposed, but what about submodules?
+To me, it makes sense to expose submodules like devices and waveforms, but most are used only internally. Some, like pulser.json are clearly internal only (and should have probably been private from the start...) but for others (eg. channels) I guess it might depend: for a user, I would say they should be hidden, but for a developer having the autocomplete on pulser.channels.[...] might come in handy.
+Do you have any insight on this?
+Indeed, this asks the question of what it is exactly the public API of pulser. For sure developers want more such as devices and waveforms and channels and samplers …
+To me, a simple answer is everything already documented here must be exported.
+I would also make a case for something that I advocate for a long time: exporting everything under the single pulser top-level namespace.
+Everyday pulser usage requires lots of boilerplate imports of naked names.
+A single import line mitigates this, and deletes the need to search for the correct module path.
+Pulser is not so big yet, so we could totally afford to have the 30-ish everyday useful symbols in a single namespace.
+To support this, it seems most of the symbols have been named in a way that allows and even compels to do so:
+MockDevice is redundant—being in the device module it could have been named Mock and used as device.Mock. But since the name carries context, we could export it at top-level to be called as pulser.MockDevice, and consider the device module just as an internal way to organize code.
+This works for
+I would also make a case for something that I advocate for a long time: exporting everything under the single pulser top-level namespace.
+I'm already playing around with the best way to do this on this PR. To me, the answer here is relatively clear: we want the top-level namespace to give access to everything a regular user needs and nothing more. This would exclude things like abstract base classes or even classes the user interacts with but never needs to initialize (eg. SampledResults et al).
+I think this decision then somehow conflicts with your other point:
+To me, a simple answer is everything already documented here must be exported.
+Many classes we include in the API documentation are there so the users can have easy access to their methods' signature and docstring, but they should not be instantiated in isolation. I feel like exposing them sends the wrong message.
+Indeed, I have suggested that a bit too quickly.
+To me, the answer here is relatively clear: we want the top-level namespace to give access to everything a regular user needs and nothing more. This would exclude things like abstract base classes or even classes the user interacts with but never needs to initialize (eg. SampledResults et al).
+I fully stand by your side with this. I trust your opinion on what should make it to the list and I'll give you feedback if needed.
+Thanks a lot for considering fixing the original issue with pyright but also rationalizing the user experience! 😃

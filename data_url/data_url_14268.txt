@@ -1,0 +1,59 @@
+I find the following code example puzzling:
+As in #9720, the first expression evaluates to something whose repr cannot be instantiated directly.
+Code sample above.
+Either both lines should error or it should be possible to evaluate the repr string.
+I should note that I've noticed at least one method that assumes that the PauliList is not empty:
+There may be others.  EDIT: _commutes_with_all is another.
+It would be nice for PauliList to support the empty list.  However, while num_paulis would be 0, num_qubits would be undefined in this case, and perhaps this will lead to complications elsewhere.
+Or, alternatively, there could be a way to construct a PauliList with 0 elements but n qubits.  And then the repr for PauliList(["XX"])[0:0] could be something like PauliList([], num_qubits=2).
+Perhaps even better would be to make the __repr__ for PauliList(["-XYZ"])[0:0] be PauliList(["III"])[:0].  That way, the number of qubits can be encoded in its repr without introducing any additional API surface area (and standardized to be n identities).  This is my favorite option at the moment.
+I saw this after the PR. I commented the main bits on the PR - I'd be ok with adding an optional num_qubits field to the constructor, but not to making the repr some compound expression. That's not really what repr is for.
+After thinking about this more, I essentially agree with Jake.  It makes much more sense to add an optional num_qubits field to the constructor, such that repr(PauliList(["XXX"])[:0]) would be "PauliList([], num_qubits=3)", instead of pursuing my proposed change in #9729.  This better path will achieve the following goals:
+Return a string containing a printable representation of an object. For many types, this function makes an attempt to return a string that would yield an object with the same value when passed to eval(); otherwise, the representation is a string enclosed in angle brackets that contains the name of the type of the object together with additional information often including the name and address of the object.
+By contrast, my proposal in #9729 achieves only the second goal.
+Yeah, I think the problem here isn't really one of repr, it's just that PauliList is designed as a collection that does a little bit of type inference on its elements, which is inherently a problem when the collection is empty.  We should either explicitly decide PauliList cannot be empty, or have a way of manually specifying the type of the scalar element (in this case, adding an optional num_qubits to the constructor and stored in the instance) for cases where inference would fail.
+My vote is in favour of the latter - I think empty collections are generally very useful programmatically, and not having them tends to require users to put in a lot of defensive coding.  Ikko is more appropriate as the decision-maker here, though, so I'll leave it to him.
+However, while num_paulis would be 0, num_qubits would be undefined in this case, and perhaps this will lead to complications elsewhere
+Why can't we also set the number of qubits to zero?
+Why can't we also set the number of qubits to zero?
+Do you mean, for any empty list, why not just set num_qubits to zero by definition?
+This could work as an alternative to num_qubits in the constructor, but has some drawbacks.
+It is already possible to create an empty PauliList with a non-zero number of qubits through two different methods: slicing, and from_symplectic.  These objects are only considered equal to each other if they have the same number of qubits.
+The goal of Add optional, kw-only num_qubits arg to PauliList constructor #9770 is to make it possible to construct these states via list construction as well.  If an empty PauliList were to always have num_qubits == 0, these other construction methods would need to be modified, too, to enforce that, and the above equality tests would both evaluate to True.
+There is the PauliList.insert() method, which requires that the Pauli being inserted has the same number of qubits as the PauliList.  If an empty PauliList were to have zero qubits by definition, then there would be no way to insert a Pauli with non-zero num_qubits in the list.
+Ikko: your suggestion solves the representation problem, but means that for logical support, we'd violate some of the current invariants of PauliList.  For example, given the structure of the collection and paulis being some PauliList then for all valid x, paulis[:x] + paulis[x:] == paulis.  Right now, "all valid x" doesn't include those that create empty lists (since the list quickly reveals itself to be in an invalid state when trying to do operations on it), but if we inferred "num_qubits == 0 if unspecified", then we're violate this (very logical) invariant: paulis[:0] + paulis[0:] would be a value error due to mismatched num_qubits unless we specifically added catch clauses into every operation.
+It's simpler to not infer something non-inferrable - in the vast majority of cases, including most of those that are natural ways an empty list might appear - num_qubits is inferrable, so users will see no change.
+Sorry, I think now the number of qubits should be Optional[int].
+For example, let's consider a list of strings of the same length.
+The length should be 0.
+The length should be None.
+This case is length is None.
+I believe PauliList is similar to this example.
+Another question: what is SparsePauliOp with empty PauliList? Is it buggy without the new validation? In particular, I think it would be a change of the representative element of 0.
+I think we roughly agree that your second example has an unknowable number of qubits.  In the third example, I disagree that PauliList needs to be None in this case; PauliList contains more context than a list, so we can safely store that the empty list has two qubits in that case.
+I think that allowing PauliList.num_qubits to be None is a problem (specifically the exposed attribute: I'm fine using PauliList.__init__(..., num_qubits=None) to indicate "must infer, error if not possible"):
+What we're proposing is something that looks approximately like:
+so the only operation that ever needs to do inference is the initial construction of a PauliList; for every other operation, num_qubits is already known, so even if we get an empty list of of __getitem__, the resulting object is still usable.
+We don't want PauliList.num_qubits to be None, because that makes every binary consumer of PauliList start with something like:
+instead of just
+The advantage of letting num_qubits be None is that the empty PauliList can interact in binary operations with a PauliList of any number of qubits, but I don't really see how this is especially desirable - there are other ways of denoting "broadcasting zero" than compromising the whole class.
+For SparsePauliOp: I haven't tested it, but I imagine it should be fine for most inputs because it sets its num_qubits by doing LinearOp.num_qubits = self._pauli_list.num_qubits, which in our scheme would always be set.  Because of the amount of typing inference all over quantum_info, I imagine we'd need to add a similar num_qubits option to SparsePauliOp if it can also accept [], but the only place that would matter would be in __init__.
+@jakelishman Thank ynu. I understand that handling optional types is difficult. (In your addition example, if one is just an int and the other is None, I think it's an error, so existing is enough.) However, I still can't find a positive reason to allow empty PauliList. If optional is difficult, empty can be an error. As you know, the original design did not allow empty PauliList and I don't want to change the API as possible.
+If you could point me to a useful example of PauliList, I would be convinced.
+I can let @garrison speak more to his uses, but from my perspective, it's that empty collections tend to arise fairly naturally whenever we allow and use slicing, and it's rather annoying as a user to need to defensively code against this, or have to insert special cases to handle the "zero" case when mathematically it makes sense for it to behave the same. But sure, I don't have a concrete use in mind, more just a ~general feeling, and your point about not wanting to relax the current deliberate constraint without good reason is a solid point.  I don't have one right now, but Jim might.
+If you think of PauliList in terms of its real data structure, z,x boolean arrays, it makes sense that you can have a zero element op, or a zero qubit op, or both, and these are already valid Pauli's you can construct via from_symplectic:
+0-qubits, 0-length
+3-qubits, 0-length
+0-qubits, 3-length
+So imo you can already represent zero length or zero qubit paulis lists, and pauli[:0] is valid (maybe there are some internal methods that fail for empty paulis but thats a separate issue).
+The problem is that there is no way to initialize the length-0 cases from the __init__ constructor which assumes an iterable (and hence the repr being used as sugar for string label iterable not working). One solution would be to add a num_qubits kwarg to init, which is only needed for empty paulis (it should only be used for validation to throw an exception for non-empty paulis if it is specified and doesnt match the number of qubits of paulis in the list). It doesn't need to be stored, its would just convenience to call
+and then you could update the repr to show this kwarg only if the length is 0.
+The problem is that there is no way to initialize the length-0 cases from the init constructor which assumes an iterable (and hence the repr being used as sugar for string label iterable not working). One solution would be to add a num_qubits kwarg to init, which is only needed for empty paulis (it should only be used for validation to throw an expection for non-empty paulis if it is specified and doesnt match the number of qubits of paulis in the list).
+The first sentence is the crux of how this issue arose, but it's also important to note that the same method of attempting the inference in the __init__ is reused all over the place.  The Pauli class correctly inferred things from the shape of the symplectic matrices given, but PauliList doesn't do it right.  The second sentence is the solution Jim and I agree with.
+It [PauliList.num_qubits] doesn't need to be stored
+This is true, though it does need to be exposed on the class to fulfil the interface.  It can be a computed property using the correct inference, though.
+One solution would be to add a num_qubits kwarg to init, which is only needed for empty paulis (it should only be used for validation to throw an exception for non-empty paulis if it is specified and doesnt match the number of qubits of paulis in the list). It doesn't need to be stored, its would just convenience to call
+and then you could update the repr to show this kwarg only if the length is 0.
+Thanks.  This is what #9770 proposes. 🙂
+@jakelishman PauliList.num_qubit already works if you initialize its arrays correctly (BasePauli infers it from the array shape)
+@chriseclectic Thank you.Indeed, my understanding of the current situation was insufficient. And your suggestion (using from_symplectic) is smart! I support this direction.

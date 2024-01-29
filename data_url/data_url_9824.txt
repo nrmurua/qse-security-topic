@@ -1,0 +1,26 @@
+TL;DR When sampling from a CQM with a linear constrain of binary variables, e.g., $x_0 + x_1 + x_2 &lt;= 2$, where $x_i\in\{0, 1\}$, the upper bounds of the Sense is not respected. The sampler produces solutions where the bounds is off-by-one, meaning, given a bias $B$, I get solutions for $B+1$.
+I have defined a portfolio optimization problem using qiskit_finance of $N$ asset and set the budget constrain as $B = N / 2$. When solving with the qiskit NumPyMinimumEigensolver for the ground-truth optimal portfolio I get a solution with $B$ amount of assets chosen.
+I then convert the qiskit quadratic_program into a BinaryQuadraticModel in the following way:
+and then create a ConstrainedQuadraticModel from the BQM in the following way, and add the constraint that the sum of all binary variables should at most be equal to our budget $B$:
+When printing the CQM both the objective and constraints I can verify that the budget constraint is set correctly. But when running and using the LeapHybridCQMSampler, getting the optimal sample, I for some problem instances get a solution with $B + 1$ variables marked.
+This problem is not always present, because sometimes the optimal solution does not require $B$ amount of assets to be chosen. But the bug happens fairly often when randomizing the input data, leading me to think that there might be a simple off-by-one or rounding bug somewhere in the source code.
+I will give a specific instance of the problem I am solving, which always leads to the unexpected behaviour. It requires you to have ready two API tokens, one from Nasdaq data link to get the stock data (its a free signup and usage), and your D-Wave Leap API token.
+The last print yields the following output:
+and the amount of 'picked' variables is $&gt;B$.
+I expect the sampler to only produce solutions that are feasible according to the defined constraint. Meaning, number of 'picked' variables $\leq B$.
+The code is originally being run in a Jupyter Notebook.
+Hi @willeagren ,
+Thanks for the detailed report! Would it be possible for us to also get the intermediate CQM? You can serialize it with
+Hi @arcondello ,
+I'm not quite sure I managed to serialize it properly. The intermediate "example.cqm" file looks quite strange. But here is the zip file: example.zip
+Just making sure, there's no way to retrieve my D-Wave Leap API token from the serialized CQM right?
+Looks correct to me! I'll take a look and get back to you when I know more.
+Just making sure, there's no way to retrieve my D-Wave Leap API token from the serialized CQM right?
+That's correct, it only contains the CQM itself, i.e. the biases, variables, bounds, and labels.
+Ok, I see the issue. Sorry, I should have noticed it earlier. You just need to change the line where you get the lowest energy sample from
+to
+In the former you are selecting the sample with the lowest energy in terms of the objective. Since in this problem it is energetically advantageous to violate the constraint, you are selecting infeasible solutions. In the latter, you are first filtering for only feasible solutions.
+We're considering making the filtering behaviour default in future versions of Ocean, to avoid this sort of confusion. But for now, filtering should resolve the issue.
+Ah ok, thanks! I would've assumed that the sampling of the CQM would only consider states that are feasible according to the constraint(s). I think the default filtering behaviour you mention would be great, since that was kind of how we expected it to behave.
+Otherwise, one could just work with the DQM and then filter manually after sampling.. perhaps that's how everything works under the hood(?)
+Anyway, thanks for the help! I'll close the issue 😄

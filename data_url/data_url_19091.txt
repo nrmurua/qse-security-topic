@@ -1,0 +1,30 @@
+QuTiP requires that functions that are used to specify time-dependent Hamiltonians have the signature func(t, args) where args is a dictionary of parameters. Currently, within krotov there is no way to make use of args. During discretization, func is always called with args=None.
+This is not a fundamental problem (all the examples use closures to specify parameters for the time-dependent controls, instead of using args), but users who have existing QuTiP code that uses args would have to adapt, as reported by @timohillmann  on Gitter. It should be very easy to modify krotov to allow a user to supply args, e.g. through the pulse_options parameter of the optimize_pulses function.
+@timohillmann Can you try out the controlargs branch? You can install the branch by running
+See the example at https://nbviewer.jupyter.org/gist/goerz/ba120072aabc36fd5ec93e98ade360ba, which is the two-level-state-to-state example rewritten to use args instead of a closure for the ampl0 parameter.
+The args dict is specified in the pulse_options in cell 10.
+Does that fit your use case?
+The documentation with the explicit answer to @timohillmann's Gitter question is now at https://krotov.readthedocs.io/en/controlargs/10_howto.html#how-to-use-args-in-time-dependent-control-fields
+@goerz This seems to work well.  I will take a closer look at work tomorrow, though.
+Seeing how we pass args to pulse_options just next to update_shape it could be worth thinking about enabling args also for the update functions in my opinion.
+Consider the example from How to use args in time-dependent control fields. If one would change t_stop in args we still have to go back to our update function and change it their manually.
+I have not worked with krotov enough to know if this would be worth implementing.
+Great!
+I briefly considered passing args to update_shape as well, but decided against it. I still think the args in QuTiP are a fundamentally bad design. I don't want to add a mandatory dummy argument args (or even the slightly better **kwargs) to the update_shape. In particular, the update_shape, being a much simpler function with a fixed amplitude in [0, 1,] will usually not use the same parameters as the control function.
+Of course, it's perfectly ok to define an update_shape with parameters, but then you can use functools.partial to set those parameters in the pulse_options. For example, if you prefer to define
+Then you could forward the args to S like this:
+or equivalently:
+Or, side-stepping S and using krotov.shapes.flattop directly:
+Yes, i think you make a good point here. partial will do the job if necessary.
+User can now define the Hamiltonian as they are used to from qutip, making krotov in this point coherent with qutip, while decoupling the optimization procedure from quitp syntax.
+That's exactly what I had in mind!
+Any other comments? If there are no further objections, I'll merge this into master later this week.
+I did not find any problems during the last days, i.e. no additional comments from my side.
+Great!
+@nathanshammah Do you think you guys would be open to changing the signature for time-dependent functions in QuTiP from func(t, args) to func(t, **kwargs) in some future major release (obviously a “breaking change”). Should I open an issue in QuTiP to propose that, or is that a non-starter?
+Let me ping @Ericgig.
+I have recently been discussing with @Ericgig some other advantages of more flexibility in the calling signature of the td funcs in QuTiP. I think @goerz proposal could be possible with breaking backwards compatibility, which would be essential for such a core feature. It would take a lot of thinking about though.
+So, the short answer is yes, please raise an issue on qutip github to discuss.
+We already support a few signature: func(t, args), func(t, state, args). func(t) will be added with qutip/qutip#1123. We are using decorators, so it is easy to add another signature, but it's slower than the default signature.
+Changing the default would require more work and some discussions better made in qutip's github.
+@goerz please could you comment on the linked issue. @Ericgig is keen to get this implemented.

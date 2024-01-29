@@ -1,0 +1,17 @@
+Electrons cannot currently be used in control-flow statements (if, for, while) when constructing a workflow. Expressions like if electron > 2, while (electron_1 > electron_2), for i in electron_that_returns_an_iterable, aren't meaningful. Consequently, in most cases the entire workflow transport graph is submitted at once and doesn't change throughout the workflow. However, the basic design of Covalent doesn't inherently require a static transport graph; Indeed, sublattice graphs are already built during execution.
+It is currently impossible to evaluate control-flow expressions involving electrons because build_graph() runs through the entire workflow to build out the transport graph.
+It takes just some minor adjustments remove the control-flow limitation.
+Some preliminary observations:
+Normally submit is asynchronous and returns immediately; dispatch_sync is implemented by a synchronous submit function, say, submit_sync:
+(In covalent, the wait mechanism basically amounts to polling the result.pkl until the result status becomes COMPLETED or FAILED, but it's not hard to imagine more efficient implementations.)
+If the dispatcher server merely runs a submitted lattice's computational graph without postprocessing the workflow, it doesn't require the graph to actually model the complete workflow. In fact the graph need not correspond to the workflow at all.
+Typical control flow statements are evaluated by calling some magic method to test for (in)equality or determine the truth value of an expression. For example:
+Proposal: During build_graph(), for each of the Electron's magic methods __le__, __eq__, __iter__, etc, just submit_sync the partially-built transport graph without postprocessing:
+For example, something like
+The key is that when two electrons are compared, both sides are defined earlier in the workflow and are therefore both already in the transport graph. Hence both self and other have a node_id.
+With this change, build_graph would dynamically build out the graph, pausing whenever electrons are encountered in control flow statements to resolve the value of those electrons. This graph building process can be performed automatically by the server using the workflow_executor introduced in #748, using the fact that transport graphs are now JSON-serializable so the the dispatcher can receive the transport graph from the workflow_executor as a JSON string.
+To implement this efficiently one should only submit_sync the newly added nodes (nodes without outputs) and edges.
+@cjao can this be closed as completed?
+This approach differs somewhat from the sublattices method in that it would be fully automatic -- but also more involved to design and implement. @santoshkumarradha Would you consider the sublattice method a solution to this issue?
+@cjao not a super high priority right now, lets add this as a backlog.
+@cjao just checking in with recent sublattice changes, how trivial (non trivial) is it to directly support control sequences in lattice? Also keep in mind that lattice execution can take place in cloud with workflow executor which is default in non local case.

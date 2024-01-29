@@ -1,0 +1,54 @@
+We should probably read back the "outputs phases status" bit from the HMC7043 before we return from init (see the typical programming sequence section, point 10). This verifies that the phases are stable before we unmute the outputs (i.e. no glitches).
+I interpret that as meaning that we should read back register 0x7D, potentially after setting an appropriate mask in register 0x71, although maybe I've misunderstood that. Anyway, currently 0x7d  always seems to be 0x00, indicating that the phases aren't stable or that I'm doing something wrong.
+As a low priority, would you mind looking into this @sbourdeauducq or @enjoy-digital
+Could this be related to #1083?
+Don't know.
+Have you tried reading the phases statuses bit on your board?
+Also 0x00.
+Thanks for checking that.
+So, either we're not using this bit correctly or the phases aren't settling properly.
+What are you writing to register 0x71? Are you setting bits 4, 2 & 1?
+Well, you have the code... we're not touching 0x71.
+Anyway there is no change:
+I'm not sure what value should be expected in 7d anyway. What does "SYSREF of the HMC7043 is not valid" mean?
+@enjoy-digital When I looked at this, I tried setting some bits in 0x71 (see top level post) but it didn't seem to make any difference. Maybe there is something else that needs doing?
+Edit: thanks @sbourdeauducq that's essentially exactly what I had.
+So, I've been taking a bit of a look at this. @sbourdeauducq successfully nerd-sniped me on it.
+The exact reseeding behaviour is complex, poorly documented, and in some cases, contradictory. The current codebase leaves the "RF reseeder" (reg 3, bit 5) enabled as is the default, which means the SYSREF FSM is stuck in reset ergo the sync can't complete (reg 0x91 stays at the RESET state).
+However, even if we fix this, 0x7D still doesn't indicate phase stable. Apparently 0x7D is broken so we might need to change to checking stability via the GPO. I'll test a bit further down these avenues and determine whether the GPO or the 0x91 FSM status register is showing the SYSREF channels as synchronized.
+Various analog devices forum posts suggest that we may want to ensure the RFSYNC inputs are forced to logic-zero if we aren't using them. This might require a HW change for a latter board rev.
+we may want to ensure the RFSYNC inputs are forced to logic-zero if we aren't using them
+In accordance with the datasheet, those pins are AC-coupled on the board, so it is unclear to me how to connect them to a constant 0. Do those forum posts have the answer?
+In accordance with the datasheet, those pins are AC-coupled on the board, so it is unclear to me how to connect them to a constant 0. Do those forum posts have the answer?
+Where do you see that? AFAICT, it's fine to tie them low by pulling P to GND and N to 3V3. Just make sure to set the biasing and termination appropriately (i.e. no biasing, no termination). See the clock input network section of the data sheet (which says that inputs are "typically AC coupled" not "must be AC coupled).
+One thing to be careful about is that sometimes these input stages have diodes to limit the maximum differential input signal. So, it's worth making sure that any DC pull ups/downs are via 10k resistors to limit any currents (you can measure the voltage drop to check if any diodes are conducting), If you do that, you might as well enable the common-mode voltage setting resistors to ensure that you're biasing around the right quiescent point.
+
+But it doesn't say they must be AC-coupled, no. I don't even see why they suggest RFSYNCIN should be AC-coupled, in some cases you may just send one pulse there, not an AC signal...
+They can be configured without input termination, then I suppose one can use two resistor dividers to set the voltages on each pin to the nominal LVPECL or CML levels. Note "The input termination network is configurable to 100 Ω, 200 Ω, and 2kΩ differentially", but cannot be completely disabled AFAICT. It's also unclear how to configure this.
+So we can work the other way: use documented termination resistor settings (e.g. 100 ohm), then one resistor to 3.3V one one pin, and one to GND on the other, with values that produce the correct voltages at the two ends of the termination resistor. Bonus, we can simply use a DMM to check that the termination settings of this horrible HMC7043 are correct. Considering how obscure this is again, it might be worth reviewing the CLKIN termination.
+I don't even see why they suggest RFSYNCIN should be AC-coupled, in some cases you may just send one pulse there, not an AC signal...
+My understanding is that the anticipated "normal" use for this IC is to have a series of pulses on the RF sync input (indeed, it even says that this is only the "normal" usage in the text I quoted). Then AC coupling works best as it ensures that the signal swing is around the optimal CM voltage to give low jitter (remember it has to have low enough jitter to work up to be sampled of a several GHz clock). For single pulses, or just pulling it low, obviously AC coupling doesn't work.
+Edit: I take that back! Looking at the engineering forum, it's pretty clear that RFSYNCIN is only supposed to be used with a single pulse and should be DC-coupled. The datasheet is just wrong here! NB after finishing syncrhonisation, it's probably best to disable the RFSYNCIN buffer to avoid noise-triggered resync events.
+In any case, the documentation seems poor and incorrect, so let's just try it and see. So long as the pull ups limit the current to something sensible we won't break anything.
+Note "The input termination network is configurable to 100 Ω, 200 Ω, and 2kΩ differentially", but cannot be completely disabled AFAICT. It's also unclear how to configure this.
+AFAICT, it's done with 0x000B but the mapping between those bits and the settings they control is a bit opaque. I'm not sure I fully understand how this works, but:
+So we can work the other way: use documented termination resistor settings (e.g. 100 ohm), then one resistor to 3.3V one one pin, and one to GND on the other, with values that produce the correct voltages at the two ends of the termination resistor.
+Just be careful not to exceed the internal 2V8 supply that these pins are powered from.
+Also, reading the docs (particularly the HMC7044, which is more detailed) it looks like these buffers are somewhat fussy over common-mode input voltages. So, I think it would be best to use the "AC-coupling" mode to enable the on-chip biassing and then use some weak-pull ups/downs to set the required logic levels (we only need to change the input voltage by a few hundred mV).
+Considering how obscure this is again, it might be worth reviewing the CLKIN termination.
+Yes, I'm beginning to think our settings here are wrong. I don't think we should be using LVPECL mode.
+r. Bonus, we can simply use a DMM to check that the termination settings of this horrible HMC7043 are correct
+That's probably a good thing to do. But, I'd feel much more comfortable if we could speak to someone who actually understands it instead of trying to reverse engineer it. Maybe post something on the ADI forum?
+@sbourdeauducq also, note that here an ADI guy says that the RFSYNCIN should be dc-coupled...
+Edit: same here https://ez.analog.com/message/355414-re-cascading-multiple-hmc7043?commentID=355414#comment-355414
+Input buffer modes: https://ez.analog.com/message/296858-hmc7043-input-buffer-mode
+Edit: so we really shouldn't be using LVPECL mode for clock in!
+The exact reseeding behaviour is complex, poorly documented, and in some cases, contradictory. The current codebase leaves the "RF reseeder" (reg 3, bit 5) enabled as is the default, which means the SYSREF FSM is stuck in reset ergo the sync can't complete (reg 0x91 stays at the RESET state).
+@sbourdeauducq we should also definitely check the SYSREF FSM state during init. Looking at the reseeder request description on the data sheet:
+Requests the centralized resync timer and FSM to reseed any of the output dividers that are programmed to pay attention to sync events. This signal is rising edge sensitive, and is only acknowledged if the resync FSM has completed all events (has finished any previous pulse generator and/or sync events, and is in the done state (SYSREF FSM State[3:0] = 0010)"
+I looks like we should also explicitly disable the SYSREF timer once we've finished synchronisation. https://ez.analog.com/message/302525-hmc7043-subharmonics
+Note to self: it's not clear whether analog fine delay works at 2GHz... https://ez.analog.com/message/334113-hmc7043-data-sheet-rev-b-page-5-max-analog-delay-fine-frequency-is-specified-at-1600-mhz-does-that-mean-if-i-have-a-2ghz-clkin-and-a-divide-by-1-that-i-cannot-use-the-analog-delay-please-what-will-actually-happen-thanks-john-reyland
+We're not using the analog delay (which is noisy anyway) on the high-frequency clocks such as the DAC sample clocks. It is only used on the lower-frequency SYSREF channels.
+We're not using any of this SYSREF/FSM/RFSYNCIN logic so the best way to deal with it is to disable it as much as possible.
+It might be worth opening an Analog Devices service request on this. They may be willing to do a design review of HMC7043 as used on Sayma.
+Thanks.

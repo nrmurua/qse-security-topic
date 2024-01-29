@@ -1,0 +1,20 @@
+I am trying to set the simulation precision to single, for example in the following script:
+This prints complex64 for qiskit version <= 0.33.1 (qiskit-aer 0.9.1) but complex128 for version >= 0.34.0 (qiskit-aer 0.10.1).
+I created two seperate conda environments and installed qiskit using:
+in the first and
+in the second. When I execute the above script on the first environment I get complex64 as expected, while in the second environment I get:
+If I use np.asarray on the final state, the precision remains to complex128.
+Since the simulator precision is set to single, the final state should be of complex64 type.
+I understand that there is an internal change and the simulator now returns custom state objects instead of numpy arrays. However shouldn't the returned precision still be consistent with what is set in the simulator settings?
+I suspected that this is related to how I define the simulator, so I tried what is proposed here to set single precision:
+however then the above script fails with
+I tried adding a circ.save_statevector() at the end of the circuit, but then I get:
+This is a good point that we hadn't considered when we swapped over the return type - Terra's Statevector automatically promotes everything to double precision when we create it.  I don't know if it's enough for you, but the calculation should have still run in single precision internally, and just the very final array should get promoted to double precision.  Getting the final Statevector to be single precision will be a bit trickier, because all of qiskit.quantum_info assumes double precision (in part because Python's floats are doubles).
+For your second point: I'm guessing that in your second example, you tried to build the circuit before the line simulator = Aer.get_backend(...).  If you move that line to the top of the script, the QuantumCircuit.save_statevector method should work again (qiskit.Aer is a lazy-loader of Aer - it doesn't actually import it until you use the object somehow).  The output will still be a Statevector in double precision, but the calculations internally should be single.
+Thank you for the quick reply.
+This is a good point that we hadn't considered when we swapped over the return type - Terra's Statevector automatically promotes everything to double precision when we create it. I don't know if it's enough for you, but the calculation should have still run in single precision internally, and just the very final array should get promoted to double precision.
+For my case it is sufficient to know that the simulation runs in single precision, regardless of the final result type.
+For your second point: I'm guessing that in your second example, you tried to build the circuit before the line simulator = Aer.get_backend(...). If you move that line to the top of the script, the QuantumCircuit.save_statevector method should work again
+Indeed, that's right. If I define the simulator before the circuit it works and the issue with precision still remains. Note however that the example provided in the docs for saving the final statevector does not work as the simulator is defined after the circuit.
+This example works because Aer is loaded first in the notebook. But maybe it is better to swap circuit construction and simulator instantiation as an example.
+I would like to close this issue. Please re-open this if a problem still remains.

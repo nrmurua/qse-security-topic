@@ -1,0 +1,19 @@
+Problem: A common optimization for simulators to perform is to allow for qubits to exist for only some small amount of time.  Qubits can be allocated and deallocated as the simulation runs and this can result in smaller simulation step sizes (less memory and less time).  This type of optimization is useful in quantum error correction and in open systems simulation.  In addition there are architectures in which moving a qubit around is a useful concept and one good way to implement this is to consider move swaps operations as a separate type of operation.  Simulators can often interpret this as tensor index re-ordering, and hence this can be used to speed up simulation.
+Rough requirements:
+There's an argument to be made that #4100 will fulfill the majority of this feature request. In short:
+Qubit-moving is not explicitly covered in that PR, but it does add a "reorder" method to the ActOnArgs interface which could be used for this purpose.
+"reorder" would only handle moving if they were in the same qubit entanglement set. If they weren't, of course you could join the two qubit sets then reorder, which would do it but then you've got an unnecessarily joined set.
+An optimization would be to add logic to core_iterator that explicitly looks for swap gates, and then renames the corresponding two qubits in the two qubit sets (requires a new rename_qubit function; straightforward to write). Renaming would be more efficient than reordering too because the latter physically restructures the tensor to the specified order.
+#4169 handles the qubit-moving part.
+The PRs mentioned above provide implicit qubit (de-)allocation in simulation - i.e., there is no "allocate qubit" operation, the simulators simply detect changes in qubit entanglement and adjust accordingly.
+@dabacon, does this fulfill the requirements for ion trap simulation (particularly with regards to "moving" qubits), or are separate, explicit qubit (de-)allocation operations also necessary?
+From @mpharrigan: could we add support for tracing qubits out (rather than measuring them)?
+@mpharrigan @viathor Note all the PRs for this is merged into master now. Per tracing out, if you add reset gates to things you no longer need, the simulator separates those.
+So, a bell state between q0, q1, with reset on q1: cirq.Circuit(cirq.H(q0), cirq.CX.on(q0, q1), cirq.reset(q1)) would separate into
+Does this satisfy the needs for tracing out? Do we want an optimizer that appends reset gates to unused/unmeasured qubits? Or can we mark this as done?
+Yes, I think this will work. I had to take a chunk of time to convince myself that resetting a qubit you're throwing out can't mess things up with the qubit you're keeping, and I wanted to find the hidden trace operation. In case it's helpful for others: The unitary equivalent of reset is swapping your system qubit |psi> with a |0> ancilla. The ancilla is traced out to get our familiar reset channel (non-unitary); but psi is now on the ancilla! this is where the trace implicitly happens.
+
+@95-martin-orion looks like this can be closed now.
+Just to be clear: the user needs to use DensityMatrixSimulator in order to get the correct behavior for de-allocating qubits. It's strange we let the user shoot themselves in the foot by allowing measure() and reset() calls when doing simulate
+Re-opening. I couldn't get de-allocation to work in any meaningful way, see #4360
+Re-closing. Turns out there were other issues, see #4360

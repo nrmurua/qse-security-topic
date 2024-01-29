@@ -1,0 +1,19 @@
+Using define_noisy_gate to simulate a channel, I get expected results if I use run but not when I use run_and_measure. More specifically, if I run
+I get the following plot, which should really be centered at 0.2 but is instead centered on some other value:
+
+If instead I run the following code using run:
+I get the output image centered on the correct value.
+
+I’m not sure this is what’s going wrong, but here’s my guess.
+Because the (pure state mode) QVM maintains a pure state, it can’t hold a single true noisy distribution. To get around this, it uses the noise model to select from a family of pure states in such a way that pulling a random pure state from that family + pulling a random bit string from the pure state’s distribution joins to give the correct overall noisy distribution. run re-runs both selection steps each time it pulls a bit string (& so gives the desired result), whereas run_and_measure chooses the pure state only once and then repeatedly samples from it, which violates this.
+This has been a source of confusion for so long that I don’t understand why we don’t throw an error if someone tries to use noisy r_a_m. I don’t see how it will ever give a useful answer.
+You could probably detect this behavior here by asking whether the center of the r_a_m distribution changes appreciably as you repeatedly run it. If so, I’ll bet this is the explanation.
+You could probably detect this behavior here by asking whether the center of the r_a_m distribution changes appreciably as you repeatedly run it. If so, I’ll bet this is the explanation.
+@ecp-rigetti Yes, the the center of the distribution does indeed change appreciably in the run_and_measure case. For example, a separate run of the same code gave me the following output image:
+
+I wish GitHub would let me pick from a wider emoji palette so that I could react with 😎
+This different behavior of run and run_and_measure in the presence of error models has been around for a while, and my impression was that @mpharrigan had addressed it. Did we somehow revert those changes at some point?
+measure_observables in operator_estimation is (and was) using run_and_measure. This will prevent it from working well with noisy program. I'm working now to change it so that it uses run instead.
+It is a horrible idea to have QVM and the QPU use different abstractions. All generic code in PyQuil that "consumes" a quantum computer should treat both the same -- otherwise we run into problems like this.
+QuantumComputer.run_and_measure just calls QVM.run a bunch of times. The old QVMConnection had the problem where run_and_measure didn't work
+Fwiw, @ecp-rigetti and I discussed this further and concluded that his explanation above for this odd behavior can't be exactly right, since in this case the pure states are either |0> or |1> and so if run_and_measure was indeed choosing the pure state once and then repeatedly sampling from it, we should've just seen bars at either 0 or 1, not distributions whose centers change (randomly) each time you use run_and_measure as in the very first code example.

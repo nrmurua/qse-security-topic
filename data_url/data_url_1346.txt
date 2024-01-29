@@ -1,0 +1,12 @@
+Description of the issue
+While working on #5469 I noticed that in theory, the deep_copy_buffers=False optimization (make copies of the state vector per simulation repetition, but reuse the existing buffers since we're simulating serially) could be used here. However when I tried it out, one unit test started failing.
+It took a while but I finally realized the reason: some of the logic in the simulator has the ability to swap the buffer and state_vector. Thus it's possible that the buffer that is being shared among the simulations will be the state vector at the end of the simulation, and thus each simulation repetition will share that same state vector instance.
+Basically, the deep_copy_buffers=False optimization is flawed and should be removed.
+@95-martin-orion
+How to reproduce the issue
+Check out #5469 and add the deep_copy_buffers=False optimization in line 601, and run pytest cirq-core/cirq/sim/sparse_simulator_test.py::test_simulate_sweeps_param_resolver
+Cirq version
+Currently it looks like this optimization is only used in _run, and would only be hit in two conditions
+I take it back, it's actually fine in the use case where it's used. 😅
+_run only returns the measurements, and the measurements are gathered immediately after each repetition, so it doesn't matter if the simulation state gets changed afterward. Whereas simulate_sweep returns a reference to the resulting simulation state vectors themselves to the user, which caused the problems when they all ended up referring to the same shared buffer as noted above.
+So @95-martin-orion we can keep the optimization but be careful with it.

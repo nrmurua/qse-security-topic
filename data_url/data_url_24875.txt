@@ -1,0 +1,16 @@
+I've been trying to implement the circuit found in Fig2a of this paper, but when I attempt to use the from_yaml function it appears to hang. I am not sure why, since I expected a 3 node circuit to be easily constructible, since the custom circuit in the scqubits documentations is a 4-node $0-\pi$ qubit.
+I tried this in Spyder and also directly in iPython in the terminal with the same results.
+Here's what I used to create the circuit. Note I elide the parasitic capacitor $C_{12}$ for simplicity.
+I expected this to work quickly, so I'm not entirely sure why it's not working. Is there some other way I can define this? Or something I'm not understanding about how the circuit I want to make is difficult for the software? Some sort of issue with the variable classification?? I'm just guessing here.
+
+OS: macOS 12.1
+Python: 3.8
+scqubits: 3.0.1
+@QuantumWitness
+As far as I can tell, the hang-up occurs on the sympy side when computing the capacitance matrix inverse symbolically. Indeed, I would never want to see the inverse of a generic symbolic 4x4 matrix. That will be a huge expression. The way to go is to work with numerical entries in the capacitance matrix only. Once I change the yaml description to values only, the circuit initialization is fast.
+@saipavanc  @pacosynthesis
+@jkochNU That is correct! The slowdown is due to the Sympy symbolic inversion of the capacitance matrix. We did notice this slowdown even for circuits like zero-pi, and so changed the code such that the symbolic inversion is skipped for circuits having number of nodes greater than the threshold of 4. And this circuit falls just short of that threshold, and the circuit initiation continues with symbolic inversion. The resultant expressions are overly long even if just one symbol is used for one of the capacitors. Now, it seems like the threshold can be reduced to just 2 nodes.
+@QuantumWitness Thanks for catching the bug. As a workaround, just replace the ground node 0 with another node. Like in this YAML description:
+For the threshold I mentioned above, I am only considering the number of nodes excluding the ground node. So, removing the ground and adding an extra node pushes it over the threshold. Thus, the symbolic inversion is skipped until the numerical Hamiltonian is constructed and the circuit initiation is quick as expected. In the meanwhile, we will discuss and implement a fix to avoid such hangs in the future.
+Both of these work-arounds worked well for me, thank you!
+This issue has been addressed with 17ddb65 and released with v3.0.2. In the current version, the inversion of capacitance matrix is carried out numerically when the total node number is greater than 3 by default, no matter the circuit is grounded or not. The hang-up will not occur with the original input file in #148 (comment).

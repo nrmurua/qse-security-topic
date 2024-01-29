@@ -1,0 +1,20 @@
+It looks like some tests, such as test_entanglement_entropy fail on GPUs with low memory (say ~4GB), with a core dumped crash.
+The problem seems to come from tensorflow/cuda when calling the tf.linalg.eigvalsh method. Here a minimal example:
+while the same code with eigvals does not crash.
+@stavros11 could you please try to reproduce this issue?
+We can report that on TF, and would be great to try on the dgx by limiting the GPU memory.
+@stavros11 could you please try to reproduce this issue?
+I just tried on my notebook GPU (GTX 1650 4GB) and I have no issues executing the example. I tried with rho of size up to (2^13, 2^13) and the diagonalization works with no issues on GPU. Also Qibo tests pass, which is strange because yesterday I was also getting core dumped when I was running the tests.
+Interesting, I can get rid of this issue by limiting the GPU memory...
+I had a look at the failing tests and can confirm that all failures when executing on GPU are due to the following methods:
+Running the example from the first post on GPU gives core dumped for me as well now. I am not sure why everything was working yesterday... Also replacing eigvalsh with any of the methods listed above gives the same error. The error is fixed if I limit the GPU memory.
+I guess we can report the problem on tf. We can also fix our tests on GPU by limiting the memory before execution. I tried doing it using:
+but I am not sure where to put it in the conftest.py so that it is called before any imports (I get RuntimeError: Virtual devices cannot be modified after being initialized).
+@stavros11 great, could you please confirm that if you set this before running these functions solves the issue?
+I would keep the code as it is for now, and wait for their feedback.
+@stavros11 great, could you please confirm that if you set this before running these functions solves the issue?
+Yes, I can confirm that limiting the GPU memory either with the code I wrote above or with set_memory_growth method you used solves the problem for all methods.
+Also, note that sometimes the problem may not appear even without limiting the memory. I think it only appears when a minimum fraction of the GPU memory is used by other applications.
+Ok, I will open an issue.
+tensorflow/tensorflow#48041
+This issue seems fixed with tf2.5.0. and CUDA 11.2.

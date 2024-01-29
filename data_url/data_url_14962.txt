@@ -1,0 +1,79 @@
+Sorry to my English. I hope you understand.
+If I use Pulse with my own calibration set at Fakebackend, and when I run the circuit including CNOT(The job type is schedule), then  Its result is really weird thing. I write my code below.
+from qiskit import QuantumCircuit
+from qiskit import transpile, schedule
+from qiskit.tools.visualization import plot_histogram
+import matplotlib.pyplot as plt
+from qiskit import pulse, Aer
+from qiskit.pulse.library import Gaussian, GaussianSquare, Drag
+from qiskit.providers.fake_provider import FakeManila
+from qiskit.visualization import plot_histogram
+from qiskit.circuit import Gate, Parameter
+import numpy as np
+Working case :
+backend = FakeManila()
+circ=QuantumCircuit(2)
+circ.rz(-np.pi/2,0)
+circ.sx(0)
+circ.rz(np.pi/2,0)
+circ.barrier()
+circ.sx(0)
+circ.barrier()
+circ.sx(0)
+circ.barrier()
+(#circ.cx(0,1))
+circ.measure_all()
+with pulse.build(backend, name='X') as x_q0:
+pulse.play(Drag(duration=160, beta=-1.5858585858585856, amp=0.08388888888888889, sigma=40), pulse.drive_channel(0))
+circ.add_calibration('sx',[0], x_q0)
+circ_transpile = transpile(circ, backend,initial_layout=[0,1])
+circ_sched=schedule(circ_transpile, backend)
+job = backend.run(circ_sched, shots=20000)
+counts_scaled = job.result().get_counts()
+counts_scaled
+then the result is pretty understandable. Because this code is just have one hadamard gate
+But Non-Working case:
+backend = FakeManila()
+circ=QuantumCircuit(2)
+circ.rz(-np.pi/2,0)
+circ.sx(0)
+circ.rz(np.pi/2,0)
+circ.barrier()
+circ.sx(0)
+circ.barrier()
+circ.sx(0)
+circ.barrier()
+circ.cx(0,1)
+circ.measure_all()
+with pulse.build(backend, name='X') as x_q0:
+pulse.play(Drag(duration=160, beta=-1.5858585858585856, amp=0.08388888888888889, sigma=40), pulse.drive_channel(0))
+circ.add_calibration('sx',[0], x_q0)
+circ_transpile = transpile(circ, backend,initial_layout=[0,1])
+circ_sched=schedule(circ_transpile, backend)
+job = backend.run(circ_sched, shots=20000)
+counts_scaled = job.result().get_counts()
+counts_scaled
+this circuit is bell state circuit but result is like {'00': 3395, '01': 16605}.
+Just output is measure of bell state result with little noise.
+NOne
+Thanks for sharing @BeomGyuChoii
+I think there is a bug here, but I don't think it's related to the pulse gate, but rather to the measurement handling for the schedule. You can recreate the bug without the pulse gate:
+The circuit run seems to be ok, but the schedule run is wrong, and doesn't measure qubit 1 at all. (It should be noted that running schedules on IBM backends is headed for deprecation [and actually won't work even now on some of them]).
+@to24toro, what do you think? Is it related to the fixes you've been working on? Is it a Terra problem or a Qiskit-Aer problem? Do we even support schedule runs on the fake backends?
+(@nkanazawa1989 FYI)
+There could be some bug since Aer pulse simulator is not maintained recently (this is replaced with Qiskit Dynamics now, but fake backends don't support dynamics path).
+Anyways just scheduling the circuit with fake backend calibration doesn't work in many case. This is because you need to know exact Hamiltonian of your device at the time the calibration data is generated, but we don't update the Hamiltonian parameter in regular basis. Basically you need to recalibrate all of your pulses on a simulator instance, with the hard-coded Hamiltonian.
+I am not sure I understand how this could be a calibration issue. The measurement calibration is so off that not even a single shot yielded 1 on qubit 1?
+Here is an even simpler example which reproduces the bug:
+Thanks @TsafrirA for further investigation. I agree this is a simulator bug about measurement instruction handling. We recently did some refactoring for measurement scheduling, but no test was broken with this refactoring. Can you also put the repr of circ_sched ?
+Just what I was looking at.
+Schedule((0, Play(Drag(duration=160, sigma=40, beta=-0.803458359149747, amp=0.09951569310073495, angle=0.0069670825682855535, name='X90p_d0'), DriveChannel(0), name='X90p_d0')), (0, Play(Drag(duration=160, sigma=40, beta=-0.6480781322121083, amp=0.09633544983165646, angle=0.020048140208258274, name='X90p_d1'), DriveChannel(1), name='X90p_d1')), (160, Acquire(22400, AcquireChannel(0), MemorySlot(0))), (160, Acquire(22400, AcquireChannel(1), MemorySlot(1))), (160, Play(GaussianSquare(duration=22400, sigma=64, width=22144, amp=0.27999999999999997, angle=-2.592031183709648, name='M_m0'), MeasureChannel(0), name='M_m0')), (160, Play(GaussianSquare(duration=22400, sigma=64, width=22144, amp=0.27, angle=2.652928848157663, name='M_m1'), MeasureChannel(1), name='M_m1')), (22560, Delay(1680, MeasureChannel(0))), (22560, Delay(1680, MeasureChannel(1))), name="circuit-120")
+It seems like the schedule is OK. Should I move this issue to Aer?
+Yes,
+looks like acquires are schedule properly. I think this is not related to Terra.
+@BeomGyuChoii
+A new issue was opened in Qiskit-Aer (1858) just to be on the safe side, but it should be mentioned that Qiskit Aer's pulse simulator is deprecated and headed for removal (1809). Pulse level simulations should be done using Qiskit Dynamics.
+DynamicsBackend tutorial is good to start with. The dynamics backend can take circuit and simulate it at Hamiltonian level.
+https://qiskit.org/ecosystem/dynamics/tutorials/dynamics_backend.html
+We'll close this issue. Feel free to reopen it.
+Thanks for taking care of this problem

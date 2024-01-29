@@ -1,0 +1,20 @@
+I have two simple QASM files:
+Let's pass test1.qasm to this program to run first, then test2.qasm.
+Running test1.qasm produces this result:
+and test2.qasm this result:
+Logically, however, we should expect the same results because both the QASM specification and the Quantum++ implementation, which has faithfully followed the spec, define this:
+I did some analysis on the issue. Using Hadamard gate directly like the one in the test1.qasm is always correct because the H gate is hard-coded correctly in the Quantum++, bypassing the definition in the qelib1.inc.
+So, the problem seems to be twofold. The QASM spec is wrong. Then, the implementation leads the API users to an illusion that the H gate is equivalent to gate h a { u2(0,pi) a; }. But, in fact, it does not use that definition at all.
+By the way, I use this QASM paper as my reference.
+This is an excellent point which I was not at all aware of, thanks! I frankly don't know what to do here. Most of the time the minus sign in front of the "true" Hadamard doesn't make a difference, but it may, e.g. in a case of a CTRL-Hadamard. I am tempted to leave it as is (and document it), so it uses the "true" Hadamard from the Q++. Other option is to just add a minus sign when parsing the QASM, so h behaves the way it's defined in QASM. I think asking QASM crew to change their definition is something that may take a while; any suggestions?
+IBM (Qiskit) is presumably the leading user of the QASM. If the fundamental H gate had been wrong, that would have affected thousands of users for a few years. I couldn't believe it. So, I take a look at the Qiskit QASM implementation. It turns out their code does not match their QASM specification either, the code being correct.
+The root cause is not the gate h a { u2(0,pi) a; }, instead the U gate. The Qiskit uses the matrix here. It is drastically different from that in the spec.
+Using the information of that matrix, I change the Quantum++ UGate::evaluate() in the ast.h and make the matrix look like this:
+Now, the u2(0,pi) q; works like a correct H gate. The new matrix is still unitary. So, I'd like to suggest you think about it.
+Well, the U gate change would affect pretty much every single gate in the qelib1.inc. I am not sure if all other gates could pass the unit tests.
+@DevelopDaily Fixed, now all gates in include/qasm/preprocessor.h are defined as they are in Qiskit, and the u3 (u matrix in include/qasm/ast.h) is defined also as in Qiskit (as you mention above). Thanks for the testing, please let me know if you find any issues with the fix.
+Here is a little piece of useful information.
+I stated earlier that the Qiskit implementation is "drastically" different from that in the spec. As a matter of fact, my statement was inaccurate.
+I just realize the matrix in the spec is not that different. If we divide the matrix by exp(-i * (phi + lambda) / 2), we get the matrix that is used by the implementations in both Quantum++ and Qiskit now. That is perfect because the division by that factor has no observable effects.
+@DevelopDaily Thanks! So I hope that the fixes are also OK?
+Definitely, the fixes are perfect. I have been using them since they were released. Thanks.

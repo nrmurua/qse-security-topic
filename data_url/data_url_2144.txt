@@ -1,0 +1,20 @@
+Maybe I'm doing something wrong, but I'm trying to insert an operation into an existing moment on an existing qubit for which I know to be idle. I'm using circuit.insert. But it won't put it at the i I specify. Rather, it will slide my gate as left as possible near index i
+This is probably because the default value for the optional strategy parameter is cirq.InsertStrategy.EARLIEST.  Is earliest the most intuitive strategy for the insert method?
+Sorry, I should have mentioned that I tried changing the strategy to INLINE. I observed the same behavior. Upon further digging it looks like (under the inline strategy) it subtracts 1 from the index you pass in and puts the operation there; which seems surprising at best.
+The behaviour is expected as far as the current InsertStrategy definitions are concerned.
+InsertStrategy.INLINE: Attempts to add the operation to insert into the moment just before the desired insert location. But, if there’s already an existing operation affecting any of the qubits touched by the operation to insert, a new moment is created instead.
+Therefore to achieve the desired effect, we would have to specify index + 1 with insert strategy INLINE.
+Currently, there is no insert strategy which directly inserts into an existing moment at index i if possible, else creates a new moment / starts scanning backwards.
+This reason for this is to make it act the way list.insert does, in that the index that you're refering to is the divider between the two indices. So if you say to insert at index 5, you mean between offsets 4 and 5. So the insert is logically before offset 5 if you say 5.
+I agree that this is confusing sometimes. I've confused myself with it. I'm not sure what's best to do.
+@dstrain115 says at the very least we should explain this in the documentation
+Maybe instead of insert i, you could do circuit[i] += op.
+Maybe instead of insert i, you could do circuit[i] += op.
+would this need to throw an exception if the operation cannot be added to the moment?
+it should raise if it won't fit
+The list metaphor makes sense if you're doing insert(moment) (because Circuit is like a List[Moment]) but it really breaks down since we're inserting a thing that goes into a list element
+What if we only allow inserting moments? and then have a .place(op) to put in an operation (and/or use the syntax you suggest of circuit[i] += op). Would this break too much existing code?
+circuit[i] += op currently works as expected. We can also use circuit.batch_insert_into([(moment_index, operation)]) to achieve the exact same thing.
+IIUC, it would break a lot of code if we just allow inserting moments. There will also be inconsistencies with other methods like insert_into_range, insert_at_frontier, batch_insert etc., all of which are for inserting operations in the circuit.
+I agree that we have to continue supporting circuit.insert(index, operation).
+Marking the issue resolved.

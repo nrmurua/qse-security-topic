@@ -1,0 +1,10 @@
+In working on #5554, we were getting random errors from test_isometry. It turns out U3 gates were being created in the transpiler with theta=1.5707992852654353, which varies by .00000295847 from pi/2. In OneQubitEulerDecomposer, a call was made to np.isclose with an atol value of 1e-12, but using the default value for rtol which is 1e-5.
+The formula for np.isclose is absolute(a - b) <= (atol + rtol * absolute(b) where b is the reference value, in our case pi/2. So a U2 gate was created which after several calculations ended up out of tolerance.
+The obvious solution is to set rtol in the np.isclose calls to a much smaller value. Since the reference values in OneQubitEulerDecomposer are all in the range [-pi/2, 2pi], setting rtol very close to atol seems appropriate - something in the range 1e-9 to 1e-12 should work.
+Maybe a simpler solution would be to change all the OneQubitEulerDecomposer isclose checks of the form isclose(val, target) to be np.isclose(val - target, 0). Then only the atol parameter should matter.
+@chriseclectic Thanks for the feedback. I'm not sure it would always be simpler. There are instances in this code like
+np.isclose(theta, [-np.pi / 2, 3 * np.pi / 2], atol=atol).any()
+in which it seems it might be simpler to add rtol=rtol to the end than do multiple subtractions. But either should work.
+The absolute of the comparison values in this code are never larger than 2pi, smaller than pi/2, or are 0, so rtol = atol should work fine here.
+I'm taking a broader look at tolerances in the decompositions so I'll include this.
+Sounds good. Thanks.

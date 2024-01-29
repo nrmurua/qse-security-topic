@@ -1,0 +1,16 @@
+When we trying to compile an if statement inside a for loop, I notice that some instructions are disappearing.
+Try to compile: (test-1.cpp in #323 )
+By running the program with CUDAQ_LOG_LEVEL=info, we can see that the x operation are not executed:
+This will also happen if we change the condition to if (value). (Before even with if (true) this would fail in the same way----now it seems to not be the case.)
+The x operations should not disappear. The program should output values 0-15 in binary.
+Not a regression
+No response
+This bug occurs because the if statement conditional is always evaluating to false. The reason it always evaluates to false is that the QuakeSynth pass is replacing the argument with the *kernelArgs pointer coming from altLaunchKernel. If we go into the generated LLVM from the library and the generated Quake, we see that the entry point function signatures do not line up exactly
+Ours (quake)
+LLVM
+Note that we prepend the i8* for the *this argument, thus assuming that all our kernels are typed and not free functions (as is the case with Bruno's failing example). I think that the bogus kernelArgs are coming from this mismatch on the signature.
+And note that if I update Bruno's example to use a struct instead of a free function, it all works fine.
+The fix would be to update the generation of the entry point in GenKernelExecution to drop the *this pointer if the kernel is a free function. We may need an extra attribute tag from the ASTBridge for that.
+The fix would be to update the generation of the entry point in GenKernelExecution to drop the *this pointer if the kernel is a free function. We may need an extra attribute tag from the ASTBridge for that.
+This bug is causing grief in various cases when using plain functions as quantum kernels. (Our support for that isn't complete.) I think we can open a separate issue for fixing the "this" bug(s). Assign it to me as well.
+test-1 passes.

@@ -1,0 +1,53 @@
+I've been seeing encaps/decapsulation failures with SIKE-434-compressed.
+I modified test_kem.c to be multithreaded and use NIST-KAT's RNG:  https://gist.github.com/thomwiggers/c23e2c4e01971ccfd5496466b72a89c6
+I've not yet entirely figured out how to feed the seed back in to get a reproducible-every-time version.
+See discussion in #981
+I'm not able to get it to happen in SIKE-p434 (not compressed), it seems...
+ahhhhh of course, the NIST RNG isn't thread-safe, so my seeds are invalid.
+single-threaded, 434-compressed:
+this reliably reproduces it.
+ahhhhh of course, the NIST RNG isn't thread-safe, so my seeds are invalid.
+Non-thread-safe RNG shouldn't affect test_kem; while it might produce weird seeds, you should still get equal shared secrets.  Multi-threaded kat_kem would produce wrong behaviour, but that's a different story.
+I've confirmed that this affects the upstream code. @thomwiggers care to submit the bug report?
+Here's the code that reproduces it upstream:
+Thanks for writing that up. I've also found the following seed for p503-compressed:
+ahhhhh of course, the NIST RNG isn't thread-safe, so my seeds are invalid.
+Non-thread-safe RNG shouldn't affect test_kem; while it might produce weird seeds, you should still get equal shared secrets. Multi-threaded kat_kem would produce wrong behaviour, but that's a different story.
+Yeah, my main concern here was that it would not give me the correct seed for the wrong behaviour.
+FYI, @patricklonga.
+FYI I reproduced this with the fuzzer sometime yesterday, and I took the opportunity to dig into it a bit further. I understand that the SIKE team is working on a fix, but I think we might want to provide some input on what an acceptable fix might look like.
+Here's the backtrace from address sanitizer
+table_r_qnr lists T elements of F_p (currently T=17). The BuildEntangledXonly function takes A in F_{p^2} as input. Lines 382-392 of torsion_basis.c find the least i for which -A*table_r_qnr[i] is the x-coordinate of a point on E_A. It does not do a bounds check (i < T) hence the buffer overflow.
+As far as I can tell, with probability ~2^-T the table will be exhausted (maybe there's some clever way of choosing the table entries but I don't see how to avoid this). At which point the protocol should either abort or it should generate new table entries on-the-fly. The latter is somewhat computationally expensive.
+I think a failure-free protocol / on-the-fly generation of extra table entries is the better option. But I can also see us accepting a sufficiently large table + a bounds check.
+How large a table would we want? Would we be comfortable with a 30 entry table and a 1 in a billion chance of failure?
+Would we be comfortable with a 30 entry table and a 1 in a billion chance of failure?
+I personally wouldn't consider any algorithm "fit for purpose" (of large-scale deployment, i.e., billions of executions every second assuming world-wide deployment) if it is known to fail "every now and then". Probabilities shouldn't play a role.
+I think a failure-free protocol / on-the-fly generation of extra table entries is the better option.
+Yes generating extra table entries on the fly would be the preferred way. Extra computations would be limited to those cases.
+I personally wouldn't consider any algorithm "fit for purpose" (of large-scale deployment, i.e., billions of executions every second assuming world-wide deployment) if it is known to fail "every now and then". Probabilities shouldn't play a role.
+I agree that no failures are a nice property, a property that SIKE actually has. Would failure rates be a useful info for the algorithm data sheets? (#892)
+These failures reveal something about either the randomness that went into the secret key or the randomness that went into the encapsulation operation. I'm not sure which of the two, or if it is relevant, but failures may not be good for security...
+no failures are a nice property, which SIKE actually allows.
+Interesting... I'd find this property very disturbing in "regular use" -- and a possible "classical", if only side-channel, attack avenue. Do you have a pointer documenting this (hopefully including an argumentation why this is no security problem)?
+Interesting... I'd find this property very disturbing in "regular use" -- and a possible "classical", if only side-channel, attack avenue. Do you have a pointer documenting this (hopefully including an argumentation why this is no security problem)?
+Perhaps what I wrote was misleading. I meant that SIKE has the property of "No Failures".
+I meant that SIKE has the property of "No Failures".
+Now I'm even more confused: Doesn't the above constitute a failure (even if just rarely)? Or are you saying it's "just" the implementation that's wrong/out-of-step with the spec of SIKE?
+Or are you saying it's "just" the implementation that's wrong/out-of-step with the spec of SIKE?
+Correct.
+failures may not be good for security...
+The failure is in encaps and is not a security risk. A constant fraction of the keyspace is not suitable for use with compression, and the subset depends only on the choice of table entries.
+Or are you saying it's "just" the implementation that's wrong/out-of-step with the spec of SIKE?
+It's not quite true that it is "just" the implementation. Page 83 of the spec says: "Experimentally, less than 20 elements are enough" and Algorithm 47 does not handle the case of exhausting the table. So the spec needs an update.
+Would failure rates be a useful info for the algorithm data sheets? (#892)
++1
+How large a table would we want? Would we be comfortable with a 30 entry table and a 1 in a billion chance of failure?
+30, 50 or even 128 entries (56 bytes per entry, if I'm calculating this correctly) might be fine, since there are much larger tables for the compressed schemes already... In the upstream repo, libsidh.a for P434 is 1.1M, for P434Compressed it's 2.8M.
+since there are much larger tables for the compressed schemes already
+And I was wondering why libcrypto (in openssl, including all classic algs) grows from below 3MB to more than 16MB...
+So what about adding large_code (akin large_stack) as another flag to #892?
+Further idea: use those flags to exclude such algorithms from a possible future "SIZE_OPTIMIZED" build type.
+Thanks @thomwiggers and everyone else for reporting/debugging this issue. I've submitted a pull request with a fix to avoid running into such failures by performing online computations when tables run out of elements. The online computations are not relatively expensive so haven't added extra elements to the tables so no memory overhead in the fix.
+I've submitted a pull request with a fix
+SIKE PR #45 has been merged; will start integrating here.

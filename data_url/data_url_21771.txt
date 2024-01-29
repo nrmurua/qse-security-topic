@@ -1,0 +1,126 @@
+I have been having a look at the performance of Artiq on Zynq SOCs (2x ARM CPU + Artix/Kintex fabric). I am particularly interested in:
+I have a proof-of-concept port working. The code is here, along with some hacks on a branch of Artiq here. The bulk of the heavy lifting had already been implemented in migen-axi. @klickverbot ported the exception handling. In this proof-of-concept I am only using a single processor, and statically linking in the Python kernel.
+I have tested this on a Zedboard (Zynq 7020, slowest speed grade), with an RTIO clock of 125 MHz and a processor clock of 667 MHz, and compared this to a Kasli:
+So, there is a modest RTIO event speedup, and a really significant computational / FP speedup.
+On all but the bottom-end Zynqs, the CPU max clock is 1 GHz, so these numbers are on the pessimistic side.
+(The EH code doesn't handle uncaught exceptions yet; I'll add that and pretty up the code if we want ARM support in upstream.)
+Some implementation notes:
+Due to the CDCs between the fabric AXI bus (running at 125MHz) and the CPU bus (667 MHz) a single 32-bit AXI write takes about 100ns, this is fine for normal CSR access, but is annoyingly slow for RTIO interface.
+In my proof-of-concept implementation I instead used the Cortex-A9 cache coherent AXI interface, with the fabric as the bus master. When the CPU triggers the kernel initiator, it reads out the RTIO event data from the L1 cache, and writes back the result on completion, thus it is only hit by the bus CDC latency a couple of times for a full event. With this method, a standard RTIO output event with up to 128 bits of data takes ~300ns to complete.
+If we wanted to, we could adjust the interface to ingest a variable length batch of events. Then, for example, a batch of 8 events would take ~500ns. Thus a DDS set() which consists of 8 output events would take only ~0.5us rather than the 2.35us reported above.
+(This could be exposed to user code as a with context which modifies the underflow semantics so errors are read back in a blocking fashion only once when the block is left.)
+We had some discussion with @hartytp a few weeks ago. We even looked at the chips and packages and XC7Z030-2FFG676I seem to be good choice - it has enough pins to serve 12EEMs and 4 transceivers.
+ZynQ US+ has two additional real time R5 cores. Maybe they gain better performance in such use case ?
+The XC7Z030-2FFG676I looks nice for a Kasli-type EEM controller:
+I feel hesitant about the Ultrascale fabric unless it is strictly necessary, considering the inconveniences @sbourdeauducq has observed on Sayma.
+Max CPU clock 866 MHz
+1GHz if you stump for the -3 speed grade.
+Given our experience with Kasli, maybe it's a good idea to go for that speed grade anyway. On the other hand, IIRC the Kintex is generally faster than ARTIX so it's probably less of an issue and, anyway, without a soft CPU timing closure is probably less of an issue.
+So, there is a modest RTIO event speedup, and a really significant computational / FP speedup.
+Expected and it's good to finally have some hard numbers about this, thanks @cjbe !
+But one question remains (and I have asked this before): are you really doing a lot of computations on the device? What would a typical payload look like, with a typical mix of RTIO operations and computations? I guess you are not using it to compute Mandelbrot sets.
+I feel hesitant about the Ultrascale fabric unless it is strictly necessary, considering the inconveniences @sbourdeauducq has observed on Sayma.
+Indeed, the Ultrascale IO system is really bad, and also we do not really need large chips like that on Kasli-type devices.
+anyway, without a soft CPU timing closure is probably less of an issue.
+The complex timing issue that Vivado has on Artix-7 with mor1kx (note that lm32 and vexriscv do not seem affected) can strike any part of the gateware and not only a soft CPU.
+The ZC706 eval board comes with a XC7Z045FFG900–2; these are much more expensive as individual chips than the '030 size mentioned above, but then there is the advantage (for hardware testing/prototyping, anyway) that one can just get going with an existing eval board.  For us at NIST, those eval boards look like they would be drop-in replacements for the KC705 with the rest of our hardware (DDS/TTL), and it seems like they would have enough resources for that purpose.
+In terms of the speedups, my sentiment is that really fast/high-throughput RTIO event outputs are best done via DMA anyway (although the extra factor of 2-3 here is certainly nice).  I imagine the modifications in #636 will further enhance this speedup?
+Another point is that the difference between set() and set_mu() has disappeared, and I think this is not to be overlooked -- especially for newer users of ARTIQ, the large performance difference between these can be confusing and lead to RTIOUnderflow errors (and frustration, and then deciding not to bother with ARTIQ because it's "slow").  The extra "oomph" gives more leeway for users to write their code.  It also means that one can afford to do more calculating on the fly on the core device -- I would envision for a lot of our experiments that we could keep a running feedforward algorithm for drift-tracking calibrations (as an example), where we interleave rather finely with our experiments.  Because we don't have to RPC out and wait for replies about how to change our feedforward parameters, but can keep a running update of the feedforward parameters on the fly with a tight loop, even if we are using a somewhat complex algorithm (maybe some Kalman filter), we should be able to get better tracking.  One might also want to do some analysis on the core device itself (turning a series of count timestamps into an ion state using some Bayesian algorithm, for example) because the downstream portion of an experiment is dependent on this measurement result -- for gate teleportation experiments, as an example.
+I would agree with the assessment to avoid Ultrascale, it seems it has been very frustrating for many reasons.
+The complex timing issue that Vivado has on Artix-7 with mor1kx (note that lm32 and vexriscv do not seem affected) can strike any part of the gateware and not only a soft CPU.
+If we do spin up a Zync version of Kasli, let's give it the -3 speed grade. My experience is overwhelmingly that post-doc time wasted due to timing issues with slow FPGAs is much more expensive than buying fast FGPAs in the first place.
+The improvement in CPU speed/decrease in RTIO latency is the icing on the cake.
+Users who strongly prioritize cost over performance can still use the Artix variant of Kasli.
+Another point is that the difference between set() and set_mu() has disappeared, and I think this is not to be overlooked -- especially for newer users of ARTIQ, the large performance difference between these can be confusing and lead to RTIOUnderflow errors (and frustration, and then deciding not to bother with ARTIQ because it's "slow").
+In principle, this could be fixed by enabling (and validating) mor1kx's FPU, which @sbourdeauducq has been quite pessimistic about so far, but which could be easier than migrating to Zynq...
+The ZC706 eval board comes with a XC7Z045FFG900–2; these  are much more expensive as individual chips than the '030 size mentioned  above, but then there is the advantage (for hardware  testing/prototyping, anyway) that one can just get going with an  existing eval board.  For us at NIST, those eval boards look like they  would be drop-in replacements for the KC705 with the rest of our  hardware (DDS/TTL), and it seems like they would have enough resources  for that purpose.
+@dhslichter agreed: if we do port ARTIQ to Zync then it would be very sensible to start with an eval board, so we have "known good" hardware instead of a completely new design. Once that works we can start thinking about a hardware port.
+Another point is that the difference between set() and set_mu() has disappeared, and I think this is not to be overlooked -- especially for newer users of ARTIQ, the large performance difference between these can be confusing and lead to RTIOUnderflow errors (and frustration, and then deciding not to bother with ARTIQ because it's "slow")
+Yes, I see things like this as being major "quality of life" improvements for ARTIQ. Related is input validation: we've all seen large amounts of time wasted due to out-of-bounds inputs being used without any errors being generated by ARTIQ. Currently, inputs aren't validated because of worries about speed.
+The correct solution seems to be to keep the set_x_mu methods as fast as possible but to add validation to all SI methods. The problem is that the SI methods often can't be used because they are far too slow. With a fast CPU, there is no noticeable penalty for using SI methods with bounds checking, which would be great!
+In principle, this could be fixed by enabling (and validating) mor1kx's FPU, which @sbourdeauducq has been quite pessimistic about so far, but which could be easier than migrating to Zynq...
+Are you sure that would be easier? What state is the FPU in mor1k at the moment? Is it well documented and well tested, and does it deal with all the nasty corner-cases involved in floating point arithmetic? Will it meet timing on Kasli with a decent CPU clock frequency? And, if we do get it working, how fast will it be?
+While there is a lot left out of @cjbe's work, I was encouraged by how quickly he was able to get the basics up and running. It's not clear to me that the remaining work will take longer than debugging an open source FPU, but maybe I'm being pessimistic here?
+What would a typical payload look like, with a typical mix of RTIO operations and computations? I guess you are not using it to compute Mandelbrot sets.
+As @dhslichter there are a lot of cases where being able to do some basic maths (even data fitting) on the core device would be really great. Currently, for anything like that, one has to RPC back to the host which takes an age.
+But, even simpler things would benefit from a faster CPU. e.g in some cases one wants to receive an input event, do some simple logic, make a decision and then send some RTIO events. The CPU time taken to do even relatively simple things is a limitation for this kind of work.
+In terms of the speedups, my sentiment is that really fast/high-throughput RTIO event outputs are best done via DMA anyway (although the extra factor of 2-3 here is certainly nice).
+DMA is great to have as a backup for anything that requires large numbers of really short pulses, but being able to do things on the fly gives one so much flexibility. Currently, we're forced to use DMA for even relatively simple things like sideband cooling which is annoying.
+cf #801 where the UMD guys are worried that updating multiple SAWGs in parallel will be so slow that they'll have to use DMA for everything, despite 200us gate times. Since they need to tweak offset frequencies etc quite quickly (too quickly to recalculate the DMA sequence on every shot of the experiment) they want to start adding a bunch of modulation knobs to the DMA sequence. A more efficient SAWG interface and a couple of factors of two in the RTIO event rate could eliminate the need to use DMA here and make their life much easier.
+The "batching" API @cjbe suggests would not be required in an initial ARTIQ-Zync port, but it would be a nice add on (maybe combined with a larger-picture think about how to make complex RTIO events faster). With a high-end Zync and an API like that, it looks like DDS set methods could be completed in ~300ns, which would allow a lot of current DMA code to be calculated on the fly.
+The batching API could also allow be great for things like reading multiple ADC samples at once (e.g. all samples from an 8-channel ADC in a single RTIO event).
+@sbourdeauducq
+But one question remains (and I have asked this before): are you really doing a lot of computations on the device? What would a typical payload look like, with a typical mix of RTIO operations and computations?
+An additional point is that we seem to see a long tail on the underflow vs delay distribution. That is, with a modest delay a given sequence will likely not underflow over several minutes of running, but one has to add a significantly longer delay to avoid an underflow over days of running. I assume this is contention on the DRAM, and I hope the better branch prediction / prefetching of the Cortex-A9 would help with this.
+Did anyone consider using Intel FPGAs here?  One concern I have is that the 7000 Zynqs are pretty long in the tooth and if Ultrascale Zynq is a no-go we don't have a path to getting really high performance silicon.  Also, naively it looks like Intel are less interested in putting everything plus the kitchen sink into their SoC FPGAs, which seems to be one of the problems with Ultrascale.
+The Arria 10 also has two Cortex-A9s but with 1.5GHz vs 1GHz max clock, 20nm vs 28nm fab, and 17 vs 12x 17.4Gbps transceivers vs 8x 12.5 Gb.  The low end of the range is roughly equivalent to the XC7Z030-2FFG676I and the largest part has about twice the fabric of the largest 7000 Zynq.  They also make Stratix 10s with quad 1.5GHz 64 bit ARM Cortex-A53 if you have lots of $$$ (though I'd happily pay an extra $10k for ripping fast artiq).
+I can imagine lots of reasons not to do this (like time invested into the Xilinx toolchain) but thought it worth asking the question.
+I assume this is contention on the DRAM, and I hope the better branch prediction / prefetching of the Cortex-A9 would help with this.
+Those CPU features are just as unpredictable as the DRAM and cache which is currently in use, though problems may only happen at a significant rate when the performance is pushed further.
+I believe that the proper solution to this problem is to make the CPU architecture simpler - not more complicated - by using SRAM tightly integrated into the CPU pipeline.
+With FPGAs we can do that either with external SRAM (slow) or by having certain dedicated kernel critical sections that fit in block RAM (not very user-friendly).
+With Zynq and similar I don't know if there is a significant amount of SRAM that can be used for this purpose, but I think not.
+With ASICs we can get megabytes which are accessible randomly with a couple nanoseconds of access time, but it is expensive.
+I can imagine lots of reasons not to do this (like time invested into the Xilinx toolchain) but thought it worth asking the question.
+One good reason is that the Intel stuff has silicon bugs that actually cause physical degradation of the chip.
+https://www.altera.com/support/support-resources/knowledge-base/solutions/rd06092016_720.html
+Xilinx silicon is bad, but not that bad.
+@sbourdeauducq
+Beyond this (supposedly fixed) bug are there any general objections to using Intel, or is this indicative of the general state of their silicon?  If it's just a matter of trying it, how much work would an Artiq port be if you had an eval board?
+With ASICs we can get megabytes which are accessible randomly with a couple nanoseconds of access time, but it is expensive.
+@sbourdeauducq are you suggesting an ARTIQ core device that is an ASIC?  Sounds rather complex to me.
+DMA is great to have as a backup for anything that requires large numbers of really short pulses, but being able to do things on the fly gives one so much flexibility. Currently, we're forced to use DMA for even relatively simple things like sideband cooling which is annoying.
+Agreed that more throughput is always nice, and not having to use DMA is ideal if possible.
+In terms of @cjbe's point about the "long tail" of delays required to prevent RTIOUnderflows, if one has a faster processor, would it be possible to implement some simple form of exception handling on the core device, such that one could keep an experiment alive if desired despite the occasional rogue underflow?  It could be structured similarly to a standard try/except block (I would just have it perform a self.core.reset and then redo the current iteration of the kernel, but you might put some kind of counter in to keep it from ending up in an infinite loop if your code throws an underflow every time).  That way, one could run long-term experiments with more confidence that the occasional "long tail" underflow doesn't cause the thing to quit in the middle of your 10-hour overnight run, for example.
+With ZynQ you can setup multiprocessing (SMP). One core can be responsible for low latency simple tasks and run from BRAM while other work from SDRAM and do remaining tasks.
+We use Intel FPGAs regularly and they are much less problematic than Xilinx or Microsemi ones.
+Quartus tool is much more mature and things usually just work. They release components and tools later than XIlinx does but their quality is much better. I teach students (mixed signal circuits course) and we use Quartus. With Xilinx it was real nightmare.
+But I'm not sure if it is right decision to move from Xilinx tools that all Artiq community uses and most people are already familiar with various issues. The Arria and ZynQ chips are very, very similar.
+Microsemi has also interesting SOC chips, they have much lower power CPU (Cortex M) but they are much cheaper than Xilinx.
+I think for these applications, we are not enormously price sensitive if it means a substantial difference in performance.  In other words, we don't need to spend huge amounts of money to get the very best performance, but if substantial performance enhancement can be had with a chip that is not much more expensive, I would go that way every time.
+Beyond this (supposedly fixed) bug are there any general objections to using Intel, or is this indicative of the general state of their silicon?
+To be honest, I don't have much experience with Intel silicon. But bugs like this do not look good.
+If it's just a matter of trying it, how much work would an Artiq port be if you had an eval board?
+It shouldn't be a big issue to port the core of ARTIQ to Intel silicon - other people have used MiSoC on them, and Quartus support is already in Migen. The main driver of frustration and development time will be the hard IPs: transceivers (containing the aforementioned bug), IO SERDES and delays (for DDR memory), and clocking elements. And the SoC part if we use that one.
+Important note: The numbers that @cjbe mentions for RTIO performance DO NOT APPLY to Intel FPGAs. What slows things down here is the latency of the hard IP bus bridge with the CDC. That part is potentially totally different between Intel and Xilinx. If we are lucky, the Intel one is much better, but someone has to test it.
+are you suggesting an ARTIQ core device that is an ASIC? Sounds rather complex to me.
+Yes! It is complex (and expensive), but it opens many new possibilities and collaborations, e.g. with SiFive.
+With ZynQ you can setup multiprocessing (SMP). One core can be responsible for low latency simple tasks and run from BRAM while other work from SDRAM and do remaining tasks.
+You missed the "tightly integrated into the CPU pipeline" part. The BRAM data will go over the same high-latency interface that kills RTIO performance. That latency will be hidden most of the time by caches and the other CPU features @cjbe mentioned, but we are back to square one regarding timing predictability.
+ASICS are fun. More than cost, my worry would be the difficulty in adding new features or fixing bugs, which would then require hardware modifications.
+In our scale of the project, it's cheaper and easier to take higher grade FPGA than playing with ASICs.
+Small scale production is not that expensive - with shared silicon you can get the ASIC production run for a few tens of k EUR.  Another option is to order hardened FPGA from INTEL. The advantage is that you use Quartus to prepare all documentation. I'm not sure if this would give us any advantage.
+When you mentioned ACISc, comething came to my mind and I will open another  issue
+No matter what grade of FPGA you take, you cannot put megabytes of SRAM into a CPU pipeline running close to a GHz.
+The Intel Hardcopy "ASICs" do not help with that either.
+That's true. But how ASIC would help here?  The same logics can be implemented with ASIC and FPGA, Of course FPGA adds sth like 50% of performance penalty.
+It's more like >90% performance penalty with this kind of thing. Especially with a large RAM that will have to be spread across the whole chip with huge routing delays, and the requirement for a big FPGA.
+(This could be exposed to user code as a with context which modifies the underflow semantics so errors are read back in a blocking fashion only once when the block is left.)
+We can do that; there is another issue with the backpressure but we can have a buffer space cache in CPU memory (like DRTIO does with a such a cache of remote space in local gateware).
+It's not clear to me that the remaining work will take longer than debugging an open source FPU, but maybe I'm being pessimistic here?
+The problem is, we are in control of the open source FPU but not in control of the Xilinx/ARM hardware. If there are hardware or design issues with the latter, we can't fix them.
+The FPU is tightly coupled with the ARM core. The only point of interaction of the ARM subsystem and logic in ZynQ is AXI bus. So what issues do you expect with FPU once GNU toolchain runs smoothly?
+Do you want to somehow control the FPU from your logic via AXI directly and here you expect some issues?
+I don't expect issues with the ARM FPU.
+My comment was about Tom's comparison of the remaining Zynq work with getting an open source FPU to work. IMO the former is a lot more of relatively high-risk work.
+OK.
+Some time ago I wrote about the possibility of getting funding for ASIC development at the WUT. Guys have the know-how, tools and funding options and they are lacking interesting ideas. To talk with them I need at least a brief description of what we would like to have. Recently they've built complete space-grade GPS/GNSS receiver in silicon so they can do complex mixed-signal designs as well.
+On the other hand, Microsemi announced that will offer their PolarFire FPGA with hardened SiFive core.
+Microsemi tools are not that easy to use, Vivado is a dream-tool comparing with Libero. At least it's worth looking at it.
+I haven't touched Actel/Microsemi tools since 2008, when they required an outdated Linux kernel that didn't support SATA hard disks and therefore would not boot on my machine. And aren't those FPGAs also small and slow?
+PolarFire has up to 500k LE and 12.7G transceivers.
+I use them due to radiation immunity and low power in space projects.
+https://www.microsemi.com/product-directory/fpgas/3854-polarfire-fpgas
+Pending 'maturity' of Zynq 7000 series may make alternative FPGA discussion above relevant.
+It's been a bit of a struggle, but we now have proof-of-concept code to control one CPU core from the other (like it's done in the current ARTIQ) and also to send/receive Ethernet packets from Rust.
+So, added to what @cjbe already demonstrated, we have the basic ingredients for a usable system (no SDRAM yet but hopefully that will be unproblematic).
+🎆 whoo! Nice job!
+Great job! Do you think Zynq US+ differs that much from 7 series?
+Funded by NIST
+Do you think Zynq US+ differs that much from 7 series?
+The ARM cores on US+ are different and 64-bit. The rest I don't know.
+A number of things are still missing, but https://git.m-labs.hk/m-labs/artiq-zynq can run simple kernels now (without exceptions and RPCs) and moninj is also working.
+Most KC705 HITL unit tests are passing on ZC706 now. Remaining problematic ones are only:
+All relevant KC705 tests pass now, and the Oxford ACP RTIO interface above is merged (it will, however, need more work).
+Sustained output event rate 280ns
+We still have not been able to reproduce this on ZC706, best we have is 390ns. https://git.m-labs.hk/M-Labs/artiq-zynq/issues/55

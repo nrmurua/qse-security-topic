@@ -1,0 +1,38 @@
+Make the state more inspectable. StabilizerStateChForm is a canonical circuit form, so you should be able to output the canonical circuit. CliffordTableau should have methods for returning the stabilizers and destabilizers as cirq.DensePauliString instances.
+Simplify the internal state. CliffordSimulator has both a tableau state and a ch state internally. We should only use one of them. My guess is it should be the CH form because that generalizes better to non-Clifford operations (which we could include support for later; not in this issue). Inside the simulator we only need one.
+Use within the rest of the cirq. Currently, cirq.sample does some basic analysis of the circuit in order to determine if it can be run by the unitary simulator or requires density matrix stuff. We should extend that analysis to include the Clifford simulator, so if all operations are Clifford, use the more efficient simulator. Methods that should be supported include cirq.sample, cirq.final_wavefunction, and possibly some others (e.g. we want to add final_density_matrix, and it could be useful there as well).
+Support more gates, including gates that may not be named now. Need to add the concept of a gate or operation being "Clifford" to cirq more globally. For example, the iswap is clifford but it isn't listed in the explicit list of supported gates inside of CliffordSimulator currently. We need a method to check if a gate is clifford, and alternatively to decompose into Cliffords. This implies we need to add _is_clifford_ and _decompose_into_cliffords_ protocols, and perhaps also a _clifford_tableau_ method akin to _unitary_ but for the clifford stabilizer table matrix.
+Simplify the internal state
+The current implementation relies on the tableau for performing measurements.
+We could separate this into 2 simulators. CHP()  and CH().  Both will use CliffordTableau.
+Simplify the internal state
+The current implementation relies on the tableau for performing measurements.
+Right, can we perform measurements on the CH representation without needing the tableau?
+Good question. If there is I haven't been able to find it.
+Another question, to implement to_circuit for CH representation it looks like I'll need a to_circuit for the Uc which is in a tableau form (from https://arxiv.org/pdf/1808.00128.pdf). To get circuit from tableau form, I can follow the algorithm to get the canonical form as described in https://www.scottaaronson.com/papers/chp6.pdf Theorem 8.
+Just wondering if there is a simpler way I'm missing here.
+Sorry for the late reply @smitsanghavi . I was looking for an easier way but this seems to be it.
+I noticed that simulator currently doesn't support S^-1 gate. It's a Clifford gate and it's needed to implement a cirquit from a paper (#2620). Can I add support for it?
+In fact, I could add support for all 24 1-qubit Clifford gates, as they can be expressed as combinations of H and S gates. @smitsanghavi , would you like me to make such PR?
+@fedimser
+would you like me to make such PR?
+Please do.
+@fedimser That sounds great, please add me to the PR! I'll add a subsequent PR to #2760 that sets has_stabilizer_effect to true for all 24 of those.
+It will also make my coming implementation of using decompose_into_clifford easier since that protocol also counts gates like Y**-1/2 as natively Clifford.
+As I promised in PR #2803, I am going to update has_stabilizer_effect to check the gate's matrix, so that we can use it to check if gate is supported by Clifford simulator. For 2x2 matrices that would be as easy as not SingleQubitCliffordGate.from_unitary(unitary) is None.
+However, why not go one step further and implement it for any unitary? Let me describe what I am going to do and ask whether I should do it. I am assuming that "has stabilizer effect" is the same as "is Clifford gate" (for matrices), according do definition.
+Let's say we want to check matrix U of size 2**n x 2**n (i.e. n is number of qubits). I am going to build 2n matrices XIIII, ZIIII, IXIIII, IZIIII, and so on (i.e. tensor prodcuts of (n-1) identity 2x2 matrixes and one X or Z matrix). I claim that they generate Pauli group.
+Now, for every such matrix P, we want to check that U P U-1 belongs to Pauli group. I suggest implementing a function which tries to decompose matrix into tensor product of 2x2 matrices (if we don't already have one in Cirq). If it succeds, and every matrix in decomposition is Pauli marix (possibly multiplied by -1), then U P U-1 belongs to Pauli group.
+Can I implement this?
+@smitsanghavi
+Dmytro, the logic seems sounds to me for an arbitrary gate with unitary U.
+My understanding of Craig's original proposal is that we want to make the simulation more efficient. So, it is better if we annotate known gates with the stabilizer property as such using _has_stabilizer_effect_ and only fall back to trying to deduce it from the unitary if it is not already hardcoded in the gate definition. Also see #2600 (review), especially the line "if it has a stabilizer effect it better have the _has_stabilizer_effect_ method for efficiency".
+So, I am definitely okay with you going forward with this implementation as the final strategy in has_stabilizer_effect protocol when the gate is not annotated at all. Let's bring it up in the meeting tomorrow?
+Here is cirq's general philosophy. Suppose you have a question you'd like to be able to answer about any gate, operation etc. You implement this as a protocol and you add a method in gate classes that efficiently answers the question. The protocol tries the efficient method when it finds it. If it doesn't find it, then it either falls back to slower but more general calculation (if it is still reasonably fast) or it raises a TypeError.
+This bug needs to be updated for whether these are completed or not.  Given that list it should then be updated to decide whether this needs to be updated before or after 1.0
+@smitsanghavi @ybc1991 @daxfohl Hi, can one of you that worked on this bug update it on the status?  It looks like there has been a ton of work on this, but it is not clear what the current state of the issue is.  What still needs to be done (and does it need to happen before Cirq 1.0?)
+Neither of my links directly affected this issue. Both were just verifying whether my changes were compatible with the direction here.
+I know bullets 2 and most of 3 are done (idk who worked on those), and some of 4 (@ybc1991 would know best). I don't think bullet 1 is started.
+Sorry for the delayed response. I was done with all the bullet points in this issue in one way or the other:
+Considering this, I think this umbrella issue can be marked as fixed as the Clifford Simulator support has been significantly improved.
+I haven't been following the development too closely to comment on what needs to be done before Cirq 1.0, but if there is anything Clifford related I'd expect it to have its own specific issue.

@@ -1,0 +1,36 @@
+Description of the issue
+cirq.RouteCQC will sometimes commute gates through mid-circuit measurements in a way that changes the expected outcome
+How to reproduce the issue
+prints
+where one of the hadamards and one of the terminal measurement have incorrectly been commuted through the mid-circuit measurement
+Cirq version
+I can look into this issue and try to reproduce it.
+was able to reproduce the issue, gonna start looking through RouteCQC class and test.
+It seems like the routing algorithm is sometimes reordering gates in a quantum circuit in a way that they are incorrectly placed before or after measurements, leading to discrepancies between the expected and actual outcomes of the circuit. New to opensource contribution so please let me know if I am misunderstanding the issue.
+I am going to start looking at which stage of gates we start seeing a mismatch between the actual and expected circuit.
+After some investigation seems like the issue is using measurement gates in the circuit. Cirq has a test case to check behavior with measurements.
+Going to compare this example with the test case and see if there needs to be a new test case for this situation.
+I tried out multiple versions of the code based on the test case implementation. Outside of modifying the cirq.RouteCQC function, changing the nx network graph device and adding initial_mapper=hard_coded_mapper seem to affect the result.
+Debug Output
+Constructed graph from cirq.testing.construct_ring_device(3).metadata.nx_graph with initial_mapperr=hard_coded_mapper parameter:
+result:
+Hey @richrines1 was able to get a 2nd opinion, the issue seems to be that the algorithm was originally designed with 2 qubit circuits in mind. So there is a small bug in one of the helper functions which is used to decomposes the single and two quit circuit operations into timesteps.
+Hey @tanujkhatta, step 3 in the route_circuit function for RouteCQC class was causing the issue. Thanks for the hint!
+by changing this if statement if protocols.num_qubits(op) == 2 and not protocols.is_measurement(op): to if protocols.num_qubits(op) >= 2: the output looks fixed.
+Would this fix work or is it necessary that measurements are excluded from the two_qubit_ops?
+I can also update the variable names from two_qubit_... to multi_qubit_... for _get_one_and_two_qubit_ops_as_timesteps function?
+@richrines1 tried it out on the original example and looks like the expected result, given the network graph = nx.Graph([[q0, q1], [q1, q2]]).
+result:
+@shef4 per cirqcync, we will go about this in stages
+@NoureldinYosri Thanks, will start work working on 1st stage.
+@NoureldinYosri Started working on Stage 2 of implementation and was wondering if there is a preference between methods 1 & 2.
+Method 1: Filter measurement gates outside of the current algorithm - possible helper function
+Method 2: Incorporate filtering measurements into algorithm
+@shef4 lets go with option 2
+@NoureldinYosri Thanks, I was able to get option 2 working and my tests are passing but test_circuit_with_measurement_gates() is now failing.
+Since it's a terminal measurement on 3+ qubits, I'm planning on adding it to the two_qubit_circuit list.
+I could also update the test and leave implementation as is.
+@shef4 multiqubit terminal states are currently handled correctly. Look at how the algorithm handles them currently and preserve that behaviour, don't change how they are handled. your work should  only affect intermediate measurements.
+@NoureldinYosri I think I see what you're saying. The original algorithm would place measurements in single_qubits_ops. I'll maintain the same input-to-output path for functions that are dependent on it.
+Part 3: From looking at the documentation it seems to be possible to create a ClassicallyControlledOperation controlled by the result of a multiqubit measurement. Will stop here until there is a need to support this case.
+Hi @NoureldinYosri, I was wondering if it's fine to close this issue unless I misunderstood the goal for part 3?

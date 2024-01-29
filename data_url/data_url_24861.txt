@@ -1,0 +1,45 @@
+For custom circuits, constant terms in the Hamiltonian associated with external parameters are subtracted before calculating energies.  It is then difficult to compare the eigenenergies for different values of these parameters.  For example, the offset charge dispersion of a CPB implemented as a custom circuit has a parabolic background.
+The bug results in unexpected behavior
+There should be no parabolic background in the spectrum.  In the transmon class, the offset charging term is incorporated in the Hamiltonian, giving the correct spectrum (as in one of the examples).
+The background corresponds to a quadratic term in $n_{g1}$ which I think is subtracted from the Hamiltonian as an irrelevant constant.
+As a hack, I commented the line above and was able to reproduce the correct CPB spectrum.  The external flux offset energies may also need to be fixed for circuits with inductances.
+Thank you for filing this! My broad take on this topic has always been that c-number offsets to superconducting-circuit Hamiltonians do not carry meaning and should be ignored when comparing numerical values. Note:
+In other words, c-number offsets in H (which lead to a global shift of the entire energy spectrum) are arbitrary. What counts are energy differences (i.e., transition energies).
+@ahttraga I'd like to understand better whether you are indicating that there is a deeper problem we may be missing.
+Thank you for making this package.  It's excellent!  Finally we can go from netlist to spectrum!
+The problem is that the energy levels as a function of charge offset are not consistent between the Transmon qubit and an equivalent custom circuit.
+If I make a custom circuit with a JJ yaml such that Ej = 1, Ec = 1/4, here are the energy levels as a function of ng1 using plot_evals_vs_paramvals
+
+This is because the corresponding _hamiltonian_sym_for_numerics is -E_J*cos(θ1) + 4.0*E_C*n1**2 + 8.0*E_C*I*n1*ng1 which doesn't have an ng1**2 term.  This plot is not what I expect to see for a CPB.
+The equivalent circuit implemented as a Transmon class has (n1-ng1)^2 along the diagonal of the Hamiltonian, so you don't have the parabolic background in the plot and it looks correct. I can also obtain the correct result for the custom circuit if I comment out the line of code I mentioned, such that _hamiltonian_sym_for_numerics is -E_J*cos(θ1) + 4.0*E_C*n1**2 + 4.0*E_C*I**2*ng1**2 + 8.0*E_C*I*n1*ng1, with the ng1**2 term.
+So I agree with your comments in theory, but in practice I think the two plots should be the same.  For consistency in general, you may want to include the c-numbers in the custom circuit class that correspond to parameters such as flux or charge offset that are implicitly included in the Hamiltonians of the Qubit classes.  Of course there's no problem for those who only plot transition energies or wavefunctions.
+@ahttraga my point is that it is debatable that one or the other is "correct". The ng^2 terms gets artificially added in the first place to complete the square@ahttraga my point is that it is debatable that one or the other is "correct". The ng^2 terms gets artificially added in the first place to complete the square in standard circuit quantization, if I recall correctly. I would gently push against any interpretation that assigns meaning to absolute energies, as those are not measurable quantities.
+Comparisons should be made for ground energy subtracted (and plot_evals_vs_paramvals offers that option).  in standard circuit quantization, if I recall correctly. I would gently push against any interpretation that assigns meaning to absolute energies, as those are not measurable quantities.
+Comparisons should be made for ground energy subtracted (and plot_evals_vs_paramvals offers that option).
+Perhaps I'm mistaken but I find that the Hamiltonian for a CPB, obtained from the standard Lagrangian, already has the ng^2 term needed to complete the square.  And I believe that the symbolic Hamiltonian obtained by scqubit for a "custom circuit" Josephson junction also has this term: (output of jj.sym_hamiltonian())
+$$
+\left(4.0 E_{C} n_{1}^{2} + 4.0 E_{C} n_{g1}^{2} + 8.0 E_{C} n_{1} n_{g1}\right) - E_{J} \cos{\left(θ_{1} \right)}
+$$
+whereas jj_hamiltonian_sym_for_numerics gives
+-E_J*cos(θ1) + 4.0*E_C*n1**2 + 8.0*E_C*I*n1*ng1
+showing that the ng1**2 term has been subtracted.  Whether it is correct or not to subtract, it's up to you, but this default behavior for the custom circuit class results in an inconsistency with the Transmon qubit class.
+Thanks for your comments  @ahttraga  - it's often good to discuss these things.
+In this case, my initial reaction aligns with the point that Jens makes: what offsets are really "correct" is not well defined.
+You write:
+[...] Josephson junction also has this term: (output of jj.sym_hamiltonian())
+$$
+\left(4.0 E_{C} n_{1}^{2} + 4.0 E_{C} n_{g1}^{2} + 8.0 E_{C} n_{1} n_{g1}\right) - E_{J} \cos{\left(θ_{1} \right)}
+$$
+But as Jens already pointed out, in the above expression, the EJ constant offset that is often written down when people explicitly integrate Kirchhoff's current-law equations to first write down the Lagrangian, is not included. So another person might consider what you wrote down as also "inconsistent" - it's just tricky to assign real meaning to those terms.
+We could in principle add a flag to the Circuit class that, if true, would have the various offsets not be subtracted (i.e. effectively on-demand comment out the line you mention), but even that would not be always consistent (with all literature). For example it would (untested - but likely to be true) keep the charge offsets not just for transmon-like circuits (what you want), but also for a fluxonium-like circuits, where those are usually not explicitly written down.
+So I would personally advocate to leave things as they are, but maybe add a paragraph to the documentation that highlights the point you make more explicitly, i.e. that in some literature, various offsets might be included when people write down their Hamiltonians, and make it clear in the Hamiltonians that scqubits provides those offsets might be different (and that of course that has no impact on any sort of physically-relevant quantities that one can ever obtain).
+(As a side note, there are some practical reasons to actually add certain constant offsets that would guarantee that all the eigenvalues are non-negative and they have to do with simplifying the diagonalization process ... but that's a discussion for another day  ;-)
+I agree in principle.  Again, I was just surprised that the Circuit class CPB charge dispersion was different from the Transmon dispersion for the same circuit.  A statement in the documentation that the Circuit class removes constant terms from the Hamiltonian, including those related to external parameters, would have avoided this confusion.
+I think we're ok with Transmon class vs Circuit class not giving identical offsets (per earlier discussion) - but just looked at your post above again, and noticed (maybe read too quickly and I missed this point before), that maybe you're also saying that the numerically obtained Hamiltonian given by Circuit has a different offset from the analytical expression that Circuit spits out - if so, then that is a problem... we would expect the Circuit class to be consistent with itself.
+We will double check this.
+Thanks again for all your input.
+@petergthatsme After reading your comment and also talking with Jens, I did find the inconsistency in Circuit module. It might have come about in my previous attempts to deal with constants when Hierarchical diagonalization is used. I just fixed it in the commit 04cb203, where the symbolic Hamiltonian is now consistent with the numerical Hamiltonian.
+@ahttraga This also removes the parabolic background in the eigenvalues from the Circuit module, as all the constants are taken into account. But as others have already mentioned, this is just a global shift of energies which is not a physical observable.
+
+great - thanks for the quick fix @saipavanc
+I will close this issue for now, but @ahttraga  if other stuff comes up or something is still not right, please don't hesitate to reopen (also Sai's fix will make it into the next formal release, of course).

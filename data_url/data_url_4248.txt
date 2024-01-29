@@ -1,0 +1,22 @@
+I want to allow users to allocate qubits, or to ask for qubits at particular positions on a grid. So I have a method qubit_at(self, x, y) in addition to the allocate method, and qubit_at returns a FixedPositionQubit.
+But when commands are applied to FixedPositionQubits, those commands don't show up back in the engine with target qubits of type FixedPositionQubit. Instead, commands strip out all the type information and store WeakQubitPtr instances.
+Stripping type information like this is not pythonic; it breaks duck typing.
+Is there a workaround for this? I could pack all the information into the id, but that feels really over the top.
+This is a useful feature and we have already thought about adding this functionality using tags in the Command object. Tags are part of the internal representation and they are thus handled correctly by all engines.
+I would suggest to write a new allocate_qubit method or extend the existing method with an optional placement parameter. Just add a QubitPlacementTag to the Allocate command.
+See, e.g., how QubitPlacementTag is used in the IBMCNOTMapper:
+https://github.com/ProjectQ-Framework/ProjectQ/blob/master/projectq/cengines/_ibmcnotmapper.py#L196
+Specifically, to add the QubitPlacementTag, you can temporarily add a CommandModifier which adds this tag while you call the standard allocate_qubit(). A similar construction was used to add the dirty qubit feature, see
+https://github.com/ProjectQ-Framework/ProjectQ/blob/master/projectq/cengines/_basics.py#L119
+If we need this temporary construction of adding tags to commands more often, we could at some point introduce
+but for now, we could add specifically the following:
+in order to make the internal code look nicer (users should not use this feature in their code)
+Yes, you have command tags that allow me to inform the engine that I want a particular type of qubit when allocating. But when the engine returns a particular type of qubit from the allocation call, and the user applies a gate to it, the generated command doesn't have that particular type of qubit anymore. I want details attached to the qubit by the engine during allocation to come back to the engine when that qubit is actually used.
+Given this bounce-details-back-to-yourself problem, the implied pythonic solution is to extend the Qubit class and add your own fields. The ability to do that is one of the big benefits you're telegraphing by having Qubit be a class instead of just-an-int. But it doesn't work due to the Command class stripping the type information.
+A workaround solution would be to keep a dictionary mapping qubit ids to the corresponding qubit instance that was given to the user. But that also doesn't work, because you use __del__ methods. Keeping track of the qubits would prevent them from deallocating.
+So the actual workaround is to keep a dictionary of ids mapping to copies of the qubits, or to some tertiary class that contains just the extra data.
+A potential design compromise would be for qubits themselves to include tags, and to guarantee those tags are not stripped.
+Yes, only the Allocate command has the QubitPlacementTag. There is no need in having a special qubit type such that all commands acting on a qubit know the physical location.
+The back-end receives the Allocate gate with the correct tag and can store a map of qubit id to physical id. Also intermediate engines can build up and store such a map but I don't yet see why this is needed.
+If you allocate a logical qubit with a specific physical location, then only the mapper needs to know about your choice and this is done if the Allocate gate has the corresponding QubitPlacementTag.
+The need to create a map from IDs to tags is the issue.

@@ -1,0 +1,21 @@
+In a clean environment created by install with-conda, trying to install anything that depends on artiq will always downgrade artiq from 5 (which is inaccessible after installation) to 4.0 (as that's in the top conda channel).
+What happens if you remove the m-labs channel (containing ARTIQ-4) before installing the other package?
+I'll try.
+Pretty sure this will extend the problem. It will then do the same to the other packages that are available in defaults or conda-forge and (were available) m-labs: It will downgrade/false-upgrade them if they appear in any downstream dependencies.
+What package do you have the problem with? Can it just not depend on ARTIQ in the conda description?
+With any driver package that contains artiq controllers. If they don't depend on artiq the controllers are broken by definition unless you install artiq manually. If we can't depend on artiq it makes the packaging effort mostly pointless.
+The controller packages I built do not depend on artiq in conda; IMO doing this and installing manually is an acceptable compromise. Depending on conda's broken dependency solver results in issues like this one and many others (for example, people getting random ARTIQ versions installed, which no longer happens with the script).
+If this really bothers you, working around this conda issue can be probably done by adding some folder in nginx, that gets populated by a hydra RunCommand script that:
+Then we can point conda to that new channel URL.
+Have you filed the conda issues you refer to? "Getting random ARTIQ versions installed" is just the symptom described here. The script certainly doesn't prevent it, it appears to be instrumental in causing it in this case.
+If artiq can't be used with the usual package distribution architecture, can't be managed with conda, and if it can't be used as a dependency then I have trouble seeing why we package it at all. You can just download the git tarball and a tarball of the binaries, throw them into the filesystem (with setup.py develop for convenience) and ship an environment definition with artiq. The script to do that may well be simpler and less fragile than the current one. Not that I would like this approach very much. That path appears to end in a new and custom packaging/distribution and deployment system for artiq.
+The current script seems to make a complicated situation worse. This is as much an issue of the script (and hydra and nix) as it is a conda issue.
+At least the script installs the correct version once; before it there would be problems all the time.
+This is a conda issue as only conda has such a broken dependency solver, if we were doing the same thing with halfway decent package managers (dpkg, rpm, etc.) this and many other problems would not happen.
+And I don't know how you could claim this is a nix/hydra issue when the latter actually gives us tools to work around this kind of conda problem, such as running conda-build in sandboxes to make it deterministic and unable to alter the state of subsequent builds. Now we can tackle this kind of problem without fear of bringing down the build system completely.
+And the nginx/RunCommand solution above would also go back to the normal "conda channel" situation which would work the same as anaconda.org except that we have more control over it (no downtime issues, no storage issues, and we can easily do what we want with the files such as offering only one version of each package so conda does not mess up).
+And I don't know how you could claim this is a nix/hydra issue when the latter actually gives us tools to work around this kind of conda problem, such as running conda-build in sandboxes to make it deterministic and unable to alter the state of subsequent builds.
+This doesn't require nix/hydra. In fact that was how I originally set up the buildbot. The reason I changed it to retain state between builds was deliberate, and it was because with the HK ISP, downloading the packages took an eternity (over a hour for each build IIRC), and I could not easily work around that with a proxy server.
+There is now a regular conda channel at https://m-labs.hk/artiq/conda/ and it is used by install-with-conda.py.
+Nice!
+Now https://conda.m-labs.hk/artiq-beta

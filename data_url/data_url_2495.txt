@@ -1,0 +1,14 @@
+I pulled in changes from the main cirq repository to my local branch and ran pytest with the following error:
+I'm running Ubuntu subsystem for Windows 10,
+python 3.6.7,
+pytest 4.3.0
+Not sure if related but I'm seeing a similar issue with my pylint run https://travis-ci.com/quantumlib/Cirq/jobs/187713507
+The pylint issue is also infinite recursion, but it appears to originate elsewher: LinearDict vs asteroid(*). It's probably caused by pylint-dev/astroid#650 (see also #1411).
+--
+(*) asteroid is an AST package used by pylint.
+I tried reproducing the original issue under various python versions. Interestingly, it appears neither in python 3.6.5 nor in python 3.7. It does appear in python 3.6.7.
+The problem is that dict implementation in python 3.6.7 calls keys() from dict.copy(). The call is resolved to LinearDict.keys() which in turn calls LinearDict.copy() which closes the cycle by calling dict.keys(). The easiest solution is to break the loop by replacing
+with something like
+since dict.items() does not call any of the overridden methods that use LinearDict.copy(). This kind of solution is brittle though since in future dict.iems() may change to call keys() or other dict method in a way that would once again resolve to a method in LinearDict that uses LinearDict.copy(), leading to another case of infinite recursion.
+The robust solution is to switch from inheritance to composition. This way LinearDict never ends up in the middle of internal calls between dict methods and so this sort of bug will not re-appear.
+The cost is the need to override more methods. However, it turns out that in order to qualify for MutableMapping, which seems appropriate here, we only need to override one more method: __delitem__().

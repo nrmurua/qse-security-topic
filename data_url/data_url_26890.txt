@@ -1,0 +1,15 @@
+I believe this race affects at least these tests:
+But probably there are more. After we fix this we should revisit the thresholds of all tests that use SCF_GUESS RESTART
+The good news is that it's easy to reproduce as it shows up in about 10% of the runs:
+Since it is reproducible with ssmp my guess is that we leave something uninitialized when doing a restart.
+Unfortunately, the problem persists even when compiled with -finit-derived -finit-local-zero.
+Finally, I could reproduce a wrong result for the test input
+QS/regtest-gpw-5/si7c_broy_gapw_a04_restart.inp
+using the CP2K toolchain when I start with the gcc-8.2.0 compiler and build the toolchain with
+./install_cp2k_toolchain.sh --with-gcc --with-mpich --install-all
+Already the arch file local.sdbg gives reproducibly a wrong result in the order of 1.0E-6. At a first glance that seems to originate from differences in the information read from the restart file, but that turned out to be wrong, though the MO eigenvectors may differ depending on the built. But this is due to MO degeneracy which causes differences in the MO orthonormalization.
+Tracing the issue led to the routine make_basis_lowdin which builds (C^T SC)^(-1/2) for the Lowdin orthonormalisation of the MOs read from the restart file in the case of smearing. Though the MO coefficient C from the restart file were already orthonormal for the given overlap matrix S, the routine does not return a unit matrix. This is caused by a not fully orthonormal set of eigenvectors returned by the LAPACK solver routine SYEVD. For the specific case above, only one pair of eigenvectors is not orthonormal (0.0044 instead of 0.0), but that is sufficient to spoil the transformation of  S. Thus, eventually, the originally orthonormal MO eigenvectors become slightly non-orthonormal after that "re-orthonomalisation step".
+I have introduced a CHECK_DIAG flag in my cp2k fork that checks the orthonormality of the eigenvectors calculated by the routine choose_eigv_solver. A full regression tester run with local.sdbg resulted in failures for the following test inputs:
+Unfortunately, the problem seems to persist :-/
+This numerical instabilities are similar to what we see in #1 ...
+I believe this got resolved by dropping -ffast-math via #195.

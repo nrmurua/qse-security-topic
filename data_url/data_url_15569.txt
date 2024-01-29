@@ -1,0 +1,37 @@
+Dear Qiskit team,
+I guess there is an issue with the recently updated documentation of the Gaussian (https://qiskit.org/documentation/stubs/qiskit.pulse.library.Gaussian.html) and Drag (https://qiskit.org/documentation/stubs/qiskit.pulse.library.Drag.html) pulse. In the following, I will comment on both documentations. Please let me know if my observations are correct.
+With the auxiliary function
+f’(x)=exp(-1/2 * (x - duration/2)^2/sigma^2) (identical to the current documentation),
+the 'LiftedGaussian‘ should follow
+f(x)=amp * (f'(x + 1/2) - f’(-1))/(1 - f’(-1)).
+The difference to the current documentation is the '+1/2‘ shift, which is due to the function 'midpoint_sample‘ of qiskit.pulse.library.samplers.strategies.py. 'midpoint_sample' is needed for the function 'gaussian‘ (and 'drag') of qiskit.pulse.library.discrete.py and shifts the timesteps 'times‘ from np.arange(0, duration) to np.arange(1/2, duration + 1/2).
+In the definition of the function 'drag‘ in qiskit.pulse.library.continuous.py the Drag pulse is defined as 'gauss + 1j * beta * gauss_deriv‘. In the function 'gaussian_deriv‘ of the same file 'gauss_deriv‘ is defined as '- x / sigma * gauss‘. The 'LiftedDrag‘ is therefore proportional to the 'LiftedGaussian‘ defined in the function '_fix_gaussian_width‘ of the continuous.py file. The correct formula of the 'LiftedDrag‘ is
+d(x)=f(x) * (1 + 1j * ( -(x + 1/2 - duration/2)/sigma^2) = amp * (f'(x + 1/2) - f’(-1))/(1 - f’(-1)) * (1 + 1j * ( -(x + 1/2 - duration/2)/sigma^2).
+I numerically checked the accuracy of these observations by comparing them to the waveform samples of both Gaussian and Drag using the following code. The result is a sum of absolute deviations (g_dev and d_dev) of the order 1e-14.
+'''
+from qiskit import pulse
+import numpy as np
+d, a, s, b = 320, 0.9, 80, 30
+g_data = pulse.Gaussian(duration=d, amp=a, sigma=s).get_waveform().samples
+d_data = pulse.Drag(duration=d, amp=a, sigma=s, beta=b).get_waveform().samples
+g_func = lambda x, duration, amp, sigma: amp * (np.exp(-1/2 * (x + 1/2 - duration/2)2/sigma2) - np.exp(-1/2 * (-1 - duration/2)2/sigma2))/(1 - np.exp(-1/2 * (-1 - duration/2)2/sigma2))
+d_func = lambda x, duration, amp, sigma, beta: g_func(x, duration, amp, sigma) * (1 + 1j * beta * ( - (x + 1/2 - duration/2)/sigma**2))
+times = np.arange(0, d)
+g_dev = sum([abs(g_func(t, d, a, s) - g_data[t]) for t in times])
+d_dev = sum([abs(np.real(d_func(t, d, a, s, b)) - np.real(d_data[t])) for t in times]) + 1j * sum([abs(np.imag(d_func(t, d, a, s, b)) - np.imag(d_data[t])) for t in times])
+print(g_dev)
+print(d_dev)
+'‘'
+Thanks for your help,
+Tobias
+Thank you for highlighting this @tobias-kehrer. This is a result of an ongoing and chronic misalignment between the Qiskit Terra frontend and backend devices. The backend devices (on which the majority of pulses are implemented) utilize a left sampler strategy (Ie., the documentation is correct insofar as the pulses are executed on hardware). However, as you note the hardcoded strategy is the midpoint for the conversion to Waveforms in Qiskit. We have two ways to resolve this issue.
+I would like to hear @nkanazawa1989 feedback on this.
+Thank you for your response and detailed description of the '+1/2‘ shift issue @taalexander. As you mentioned, the documentation of the LiftedGaussian is correct up to the sampler strategy. Unfortunately, to my mind, there is a further issue with the documentation of the LiftedDrag. It does not define (the real part of) the LiftedDrag to be proportional to the LiftedGaussian as implemented in qiskit.pulse.library.continuous.py:
+Drag = Gaussian * ( 1 - 1j * beta * (x - duration/2)/sigma^2 )
+LiftedDrag = LiftedGaussian * ( 1 - 1j * beta * (x - duration/2)/sigma^2 )
+The figure attached shows the differences between the documentation and qiskit.pulse.library.continuous.py. The black curve denotes a non-normalized Gaussian with maximum value amp. As mentioned above, the documentation of the LiftedGaussian (gray curve) is correct up to the sampler strategy. However, the dashed curves denoting the real (blue) and imaginary (red) part of the LiftedDrag (as defined in the documentation) are different to the bold curves denoting the real (blue) and imaginary (red) part of the LiftedDrag (as defined in the code).
+What are your thoughts on this issue?
+LiftedGaussian_LiftedDrag.pdf
+I'm sorry for the delay in responding. I believe you are right and would welcome a PR fixing the documentation here.
+Sorry about lazy response. To me this suggestion makes sense. Fortunately we are going to update parametric pulse to make it QPY serializable #7821 . With this upgrade we will be able to directly submit a parametric pulse without considering sampler strategy difference on backend and frontend. However the documentation issue will not be addressed.
+Thank you both for your responses! I will set up a PR for the documentation.

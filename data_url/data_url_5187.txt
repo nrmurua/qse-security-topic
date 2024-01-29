@@ -1,0 +1,27 @@
+I am running the SDK QVM version 1.3.2 and ran into a very puzzling issue;
+As far as I understood the QVM supports multiple workers/living on different threads. This is also what I find with qvm --benchmark, which by default runs a 26 qubit experiment. I'm running on a 12-core AMD 1920X which supports 24 threads, and during the benchmark I observe all CPU threads are active.
+However, I am observing a strange deviation in run-time, in addition to CPU usage jumping from 100% to ~1500%, when I increase the qubit number from 18 to 19.
+Minimal working example (I compiled the below via pyquil, and not directly in lisp, but below I show another example in command line QVM. ):
+Then, the output for my particular machine results in:
+16-qubit experiment took 5.752 seconds
+17-qubit experiment took 12.02 seconds
+18-qubit experiment took 26.18 seconds
+19-qubit experiment took 8.229 seconds
+20-qubit experiment took 14.66 seconds
+21-qubit experiment took 29.66 seconds
+22-qubit experiment took 53.15 seconds
+Clearly, the 19-qubit experiment took shorter time than the 18 and even 17 qubit case. Based on the system monitor showing activity on a single vs multiple threads, therefore a hypothesis is multi-thread is enabled only past 18 qubits?
+Also, I tested it by running the benchmark and it gives me this for 18 qubits:
+which shows 100.00% CPU for 18 qubits, while if I select a benchmark with 19 qubits:
+it shows 1473.56% CPU... another indicator. Note that I find the same results with the option -w 24 added (which makes sense, it already defaulted to my system max of 24).
+Is this behaviour reproduced on your side? If so, is it intentional?
+Hey @vincentelfving, thanks for the comment.
+It is an open issue to define the proper "parallelization limit". This is statically defined at 19 qubits currently here, but it should be calibrated on a per-machine basis. The number 19 was chosen because that's what it was for one model of laptop I was using. This issue is described here. This would be a wonderful contribution to determine where the crossing point is.
+As a side note, as you increase the number of cores, for some qubit numbers, adding a new core doesn't actually give you a speedup. For instance, on my machine for a 32q benchmark, 10 cores vs 20 doesn't provide anything. This is something I intend to investigate to see if we can eek out more parallelization speedup, and if not, determine why (e.g., memory bandwidth, blowing the cache, etc.).
+@stylewarning alright, that makes sense! I realize that parallelization speedup is actually highly non-trivial.... I guess there is not 1 magic number.
+I would, however, love to see if it is possible to gain more speedup for low qubit numbers like N=4-18, for testing in cases where a huge number of (variational) circuits and iterations are necessary. In that case even every microsecond per circuit adds up significantly to the total time.
+@vincentelfving I just made a PR #31 to allow this parameter to at least be controllable by you, though it won't be calculated automagically. It should be merged by EOD, if you care to build from source. If not, it'll be in the next release of the QVM.
+@stylewarning excellent, thanks a lot!
+@vincentelfving Merged. Also, I notice you don't seem to be aware of the --compile or -c option. Try doing:
+and then
+It's not always the right thing to do, especially if you have a very small number of qubits, but it can bring great wins otherwise.

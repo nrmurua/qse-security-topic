@@ -1,0 +1,34 @@
+SummedOp.add(other) takes O(n) time where n is the size of oplist.
+It is because other is compared with oplist in the following line.
+https://github.com/Qiskit/qiskit-aqua/blob/e269aa41ce9f749927415e422f795de4b417c1c1/qiskit/aqua/operators/list_ops/summed_op.py#L66
+If we take a sum of n operators, it takes O(n^2) time in total.
+I think we need a fast path to avoid the linear search.
+I attach a small code to check the performance. I observed that most of time is consumed for the equality check of operators.
+The call graph generated with cProfile and gprof2dot is as follows.
+
+I also found bugs. See #979 (comment), #979 (comment), #979 (comment)
+If the same operator is not allowed in oplist, set may be better than list for oplist.
+From what I can tell the code for add has this, which would lead to equality checks, I do not believe it is anything to do with preventing/disallowing same operators in list - rather just enacting particular code if it is.
+Yes, SummedOp.add(op) behaves as follows.
+I notice that 2 and 3 are not consistent. See the next comment for details.
+I found a bug related to these behaviors.
+If we add a primitive operator, it summed up the same operator thanks to the linear search (case 3), i.e., 2.0 * XX.
+But, it allows duplicate operators XX (case 2), i.e., XX appears twice.
+The behaviors should be consistent.
+output:
+I come up with an idea similar to sympy.
+SummedOp.add(op) just concatenate op to self.op. We also make a new API simplify to merge duplicate operators.
+Example:
+output:
+In the prior WeightPauliOperator I will note that it had a simplify() too. Would combine paulis and remove any with zero coeff.
+If SummedOp must be simplified all time, we should fix the case 2 (not simplified).
+If simplification is not always necessary, simplify can be optional. Then, users don't suffer from bottleneck of summing up a bunch of primitive operators.
+I'm wondering when simplification is necessary. Does any part of the operator flow require operators to be simplified?
+I would think when it came to computing an expectation value, if the operator was not grouped (the default) then it should be at least simplified at that point. At other times I would think it should be optional. In the prior WeightedPauliOperator it was simplified at construction and also (self and other) for equality comparison. If the opflow equals detects equality correctly, such as in your above example where they are the same but have differing internal representation, then it would seem that simplify ought in general to be left optional.
+Thank you for your information. I try to separate simplify as an optional method and check unit tests related to expectation value.
+@woodsp-ibm I found another bug of SummedOp.add. It does not work correctly if coeff != 1, I will fix it with my change.
+Output:
+I found another bug of SummedOp.add caused by ListOp.equals.
+Because the following line does not compare self.coeff and other.coeff, self.mul(2) is called even if self and other have different coeffs.
+https://github.com/Qiskit/qiskit-aqua/blob/a74e65b87f19ed315707fb2a1f7341b9fbc06819/qiskit/aqua/operators/list_ops/list_op.py#L161
+Example:

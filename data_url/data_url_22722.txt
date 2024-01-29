@@ -1,0 +1,27 @@
+The ARTIQ scheduler permits preemption of a running experiment by a higher priority experiment. In the context of trapped ion devices, a kernel should be stopped only at times when the experiment is in a safe state. For example, ion experiments start and finish with ions in trap zones where they're subject to laser cooling. At intermediate times the ions may be moved to zones where there's no cooling available. If an experiment terminates in the latter case, ion loss may result.
+Recommendation: Only support preemption if a kernel has well defined exit points.
+Graceful Termination:
+run() ( or @kernel run() ) method must contain event loop that tests for the following.
+That has always been the plan. An experiment can only explicitly suspend itself.
+Here's I've articulate the problem and described a potential solution. SB asked me to insert this into the github Issue Tracker so that others can comment. Please reopen and create a new label to distinguish bugs from feature discussion.
+Fair enough. But then you need to base you comments what was planned and described that and/or why it is not enough.
+Preemption is already implemented via scheduler.pause(). What is not is graceful termination.
+The reason for not making graceful a separate feature from preemption was that whether an experiments preempts or suspends, it always needs to leave the hardware in a well defined states for other experiments to pick up. Thus graceful termination and suspension are the same thing from the yielding experiment's perspective. The only option I see here is that on graceful termination, scheduler.pause() could raise TerminateExperiment instead of simply returning and the experiment can process the partial data it has accumulated so far.
+Would there be cases where the experiment should check for a graceful termination request without pausing?
+I can not think of one. If an experiment is willing to terminate gracefully, it would also be willing to pause() for a higher prio/overdue experiment. Assuming pause() is cheap if there are no other runnable experiments, that is.
+Pause is cheap as the benchmark shows.
+However, doing it via pause() brings about the delicate issue of what to do when graceful cancellation is requested while an experiment is paused:
+I would add another call that the experiment can use to check for graceful termination requests. Users can implement behavior 2 explicitly with a small amount of extra code:
+Ah. In my mind graceful cancellation is a one-shot attempt/request targeted at the in-control experiment and not a flag. Then there would be no problem with behavior 1. The in-control experiment can catch TerminateExperiment and keep going, even doing pause() again is not a problem because TerminateExperiment will only be raised (by pause()) once per graceful cancellation request.
+With the behavior you suggest, if pause() returns early and the experiment refuses the request, you would priority inversion and messed-up timing as well.
+It has to be a flag as you have to store the information until the worker process is ready to receive it.
+Clearing the flag solves the problem of raising the exception multiple times (and adds a few lines of code to the already complicated scheduler). But not the hardware access conflict: what do you do after catching the exception - you may be running concurrently with another experiment that can do anything with the hardware. Pausing again looks a bit like a hack.
+Also, how to handle termination requests in analyze and prepare stages (which cannot pause)?
+I am suggesting to decouple entirely the termination request from pause, and that pause never returns early (additionally, this doesn't make the scheduling algorithm more complex).
+The complicated option is behavior 1 with an optional argument for pause that says "I'm going to catch the terminate exception and may use the hardware afterwards, don't return early" (defaults to False), maybe clearing the flag, and graceful termination = immediate termination in all stages other than run.
+From the perspective of the experiment it does not need to be a flag.
+You would not be running concurrently with another experiment when pause() raises. Just as you are guaranteed exclusivity when pause() returns cleanly. If returning or raising earlier than scheduled leads to too much of a hack, then we should not do that.
+I don't see the need to gracefully terminate in analyze or prepare. What would distinguish a meaningful graceful termination from forced termination in those stages?
+You would if we implement early returns. If you are paused because something higher-priority is running, and then you get a graceful termination request because the user just clicked the button, then pause returns (with an exception) and the higher-priority experiment is still running (at the same time as you).
+Something quite straightforward to do is if there are multiple experiments paused and we need to choose one to resume, we can prioritize those that have pending termination requests.
+Yes. Either not raise early then or just define that when pause() fails (by raising something), the receiving experiment is not in control and can only regain control by pause()ing until the pause succeeds.

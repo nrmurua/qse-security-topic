@@ -1,0 +1,10 @@
+The error is thrown when trying to run Optimize1qGatesDecomposition on multiple circuits in parallel.
+It should work.
+No response
+TBH, I'm surprised the test suite didn't catch this, I thought we had tests that covered parallel dispatch for all the preset pass managers and Optimize1qGatesDecomposition is a fundamental pass for optimization levels >= 1. But looking at the test class I was thinking of: https://github.com/Qiskit/qiskit-terra/blob/main/test/python/compiler/test_transpiler.py#L1878 it only runs transpile() which creates a separate pass manager in each worker processes so it doesn't need to use pickle.
+The easiest fix for this is to just add __getstate__ and __setstate__ methods to the OneQubitGateErrorMap struct definition: https://github.com/Qiskit/qiskit-terra/blob/main/crates/accelerate/src/euler_one_qubit_decomposer.rs#L43 There is an example of how to do it right below for OneQubitGateSequence.
+Would you have any interest in pushing up a fix for this? It would be a good first PR for rust in qiskit since it's a very mechanical change.
+Sure, I'll open a PR.
+Do you know if this issue affects any transpiler passes beside Optimize1qGatesDecomposition? How can we comprehensively ensure all passes are tested?
+Well for 0.24.0 Optimize1qGatesDecomposition is the only pass that added a new rust component so it's probably the only one with this issue. I think the best way to test it easily is to do:
+in the parallel transpile test class I linked to before which forces multiprocessing to be enabled. But, this still isn't comprehensive, because there are passes which aren't included in any preset pass manager. I think the only comprehensive way would be to add a test case that explicitly tries to pickle every pass in qiskit.transpiler.passes But in general it's pretty rare for passes to contain state that isn't serializable, it's really only the classes that are written partially in rust or are using external compiled libraries (or those with bugs that are storing things that aren't needed, like a Backend object).

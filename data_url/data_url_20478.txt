@@ -1,0 +1,95 @@
+Hi,
+As we are interop testing we found an issue in how OQS OpenSSH encodes the exchanged keys.
+The way it works today in OQS OpenSSH, the shared secret is K = HASH((PQ shared key) || (ECDH shared key))
+The PQ SSH draft is currently a little ambiguous on this, and I will update it to be more prescriptive, but we want to make a suggestion here to make sure we are all implementers on the same page:
+Both PQ shared key and ECDH shared key would rather be a simple byte array padded to the nearest byte boundary. Previously mpint worked because ECDH shared key was going directly into K, but that is not the case any more. PQ shared key and ECDH shared key go into a hash, so they ought to be raw data, fixed-length, simple byte array padded to the nearest byte boundary. Using mpint for one shared key and raw data for the other is inconsistent and mpint adds some predictability into the content of the hash input buffer.
+Btw, that is what OpenSSH does with its X25519+SNTRU PQ-hybrid key exchange method.
+@dstebila , @baentsch , @christianpaquin , what do you think?
+Btw, that is what OpenSSH does with its X25519+SNTRU PQ-hybrid key exchange method.
+Following the pattern of the upstream OpenSSH code would be good.
+Btw, that is what OpenSSH does with its X25519+SNTRU PQ-hybrid key exchange method.
+Here's where they handle this case in OpenSSH. For the hybrid KEX, they set raw=1 when loading the shared secret into the buffer that goes into the hash function.
+Hi Panos, I think your proposal makes sense.  But to be clear, when you say that the ECDH shared key is going to be a "simple byte array padded to the nearest byte boundary", that boundary will be based on the size of finite field in which the ECC arithmetic is being done, not the size of the shared secret.  In other words, if the top 8 bits of one particular shared secret are all zero, that is still encoded in a byte array of the same length as a shared secret where there top 8 bits were not all zero?
+Thx @dstebila ,
+In other words, if the top 8 bits of one particular shared secret are all zero, that is still encoded in a byte array of the same length as a shared secret where there top 8 bits were not all zero?
+Exactly.
+OK, so we will code up towards that goal. Basically the ECDH shared secret will now be raw data. The rest remains the same in the way it is implemented in OQS OpenSSH.
+I will assume you will make the change in OQS. We are testing here against this spec, so if you are too late we may submit a PR for this depending on workload.
+For completeness, I added text in the draft to be more prescriptive about it. It now reads
+The ECDH shared secret was traditionally encoded as an integer as per
+[RFC4253], [RFC5656], and [RFC8731] and used in deriving the key.  In
+this specification, the two shared secrets, K_PQ and K_CL, are fed
+into the hash function to derive K.  Thus, K_PQ and K_CL are encoded
+as fixed-length byte arrays, not as integers.  Byte arrays are
+defined in Section 5 of [RFC4251] padded to fixed-length.
+OQS OpenSSH does not currently follow the above snippet as it encoded the ECDH shared secret as an integer.
+K, the shared secret used in H, was traditionally encoded as an
+integer (mpint) as per [RFC4253], [RFC5656], and [RFC8731].  In this
+specification, K is the hash output of the two concatenated byte
+arrays (Section 2.4) which is not an integer.  Thus, K is encoded as
+a string using the process described in Section 5 of [RFC4251] and is
+then fed along with other data in H to the key exchange method's HASH
+function to generate encryption keys.
+Note that OQS already follows this latter snippet.
+Diff that fixes the issue, courtesy of @geedo0
+Maybe you want to pull it in?
+Should I submit a PR unless you don't like the fix?
+Maybe you want to pull it in? Should I submit a PR unless you don't like the fix?
+That looks fine to me.  I had forgotten enough of the OpenSSH code to quickly know what to write, but reading that makes sense to me.  Yes, please go ahead with a PR if you have the chance.
+Should we also rename the KEX methods?  I'm not sure if #134 is in play yet, but even if it isn't it seems prudent for us to rename them here so we don't have unexpected incompatibilities as a result of this encoding change.
+And we should also make the corresponding update in https://github.com/open-quantum-safe/libssh/.
+Thx Douglas.
+Here is the PR #137
+Should we also rename the KEX methods?
+I changed my comment on this a couple of times. But given that the method names we have in there now, which include the word kyber, will never conflict with the final names because NIST will rename the algorithm to mlwe-kem or something like that, I think it makes sense to keep it as is for now. No need to create more work for ourselves.
+In the next iteration of the draft that breaks backwards compatibility, update the names to follow the new nomenclature ecdh-nistp256-kyber-512r4-sha256-tbd2 and x25519-kyber-512r4-sha256-tbd2 or something like that.
+Feel free to close #134 , I think we reached consensus on this.
+Thx Douglas.
+Here is the PR #137
+Should we also rename the KEX methods?
+I changed my comment on this a couple of times. But given that the method names we have in there now, which include the word kyber, will never conflict with the final names because NIST will rename the algorithm to mlwe-kem or something like that, I think it makes sense to keep it as is for now. No need to create more work for ourselves.
+In the next iteration of the draft that breaks backwards compatibility, update the names to follow the new nomenclature ecdh-nistp256-kyber-512r4-sha256-tbd2 and x25519-kyber-512r4-sha256-tbd2 or something like that.
+Feel free to close #134 , I think we reached consensus on this.
+I don't think this addresses my concern though.  Within OQS-OpenSSH, what is being called ecdh-nistp384-kyber-768-sha384 has changed from before this commit to after, and thus a user of the version from before this commit will be incompatible with a user of the version from after this commit for the same method name ecdh-nistp384-kyber-768-sha384.
+(I also just realized that we should have followed the convention of naming non-standardized methods as newname@openquantumsafe.org.)
+I don't think this addresses my concern though. Within OQS-OpenSSH, what is being called ecdh-nistp384-kyber-768-sha384 has changed from before this commit to after, and thus a user of the version from before this commit will be incompatible with a user of the version from after this commit for the same method name ecdh-nistp384-kyber-768-sha384.
+Agreed. Maybe you want to add versioning to all previous compatibility breaking names, but that is probably a lot of work given all the method names and the iterations.
+(I also just realized that we should have followed the convention of naming non-standardized methods as newname@openquantumsafe.org.)
+Indeed. But going forward, at least for the method names in the IETF draft, we can add @openquantumsafe.org in the name like ecdh-nistp256-kyber-512r4-sha256-tbd2@openquantumsafe.org or something like that.
+I don't think this addresses my concern though. Within OQS-OpenSSH, what is being called ecdh-nistp384-kyber-768-sha384 has changed from before this commit to after, and thus a user of the version from before this commit will be incompatible with a user of the version from after this commit for the same method name ecdh-nistp384-kyber-768-sha384.
+Agreed. Maybe you want to add versioning to all previous compatibility breaking names, but that is probably a lot of work given all the method names and the iterations.
+Yes, I guess we haven't been very good about that, so most method names we're using now have this problem.  Is it worth doing it here since we know about it?  @baentsch @xvzcf @christianpaquin @kevinmkane any opinions?
+any opinions?
+At this point in time I'd consider it water under the bridge. What could help to avoid such oversight going forward might be the equivalent of the test.openquantumsafe.org TLS1.3 interop test server for SSH: That kept at least me thinking about interop (and changes that would/did break it). So what about setting up such PQ-SSH interop server (if not already existing somewhere (?) -- I didn't follow this protocol & other implementations to the same degree as with TLS).
+I would encourage changing the name for any method whose operation will be different after this change just to prevent the pain of two parties using versions on different sides of this change.
+Are all these names considered experimental, anyway? Will there be any expectation of interop when the standards is finalized and implementations snap to them?
+After the ratification of standards all previous codepoints will be obsolete, but some vendors that deployed early may choose to still support them for some time for backwards compatibility.
+Since moving forward we shouldn't see too many name changes for the NIST finalists + round4 algs, I'm happy to label the alg name now to differentiate future updates.
+Okay, then I'd propose we rename the hybrid KEX methods effective as of this PR with
+ecdh-nistp256-kyber-512-r4-hybrid-d00-sha256@openquantumsafe.org
+where the components in the name are:
+The only annoying thing for updating the PR might be putting in the algorithm version for all the PQ algorithms, I'm not sure if it's available in the metadata file yet or not.
+Okay, then I'd propose we rename the hybrid KEX methods effective as of this PR with
+You mean, in the next backwards compatibility breaking iteration, right?
+I would suggest to lose hybrid for brevity, as the existence of ecdh-nistp256 and kyber-512 implies it already.
+Okay, then I'd propose we rename the hybrid KEX methods effective as of this PR with
+You mean, in the next backwards compatibility breaking iteration, right?
+Well, this is a compatibility-breaking iteration?  Not compatibility-breaking in terms of the algorithm versions, but compatibility-breaking in terms of the hybrid mechanism.  Unless I misunderstood?
+I would suggest to lose hybrid for brevity, as the existence of ecdh-nistp256 and kyber-512 implies it already.
+Yes... I was just concerned with ensuring that the d00 is clearly the version identifier for the hybridization draft, rather than the Kyber draft.  Perhaps I'm overthinking things.
+Gotcha, right. Done. I just added in  https://github.com/csosto-pk/pq-ssh/blob/master/draft-kampanakis-ssh-pq-ke.txt the method names
+Please note the name changes.
+We will code up our side to these now.
+If you violently object to any of these names, please let me know.
+Looks good to me.
+We will code up our side to these now.
+Does this mean you'll be updating this PR as well, or do we need to do that?
+We will code up our side to these now.
+Does this mean you'll be updating this PR as well, or do we need to do that?
+Hmm, let me cut you a new PR that updates the method names in kex.h. I will paste the PR name here.
+As promised the new PR is here #138. It has two commits
+As promised the new PR is here #138. It has two commits
+Thanks Panos. I've updated #138 to use our templating method and put the relevant method names in a few more places.
+They're not in the draft, but it does use the hybridization method in the draft.  I'm torn on which way to go for these.
+FrodoKEM was a round 3 alternate.  That being said, FrodoKEM didn't change from Round 2 to Round 3, so r2 is a fine moniker to use.
+As for merging these, I think I'm inclined to merge #138 into #137, so that all the tests can run with the full suite of changes, and then merge #137 into main.  Does that make sense? @baentsch any opinion?

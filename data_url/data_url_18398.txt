@@ -1,0 +1,45 @@
+This issue contains a proposal to use coalton in quilc as well as the roadmap for implementation of both coalton into the compiller as well as the corresponding coalton features. This issue will be updated as progress or decisions are made.
+From the coalton README:
+Coalton is a dialect of ML embedded in Common Lisp. It emphasizes practicality and interoperability with Lisp, and is intended to be a DSL that allows one to gradually make their programs safer.
+Coalton allows for the type-level guarantees and safety provided by static typing while still being compatible with existing lisp code.
+There are three proposed places to convert existing lisp code to coalton as part of this issue. Any other places that could be improved with static typing should be added here.
+The operator-description type in src/ast.lisp is an ideal candidate for conversion to coalton. The structure of this type and the simplicity of related functions means converting to coalton will be trivial. This will require coalton to support easy lisp interoperability, function and type documentation, and the ability to handle lisp structs and objects.
+Operator fusion in src/analysis/fusion.lisp is another good candidate for coalton. The logic within this module is largely self-contained and does not rely strongly on the rest of quilc. Much of this code depends on low-level mutations of a doubly-linked list and logic around the graph-node and program-grid types.
+The required coalton features for this task include support for record types, generic functions, and multiple-value expressions.
+Although this is not strictly coalton related, it would be ideal to write a new algorithm in coalton to showcase its features. The current fusion implementation attempts only trivial subsumptions in the order that gates are supplied. This algorithm can be improved to find the optimal (trivial or non-trivial) fusions for a given program. This will greatly improve the performance of qvm.
+Coalton is currently in development and has a working type system, basic interoperability with lisp, and a simple standard library. Development is currently focusing on making the language more user-friendly (allowing reloads without breaking, better error messages, and more complex types). Much of the future feature development in coalton will be guided by its use  and the requirements that arise in quilc.
+This section will include a roadmap for quilc-centered coalton features. For a full list see the coalton issues page.
+Required features:
+Nice-to-haves:
+I think this is an excellent list to start with. They're relatively self-contained and not obstructed by the complexity of the core compilation routines in quilc. (Though, we would hope that in due time, we could attack the more complicated logic.)
+Coalton hasn't been proved to be useful in otherwise idiomatic Lisp code, and so I think this task provides two benefits:
+It explores practical ways in which we can make quilc more robust, easier to extend, and easier to debug.
+It explores the feasibility of gradually statically typed code.
+Either of these objectives may fail, of course, but I have high hopes.
+This sounds cool, but a conservative take is that I am wary about integrating one person's pet project (granted, @stylewarning is a force to be reckoned with) with IMO highly non-standard semantics (relative to the current CL ecosystem) to any core parts of quilc without a compelling use case.
+Since there is a desire to use Coalton, I would at least make a distinction between using it an optional analysis pass (which e.g. present and future Lisp hackers can basically ignore, if that's how it goes) versus adding it to essential parts of the compiler (edit: I consider the AST and parsing code essential).
+Again, this isn't so much a statement about Coalton as it is about threading boutique library dependencies across core and long-living  code. Any cost/benefit analysis of course also depends on the benefits, so I could also be persuaded to change my mind if the discussion highlighted those a bit more.
+Even though I like Coalton (and ML-flavored static typing in general), I basically agree with @kilimanjaro.
+I also think the cost/benefit analysis just by the nature of such things will be hard to quantify, and once the train leaves the station on things like this, inertia tends to take over.
+I think the list of candidate features here are reasonably self-contained, and in the case of operator-descriptions e.g. there is already some overlap with cl-algebraic-data-type, which makes sense, but also share @kilimanjaro's reservation about using Coalton for core functionality right away.
+I'm definitely open to the idea and don't mind using this as a testing ground, but I think we should maintain a high bar for declaring the experiment a success before merging.
+Well, the good (?) news is that no code is written. Coalton a pet project, but everything starts out as a pet project until it's no longer a pet. Coalton was started originally for quilc, "ideating" around the time we had interns working on quilc. Of course, none of that means Coalton must be used for quilc.
+I would at least make a distinction between using it an optional analysis pass
+@colescott's proposal (which I pushed for) has two pieces:
+These are out of the way and I think are good grounds to demonstrate the use of Coalton as a part of a larger proposal.
+IMO highly non-standard semantics (relative to the current CL ecosystem)
+This I disagree with. Coalton adds (1) Scheme-like syntax with (2) compile-time type checking with (3) Common Lisp semantics. Functions map to functions, data types map to plain old classes, etc. Anything defined in Coalton can be used out of the box in plain Lisp, even without Coalton-compile-time interference. It's not like Coalton introduces new evaluation semantics (e.g., lazy eval).
+@colescott and I (and @appleby ?) know that Coalton is alpha quality. If you try to use it, it doesn't work very well with things you expect with Lisp, like being able to reload files. So it goes without saying that everybody should tread carefully.
+With that said, quilc is growing monstrously complex. There are many avenues to reduce complexity; @kilimanjaro's own refactors have been great for that. Common Lisp also makes things relatively easy to debug, even if it takes 1+ days with quilc issues. But I think—especially as we introduce code generators, additional analysis passes, etc.—that we ought to really think into the medium-to-far future of quilc, and set ourselves up for easier hacking. And I think static typing helps with that, especially with a compiler.
+What I told @colescott is that if we open an actual PR, the intent is NOT to merge it immediately—even after careful review and even if the PR only affects "ancillary" code—and to indeed take the conservative take @kilimanjaro and @appleby discussed. As soon as two criteria are satisfied, then the PR could be merged:
+The PR tangibly benefits the code base. (Perhaps the PR even found & fixed a bug.)
+Coalton is stable and versioned.
+Do you find this take agreeable?
+What I told @colescott is that if we open an actual PR, the intent is NOT to merge it immediately—even after careful review and even if the PR only affects "ancillary" code—and to indeed take the conservative take @kilimanjaro and @appleby discussed. As soon as two criteria are satisfied, then the PR could be merged:
+Do you find this take agreeable?
+Sounds reasonable to me as long as there is broad agreement regarding (1) and (2).
+What I told @colescott is that if we open an actual PR, the intent is NOT to merge it immediately—even after careful review and even if the PR only affects "ancillary" code—and to indeed take the conservative take @kilimanjaro and @appleby discussed. As soon as two criteria are satisfied, then the PR could be merged:
+Do you find this take agreeable?
+I am ok with this. FWIW I think even something like "the Coalton code more clearly expresses the programmer intent or program behavior" counts as a tangible benefit (although finding bugs is hard to argue with).
+In some sense, the two pieces of Cole's proposal are quite modest. What is at stake then? If I can put it naively (and I confess to not having much experience with Coalton), what is suggested is a rewrite of parts of the compiler in another language. This has potential benefits: after all, Coalton was designed to address some of the challenges that quilc development has presented. But it also has potential costs: legibility, maintenance, and so on. The work described above is just the "thin edge of the wedge", i.e. success here prompts further more substantial usage of Coalton, with all the long-term consequence of language choice, which is why I agree with @appleby that we should hold a high bar.
+Anyways, it's hard for me to gauge how the tradeoffs I mentioned balance out in the abstract. So I'm definitely excited to see how the PRs turn out!

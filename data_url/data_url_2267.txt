@@ -1,0 +1,26 @@
+I've been experimenting with whether it's feasible to have special cases for controlled_by. By having specific classes (GateOperation, ControlledGate, ZPowGate) override their controlled_by method, and preferentially calling this method instead of ControlledOperation's constructor in a few places, we can do things like have Z.controlled_by(x) turn into a CZ.
+The main decide is that, in order for it to really work, it is necessary to introduce a PartialGate class that has some of the qubits specified. Otherwise it is not possible for cirq.Z.controlled_by(q) to return a CZ that has the control filled in but not the target. This situation arises in the code path within GateOperation.
+An alternative could be to have Gate.controlled_by take an integer for the number of controls, and return a gate without them specified.
+I'm a bit worried that this partial gate concept will start appearing in more places as the code base grows. It's particularly tricky at the moment because it's ambiguous whether gate.num_qubits() is the number of qubits to pass in order to get an operation (relevant to on(...)) or the number of qubits that will be present in the final operation (relevant to _unitary_).
+I don’t see a need for PartialGate here.  It seems reasonable for Z.on(a).controlled_by(b) to return CZ(b, a) and Z.control(1) to return CZ (once #2090 is merged).
+The controlled_by method of Gate currently doesn't take qubits to apply to; ZPowGate.controlled_by has to return a Gate that takes a single qubit. Even if you say Z.on(a).controlled_by(b), the ZPowGate.controlled_by method is being invoked behind the scenes when GateOperation delegates to it.
+I think I made some sort of argument like this in #1973 , but if you do decide that PartialGate is needed, you might as well go all the way an collapse Gate, PartialGate and Operation into one thing, corresponding to none, some, and all of the qubits filled out.
+I still question the utility of having partial gates. In your example, they're very quickly promoted to full operations by chaining methods. Can you give an example where you'd want to have Z.controlled_by(q) be assigned to a variable and used later?
+Yes, this does relate pretty closely to #1973 .
+Can you give an example where you'd want to have Z.controlled_by(q) be assigned to a variable and used later?
+It's currently needed in order to represent the value communicated from Gate.controlled_by to GateOperation.controlled_by. Basically, it would appear in library glue code. Also it's nice if users who reverse the order of on and controlled_by find that their code still works.
+We could modify the signature of Gate.controlled_by to include an "also here are the qubits the gate applies to" argument. Alternatively, Gate could have controlled(int=1), which would also work. This would fix the GateOperation.controlled_by snag.
+if you do decide that PartialGate is needed, you might as well go all the way an collapse Gate, PartialGate and Operation into one thing
+I disagree with this reasoning. That's like saying because functools.partial_func is a thing we should collapse int and function into one thing.
+Currently I'm leaning towards have Gate.controlled(control_count: int=1) instead of PartialGate. I don't think that partial gate muddies the concept of what an operation is, but it does muddy the concept of what a gate is (e.g. the num_qubits method becoming ambiguous).
+#1973 is closed and #2090 added num_controls, control_values and control_qid_shape to Gate.controlled.
+Now, Z.controlled can be overriden to produce CZ when appropriate.
+Coming back to this, what if there are more than one control qubits? Should Z.controlled(num_controls=2) produce ControlledGate(CZ, num_controls=1) or ControlledGate(Z, num_controls=2)?
+I feel the first one is much better for consistency but the result might be somewhat unintuitive to the user.
+I think this was fixed, and then there was a regression that was fixed.
+@smitsanghavi are there more places that this needs to be implemented?  Could you list them if so, or close otherwise.
+Implemented the following:
+ZPowGate->CZPowGate->CCZPowGate
+XPowGate->CXPowGate->CCXPowGate
+This is all I intended to do and will close this for now. Please reopen if anyone has more suggestions for specialized controlled gates.
+FYI, cirq.Z(a).controlled_by(b) does not return CZ(b, a) after this change. It still returns a ControlledOperation.  This is because only specialization on gates was added but GateOperations controlled_by was not overridden to first call the underlying gate's gate.controlled and then construct the operation. See #4172 for more details.

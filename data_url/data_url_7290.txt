@@ -1,0 +1,21 @@
+tmp1 and tmp2 can cause high alloc when  the integration tspan is large.
+Speculate that adding fields of Ket, Bra, and combinedoperater may resolve the use of tmp, but it may make LazyProduct a little bit fat.
+As a test add KTL and BTL
+@benchmark QuantumOptics.mul!(dpsi,H_kin,Ψ0)
+Now the  alloc is  irrelevant with the integration time
+@benchmark tout, Ψt = timeevolution.schroedinger($T, $Ψ0, $H)
+Yes, that mul! can be optimized. Caching the Ket and Bra like you do is a good idea in principle.
+One issue here is that the data type of the Ket you multiply with is not conserved. What I mean is, that e.g. Ket(operator.basis_l) in your ket_l does not specifiy the data type of the data of the Ket, so Vector{ComplexF64} is assumed. This means, however, if you try to work with, e.g. Vector{ComplexF32}, the data type will not be conserved when multiplying such a Ket with a LazyProduct.
+This issue is actually a bit tricky as it means you need to take into account the type of result from the mul! method for the cache of LazyProduct. So you cannot fully know this when constructing the LazyProduct. You could fill the cache in mul! directly, since you'd have all the info. Then you just need a fast way of checking if the cache has already been filled for the current data types involved in the mul! operation and don't reconstruct it if it's already valid.
+That said, the current version of the code (on master) doesn't respect the data type either. So what you're doing is definitely an improvement, and we could leave the data type issue for another time. Would you like to open a PR with the changes you suggest above?
+OK, I’ll open a PR. But I’m new in programming, may take some time to know how to use GitHub PR.
+After setup for a whole night, I find out that I have no permission.😂😂
+@Lightup1 that's not how you submit a PR... you need to fork the repository. See for example this guide: https://code.tutsplus.com/tutorials/how-to-collaborate-on-github--net-34267
+Oh, thank you. Got it!😅
+An alternative is to use caching to handle the tmp vectors, like in this PR. We could use the same cache in LazyProduct and LazyTensor (which is also a kind of lazy product operator).
+I thought about using the approach described here, but it does seem a bit much to put all possible intermediate types (those for kets, bras, and operators!) in the operator struct.
+A third way is to put a cache in the operator struct. That way only needed arrays get created and the memory is freed when the operator is garbage-collected.
+Thanks  for your suggestions.
+A third way is to put a cache in the operator struct. That way only needed arrays get created and the memory is freed when the operator is garbage-collected.
+I wonder how we define the type of cache since it can be Ket or Operater with different basis.
+Yes, the typing issue is a little tricky, also because element types can vary, as @david-pl points out above. It may not be too terrible to use abstract types, such as an appropriate union, or even Any, as is used in the global cache of the PR I linked. There doesn't seem to be a significant performance hit in cases I have tested.

@@ -1,0 +1,33 @@
+The docker image cp2k/cp2k:9.1 has at least two compatibility issues with shifter (one of the popular ways of running docker images on HPC systems).
+The use of --disable-shared in the build of MPICH results in a static link of libmpi to the executables. This means one can not bind mount the system MPI library (relying on MPICH ABI compatibility) in order to run with MPI on multiple nodes with good performance.
+The ENTRYPOINT method tries to write files within the image after it is created. With shifter the image is squashed making it read-only. As a work-around one could bind mount in a directory that could be written to, but the cp2k links are being put into non-empty directories which means a writeable overlayfs needed which shifter doesn't support. Usually /tmp is a writeable by default directory available in these systems. Is there a good reason to do this environment setup in the entrypoint as opposed to putting the binaries in default PATH's?
+2 is probably specific to shifter and might not be an issue with other things like podman or singularity, but 1 might be an issue for other HPC container runtimes.
+Thanks a lot for the feedback!
+I already fixed 2. via #2039, but have not yet updated the cp2k/cp2k:9.1 image. However, the cp2k/cp2k:dev20220330 image already contains the new entrypoint script.
+I'll also look into 1. It requires a bit of refactoring in the Toolchain, but this is something I wanted to do anyways.
+I've uploaded a new image cp2k/cp2k:dev20220511, which links MPICH dynamically.
+I'm also happy to report that it's 40% smaller.
+Let me know how it goes?
+Thanks for doing this!
+I can at least get it working now, but I need some "hack"
+Specifically I had do
+where setup2 is the same as the normal entrypoint but with
+instead of
+That change in the entrypoint would allow the simpler
+instead
+Thanks for testing this :-)
+I've uploaded a new  image cp2k/cp2k:dev20220519, which uses append_path instead of prepend_path for MPICH.
+I realize that the setup script is not an ideal solution. Hopefully, we can replace it with a few ENV instructions some day.
+Btw, we have an old wiki page about Shifter: https://www.cp2k.org/howto:shifter. Maybe you could update it or share the commands that worked for you?
+The latest image works great!
+and then
+works nicely. I cannot seem to directly edit that wiki page, but here is an updated version:
+Maybe a question for different issue? but I see this in the output
+Are there plans to offer prebuilt docker images for other architectures? AVX2, CUDA, AVX512, etc?
+Thanks for the instructions. I've updated the wiki page. (If you'd like your own wiki account just send me an email).
+Are there plans to offer prebuilt docker images for other architectures? AVX2, CUDA, AVX512, etc?
+Yes, this is definitely planed, but it requires a bit of refactoring on the toolchain. I might get to it towards the end of this year.
+Alternatively, you could build the image yourself using Dockerfile.prod_psmp, which uses -march=native -mtune=native.
+Great to hear it is in the plans, in the meantime I'll try out some of the other Dockerfiles and open an issue if I run into any problems.
+Thanks for all the work on this, I think it is/ will be a huge productivity boost for everyone.
+FYI @brandongc there is a CUDA container on NGC. If you weren't aware of it, I'd recommend to give it a try (it uses OpenMPI though, not MPICH). Please let me know if you find issues with it.

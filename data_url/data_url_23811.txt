@@ -1,0 +1,43 @@
+@alexcjohnson , I finally got around to testing the updates to the instruments
+Sadly our code does not run with this out of the box, our problems seem to be related to the use of meta-instruments, that is instruments that contain references to other instruments.
+I show just the AWG instrument and the qubit object, all the keyword arguments (expect server_name) that are passed to the qubit object are instances of (physical) instruments.
+There are 2 scenarios in which this fails.
+AWG initializes correctly, qubit object initialization fails with Empty  (see all he way below)
+Both instruments initialize correctly but when I try to load and run a sequence from the qubit object I get an exception Empty  (see all the way below).
+All runs fine, I find however that it fails if either the CBox (FPGA used for data acquisition) or the AWG is running on the instrument server it fails (scenario 2) .
+For now using instrument_server = None is a suitable workaround as I am still using MeasurementControl instead of the Loop, however I do want to switch as soon as possible and this would be a major showstopper.
+As I made some dummy instruments for playing around with the Loop I should also be able to come up with a self-contained example of scenario 1, scenario 2 might be a bit more difficult to find out.
+This is what shared_kwargs class attribute is for - in short, any object an instrument needs that you can't send through a queue, you must provide to the InstrumentServer on its initialization. So in this case you need to ensure:
+That's what I think the answer should be anyway... I'm not quite sure why you're getting the errors you are, but hopefully when I get to #83 and make better error messages it will catch this case.
+@alexcjohnson , I tried to implement the fix you proposed but I get the following error (see below)
+It complains about a non-pickleable command in our CBox driver, namely a function that generates a channel specific get function.
+This specific example is something we have manual parameters for now but the pickleability constraint does seem quite severe, I know that the same construction is used in the IVVI driver and if I change my driver here it will just pop up there, where I cannot solve it easily.
+It complains about a non-pickleable command in our CBox driver
+Wait, why is it trying to pickle a QuTech_ControlBox? Shouldn't it pickle the RemoteInstrument that points to this?
+Shouldn't it pickle the RemoteInstrument that points to this?
+@alexcjohnson , my first reaction is it should. I realised however that it does not do that because I made the instrument not run on any server (because of the bug that occurs in scenario 3).
+Let me retry with all the instruments as shared kwargs and everything running on a server. Also the issue #120 makes it cumbersome to test these things as I find myself restarting the notebook server all the time.
+@damazter suggested to me that things might look better if I try to set all instruments at the same instrument server instead of having them scattered over the GPIB, VISA and SERIAL servers. It occured to me that I have no good understanding of how the server implementation works. @alexcjohnson Would it be possible to do a similar FAQ addition as what you did in #118 for the use of servers? Things I would like to know are when do I want to use no server at all (I now have the impression that is incompatible with Loop but I may be wrong), what are (are there any) constraints on instruments? What's the deal with shared kwargs etc.
+I'll get back to you on testing this.
+@alexcjohnson , Ok, looks like we are one step further. If I set all instruments to reside on the instrument server (using server_name='') I get the following error (see below). In this case it is not complaining about not being able to pickle the CBox (if I set server_name=None on the CBox that will reappear, so I would say that that problem is reproducible and understood).
+The thing it is now complaining about is that the shared kwargs are not identical. Note that I have added the shared_kwargs argument to the instrument driver.
+In the case of the Lutman I use the following code to initialize it
+With
+The abvious direct solution to this bug would be to make sure that all the shared_kwargs of all instruments in the instrument server are identical. However I do not see the best way to do this as it would involve editing instrument drivers that are supposed to be independent, I think it would make more sense to solve this problem by setting the shared kwargs in the instrument server and appending more if more get added, however I do not understand the internals of that well enough.
+I'll try to come up with a self contained example using mock instruments, I'll need to build those anyway for testing the data structures.
+Note that you might also observe that the error is being raised in a different instrument now, this is because I had set instrument server = None on all meta-instruments before and the LutMan (lookuptable manager) is just earlier in the initialization script.
+@AdriaanRol yes, this is certainly confusing and in need of some good docs & examples.
+Every InstrumentServer needs to have identical shared_kwargs among all the instruments loaded there. That's because these args get loaded into the server when it's created, then passed on to each instrument that's loaded there during its construction on the server side.
+So in this case, seems you have:
+Just in case you haven't seen it, note that there's also the default_server_name() class method... but lets get this working first with server_name=... and then you can put the results in that method.
+@alexcjohnson thanks for the clarifications. I got around to testing it. I can now almost correctly initialize my instruments provided I put every meta-instrument on its own server.
+The problem occurs now because the qubit object also receives an instance of the MeasurementControl (MC), our equivalent of the loop. The MC is not pickleable (see below for error log, tested by setting MC=None). My current workaround is to run the qubit object with server_name=None
+We may argue that compatibility with MC is not required for qcodes, however I think that the same problem will occur when we want to reuse loops (as discussed in #128 ). I would prefer if we could either combine the Loop with instruments that do not run on a server (suboptimal) or if we can somehow get red of the pickleability constraint.
+If we want to use something like a qubit object that is able to perform simple measurements (loops) we need to be able to pass a reference to an instance of a Loop or to the station that contains such information. If you want I can send you a slide on how we use the qubit object and envision it related to meta-instruments and the Loop.
+@alexcjohnson , Cheered too soon, I cannot run a measurement when the AWG is on a server. Going back to having all instruments on None.
+I do not know why this is, the crash come when I call AWG.is_awg_ready(), a command that runs fine from the notebook itself.
+Now that I think some more about it I am quite sure this last error is caused by #136 .
+This only leaves the problem of being able to hand an instance of a non pickleable object, or to be qcodes specific, the ability to start a loop from an instrument or (as suggested in #128 ) hand a reusable loop object to an instrument.
+Another alternative I see is to make the loop compatible with instruments that are not running on a server. This would allow using the server = None (non-parallelized) instruments in special cases when you care less about parallelism. This would be suboptimal.
+Closing this issue as I am convinced me continuing troubles are caused by the server timeout bug (which was solved) . The non pickleability of my Measurement control is a constraint of the instrument and not a bug.
+If the issue persists I will reopen.

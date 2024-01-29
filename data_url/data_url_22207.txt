@@ -1,0 +1,15 @@
+The following code throws an error, because seconds_to_mu requires different arguments in prepare and on the core device.  It's annoying to write two versions of set_pulse_time so that I can call it from both locations.  Would it be possible to make seconds_to_mu on the core device accept the core argument, even if it doesn't use it?
+Alternatively seconds_to_mu and mu_to_seconds could be made methods of the core device object.
+@dleibrandt If you notice any performance improvement with this technique, please post your code as I suspect that this is something that the compiler should have done itself e.g. with inlining/constant propagation.
+Alternatively seconds_to_mu and mu_to_seconds could be made methods of the core device object.
+This seems preferable.
+@sbourdeauducq 's suggestion sounds good to me.
+I do see a significant speedup.  A simplified example is below:
+With the pulse method commented and the pulse_mu method uncommented, RTIOUnderflow occurs when the pulse time is 1 us.  With the pulse method uncommented and the pulse_mu method commented, RTIOUnderflow occurs when the pulse time is 20 us.
+maybe also affected by #591
+@dleibrandt The primary problem in your case is that you haven't marked t as kernel invariant. Once this is done, the pulse and pulse_mu variants generate exactly identical code.
+If you are pre-calculating values such as timings, it is best to pass them through arguments. Storing them in attributes inside the kernel will hinder the optimizer.
+Do you specifically want to store such calculated values in attributes? Can I see a more realistic example so that I can try to make it more ergonomic, within the constraints of the optimizer?
+@dleibrandt To help debug these issues, commit f5cca6b includes a pass that automatically detects attributes that may be marked kernel invariant:
+Kernel invariants won't actually help here, t is not one when set_time_kernel is used.
+Titular issue fixed in 009d396; I am addressing the underlying reason for slowness in #624.

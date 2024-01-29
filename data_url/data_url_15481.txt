@@ -1,0 +1,17 @@
+When iterating over a Statevector in a foor loop, data is attempted to be accessed after the last element.
+Leads to
+EITHER:
+Adopting the latter would result in behavior like this:
+Leads to
+without any errors.
+Since this iteration style is considered pythonic, it would be nice to have a proper iterator.
+I suspect the iterator might be simply forwarded form the internal representation of the data.
+Maybe also check other data types for this behavior?
+Removing __iter__ actually doesn't disable iteration, which is where the bug really comes from; Statevector doesn't define __iter__, and wasn't originally intended to be used in iterable contexts.  The problem is that Python "helpfully" tries to make any class that supports __getitem__ into an iterator by just trying successive integers in its __getitem__ until that method raises a KeyError, which Python catches and turns into StopIteration.  Since Statevector raises QiskitError rather than KeyError (I'm not 100% sure why), the implicit form breaks.
+The two possible solutions here are:
+For our purposes, solution 1 is better, because we can do that without breaking backwards compatibility - it's possible (albeit unlikely) that some people are relying on Statevector throwing QiskitError on bad index access, so changing that would be a nuisance for them.  Adding a proper __iter__ method is fine, though.
+Removing __iter__ actually doesn't disable iteration, which is where the bug really comes from...
+Thank you @jakelishman! I did not know about this implicit rule. It explains the surprising behavior very well.
+Personally, in relation to #8032, I'm against adding the explicit __iter__ method and I think we should explicitly use the data attribute. Including __getitem__, they can cause bugs and I don't like implicit conversions.
+(@jakelishman Perhaps this is my preference, and we had a similar discussion at Fermion...)
+Ikko: I completely agree with you if we didn't already have __getitem__ - I don't like this type of "implicit" reinterpretation of the data as something else, either.  Since we've already got __getitem__, and we don't want to annoy people with removals, I think to fulfill the spirit properly we have to do __iter__ as well.  It's not my preferred design style, but I'd rather have some code I don't much like than cause users problems for something which we don't have a technical need to remove.

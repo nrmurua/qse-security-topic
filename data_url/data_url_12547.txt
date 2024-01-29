@@ -1,0 +1,25 @@
+Expectation layers can feed with batch of circuits, symbol values and measurement operators. However, the output shape shows some conflicts with different combination of batches in the input and even segfault may occur. See the following demo:
+The batch of symbol values and batch of circuits both take the first dimension of outputs. And when both are in batch form, circuits beyond the first one seem to be directly omitted by expectation layers. Besides, I met segmentation fault for the last line: when three things all in batches and only one set of symbol values are provided.
+Any thoughts on this?
+Thanks for raising this issue. Couple thoughts:
+Creating one layer and calling it over and over with different input signatures is not a natural workflow for TF and Keras, usually one creates a single layer that in turn gets linked into a larger computation graph. From there input and output pairs are sent through the graph.
+The reason you are getting this strange behavior is because each time you call the layer after it's creation you are forcing it to save some small amount of internal state (under the assumption that it will not be called with a different signature) in order to function correctly in a compute graph. For example in the first print statement the layer is assuming that because you didn't provide any symbol_values that you want the layer to manage that for you. From there it will create it's own learnable variable for symbol_values to match the size of symbol_names. In the third print statement, what is happening behind the scenes is that the layer is creating a tile operation to generate many copies of c1 with batch size equal to the batch size of symbol_values. Eventually what happens is that the incompatability of all these different states eventually puts the layer into a completely broken state.
+So to fix your issues it's likely that you just need to do something like this:
+The reason we opted for this behavior is because it gives the user a bit more flexibility in how they call into the layer at the cost of knowing that things might break if they used it this way. The alternative to this would be something more rigid like this:
+This would force the user to have to remember, "OK, which optional constructor parameters give me the call signature that I want" as apposed to "OK, I'm gonna send my stuff in to the call and it should just work".
+Does this help clear things up ?
+@MichaelBroughton , thanks for your reply.
+I changed expectation in the above code with tfq.layers.Expectation() and the shapes of all the outputs as well as the last segfault persist. So the issues 1. circuit batch and symbol values batch both take the same dimension in the outputs and hence may be conflict and 2. segfault in the last line persist.
+Ok In that case we should definitly look into the segfault issue.
+circuit batch and symbol values batch both take the same dimension in the outputs and hence may be conflict
+What exactly do you mean by this ? I ran the snippet above just now and saw that there were different output shapes, but that is to expected since the input signatures are different.
+You can check the comments after each print line in the code. Basically, there are three things can be provided in batch (list) for expectation layers. They are input(circuits), operator(measurement), and symbol_values. However, the output shape rank is always 2. The second dimension is determined by operator batch, while the first dimension is determined either by input batch or symbol value batch. When you provided the three arguments all in list form, the output shape is still rank 2, and there will be some conflicts.
+Specifically, for this line
+I expect the output should be in 2(2 circuits) times  2(2 symbol values) times 2(2 measurements) shape, while the output is 2 by 2
+This is the desired behavior. In the case of the circuits input not being a list or tensor, the layer will create multiple copies of the circuit in order to resolve each variable value into it in a 1:1 fashion:
+This gives output shape 2,2 where out[i][j] = [[<c1([0,0]) | m1 | c1([0,0])> , <c1([0,0]) | m2 | c1([0,0])>], [<c1([1,1]) | m1 | c1([1,1])> , <c1([1,1]) | m2 | c1([1,1])>]]
+Whereas if I do something like this where I pass a list/tensor of circuits we assume that you will give a good 1:1 mapping with symbol_values:
+The output shape will be 3,2 where: out[i][j] = [[<c1([0,0]) | m1 | c1([0,0])> , <c1([0,0]) | m2 | c1([0,0])>], [<c2([1,1]) | m1 | c2([1,1])> , <c2([1,1]) | m2 | c2([1,1])>], [<c3([2,2]) | m1 | c3([2,2])> , <c3([2,2]) | m2 | c3([2,2])>]]
+To use your example when you run:
+Does this make sense ?
+Wow, this makes tons of sense. Thanks for your detailed clarification! And I believe this is why there is segfault when circuit batch mismatches with symbol values batch (although as you said, segfault should never happen in robust implementations)

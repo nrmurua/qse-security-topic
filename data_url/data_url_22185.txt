@@ -1,0 +1,36 @@
+Is it possible for Artiq to add its experiment repository to the python path, in order to allow absolute imports of experiment modules?
+An example use case is a repository with the following structure:
+It would be very useful to be able to import repository.scans.laser_scan in laser_servo.py
+Currently the only way of doing something similar is
+Sounds reasonable. Can you submit a patch (need to take care of master, artiq_run, and documentation)?
+@cjbe In fact, this is a problem with artiq_run, unless we add a --repository option to it, or require that the user sets PYTHONPATH. But this is quite unfriendly. Maybe it is better to agree that experiments should do relative imports in this case?
+Can't the workers/artiq_run adjust sys.path to fit?
+Yes but that's not the problem: artiq_run doesn't know about the repository and therefore cannot do it.
+@sbourdeauducq I agree this is problematic for artiq_run. My opinion is that artiq_run is a lower level tool that will be mostly used for debugging rather than by the average user, so requiring the user to set PYTHONPATH is OK.
+I will tidy up my code for this and submit a PR in a few days.
+@cjbe Do you still want this?
+I still think it would be very useful, but have not come up with a tidy implementation. Happy to close this issue if you want.
+Yes. I'm not sure if there is any tidy solution that doesn't introduce a problem at least as bad as the initial one.
+To revisit a long-dead issue, is there a better solution to this these days? I agree with @cjbe that absolute imports would be really useful.
+#668 was closed partially because of the potential trouble caused by adding a parent folder to PYTHONPATH which might contain other stuff accidentally. That could be avoided by instead adding the experiment repository itself to the path: you'd then do import scans.laser_scan instead of import repository.scans.laser_scan. It doesn't fix the clashes with artiq_run or artiq_browser though.
+We current hack around the problem by having a dummy setup.py in the experiments repo:
+This means that any python instances which get started in a virtual environment in which this "package" has been installed have the experiment repository in their pythonpath.
+How do you want to handle experiments submitted outside the repository?
+The discussion in #1543 also seems realted to this.
+@pathfinder49  thanks, that's very relevant and more recent, so probably is the better place to discuss this.
+@sbourdeauducq I don't have a proposal for that. Really, I would expect experiments submitted outside the repository to be self contained, so I don't think it's unreasonable for them not to have access to the repository code.
+Really, I would expect experiments submitted outside the repository to be self contained,
+That's not a reasonable expectation; you typically want to test changes before committing them and this includes testing changes on experiments with user-defined imports.
+you typically want to test changes before committing them
+Ah I see the problem. In my workflow I test changes by running an artiq_master with a local copy of the repository and then, when I'm happy, I commit and change back to an artiq_master that's running in git mode. I think of the state of my code as being the state of the whole repository, so the idea of testing just one file of it seems odd to me.
+But maybe that works for me because I work locally on the machine running artiq_master: are you thinking more about submitting test experiments to a remote machine?
+Still, maybe it's just me but I can't really see myself ever needing to test a single file without also testing the libraries which support it. My actual Experiment files tend to be pretty short and usually just call a collection of library components. I wonder how others do it.
+I wonder how others do it.
+In our lab we are frequently in a multi-remote user scenario. Frequently one user will develop new code while another is taking data with existing experiments. Changing masters would be disruptive for us and does not help with the multi-user scenario.
+As I mentioned in #1543, my current workflow is to disregard the artiq repository entirley. Instead, we install the experiment repository in development mode. This allows absolute file imports from the current state of the files. This places the burden on the users to not modify code that is being used by others. Admittably, this is not a satisfactory solution.
+How do you want to handle experiments submitted outside the repository?
+Absolute imports might actually help in this situation. If the experiment repository were available as an aboslute import, it should be possible to replace the name of the imported module (using git-hooks?). I could then call the development repository foo and the artiq-experiment-repository bar.
+Still, maybe it's just me but I can't really see myself ever needing to test a single file without also testing the libraries which support it. My actual Experiment files tend to be pretty short and usually just call a collection of library components.
+As I mentioned here, it remains possible to import other files at the level of the experiment and in directories below it. This works with experiments submitted both from inside and outside the repository.
+Admittedly, this is far from perfect as it severely restricts the organization of experiments using folders.
+Another possibility is to pass an additional user-specified path to the "root of user libraries" when an experiment is submitted from outside the repository. When the experiment is submitted via the repository, that path would be set to the repository.

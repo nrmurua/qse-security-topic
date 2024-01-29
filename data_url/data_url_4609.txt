@@ -1,0 +1,24 @@
+While performing benchmarks for shots on DGX I found a strange error for specific choices of nqubits and nshots a strange. Particularly for nqubits = 15and nshots > 66000 I get the following:
+The same error appears for various other choices, eg. nqubits = 16 and nshots = 50000 but I have not yet understood if there is a specific pattern. I thought that it is related to the CPU fallback, however this seems to work for larger circuits. For example for 18 and 20 qubits with 50000 shots it falls back to CPU without problem (I confirmed this by adding a print in the fallback exception).
+The error appears only when using GPU on DGX. The CPU-only version works fine. Also, I have not been able to reproduce this on dom, even when using exactly the same script/numbers as the DGX. There the CPU fallback always works.
+This looks familiar to the int precision choice.
+Do you know which function throws this error?
+It seems to me that it is a Tensorflow bug related to the tf.random.categorical function used by the measurement gate. I was able to reproduce the error with the following script:
+If you attempt to run this on DGX you should get the error for nqubits=15, nshots=70000 or nqubits=16, nshots=50000 and probably some other configurations. It seems to happen close to the point where the GPU runs out of memory but probably before because if you try other values (eg. nqubits=15, nshots=100000 or nqubits=20, nshots=50000) the same script raises the proper tf OOM. The issue is similar to #155 (probably some bug in tf's C++ code?).
+I have not been able to reproduce this on dom. I suspect it has to do with the fact that the DGX GPU has 32GB of memory and allows us to access higher nqubits/nshots configurations for which tf.random.categorical doesn't work. They probably don't use 32GB GPUs on Tensorflow's testing.
+If you can reproduce the error and agree that it is a tf issue that we cannot fix, perhaps the simplest solution is to change tf.random.categorical to something else.
+Many thanks, that's quite useful.
+I can confirm the following:
+So, I think we can say this is a tf bug, we are getting an overflow before the OOM.
+Some indexing is coded e.g. with int32, while the 32gb allows us to use int64 and then we get the overflow before filling the memory and raising the OOM.
+We could replace this function with a custom operator, or maintain the code as it is for the time being and fill a bug report on tf.
+Edit: I have tested the code in another machine with the V100 with 32gb and the Abort is also there.
+Some indexing is coded e.g. with int32, while the 32gb allows us to use int64 and then we get the overflow before filling the memory and raising the OOM.
+I also think it is something related to integer precision.
+We could replace this function with a custom operator, or maintain the code as it is for the time being and fill a bug report on tf.
+Both solutions are fine with me. I am inclined towards the custom operator because if remove Tensorflow completely in the future we will to replace all these functions with custom operators anyway. On the other hand we could save some time for now by maintaining for the first release. For example falling back to CPU if the int32 limit is passed instead of capturing the OOM should work. The CPU version works without a problem and I already have some benchmarks in the qibo_shots notebook in the paper repository.
+Regarding the custom operator, I use tf.random.categorical to produce samples from a given probability distribution. This is a probably a very common problem in sampling so it should be possible to use a random generator library to solve this even in C++. If I had to code a solution from scratch I would do something like rejection sampling but this may not be the best approach so I would prefer to use a pre-coded solution from a library.
+For the first release, we can keep the implementation as it is, fallback to CPU and finalize the plots. We should keep this issue open, I will fill a bug report on TensorFlow with your minimalist example.
+I did a quick look at the tf original custom operator called by the tf.random.categorial. From the C++ perspective I don't see any particular issue, this may be due to the python gen_random_ops and related functions.
+I agree about the rejection sampling, the only problem is that it will be probably difficult to find a cuda implementation, and even with a cuda implementation we will fallback to CPU.
+Bug report in tensorflow/tensorflow#41458

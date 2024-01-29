@@ -1,0 +1,49 @@
+Dynamically changing val_mapping on existing parameters does not produce expected behaviour.
+a: ValueError: ("'Power' is not in {'Logarithmic frequency', 'Linear frequency'}; ...)
+b: parameter set to: 'Logarithmic frequency' without error
+c: return 'Logarithmic frequency'
+a: KeyError: ('Power', 'setting vna_sweep_type to Power')
+b: ValueError: ("'Logarithmic fequency' is not in {'Power', 'Linear frequency'}; ...
+c: KeyError: ("'LOGF' not in val_mapping", 'getting vna_sweep_type')
+It would be helpful to provide such information:
+Windows 10
+If you are using a released version of qcodes (recommended):
+0.34.1 (from ...\qcodes\_version.py)
+I'm trying to wirte an instrument driver and can change vals or unit without issue.
+But maybe I am using the wrong approach, and Qcodes actully works as intended?
+@DavidMerges Thanks for the report. I agree this is not great.
+I don't think val_mappings were ever designed to be replaced but then at least we should prevent the user from doing it
+if that is the case.
+Specifically the issue is likely that setting val_mapping in __init__ will also update vals and inverse_valmapping
+overwriting the val_mapping will do non of this. See the code here
+I can see two options:
+To determine which solution is best I would like to better understand your use case for replacing the val_mapping. Can you say something about that? I have always expected the val_mapping to be static but there may be good reasons it should not be.
+@jenshnielsen Thank you for your reply and your help.
+As I stated, I'm trying to write an instrument driver.
+I'm new to Qcodes, so maybe the approach I'm taking at the moment is not the best.
+The Instrument is a "Network/Spectrum/Impedance Analyzer"
+Depending on the mode I'm in the parameters of the instruments change.
+For the sweep type you will have:
+It's a complex instruments, and there are quite a few interdepended parameters.
+For example the sweep start parameter will change dependend on the Analyzer mode and the sweep type
+After changing or requesting the current Analyzer mode I would like to update these paramters in the software-modell accordingly. So that when in Spectrum Analyzer mode you cannot choose 'Log frequency' as sweep type
+Maybe it is better to delete the parameter instances and create new when the Analyzer mode changes? There are a few parameters that are not available dependend on the Analyzer mode so I might have to delete/create these ones any way.
+Or I could change snapshot_exclude to True for the ones that are not available - but then they would still be setable I think.
+I provided a few entries from the programming manual:
+
+I thought more on this problem, and I'm still not sure if I'am maybe just using the wrong approach - maybe there is another way to structure interdependent parameters?
+I would like to be able to take a snapshot (with update=True) and also allow the users to use the help() function - but a lot of the parameters are interdependent. (valid Ranges, Units, value maps etc. are subject to change)
+When the 'Analyzer mode' attribute changes the 'start'(STAR) attribute will change - but it will also be dependent on the 'sweep_type' (SWPT) which in tun will also be dependent on the 'Analyzer mode'
+Updating parameters (even delete/create them) accordingly seems the logical route for me, this is why i tried to change the val_mapping.
+Sorry, Yes I think updating the val_mapping is reasonable. I would be happy to review / help with a pr that made val_mapping a property and added a setter such that the inverse_val_mapping and validator is updated when val_mapping is changed.
+I think that will also need some logic to ensure that the user either updates val_mapping or validator but not both
+For other instruments we have been able to split the functionality into multiple modules and toggle between the modules/channels such that one module has code for one mode and the other for another mode but I don't think that makes sense here.
+Hello,
+thank you for your help.
+I'm still learning a lot about qcodes and I'm happy to submit a PR regarding this issue.
+I (hopefully) finished the driver for our network analyzer today and plan to submit it to Qcodes_contrib_drivers.
+I ended up with creating the parameter instances with val_mapping of all possible values and then changed parameter.vals according to instrument state.
+The only time a val_mapping would need to be changed is when you have an instrument where you ended up having the duplicates of key or values in the val_mapping dict using this method. I'm not sure if this is likely to happen, so making val_mapping read only semms to be fine, too.
+I'm happy to go either way with the implementation, what do you think?
+That makes sense. If I understand it correctly you suggest
+That sounds like a good way of doing it. We can always extend later if there is a compelling reason for over writiing the val_mapping

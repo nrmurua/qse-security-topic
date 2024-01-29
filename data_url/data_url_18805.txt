@@ -1,0 +1,78 @@
+When declare (qu)bits, is bit foo; equivalent to bit[1] foo;? In other words, singleton registers and single bits type-equivalent?
+For example, are these valid?
+This is something that should be clarified by a prospective Types working group if and when it is formed...
+if single qubits are also singleton registers let concatenated = q[0] || q[3]; is allowed
+We've had some discussion on this on Slack, so including that here.
+First, if this PR is accepted and scalar qubits are exactly equal to qubit registers of length one, then I don't think anyone is against q[0] || q[3] producing a register.  As I understand it, this is also the current behaviour of the internal IBM parser, but not the reference parser - @steleman is explicitly in favour of this being allowed.
+I made an argument against this PR, and keeping scalars distinct from arrays of length one.  With current ongoing discussions about adding an array classical compound type to the language, I would not expect array[float[32], 1] to be a compatible type with float[32], so I think it would be inconsistent for a user if qubit[1], which according to the spec is an array (i.e. similar to array[qubit, 1]) to be compatible with qubit.
+While qubit is unlikely to be allowed with array, I'm concerned with the classical analogue bit:
+Now, by the similarity of bit and qubit, I would expect qubit to follow the same rules as bit with respect to array-concatenation operators.
+If an array type is added to the language, then we will need some syntax for initialising arrays.  I would rather use this initialisation syntax to produce ad-hoc arrays from scalar types (for example, [| qubit1, qubit2 |]), rather than overloading the array-concatenation operator to do this, for consistency.  This would also allow us to have the difference between array[bit[4], 2] and bit[8], and I think it would be least surprising thing for the user in the end.
+My suggestion certainly isn't the only way of looking at this, so I think it's something for discussion here, and in the types working group.
+For completeness' sake, I've copied in the Slack discussion below, but I think the above summary is shorter and a better version of my argument, and fairly represents what everyone said.
+@jakelishman:
+I’m in favour of this being forbidden, because I think overloading the array-concatenation operator will make distinguishing arrays from bitstrings a strange corner-case of the language, but I am in favour of having an “array literal” syntax, so that this sort of behaviour can be achieved with (e.g.)
+which would also be nice for ad-hoc usage in for-in loops.
+I don’t think my concerns about distinguishability between scalar types that feel like registers and proper arrays are insurmountable, though, so I’m not entirely against the overload if others prefer it.
+@1ucian0:
+if a single qubit is the same as a singleton register #218 , q[0] || q[3] seems like something that should be allowed. or am I missing something?
+@steleman:
+This is currently allowed and should be allowed. I don't see why it wouldn't be allowed.  I also do not understand what this has to do with loops or bitstrings.
+@jakelishman:
+I think we need to be careful not to mix “currently allowed by IBM’s internal parser” with “allowed by the specification of the language”.  The quote Luciano posted is the text of the specification, which only defines the || operator in terms of registers; the question is whether a singleton qubit is exactly equivalent to a register of qubits with length one.  This isn’t answered in the spec, so the action of qubit_one || qubit_two isn’t defined at present.
+The relation with bitstrings is because quantum registers aren’t the only thing referred to as registers in the language specification - the specification says that || applies to both classical and quantum registers, and that bitstrings are initialisers of “static arrays of bits”.  My concerns are based in other current discussions about a more general “array” compound type, which would extend all types, and would risk starting to produce unexpected behaviour for a user of the language.
+The relation with loops is because the specification allows looping through collections of qubits.  If qubit_one || qubit_twois forbidden, then we will probably want some other way of constructing an ad-hoc register where the qubits aren’t contiguous in a register, otherwise the user will have to do quite a lot of typing for a simple concept.
+This is absolutely a subject for the types working group, so I don’t want to try and invent a whole bunch of syntax on-the-fly now. For one particular example, I’m concerned with how one will construct arrays containing array-like types already, if the concatenation operator is overloaded to also mean “array creation from scalars”.  For sake of argument, let’s say we do decide to add array to the language, and I want to construct an array[bit[4], 2] (array of 2 bitfields of length 4).  I can’t do bitfield_one || bitfield_two because that will make a bit[8], so I’ll need some way of explicitly constructing an array. Basically, treating singleton instances as equivalent to registers of length 1 starts to introduce minor inconsistencies when combined with explicit arrays, which I’m worried may be a pain point for users in the future; having a separate syntax completely removes that, and comes with benefits for ad-hoc collection creation.
+Also, @1ucian0: my argument is against arrays of length one being implicitly equal to the scalars they contain, so my main argument is against the PR you linked.  If we do decide to accept the PR, then we absolutely must have || work on single qubits.
+We've had some discussion on this on Slack, so including that here.
+First, if this PR is accepted and scalar qubits are exactly equal to qubit registers of length one, then I don't think anyone is against q[0] || q[3] producing a register. As I understand it, this is also the current behaviour of the internal IBM parser [ ... ]
+The expression
+does not produce a register set. It produces a set of register aliases.
+There is no difference between saying
+and saying
+In both cases the LHS of the assignment operator is a qubit|register alias set, not a qubit|register set.
+I've no problem with that terminology difference as an implementation detail, providing it has no behavioural impact: the spec currently says
+Two or more registers of the same type (i.e. classical or quantum) can be concatenated to form a register of the same type [...] The statement a || b denotes the concatenation of registers a and b.
+About qubits and registers, it says
+The statement qubit name; declares a reference to a quantum bit. [...] The statement qubit[size] name; declares a quantum register [...].  The label name[j] refers to a qubit of this register [...]. Quantum registers are static arrays of qubits
+so as it stands, it (implicitly) says that a single qubit name[0] is not a register (it's a qubit instead), but it only defines || on registers.
+For example, given
+my reading of the spec is that the types of defined_as_register and defined_as_alias should be exactly equal, and defined_as_register and defined_as_alias are both usable in all the same situations.
+Behaviour that uses || with single qubits is currently beyond the specification, so is an implementation detail of the internal parser, which is fine as long as the language doesn't specify it.  For consistency across implementations, we need to make a positive decision at the language level in some direction. I'm not irreconcilably against the behaviour you're describing and have got implemented, but it's not my preferred definition (though of course my opinion is only one opinion).
+My issue is that I'm assuming there will be an explicit (classical) array type added to the language, which will presumably come with an array-initialisation syntax.  Assuming that becomes true, I think it would be better to use that as the constructor of ad-hoc or alias collections, rather than overloading a concatenation operator, and for consistency I would expect to use the same syntax for classical and quantum types.
+I've no problem with that terminology difference as an implementation detail, providing it has no behavioural impact: the spec currently says
+Two or more registers of the same type (i.e. classical or quantum) can be concatenated to form a register of the same type whose size is the sum of the sizes of the individual registers. [...] The statement a || b denotes the concatenation of registers a and b.
+I am not discussing terminology.
+Can Qubits be physically copied?
+In the interests of keeping the discussion approximately linear, I'll respond to your follow-up question after you've responded to the rest of the points made in my comment, if you disagree with them.  If you agree with them, it might be helpful if you could just make a note of it, so we don't misunderstand each other.
+The entire premise of your argument is incorrect. As such, I don't know what I can answer.
+Qubits cannot be physically copied. Correct me if I'm wrong.
+If Qubits cannot be physically copied, it follows that the result of the concatenation of two or more Qubits or Qubit sets is a set of Qubit aliases. I.e., the Qubits have not been physically copied into this resulting (new) Qubit container. This container contains references - i.e. aliases - to the original Qubits.
+As such, there is no difference between aliasing two or more Qubit sets or two or more individual Qubits from a Qubit set. In either case the resulting Qubit container will contain references to the original Qubits, not copies thereof.
+I agree that qubits cannot be copied.
+It doesn't follow from that that two qubits put together into one identifier is not a register.  In QASM, a register is an abstraction - it doesn't need to correspond to anything physical. The declaration
+does not declare any physical qubits - in your terminology, it only contains references to physical qubits. This is explicitly in the language specification in the physical qubits section - physical qubits cannot be declared, and therefore a register is a collection of references to qubits, just like what you called an alias.  By the specification, the identifiers declared by
+are "of the same type" (quote from spec given in previous response) as an identifier defined by
+At any rate, no part of my argument against the overloading of the || operator is dependent on the exact type of the output of the operator.  In your terminology, I'm arguing that a "qubit" should not be usable as an input to an operator that expects  a "qubit set".
+My reading of the specification (which I gave the supporting text for in a previous response) is that qubit x; declares an identifier which is a different type to qubit[1] y; and qubit[2] z; (in your terminology, the former is a "qubit", the latter is a "qubit set").  The specification clearly defines (and I think we agree on this) what happens with y || z, but since x is an identifier with a different type to y, it doesn't currently define what happens with x || y, and I'm arguing that we should keep "register/array of scalar" as distinct in the type system from "scalar".
+My reading of the specification (which I gave the supporting text for in a previous response) is that qubit x; declares an identifier which is a different type to qubit[1] y; and qubit[2] z; (in your terminology, the former is a "qubit", the latter is a "qubit set").
+Your reading is wrong.
+There is no such thing as declaring an identifier. Identifiers aren't declared. By themselves, identifiers do not represent anything.
+Identifiers are one of the three parts of an association between a type, a memory-location and a human-readable mnemonic representing a metaphor for the type <-> memory association.
+This association between a type, a memory address and an identifier is automatically created by the compiler, behind the scenes, when it parses the declaration.
+We can declare qubits, gates, bits, bitsets, defcals, functions, angles, integers, floats, etc.
+We can reference these declarations throughout our program through their associated identifiers.
+In your example, you are declaring a qubit identified by x:
+This declaration creates an association between a type (qubit), a memory location (we don't know where that is), and an identifier. From now on we can reference this type <-> memory association simply through its identifier.
+An identifier by itself, on its own, cannot form a declaration.
+How would you declare an identifier?
+That's an identifier. Is that also a declaration? If you believe it is, what does it declare?
+[ ... ] I'm arguing that we should keep "register/array of scalar" as distinct in the type system from "scalar".
+This has nothing to do with allowing qubit alias concatenation based on individual qubits as well as qubit containers.
+Also:
+is not an array of qubits.
+In OpenQASM3, arrays of qubits are declared thusly:
+It's easy to get wrapped around the axle with some of the syntax proposed.
+The early syntax of OpenQASM 3 is exceptional from a point of view of the developing field of NISQ and a little clunky in terms of language design.
+I opened some PRs a while ago suggesting some changes but they were too far off from the extant work.
+It's good to revisit and revise before this escapes from the lab :) Nothing is yet sacred!

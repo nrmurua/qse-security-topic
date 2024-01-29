@@ -1,0 +1,53 @@
+In order to seed transpiler for a list of circuits a list of seeds is required.  This is supported, but not mentioned anywhere:
+https://github.com/Qiskit/qiskit-terra/blob/a296ca009bf440b5a2cb00f61b8221c6ce9aa044/qiskit/compiler/transpiler.py#L65
+See the docstring
+It should be listed as an option because I originally assumed having all processes set with a single int seed was a bug.
+No response
+It's not just seed_transpiler, I think, it's all the arguments, but the docstring does say this: https://github.com/Qiskit/qiskit-terra/blob/a296ca009bf440b5a2cb00f61b8221c6ce9aa044/qiskit/compiler/transpiler.py#L73-L76
+That said, if we're going to have type hints, they should at least be accurate.  It'll look super ugly, though - for long ones, it may be better to define aliases at the top of the file, so we can do Union[None, Alias, List[Alias]] throughout, rather than duplicating everything in Alias twice.
+Note that the behavior is also not consistent with Aer, where seed_simulator can be an int, but then each circuit in a list does not get the same seed applied to it.  Also giving Aer a list raises an error.
+I would say I don't like this undocumented behavior because it makes #7789 and similar refactors much harder to work with. #7789 still supports the list input (except on optimization level and basis gates because the PR assume they're always shared on each circuit in the list), but not having to worry about whether it's a single input or a list is kind of annoying.
+If a passed int seed was used to seed an RNG to make a list of seeds, one for each process, would that not work here?  I have done that elsewhere for some time now and it works well.
+Hi @nonhermitian, just checking to see how this is going, I would like to try my hand with this issue if thats fine with you?
+@aniken04: the current actionable part of this issue is to update all the type hints in the manner I'd described in my comment above.  The other discussion here is more about design choices that we can't immediately change without breaking compatibility for users, but that's separate to the original issue.  If you'd like to work on the type hints, let me know and I'll assign you.
+(On the subject of the design choices: given that transpile can take a list of circuits, in general I'd err on the side of the current "broadcast-like" behaviour, even if it's a bit more complex for us to deal with internally.  I feel like we should be able to handle sending the arguments over the wire sensibly in the current form, even if that means just re-broadcasting the arguments within each process to save wire time.  I start changing my tune if there are any cases where the singleton has a type of list, so that it's difficult/impossible for us to tell the difference between a singleton or a collection.  I personally prefer requiring all the types to match (all singletons or all lists), but at this point it's probably needless friction for existing users.)
+Hey @jakelishman, I'd love to work on the type hints if that's fine!
+Thanks, I've assigned you, and let us know if you've got questions!
+@jakelishman looking around, I can't see that this issue was closed. Could you assign this to me so I can work on the type hints?
+Just to clarify if this issue is still open:
+when changing seed_transpiler, it should be
+seed_transpiler: Optional[Union[int, List[int]]] = none, 
+(within the transpile function)
+or should it be
+Seed_transpiler = Optional[int]
+at the top of the file
+and then within transpile it would look like this
+seed_transpiler: Union[None, Seed_transpiler, List[Seed_transpiler]]
+or is there another preferred way?
+hey @Eriken79 thanks for jumping on this, I've assigned to you!
+As for the preferred implementation, Jake is on leave at the moment, perhaps @mtreinish could weigh in?
+Hi @Eriken79, sorry for the delay: for simple things like int, it's better to directly write Union[None, int, List[int]] in the transpile docstring, because then a user can quickly read off the type.  The alias form is never really necessary, but if there are any arguments that have really complicated types that would make them difficult to read if they're duplicated, the alias form could be a simpler option.
+@jakelishman thank you for the response, sorry I'm a bit confused still. So am I just updating the type hinting or are there also changes I should be making to the docstring?
+As far as my current understanding goes, I should be updating the type hints so seed transpiler changes from
+seed_transpiler: Optional[int] = None
+to
+seed_transpiler: Optional[Union[None, int, List[int]]] = None
+and type hinting on something more complex like timing_constraints changes from
+timing_constraints: Optional[Dict[str, int]]
+to
+(outside transpile function)
+TimingConstraints = Dict[str, int]
+(inside transpile type hinting)
+timing_constraints: Optional[Union[None, TimingConstraints, List[TimingConstraints]]] = None
+I'm assuming the Optional and = None are still necessary since those transpilation targets don't necessarily have to be set.
+These changes don't seem to have any corresponding changes in the transpile docstring that you mentioned, so I'm a bit confused there. Let me know if any of my logic is off, thanks for your time!
+The docstring looks fine as it is to me - the comment at the top addresses that all options are also allowed to be a list of values, and there's no explicit types given elsewhere in it.  The type hints just need to include the List option as well.
+Optional[x] is exactly the same as Union[x, None], so you don't need Optional if the Union already contains None (or you can omit the None from the Union and wrap it in Optional).  Other than that, what you said looks correct to me.
+Thanks @jakelishman, sorry I have a few more question and I should be able to square this issue away.
+Should type hints like basis_gates that start with a List[str] be expanded to be Union[List[str], None, List[List[str]]] or Union[str, None, List[str]]? I'm unsure whether or not I should assume the List[str] to be the "singleton" element or not.
+Also, with type hints that have multiple distinct unioned types like initial_layout, should each option have a list element, like Union[None, Layout, List[Layout], Dict, List[Dict], List, List[List]] or should the non-list versions be the only options?
+Finally, for unitary_synthesis_method, unitary_synthesis_plugin_config, and target should they also be unioned with none? The previous type hinting doesn't wrap these in an Optional so I'm not sure if there should be a None option for those.
+Thank you so much for helping me out!
+Hi @Eriken79, sorry, I didn't see this at the time.
+@Eriken79 how are you? Did you already complete this one? I was thinking to hop on and help or take it in case you want to donate it to me?
+They ended up going with a different design on the transpiler that makes this issue invalid. @jakelishman This issue should probably be closed! PR #8814 is the one I submitted. You can follow the chain there to see what direction they ended up taking this issue.

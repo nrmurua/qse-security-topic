@@ -1,0 +1,13 @@
+Use quil-lang/magicl#67 to accelerate the QS and Euler compilers.
+Ideally, callers of lapack-csd would know at which stage the base case should be invoked and would switch to csd-2x2-basic then.
+My knee-jerk preference is for a single csd wrapper that dispatches appropriately, ideally (but not necessarily) in a way that's inlineable. What's the reason to put that burden on the caller?
+My knee-jerk preference is for a single csd wrapper that dispatches appropriately, ideally (but not necessarily) in a way that's inlineable. What's the reason to put that burden on the caller?
+That was my first approach too. The reason why I changed it is because a caller that runs the CSD in a loop knows exactly when the base case should occur whereas the callee would need an if form executed every time. In other words, by making the caller responsible for dispatching, we avoid executing a conditional statement every time the CSD is called.
+I'm with you, but I feel that in practice there's just another such if statement inside of the caller which conditionalizes on something like the value of matrix-rows, which could just as well be handled through inlining.
+I agree that it is more hassle-free for the programmer if the two cases are subsumed in the same function. However, just for the sake of exploring the space of possibilities, let me introduce the following abstraction of the two options:
+The function f mimics the case where we dispatch at every iteration whereas the function g separates calls to the base case from the remaining cases. The latter produces tighter assembly and is ~1.5 times faster than the former in my machine. I imagine the reason is that there are less opportunities for branch prediction to fail in g than in f.
+I guess it is a matter of evaluating the impact in our code base and determining  whether the convenience/speed trade-off is worth it.
+I think that f is closer to the expected use-case within quilc, where compilation happens in tiny context-free steps and control percolates back up to some outer loop to make context-ful decisions.
+I'll also say for the record that I'm happy with either decision ultimately being made, so if this discussion grows tedious you're invited to override it.
+I didn't measure, so take this with a grain of salt, but I don't fully buy the speed argument as rationale. CSD is very heavyweight and does a lot of math, and a single numerical comparison will get completely lost in the weeds noise.
+I'd rather expose two functions (though not necessarily with these names): csd (DWIM, chooses whatever is the best) and csd-2x2

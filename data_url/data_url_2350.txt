@@ -1,0 +1,24 @@
+Calling show in some cases leads to warning messages, for example if using an inline backend in colab:
+We could try to detect which backend is running, but I think that way lies pain. Better IMO would be to just not call show, since in common environments (colab, ipython with matplotlib integration) it's not needed.
+The reason I wanted these calls included is because, without them, the plot method fails to show a plot when running from the command line, from python's interpreter, and from within pycharm.
+We could perhaps have plot and show_plot? Seems confusing...
+Intercept the warning message and dump it? Seems dangerous...
+Detect the backend and react appropriately? Sounds like massive jank...
+Do we have data on how often users are using each environment?
+I would bet that most users will be in a notebook environment (colab or jupyter) or ipython, but I don't have data to say what the ratios are. We certainly have lots of colab examples for introductory purposes and it seems to me that emitting warnings for plots in those examples is not great. If there's a way to detect whether the matplotlib backend is a "GUI" backend and do it robustly, then we could have a helper method like try_show_plot that we would call instead.
+FWIW, on the commandline you can just append ; plt.show()...
+I agree that we want to fix the warning in notebook environments, but I'd strongly prefer to not require different code in different environments to make the plots pop up. I want to be able to say "call .plot to see a plot" in the documentation, instead of "if you are in a notebook environment such as ipython or jupyer call .plot to see a plot. If you are not, then you also need to import matplotlib.pyplot as plt and then call plt.show()".
+We now have both patterns in Cirq.  Probably we should make a decision on this.
+Coming here from @cduck 's xref on #1992. Library code should never call show
+I agree that we shouldn't call show by default.  We could have a show bool parameter, so that people who really want to call show would do plot(show=True).  I do think we should optimize the plotting for common environments, which means colab / ipython type setups, which also argues against calling show.
+It also leads to lots of warnings in our tests
+@pingyeh could you comment on the pattern you used in heatmap and why?
+Library codes that create plots on an Axes should not call show(), so the caller of the library can decide when to show it, e.g., only after adding more stuff to the plot.
+Some codes are supposed to make visible plots, e.g., the example codes in cirq.vis.examples.bristlecone_heatmap_example.main. They have to call show().
+How about replacing calls to Figure.show() with Figure.show(warn=False)? The doc and the source both shows that the warning is suppressed. That should make our tests cleaner.
+warn=False sounds like an ideal solution
+So warn=False for example code and like that has to call show.  But in general library code should take in an Axes (so that people can control where it is shown)?  And if Axes is not passed in, should it create a Figure and Axes and then do show (with warn=False)?
+I thought about making the ax argument of the Heatmap.plot() method optional and creating a Figure and an Axes if it's not specified, but I decided against it. My rationale is:
+The down side is that it is a bit less convenient in interactive sessions. But I think that's a good trade-off for a library.
+We can create a SupportsPlot protocol and a cirq.plot function that takes any object with a __plot__ or plot method (to be determined) and shows the plot. That is, it creates a figure and ax if not specified, and calls the __plot__ or plot method to plot on the ax, and show it. That should solve the use case of interactive sessions.
+The pattern that is recommend is documented in docs/dev/plotting.md.

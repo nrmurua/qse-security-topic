@@ -1,0 +1,18 @@
+The test input CH4-rsLDA.inp returns wrong results using Intel compiler versions newer than 18.0.5.
+I recently started using __attribute__((always_inline)) to generate specialized branches in the grid ref backend.
+In any case, this should not produce wrong results and smells like a compiler bug.
+It is not yet clear where the inlining causes wrong results with the Intel compiler versions 19.x and newer. There is possibly no link to the new grid routines, since the wrong results show up only in a test related to ADMM purify and MO_DIAG. Though an error sometimes occurs in the eigensolver part, the problem is possibly just trapped there caused by an invalid input matrix.
+It seems that the Intel compiler ignores your unroll pragmas partially:
+Loop with pragma of unroll = 10 ignored due to unroll factors mismatched
+Oh, that's good to know. The gcc doesn't care and unrolls anyways. Unfortunately, I have the exact unroll factors only as a const variable - not as preprocessor macro. Since the Intel compiler does not require the unroll factor, we should probably just use the pragma without it.
+The icc warnings should be gone with #1476. It still says:
+... but I think this might actually be legit because for large lp the inner loops become pretty long.
+Nevertheless, this might be a good time to check the performance with other compilers besides gcc.
+I finally managed to build myself a binary using the Intel stack to investigate the problem with CH4-rsLDA.inp. My findings are:
+The problem seems to be related to qs_scf.F. Dropping a WRITE statement anywhere into that file or compiling it with -O0 makes the test pass.
+@oschuett Thanks for further tracking the problem. That looks like a compiler bug. I think reducing the opt level for a high level routine like qs_scf.F might have less performance impact than using a global -fno-noinline compiler flag.
+Yes, I also suspected a compiler bug at first, but it turns out that adding a WRITE statement anywhere before the end of the outer scf loop lets the test pass. Even adding it to cp2k.F does the trick. So, that smells more like a stack corruption.
+However, I also noticed that the test passes when the SRLDA functional is disabled. That functional was added somewhat recently (Dec. 2019) and it appears to be the source of the NaN values. Unfortunately, I can't be certain because -fpe0 makes the problem disappears. Nevertheless, compiling xc_sr_lda.F with -O1 or -fp-model strict lets the test pass.
+I'm not yet sure why adding WRITE statements helps. Maybe it affects the alignment of some array and as a result a non-AVX branch is used. Then again, this reproducer is so fragile that the SRLDA functional might just be a red herring  ¯_(ツ)_/¯.
+I'm now convinced that the problem is in xc_sr_lda.F because the following check fails:
+I did not mange to track it down further, because most code modifications let the problem disappear. I believe this problem is caused by over-aggressive compiler optimizations and the fix will be to use -fp-model strict for this module.

@@ -1,0 +1,35 @@
+LineQubit models a very sparsely connected topology. GridQubit describes devices with very dense connectivity. In a lot of real quantum hardware qubit connections are denser or more elaborate than simple lines, but still less dense than fully connected 2-D grids, see e.g. IBM Q device topologies below or Rigetti's Aspen topology.
+This issue proposes a new type of qubit class with behavior intermediate between LineQubit and GridQubit. In particular, the is_adjacent methods should be flexible enough to adhere to any topology specified at construction.
+Another interesting example of a topology that cannot be captured by LineQubit and GridQubit is the "star" topology with the shared "bus" phonon qubit surrounded by the ion qubits.
+Another way to deal with this would be to use cirq.NamedQubit to identify the qubits and then put the connectivity graph in the Device. This to me seems conceptually cleaner than having a different qubit type that would need to include connectivity information.
+Note that we're actually also in this situation of needing a Device object when using GridQubit because while we can generate the possible neighbors of a GridQubit without any other information, we need a specific device object to tell which of those neighboring sites actually have qubits.
+I don't think this concept lands in a nice conceptual valley. It strikes me as very general (you can do any connectivity!) mixed with very specific (it has to be on a plane at integer coordinates).
+I think we should wait until we actually need a type of qubit before defining it. And my instinct is to define specific qubit types ("OctagonalTilingQubit") rather than to create a qubit so general that it can represent anything.
+Re connectivity graph in Device:
+LineQubit and GridQubit have is_adjacent method that serves this purpose already. I'm concerned that adding adjacency checks in Device would cloud the division of responsibilities. Specifically, some high-level abstract notion of adjacency would be present in qubit classes like LineQubit and GridQubit, but for details users would have to resort to using another class - a Device. I'd really prefer to place the responsibility for adjacency in one place.
+What I envision instead would be a qubit class (perhaps more aptly named GraphQubit instead of SparseGridQubit) which receives topology at initialization and uses it in is_adjacent while Device would supply the topology to the new qubit class when it creates qubits (via a new factory method Device.make_qubits). This way Device owns and determines the topology, but the qubit class gets to make use of it to enable adjacency checks.
+Re existing situation with Device + GridQubit:
+True, we do have this problem! We can fix it by allowing GridQubit to accept optional bounds on rows and columns. If we do this, then division of responsibilities between device and qubit classes would be the same for both GridQubit and GraphQubit.
+Re generality mismatch in the underlying concepts:
+Good point. This can be remedied by dropping the requirement for integer coordinates. Essentially, we'd gain a qubit type whose topology is defined by a user-supplied graph. No coordinates. Hence a better name for the class would be GraphQubit.
+Re application:
+I'm factoring RQC generation code out of XEB example (see #2113) while generalizing it to support any topology. RQC generation requires adjacency checks. I looked around for the best place to put it and qubit's is_adjacent seems the most appropriate.
+RQC generation requires adjacency checks. I looked around for the best place to put it and qubit's is_adjacent seems the most appropriate.
+I don't think is_adjacent is going to be the best place for this in general. We're put information such as what 2-qubit gates are allowed between what pair of qubits in the device description (see recent work on this in #2110). It seems to me that the random circuit generation code should take a Device (created from such a protobuf device description) and use that to determine where it can place gates. We will need to improve the Device interface to make all this possible, and I think we should focus on that instead of on new qubit types.
+Re specific qubit types:
+I think in practice after about three graphs, anyone would just implement GraphQubit and then things like OctagonalTilingQubit or AspenQubit by deriving from GraphQubit and feeding it a different graph (see the links in first comment above to see what graphs I have in mind).
+Sounds like we'd like to keep the adjacency logic in device, which does make sense to me.
+However, the issue of confusing API and mixed responsibilities remains: now both qubit classes and devices are responsible for qubit adjacency checks.
+We can fix this by removing is_adjacent from the qubit classes. WDYT?
++1 from me on removing is_adjacent on qubits. Adjacency is not a property of qubits, but a property of the devices they are embedded in (even if that device is the "unconstrained" device with an infinite lattice). The API should make this clear.
+#95
+cirq.contrib.graph_device was intended to address many of the concerns discussed here. Its generality makes it a little cumbersome, but I imagine a few more helper classes would make device creation pretty easy.
+Is there a way to obtain a networkx graph from a graph device? The greedy router accepts such graphs for the connectivity.
+is_adjacent is used exactly twice outside of tests.  The first is in xmon_device.  The second is three_qubit_gates where code calls this to do the adjacency preserving CCZPowGate.
+I think there is a strong preference by upvotes to remove is_adjacent.  I do think it can lead to bad code when, for instance, you ask about adjacency for qubits that are off the device.
+I'm going to rename this issue to for that.
+GraphDevice is our current solution to this.  We should consider what we need to get this out of contrib.
+I'm not aware of anything that needs to be done to get it out of contrib, but I'm willing to spearhead that.
+We should deprecate this method sooner than later
+@MichaelBroughton wasn't this done as part of the Devices API?
+We tabled it for discussion with the group (people on this thread were there) and opted to just leave it. Closing.

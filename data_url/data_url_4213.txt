@@ -1,0 +1,89 @@
+The documentation says that the IBMBackend supports the CNOT gate, but I have not been able to make IBMBackend.is_available() return True for the CNOT gate. I am calling it as follows:
+ibm_backend.is_available(pq.ops.Command(eng, pq.ops.CNOT, [[qureg[0]], [qureg[1]]]))
+I might be doing something wrong in this call, but I have the impression that the culprit is in line 95
+95      if g == NOT and get_control_count(cmd) <= 1:
+of _ibm.py.
+Both pq.ops.CNOT==pq.ops.NOT and pq.ops.C(pq.ops.NOT)==pq.ops.NOT evaluate to False and thus it makes sense that .is_available() returns false.
+Hi
+CNOTs are supported by the IBM backend and there is also a test for it:
+https://github.com/ProjectQ-Framework/ProjectQ/blob/develop/projectq/backends/_ibm/_ibm_test.py#L60
+Controlled gates are "meta gates" and handled differently from standard gates:
+A controlled gate consists of a bare gate without control qubits (X for CNOT) plus a specific number of control qubits.
+These control qubit get separated when a Command is generated and are saved in a special attribute for controls
+If you want to test that is_available works:
+Users shouldn't need to build Commands but of course if you are working on the compiler or backend then you might have to do it from time to time. Important to check the docs: qubits need to be a tuple of lists of qubits and controls a list of qubits...
+Hope this helps
+Also the following is true:
+X = NOT = XGate() (just different names which people are familiar with)
+Thanks. So is it true that
+Command(eng, pq.ops.CNOT, [[qureg[0]], [qureg[1]]])
+and
+Command(engine=eng, gate=X, qubits=([qureg[0]],), controls=[qureg[1]])
+do not yield identical Commands?
+Maybe I should give a little more context to make it more clear what I am trying to do: I am given a list of gates, such as those returned by pq.ops.XGate() or instances such as  pq.ops.CNOT. I am now trying to find out which of these gates are supported on a given subset of qubits (say the first n, where n is the number of qubits each such gate acts on). I would like to construct a Command from each of them and then run is_available(). For the non-meta gates this works as expected, but for CNOT (and other meta-gates) is_available() returns False (if I construct the Command as described above), even if after separation they are/would be supported.
+Thanks. So is it true that
+Command(eng, pq.ops.CNOT, [[qureg[0]], [qureg[1]]])
+and
+Command(engine=eng, gate=X, qubits=([qureg[0]],), controls=[qureg[1]])
+do not yield identical Commands?
+Yes, they are not an identical command. In fact, Command(eng, pq.ops.CNOT, [[qureg[0]], [qureg[1]]]) is invalid. We will add at some point more assertions to check for compliance with the docs.
+I don't yet fully understand your use case, but in case you want to figure out which operations are possible on an IBM chip, it works like this:
+IBMBackend.is_available() only checks if gate types are possible (not if they are possible on a specific set up qubits), this allows the backend to be universal for all IBM chips. The question if a Command is possible is a bit tricky to answer:
+https://github.com/ProjectQ-Framework/ProjectQ/blob/develop/projectq/setups/ibm16.py
+E.g. in the IBM 16 setup, there is a mapper which makes sure that the qubits are switched (with Swap operations if necessary) in order that all the allowed gate types are acting on qubits which can execute them (ibmqx5_connections stores which qubits are allowed to make CNOTs) and also that the direction of the CNOT are correct by the SwapAndCNOTFlipper.
+I am actually happy to just know which gates are supported in principle, and need not know whether they can be preformed on a specific set of qubits.
+Can you explain why my call to Command() is invalid?
+The docs only state that the qubits parameter has to be a "Tuple of qubit lists (e.g. Quregs). Interchangeable qubits are stored in a unique order". That gave me the impression that
+Command(eng, pq.ops.CNOT, [[qureg[0]], [qureg[1]]])
+or at least
+Command(eng, pq.ops.CNOT, ([qureg[0]], [qureg[1]]))
+should be valid commands.
+How can I construct a Command object from meta-gates such as CNOT? Do I need to do the decomposition into gate and command part manually?
+Sure:
+Would be invalid because [[qureg[0]], [qureg[1]]] is not a tuple of qubit lists but a list of qubit lists which violates the requirements of Command for its input parameter qubits.
+This example satisfies the requirements from Command, however, the number of qubits is defined by the gate:
+CNOT is a ControlledGate of the NOT gate.
+https://github.com/ProjectQ-Framework/ProjectQ/blob/develop/projectq/ops/_shortcuts.py#L33
+The NOT gate is a single qubit gate. This is not explicitely mentioned in the docs but the implementation has a single qubit matrix. We will add this to all gates in the next major release (and add more checks of this)
+The docs of the ControlledGate mentions that control qubits need to be given separately:
+This would raise the following error:
+A user needs to use:
+This will construct the right Command. If you want to manually build a Command object, then the docs of Command says that control qubits are a separate input parameter:
+https://github.com/ProjectQ-Framework/ProjectQ/blob/develop/projectq/ops/_command.py#L73
+Hence this is the correct Command of a CNOT
+If you want a Toffoli gate:
+If you want a QFT which has not control qubits:
+May I ask why you want to manually create a gate?
+Sorry:
+May I ask why you want to manually create a Command (not a gate)?
+Naturally users don't touch Commands as they can use the | which creates the Command object and sends it to the right place.
+This syntax works also internally, see e.g.:
+https://github.com/ProjectQ-Framework/ProjectQ/blob/develop/projectq/cengines/_swapandcnotflipper.py#L119
+but of course it's valid to construct it manually.
+I know that the NOT gate acts on a single qubit and I understand that CNOT is a controlled version of NOT and it thus acts on two qubits. My mistake was that I assumed that I could pass the control qubits together with the qubits the gate acts on in the same qureg (or or list of qubits). As CNOT is really just a 2 qubit gate this seemed natural. It would be nice if that were possible.
+The only reason why I need to construct a Command manually is that (as far as I understand) is_available() needs a Command as input. I would actually much prefer to simply pass it a gate directly (especially as it does not seem to care which qubits I want it to act on, the gate alone should really be enough to decide if it is available or not), but it doesn't allow this, right?
+I also fully understand how I can construct Commands from elementary gates, and also how I can get a Command that represents a controlled version of an elementary gate.
+My original problem however remains: If I am given a list of gates that may also contain controlled and other meta-gates) and want to check whether they are all supported by a given backend, I need to construct a Command for each of them and pass this command to is_available(). How do I do this? Do I need to manually check for every gate whether it is a controlled gate, decompose it myself, construct the command representing that controlled gate from the elementary gate and pass that to is_available()? Is there really no simpler way?
+Sure, you can instantiate a MainEngine with a list of compilation engines that only contains an AutoReplacer with no decomposition rules. You can then try applying the gate(s) and see whether you get an exception (NoGateDecompositionError).
+May I ask why you need to perform this task?
+I just want to fail in a nice way in case someone tries to run my code with a circuit that contains gates that the chosen backend does not support. It would be really nice if ProjectQ had an easy way to tell me, given an instance of a gate and a backend, whether that gate can be executed on that backend. I thought that is_available() would do that for me.
+I would have suggested the same as @thomashaener.
+Your code takes a circuit as input? How does this look?
+Where does your code live?
+Is it a compiler engine for ProjectQ?
+Or is it a code on top of ProjectQ?
+Could you provide a minimal example?
+I would say that it is code on top of ProjectQ, but it is not yet ready for release. The specific code is nothing special, just a list comprehension over a list of gates, by which I want to filter out the gates not supported in a given ProjectQ backend.
+The AutoReplacer in the compiler will automatically change gates which are not supported by the backend. Hence, don't worry if the backend, e.g., doesn't support a Toffoli as the compiler will change it to CNOTs and single qubit gates (in case of IBM).
+In case you define your own gates or your special backend with an unusual gate set, then the compiler might not yet have a rule how to decompose into that gate set in which case it throws a NoGateDecompositionError. If you want you can catch that in your code and handle it separately.
+If that worked for all standard gates it would make my problem obsolete. But for SqrtSwap on the IBMBackend, I, for example, get the following error:
+Minimal example:
+True, SqrtSwap has not decomposition into our standard gate set yet.
+(But it is the only standard gate which is not supported on some backends)
+Okay so then the problem is best fixed by implementing a decomposition rule for SqrtSwap. Do you want to do it?
+Or should I quickly do it?
+I have not yet had a look into the gate decomposition code, so that I don't feel I am the most qualified person to implement the decomposition rule :-)
+Done.
+Can we close this issue?
+For my side yes. Thank you very much for the quick response!
+You are welcome. Let us know if you decide to publish your project

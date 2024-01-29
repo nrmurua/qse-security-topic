@@ -1,0 +1,21 @@
+(Failing) test case here: #1112
+This is the loopback test, but with the output events (including the TTL counter sensitivity settings) generated via DMA. count() after the sequence returns incorrect values.
+Another test case with debug output, where exactly the same sequence without DMA works without issues: https://gist.github.com/klickverbot/b274840ce8e2372d406767a41e20140f.
+The timeline cursor seems to be advanced correctly: https://gist.github.com/klickverbot/c50e6e89a0752ae809ba5dc1caa4436c
+What about the analyser, anything suspicious there? The raw records should contain the gate events.
+Oh, the problem here is much more pedestrian: DMA of course doesn't advance TTLInOut.i_previous_timestamp, so count() still uses the timeout from when the sequence was recorded (i.e. gate_* was actually called). Same would go for output events and .sync(), although that is much less frequently used.
+The fact that three experienced devs looked at this and failed to notice the issue, obvious as it may be in retrospect, probably indicates that we have an usability issue here. However, I'm not sure what to do about this – "attribute writeback" for DMA would be rather nontrivial to implement, and a questionable design in the first place (especially across kernels).
+An example illustrating this in the DMA docs will certainly help to some extent, but any other ideas on how to address this?
+Maybe invalidate i_previous_timestamp in count() (and elsewhere) to prevent it being used wrong in the DMA case and describe how to manually compute it and set it when doing count() ing a DMA gate. Or change the TTL api to enforce returning the gate closure time from gate() and require using that in count() (and elsewhere).
+Requiring a timestamp argument to count is perhaps the cleanest way to solve this. I was going to add this anyway to be able to write correct user code without fiddling with i_previous_timestamp or directly using rtio_input_timestamp, but we could remove the no-timestamp version with the next major release.
+We should probably ditch sync() entirely as well.
+I'd like to have sync_mu(t_mu) as a method of the core device though. It's a frequent pattern.
+Indeed, and currently a rather clunky one (manually writing out the loop), unless I've missed something.
+Analogous to this and to #1003 the following states are also potential sources for problems as a side effect of recording DMA (tracked state becoming inconsistent with implied hardware or model state):
+(The two phase_mode instances somewhat less so since they don't mirror hardware state.)
+I am ok with leaving them as is for now and add warnings.
+xfer_period_mu? DId you mean xfer_duration_mu?
+I did and I do.
+I am ok with leaving them as is for now and add warnings.
+Add warnings in the documentation?
+Yes.

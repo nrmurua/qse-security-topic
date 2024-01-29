@@ -1,0 +1,13 @@
+When transpiling a 6-long qubit circuit in a disjointed target (say 3+3), the errors with optimization_level=0 and optimization_level=1 are different. I think it should be the same one (even when might had been detected in different places of Qiskit)
+However, with transpiled = transpile(circuit_in, seed_transpiler=42, coupling_map=[[0,1],[1,2],[2,0],[3,4],[4,5],[5,3]], optimization_level=1):
+The error for optimization_level=0 looks to me a bit more obscure. I think raising the same error is important to better guide the user.
+No response
+The errors are actually different though, it's a subtlety in how level 0 works. For level 0 it runs trivial layout which is successful and the layout is applied to the circuit because it is unaware of the coupling map connectivity in its operation (it just maps 0->0, 1->1, etc). Then when it reaches routing that fails because there is a path needed between connected components where that isn't possible, which is what the error says. This is the same error you'd get if you set initial_layout and it wasn't a good layout. For level 1 it is different because it runs sabre layout which looks at the connectivity and determines that a suitable layout is not feasible for the backend and errors accordingly.
+That being said we can change the error message text fairly easily it lives here https://github.com/Qiskit/qiskit/blob/main/qiskit/transpiler/passes/layout/disjoint_utils.py#L167 the message that comes from a layout pass failure is in the same module too.
+Fwiw we discussed this strategy of "what level 0 means" in the compiler meeting before the disjoint-coupling support merged, and the general consensus (as best I remember it) was that level 0 is effectively saying "use this layout we're giving you" (the trivial layout / initial layout) as opposed to other levels that are saying "find a good layout for me".  The error messages reflect that, but it's certainly possible that the decision could/should have been different.
+oh! I see. Thanks for the explanation.
+Indeed, a 3-long QV may raise too with level 0. For example:
+
+I agree, they are indeed two different errors.
+Maybe Chosen layout is not valid for the target disjoint connectivity is a bit confusing as I did not choose any layout. Let me have another thought to see if the message can be improved.
+I tried to extend the message in #10733 . I think it helps, but also not ideal.

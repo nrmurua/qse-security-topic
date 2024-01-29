@@ -1,0 +1,44 @@
+Certain RPC-heavy experiments trigger the following error (in the coredevice UART logs) after a few hours runtime:
+Reproduction code is at airwoodix/artiq-storefault-repro. The environment is provided by a Nix flake.
+The reproduction is on recent ARTIQ-7 with RISC-V softcores. The issue has been discovered on a OR1k system (also ARTIQ-7). Both carriers are Kasli v1.1.
+Variations of the reproduction code lead to varying behavior. msgpack serialization is used to increase the RPC throughput (raw bytes vs lists) and hence the rate of rpyc RPC calls, which seems to accelerate the error reproduction. It is not clear whether the error is linked to the use of these two libraries but probably not.
+Kernel executes "forever" with output on ttl4-6.
+That address (0x450000e0) should be part of ksupport. Did a objdump and the store instruction is the following.
+It is after the _start_trap symbol in firmware/libboard_misoc/riscv32/vextor.S. Note that:
+the instruction is part of the trap, and one of the cause of entering the trap is an exception, so another exception might have occurred right before the one that was reported, and therefore
+the exception might have recursed itself from the higher address of the protected region to the lower address (-64 for each iteration), so the stack pointer is not necessarily this low (< 0x45062000) at first in this case.
+Can be reproduced with the following ARTIQ-Python code.
+And manually turned the stack upper address limit down to 0x45065000, so it runs into stack overflow much sooner.
+Attached is the RISC-V assembly of the kernel kernel.zip.
+I would like to draw your attention to the while loop (.LBB1_2 symbol).
+Note that the stack pointer was decremented by 16 from line 101 to 103.
+The new stack pointer is then saved to register s1 on line 104.
+The stack pointer is then further modified without changing s1. On line 118, sp was restored by s1.
+Eventually it jumps back to .LBB1_1. s1 was not modified on the code, so the second restoration of sp on line 97 should restore the sp to the same value as line 118 did. Finally, it move back to .LBB1_2 and repeat.
+I think the issue is that the decrementation of sp from line 101 to 103 was not reversed, so sp decrease by 16 per iteration. Eventually it will hit the stack boundary and trigger the stack guard. In your original case it seems to have taken 2 hours, in my case (with drastically reduced stack size) it took merely 2 seconds.
+I am not sure which part of the compiler cause this.
+Looks vaguely related to #1655. Wrong RPC/Mailbox data scopes?
+Thanks a lot @occheung  for the feedback, the insight, and the much simpler and faster reproduction code!
+The diagnostic fits well with my observations but I'm unfortunately too unfamiliar with the compiler to contribute to a fix. @sbourdeauducq does it look like something that could be addressed in the current compiler?
+@jordens that's indeed interesting, I wasn't aware of this issue. Would you have a resource to understand "RPC/Mailbox data scopes"? Thanks!
+@airwoodix async RPC data ist passed through the rpc_queue with the mailbox doing the metadata and handshake. See ksupport and libboard-artiq in firmware for the components and usage on the comms cpu (runtime) and kernel cpu (ksupport) side. print() is async (IIRC) so it'll exercise all of it. But I'm not the expert in those areas.
+@jordens that issue happens when kernel communicator fails to send data from host correctly (see my comment for more), this issue is thus not related.
+@airwoodix Also, pre-allocate the array instead of returning it from an RPC.
+Returning an array from RPC means a lot of memory allocation. (Actually this is the main cause)
+You can pre-allocate in the prepare block.
+Then simply assign your payload to the list.
+@occheung thanks for the hint! I'll test this, as well as #1802, in January.
+@occheung looking at your suggestion more closely, I'm afraid it doesn't work functionally because attributes are not synchronized before the kernel stops (#1462). self.states is set in an RPC, and thus not updated in the main loop. This corresponds to the behavior I observe on hardware. Or did I miss something?
+I ran the reproduction code (airwoodix/artiq-storefault-repro@ac3503f) on a recent master (3f812c4, after #1802 was merged) and unfortunately hit the issue again after the same run time. The coredevice log message is now (no other relevant lines):
+It thus looks like there's an issue with the panic reporting as well as #1802 not fully fixing this issue.
+Maybe we can trigger the stack restore thing by wrapping RPC inside a function, so it does not eat up 1000 bytes every iteration.
+What about wrapping the RPC function (get_states) inside a kernel function. Let say you replace the content of the while true loop with a kernel function loop() that does everything inside the while true loop.
+Note: I haven't done extensive testing with this, just a reflection from #1802.
+I guess the issue is due to the lack of proper lifetime tracking in artiq. As you will use the returned list value, we cannot deallocate (call stackrestore) immediately after the RPC is completed. A proper solution would require tracking the lifetime of the value and inserting deallocation calls in appropriate places, but as you know our escape analysis is broken now...
+I think the way occheung suggested, i.e. wrapping the RPC function inside a kernel function should work for now. I will look into this problem in nac3, hopefully, I would have enough time to fix this (and other issues)
+@occheung @pca006132 thanks a lot for the insight! Wrapping the main loop's content in it's own function indeed resolved the issue on the reproduction code.
+A proper solution would require tracking the lifetime of the value and inserting deallocation calls in appropriate places […]
+Just for future reference (I'm sure you're aware), it isn't really possible to deallocate single items off the stack; the best we can do is to restore the stack pointer, and even this might mess with some optimisations (?). To properly fix this, we'll need to allocate variable-length results on some form of heap buffer. Escape analysis is still necessary here, of course, if we don't want to leak that memory.
+Just for future reference (I'm sure you're aware), it isn't really possible to deallocate single items off the stack; the best we can do is to restore the stack pointer, and even this might mess with some optimisations (?). To properly fix this, we'll need to allocate variable-length results on some form of heap buffer. Escape analysis is still necessary here, of course, if we don't want to leak that memory.
+Indeed, my hope is to reset the stack pointer at the end of the loop if possible, and warn the user about the possibility of a memory leak if we cannot do this.
+With 950b9ac, at least the error message should be marginally easier to understand now.

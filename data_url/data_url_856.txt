@@ -1,0 +1,19 @@
+Describe the bug
+I ran a circuit on the OQC Lucy backend, it returned an error Task failure reason is: Cannot generate CompilerPass from empty list. This error does not give enough details for me to know where the bug is at, but I think that the circuit is valid.
+To reproduce
+I do not know what properties of the circuit triggered this error, here is a screenshot of it (I needed to add the identify gates in order to not trigger a non contiguous qubit error):
+
+Expected behavior
+Output should look like this:
+System information
+Additional context
+I am guessing that the error comes from the identity gates being removed because they are redundant (which is fine, and intentional, but required in order to not trigger a pre-processing error in amazon-braket-sdk) and then a server side compiler attempting to handle empty qubit lines.
+I am still not sure what exactly the cause of this error is, but I have resolved it on my end by not using the identity gates. It appears that the local simulator was throwing errors when the qubit indices were not contiguous. However, when submitting to the OQC backend the task passes the validation step if the qubit indices are not contiguous.
+Hi @epelofske-LANL
+I believe the Task failure reason is: Cannot generate CompilerPass from empty list. error is from passing disable_qubit_rewiring=True as an argument to device.run(). Unfortunately, the OQC compiler does not allow us to disable qubit rewiring in general. We're rolling out a hotfix to make the error message more meaningful.
+Since the circuit you posted is composed of native gates, a possible workaround is to use verbatim circuits:
+In this case disable_qubit_rewiring works as expected since the circuit is verbatim (which means the compiler doesn't touch the circuit and it's run directly as is)
+As for the local simulator, yes, it currently only supports contiguous qubits whereas QPUs support non-contiguous qubits. A possible workaround is something like this, which  maps the circuit to a contiguous qubit circuit:
+Please let me know if those work for you.
+For the Local simulator, the contiguous qubit index remapping does work as expected.
+For verbatim compilation, it now works such that with a verbatim box Circuit().add_verbatim_box(circuit) the circuit optimizations are turned off for Lucy, whereas without a verbatim box circuit optimizations are turned on. I think this addresses the errors I was seeing; closing the issue.

@@ -1,0 +1,71 @@
+Probably worth trying to speed up that notebook test as it is long poll in the CI.  Maybe there is a pattern to add something that can "fix" the notebooks to smaller parameters to speed them up?
+Haha, I was just about to open this issue!
+There is a lot of room for improvement.
+A bit of context: notebooks are expected to ran in two ways: 1) in colab 2) in jupyter notebook from the Cirq repo
+In 1) the path currently requires the latest stable version of cirq to be installed (currently 0.9.1). This means that we need to test the notebooks as they change against the latest release. Currently the notebook test does this. That's why they are slow: each test creates a separate virtual env and runs the pip install cirq command, and then executes the notebook. This is also how the devsite pipeline tests them, so it is useful to have this test on the PRs. However, we don't have to run these "expensive", "isolated" tests on every PR for every notebook, as the code does not change (we are testing against the 0.9.1 currently!). Action item: we can make the "isolated" tests only for changed notebooks.
+For 2) we do not have tests currently. But those do not need to be in an isolated virtual env. They can share a one-time setup and we can just run through them. Action item: create a full notebook test to test against master. Note: While this is technically possible, it will ensure backwards compatible changes between consecutive releases (as the same notebook have to work for master as well as the last stable release).
+Finally, these will be always on the slower side. We can and should resort to xdist based execution within a job and sharding of the workloads to multiple jobs. E.g. here's a PoC that uses treebeard for the sharded 1) case
+One thing you can do currently locally:
+check/pytest -n auto -m slow dev_tools/notebook_test.py - which will run them in parallel.
+One last thought: even though a marginal win, but if we could add cirq to the colab runtime (with a regular process around it, tied to our release process), then we could speed up 1) even more and use a shared virtual env there too in case multiple notebooks change...though it might still be useful to think about 1) as "notebook environments" where cirq is not installed instead of just supporting colab.
+Is the variation above really due to the virtual env and pip install?  It seems to me that this is more likely that these notebooks have some pretty heavy computation in them (the variation is quite large)...I'm just basing this on seeing the names and thinking, oh yeah that could be a lot of compute.
+Would be nice if there was a way to not have to do the install every test, but must be a good reason this is not possible.
+Also probably there should be some discussion of notebook naming :)
+Also probably there should be some discussion of notebook naming :)
+Yeah, the quimb ones should be renamed to underscores and no capitalization. I did rename a bunch of them during the site revamp, so the situation is better than before.
+Are there any other naming things you see to be addressed
+?
+Is the variation above really due to the virtual env and pip install?
+A big part of it for sure, e.g. the quimb ones have to install quimb as well...but there must be computational differences. I like the idea to make them faster by choosing smaller problem sizes by default and clarify for users how they can scale them up if they want to.
+E.g. here's a PoC that uses treebeard for the sharded 1) case
+note on treebeard: I've rebooted it as nbmake and nbmake-action -- you'd probs need to re-add your virtualenv logic as a pytest hook as I minimised the feature set.
+I'm getting this error nteract/papermill#519 in #3669
+Also, when I run the notebook check locally I think it runs a tonne of .ipynb_checkpoints/ files (as well as some old docs/_build notebooks from the sphinx days. Instead of globbing all *.ipynb's it might make more sense to glob through all notebooks checked in to git
+Instead of globbing all *.ipynb's it might make more sense to glob through all notebooks checked in to git
+I like that idea.
+Today we are running almost at 30mins for notebook tests against a PR.
+This is unacceptable - so I'm going to make the build non-blocking until we figure out how to proceed.
+Options:
+How often do we push the docs? Can we set up a system where that serves as the notebook test?
+The devsite pipeline does test the notebooks. Currently it runs on an ad-hoc basis.
+You're right that just eliminating tests in Github could be an option (like it is in ReCirq / OpenFermion / qsim today), however:
+I'd rather just repurpose the notebook tests as a nightly test on master.
+Just confirmed that 1.) is going to be fine - we'll have a nightly build.
+So the only question is whether there's value in keeping the tests here. If we push the tests to after merging to master, the only value left is visibility (as long as "pre-release" notebooks still use pip install --pre, they are essentially the same workflow as the isolated notebooks) - which might be a survivable pain for now: it's on Googler maintainers to fix any issues related to PRs that break any of the notebooks.
+It would simplify our lives a lot.
+I'm a bit sad that I put so much effort into testing notebooks just to yank them out, but I don't want to fall into sunk cost fallacy either :) Maybe the notebook tests could still stick around for repro purposes, when things fail in the devsite pipeline. The changed notebook tests actually are not that expensive - they might still be valuable.
+Do you have data on how long each notebook takes? We could keep the github checks but remove long running notebooks. Each long running notebook that isn't checked in github has to have a google "owner" or sponsor to deal with breakages that are surfaced in the hidden doc build system.
+I agree it's a shame to put the nice testing scripts to waste :)
+An updated version from my Mac, where -n auto is significantly faster than on Github Actions VMs/containers taking altogether 8.2 minutes (instead of 32!):
+[note: the name of the test should be renamed to test_notebooks_against_current_branch ]
+if we could parametrize the notebooks in a way that they could be run in a "fast" mode for tests, each of them < 10s, it would save a lot of time, and create a faster feedback loop. Anything above 30 seconds is a bit of a suspect for me that could be probably easily sped up.
+https://github.com/nteract/papermill might be helpful here
+edit: oh haha we are already using this?
+I'm going to see if I can knock off some of the worst offenders using the papermill configuration.
+edit: oh haha we are already using this?
+yupp :)
+I'm going to see if I can knock off some of the worst offenders using the papermill configuration.
+Nice, thank you! 🙏
+So I have a PR that can speed up the notebook tests significantly by parameterizing the notebooks and supplying reasonable numbers during test.  However it is incompatible with the tensorflow nb document formatter which removes all sort of things including the tag you need to use for the parameterized cell.  Grrr.
+After sleeping on it, I think a better solution is to not use papermill. It has a deficiency in that you need to only have 1 cell that includes the parameters that can be updated. This makes the notebooks much less readable as you often have to put multiple parameters at the top of the notebook.
+There are some frameworks for explicitly testing notebooks, those could be an option.  testbook and pytest-notebook look to be the most popular.  Testbook allows code injection.  These are designed more for unit testing of the notebooks, i.e. something that really should be done, not just checking they run, but that's probably another story :)
+A few other options involve writing our own way to modify the notebooks for test.
+which would do code replacement.  This kind of uglifies the notebooks, but it is nice in that it everything is self contained, and you modify the code where it has an impact.
+or
+If we don't want a separate file we could add a final cell that includes these replacements.
+@balopat  Thoughts?
+Thanks for investigating and those are some good ideas @dabacon. My 2 cents is we should give high priority to readability to notebooks in their intended form. Prioritize making our users happy rather than our github actions VM happy. It sounds like you're on the same page!
+TLDR; I feel strongly about leaving the final doc as clean and natural as possible. This means, that I'm okay to sacrifice the ease of defining test values. Let's go with your version 2, and use a notebook.pytest to define regex replacements before running tests.
+Detailed musings:
+I introduced the notebook tests to achieve faster feedback loop on PRs specifically for the devsite pipeline where they run the notebooks with install scripts and all to generate the site. As such, the unit test framework direction is a bit out of scope at the moment unless we can make those frameworks do smarter parametrizations / code injections. It doesn't seem that way unless I'm missing something.
+For a given parameter we have fixed place of usage(s) - however the following places vary in different solutions:
+Without parametrization (naturally, currently):
+With papermill:
+With your comment based templating:
+With your replacement file:
+With env vars:
+An age old templating device is to use env vars for injection, which is similar to the comment based templating, just a bit more well defined, less tooling is required
+One solution to uglification, is that we could go even further and have our final notebooks "post-processed" from our template, to e.g. strip the comments out of them. We could have a ci test to ensure consistency. I don't like the large amount of duplication and extra maintenance here though.
+Bad luck. Got a version of this working only #4077 only to have notebook tests broken at head #4081 .
+OK have a PR that is now ready for review.
+I think this can be closed now, notebooks are much faster, parallelized, partitioned, etc....please reopen if you think there is more to be done!

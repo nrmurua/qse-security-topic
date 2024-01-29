@@ -1,0 +1,19 @@
+I am doing some trials to change between the use of CPU and GPU. I have seen in the documentation that the command qibo.set_device() allows to decide which device to use. In my case, I add
+set_device("/CPU:0") set_backend('matmuleinsum')
+and the set_backend works, but the set_device does not, as I run nvidia-smi in another terminal and it tells me that ~1.5 GB of GPU is being used (for a 1 qubit circuit, which seems too large).
+On the other hand, if I run export CUDA_VISIBLE_DEVICES="", the system does not see the GPU and everything works in the CPU
+What is happening here?
+Thank you
+I think this is fine, tensorflow by default always allocate the full GPU memory when some object is created. You should do something like watch -n0.5 nvidia-smi to monitor the GPU % usage during the calculation. Please do not except fast GPU calculation for tiny circuits.
+I also checked and what Adrian describes sounds fine. If you have tensorflow installed with GPU support it will allocate the full memory of the first GPU regardless of whether you use it or no (there are a few tensorflow commands to disable this or reduce the allocated memory if you are interested). If you do export CUDA_VISIBLE_DEVICES="" you hide the GPU from tensorflow so it won't allocate the memory.
+If you use set_device("/CPU:0") the circuit will run on CPU regardless of whether a GPU is hidden or no. You can confirm this by looking at the GPU utilization using watch -n0.5 nvidia-smi. Although GPU memory will be used, the utilization will stay at 0%. You can also check CPU utilization using htop which will show some activity in all threads. Alternatively you can try a larger circuit (eg. 27 qubits) where execution on GPU is significantly faster and log the execution time. It should be slower when you use set_device("/CPU:0").
+For 1 qubit circuit the CPU will probably be faster. It might even be better if you restrict to single thread using taskset -c 0.
+I have run what you said and, indeed, it is working as expected. The memory usage of GPU is almost 100% always, but for the QFT model for 25 qubits, an order of magnitude in the time needed to compute everything is observed.
+I was concerned about this because my machine has got only a 2GB GPU, and maybe one circuit is enough to make the computer run slowly, so I will investigate further how to reduce the memory for python processes in GPU.
+@stavros11, when you talk about taskset -c 0, how must it be used? Is it a terminal command or is it something to write in the python script?
+Yeah, 2GB is probably very low circuit simulation, just to give you an idea we have GPUs with 12GB and 32GB. Concerning taskset, you call this program before launching the python script or jupyter notebook, e.g. taskset -c 0 python my_script.py, note that -c 0 means use the cpu core/thread 0, you can also set to other numbers or range of numbers (e.g. -c 1 or -c 0-1).
+I was concerned about this because my machine has got only a 2GB GPU, and maybe one circuit is enough to make the computer run slowly, so I will investigate further how to reduce the memory for python processes in GPU.
+2GB is indeed quite low but it should be possible to run up to 26-27 qubits. How much performance increases (compared to CPU) will depend on the GPU model.
+Regarding reducing the GPU memory allocated by tensorflow, there is a "Limiting GPU memory growth" section in their tutorials that could help. In particular, including the following lines before importing/initializing anything from qibo or tensorflow should work:
+If you do this, you should be able to see in nvidia-smi that only 1GB of GPU memory is being used. You can reduce this further by setting the memory_limit in MB.
+Ok, thank you very much, now I understand much better what is going on!

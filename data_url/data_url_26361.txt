@@ -1,0 +1,163 @@
+as mentioned in #1428
+We currently see the following issues on our machines with ELPA:
+It is not related to CUDA or OpenMP (OMP_NUM_THREADS=1 triggers it nonetheless), but most likely related to small matrices since it can be more easily triggered by small systems and when I looked into some of the hanging processes by attaching gdb and going up the stack matrix dim was < 100.
+Also, while it got more problematic with the latest ELPA and CP2K releases, I observed similar problems with small matrix sizes with CP2K 7.1 (and the ELPA we used back then) but didn't have enough time to come up with a minimal reproducer to report to upstream.
+Yes, that's a serious issue with ELPA. Recently, I relaxed the tolerance for CHECK_DIAG for the regression tests, because some tests showed deviations from orthonormality in the order of 1.0E-11 which is too large for small matrices using dp.
+I consider the use of ELPA with CP2K currently as unsafe.
+Yes, that's a serious issue with ELPA. Recently, I relaxed the tolerance for CHECK_DIAG for the regression tests, because some tests showed deviations from orthonormality in the order of 1.0E-11 which is too large for small matrices using dp.
+I consider the use of ELPA with CP2K currently as unsafe.
+Agreed. Unless we can solve this for 8.2 we should disable ELPA again (or at least not use it by default when compiled with ELPA support). The risk of wrong results in non-SCF calls and time wasted for unstable SCF is not worth the possible speedup.
+I also strongly advocate to change the default for PREFERRED_DIAG_LIBRARY from ELPA to SL
+Hello, would it be possible to detail a bit the situation when this problem arises? Especially what are the sizes of the ELPA MPI communicators, and how large is the matrix size? I do have the suspicion that the matrix is too small for the number of MPI tasks, and ELPA ends up with "empty" MPI ranks. I'd appreciate if you detail more information here, or you open an issue at https://github.com/marekandreas/elpa, such that I could have a look at this. A first good indicator would be if you run one of the ELPA test programs with the number of MPI tasks and matrix size: we will then see whether it runs smoothly or not:
+mpiexec -n TASKS ./validate_real_double_eigenvectors_2stage_default_kernel_random MATRIX_SIZE NR_OF_EIGENVECTORS BLOCK-CYCLIC-BLOCK-SIZE
+While I don't know the exact parameters that triggered this problem, I doubt that empty ranks are the cause.
+When there are not enough columns for every rank then we split the communicator and call ELPA only on some of the nodes.
+So, maybe ELPA assumes that it's always called with the same number of ranks as elpa_init?
+Do you then set-up a complete new elpa object? If yes, do you provide then just a new "comm_parent" or  all communicators? and how is the setup of the new distributed matrix and blacs-grid handled? If you do not create a new elpa object, then I expect all kind of strange errors...
+Yes, we create a new blacs grid and a new elpa object for each invocation.
+Since all of this has been in place since November 2019, I suspect the problem was introduced by the upgrade to 2020.11.001.
+@dev-zero, maybe you could check if downgrading fixes your crashes?
+I was just looking a bit at the CP2K src, and of course I do not completely understand the logic in this short time. But I do have a question: when creating the new blacs grid, I do not see a call to descinit and especially to check it's "info" return value, whether the new blacs distribution is reasonable. Might this be a problem? As said, I am just guessing and this might be completely wrong in this issue. I just know cases, where this was an issue since users wanted to call elpa on an inconsistent blacs distribution.
+I do not see a call to descinit and especially to check it's "info" return value
+The call to descinit is somewhat hidden, but it does check the returned info:
+cp_fm_diag_elpa -> cp_fm_redistribute_start -> cp_fm_struct_create -> descinit
+@mkrack, I've tried to reproduce your CHECK_DIAG failures by making ELPA the default again. However, despite the tigher thresholds none of the regests failed with pdbg. What setup did you use?
+@dev-zero, could you please share some details on how I could reproduce those crashes you observed?
+@oschuett Note, the original threshold for an abort was 1.0E-12 with CHECK_DIAG. I will also run again a regression test with ELPA as default. It might also matter how ELPA has been compiled.
+@mkrack, it seems when ELPA is built by the toolchain then the pdbg regtests pass even with a threshold of 1E-14 (see #1501).
+We can try ELPA again as the default with the original tight threshold of 1.0E-14 for CHECK_DIAG. In this way, we will detect potential issues related to ELPA in the regression tests. On the other hand, CHECK_DIAG is usually not enabled for CP2K production binaries and thus problems won't be recognized. What's about the warnings printed by ELPA itself? Do you still see such warnings in your output files?
+What's about the warnings printed by ELPA itself?
+I'm not sure which warnings you mean?
+In cp_fm_elpa.F there is a second eigenvalue check, but that one passes the regtests as well.
+We can try ELPA again as the default with the original tight threshold
+Yeah, it's tricky:
+The bug is probably still there because we didn't fix it.
+We can't fix it because we can't reproduce it anymore.
+Without ELPA in use it's unlikely that we'll discover a new reproducer.
+On the other hand, CHECK_DIAG is usually not enabled for CP2K production...
+How expensive is CHECK_DIAG? Could we maybe always run it - or at least for small matrices?
+I'm not sure which warnings you mean?
+I remember that there have been warnings from the ELPA routines itself. Maybe, they were not important or unrelated.
+Yeah, it's tricky:
+The bug is probably still there because we didn't fix it.
+We can't fix it because we can't reproduce it anymore.
+Without ELPA in use it's unlikely that we'll discover a new reproducer.
+Yes, that's exactly the dilemma.
+How expensive is CHECK_DIAG? Could we maybe always run it - or at least for small matrices?
+Though the overhead for small and medium-size systems is moderate, it is something nobody wants to have by default for production. I think the updated CHECK_DIAG implementation in a separate routine could also be activated now easily via an input keyword in the global section instead of a compilation flag. This would allow for an seamless checking of production binaries in case of any doubt. What do you think?
+I remember that there have been warnings from the ELPA routines itself. Maybe, they were not important or unrelated.
+I ran grep -ir elpa * and  grep -ir warn * | grep -i eigen on the regtest output directory. Nothing out of the ordinary came up.
+This would allow for an seamless checking of production binaries in case of any doubt. What do you think?
+Yes, that sounds like a good compromise.
+For this input CP2K (d8b6a4f for both CP2K and toolchain) either crashes or hangs (depending on solar flare activity I guess) when run with mpirun -np 36 exe/local/cp2k.popt cp2k.inp on a dual AMD EPYC 7742.
+When hanging, strace gives:
+and bt on an attached gdb gives:
+When looking at the above stacktrace, I see lines
+#10 0x0000000002aa31b3 in solve_tridi::solve_tridi_double (obj=..., na=4, nev=4, d=..., e=..., q=..., ldq=2, nblk=1,
+matrixcols=1, mpi_comm_all=22, mpi_comm_rows=29, mpi_comm_cols=30, usegpu=.FALSE., wantdebug=.FALSE.,
+success=.TRUE., max_threads=1) at ../src/solve_tridi/./solve_tridi_template.F90:231
+From this line I do get that in this special case, the size of the matrix you'd like to solve is  4, and the block_size of the block cyclic distribution (nblk) = 1. This is very, very, small (and not realy the target size for ELPA). I cannot deduce from the above stacktrace the information of: how many MPI tasks should work on this problem , and how are they set-up in rows and cols. Can anyone find out this information? I just checked (with the test programs shipped with ELPA) that ELPA does work with such a (matrix size , nblk) combination on up to 4 MPI tasks. More than 4 MPI tasks will definitely not work
+The CP2k regression tester run usually with only 2 MPI tasks and 2 threads per MPI task. There are indeed regression tests that do not run properly with more than 2 MPI tasks. The selected (preferred) diagonalization library is used by CP2K for all diagonalizations including small matrices. We could restrict the use of ELPA to the larger matrices and use ScaLAPACK as a fallback for the remaining cases. I am working on a PR for CHECK_DIAG which could consider also such a mininmum matrix size for calls to ELPA.
+I still think that ELPA should also work with these small matrices, and it does in my test-runs. So I would still be very interested in a reproducer, when ELPA hangs. Did anybody of you guys check whether the ELPA internal test-programs on your ELPA builds do successfully run with 2 MPI tasks and NA=4, NEV=4 , NBLK=1?
+@marekandreas I just ran make check on that node where I produced the trace above, which should run the tests with NTASKS=2. The summary is:
+Full log here: test-suite.log
+So far the errors are from the MPI implementation not supporting MPI_THREAD_MULTIPLE.
+Running again with make check CHECK_LEVEL=extended now.
+When I run the test case  provided by @dev-zero, I observe the following behaviour for different numbers of MPI ranks (only one thread always) with a CP2K Linux-x86-64-gfortran-regtest.psmp binary:
+All results are fully reproducible, i.e. no impact of lunar activity.
+@marekandreas I just ran make check on that node where I produced the trace above, which should run the tests with NTASKS=2. The summary is:
+Full log here: test-suite.log
+So far the errors are from the MPI implementation not supporting MPI_THREAD_MULTIPLE.
+Running again with make check CHECK_LEVEL=extended now.
+I guess, it would also be helpful to run
+make check TEST_FLAGS="4 4 1", which mimics the behavior discussed earlier
+When I run the test case  provided by @dev-zero, I observe the following behaviour for different numbers of MPI ranks (only one thread always) with a CP2K Linux-x86-64-gfortran-regtest.psmp binary:
+MPI ranks 	Result
+1 	works, no issue
+2 	works, no issue
+3 	works, no issue
+4 	works, no issue
+5 	works, but prints "ELPA: Warning, block size too large for this matrix size and process grid! Choose a smaller block size if possible." after each SCF step
+6 	works, no issue
+7 	works, no issue
+8 	hangs at first SCF step
+9 	works, but prints "ELPA: Warning, block size too large for this matrix size and process grid! Choose a smaller block size if possible." after each SCF step
+10 	hangs at first SCF step
+11 	works, no issue
+12 	hangs at first SCF step
+13 	works, no issue
+14 	hangs at first SCF step
+15 	hangs at first SCF step
+16 	hangs at first SCF step
+17 	works, no issue
+18 	hangs at first SCF step
+19 	works, no issue
+20 	hangs at first SCF step
+All results are fully reproducible, i.e. no impact of lunar activity.
+OK, this is a first indication. This error "ELPA: Warning, block size too large for this matrix size and process grid! Choose a smaller block size if possible." should never appear. Is is triggered if the following condition is met:
+nblk*(max(np_rows,np_cols)-1) >= na
+ASSUMING that we still have the situation nblk = 1 and na = 4, then (max(np_rows,np_cols)-1) must be at least 4 which means that more than 4 MPI tasks are used, no?
+There is one regression test (SE/regtest-3-2/N3-rp_colvar.inp) that is failing with the Intel 19.1.3 compiler version because of ELPA. The test does not fail with a single thread and 2 MPI tasks.
+Just to make it clear: we are really releasing our software with a setting where the user can possibly waste thousands of node hours (besides his own time)?
+Since the problem was already present in the 8.1 release, we're not making it worse. And yes, every release is a judgment call. Other features, e.g. the improved collocate/integrate kernels, will save some people a lot of resources.
+Ok, updated the comment above with "knowingly".
+Of course, I'm always open for constructive suggestions.
+Do not enable ELPA by default. It is obviously not a drop-in-replacement for ScaLAPACK and should not be treated as such.
+I'm in favour to make stable release and make ELPA optional in the toolchain.
+Dear @juerghutter,
+great if you found a case where one can reproduce ELPA to create an error.
+In order that I can check this in ELPA I do need, however, the following information
+I observe already deviations of more than 1.0E-12 in the total energy for 12, 14, 18 MPI ranks for that test.
+NA and NEV are always 212.
+Solver: ELPA_2STAGE
+Kernel: AVX512_BLOCK4
+Please provide me with the data I asked before, in order that I can check this.
+Deviations larger than 1e-11 (typically 1e-12 - 1e-13) are much too large in double precision calculations
+@marekandreas I have added the NBLK values in the table above. NA and NEV are always 212.
+The test of @juerghutter gives accurate total energies within 1.0E-12 running with 1 to 40 MPI ranks, if ELPA is not used for the diagonalization of the small matrices, i.e. ELPA is only used for the diagonalization of the 212x212 Hamiltonian matrix. Thus the problems with that test case stem from the small matrices.
+Following the statement of @dev-zero
+Do not enable ELPA by default. It is obviously not a drop-in-replacement for ScaLAPACK and should not be treated as such.
+I propose as a compromise to use ELPA as default eigensolver only for larger matrices. I am using 16 eigenvectors (NEV, nmo) as the lower limit for the use of ELPA, currently, but any suggestion for a better choice are welcome.
+@weilaigit Thanks for contributing to the discussion. Could you try the more recent version ELPA 2020.11.001 in the same way? It is quite likely that not all previous ELPA versions show the same issues.
+I cannot reproduce the errors from above (however I had to use Intel 2021.2 compilers).
+I get when running
+ELPA_FORCE_real_kernel=ELPA_2STAGE_REAL_AVX512_BLOCK4 mpiexec -n 12 ./validate_real_double_eigenvectors_2stage_default_kernel_random 212 212 32
+..
+Results of numerical residual checks:
+Error Residual     :  4.245492846166598E-013
+Maximal error in eigenvector lengths:  2.220446049250313E-015
+Error Orthogonality:  2.220446049250313E-015
+Can you check what you get when running the above test-program?
+for the record: on our side this was with the gcc-7.5.0 (and the compilation flags as shown above)
+Here we go:
+Setting OMP_NUM_THREADS didn't change the outcome.
+@marekandreas Please, consider my more recent comments. The results for the 212x212 matrix are correct with CP2K. The error in the total energies was caused by results for the small matrices.
+On the other hand, if forcing the real kernel to ELPA_2STAGE_REAL_AVX2_BLOCK2 instead:
+Dear all,
+again if ELPA complains about the block size being too large, this most likely implies that the setup one wants to run ELPA with is not supported by a proper blacs grid. I have changed this such that from now on during elpa_setup it is checked whether the setup of the blacsgrid (before ELPA is called) is reasonable. This check is the same as it is done within descinit. If this check fails elpa_setup will return with an error. This changes will be in the upcoming release 2021.05.001 of next week or so.
+I have tested now for ELPA 2019.11.001, 2020.05.001, 2020.11.001 and current head of master-pre-stage the runs
+OMP_NUM_THREADS=2 ELPA_FORCE_real_kernel=ELPA_2STAGE_REAL_AVX2_BLOCK2 mpiexec -n 12 ./validate_real_double_eigenvectors_2stage_default_kernel_random 212 212 32
+and
+OMP_NUM_THREADS=2 ELPA_FORCE_real_kernel=ELPA_2STAGE_REAL_AVX2_BLOCK4 mpiexec -n 12 ./validate_real_double_eigenvectors_2stage_default_kernel_random 212 212 32
+and I cannot reproduce the errors from above, since all the test run with reasonable error residuals.
+What catches my attention are the messages
+ pml_ucx.c:225 Error: UCP worker does not support MPI_THREAD_MULTIPLE
+If the MP implementation does not offer MPI_THREAD_MULTIPLE, then do not build ELPA with OpenMP support. This might lead to all kind of undefined behavior depending what the MPI library does.
+Can you verify that the ELPA still persists (or vanishes) of you run these tests in an MPI-only build of ELPA (--disable-openmp) ?
+@marekandreas please note: it runs with ELPA_2STAGE_REAL_AVX2_BLOCK2, but gives wrong results with ELPA_2STAGE_REAL_AVX512_BLOCK4.
+@dev-zero please note: I now tested  ELPA 2019.11.001, 2020.05.001, 2020.11.001 and current head of master-pre-stage for
+ELPA_2STAGE_REAL_AVX2_BLOCK2 ,  ELPA_2STAGE_REAL_AVX512_BLOCK2,  ELPA_2STAGE_REAL_AVX2_BLOCK4,  ELPA_2STAGE_REAL_AVX512_BLOCK4.
+The do all run correctly. The problem on your side might be the missing
+pml_ucx.c:225 Error: UCP worker does not support MPI_THREAD_MULTIPLE support. You could clarify/verify this by running a build without openmp (--disable-openmp)
+@marekandreas will do, but shouldn't the problem then vanish if we set OMP_NUM_THREADS=1 as well (which it doesn't)?
+@marekandreas and what is ELPAs behaviour wrt OpenMP/MPI when it was built with OpenMP support but MPI was initialized with MPI_THREAD_FUNNELED?
+MPI_THREAD_FUNNELED is a too low level of threading support of the MPI library for ELPA. At least MPI_THREAD_SERIALIZED or better MPI_THREAD_MULTIPLE is required. Depending on the MPI implementation everything might go well with a lower lever, but this is like gambling.
+will do, but shouldn't the problem then vanish if we set OMP_NUM_THREADS=1 as well (which it doesn't)?
+This is true I guess
+MPI_THREAD_FUNNELED is a too low level of threading support of the MPI library for ELPA. At least MPI_THREAD_SERIALIZED or better MPI_THREAD_MULTIPLE is required. Depending on the MPI implementation everything might go well with a lower lever, but this is like gambling.
+Ok, thanks. We therefore have to stop building ELPA with OpenMP in our toolchain since we initialize MPI in CP2K always with MPI_THREAD_FUNNELED atm. Switching to MPI_THREAD_SERIALIZED might be an option, but MPI_THREAD_MULTIPLE does not seem to be commonly supported on the MPI implementations available on Linux distros (meaning that we would have to build our own MPI implementation by default as well).
+@marekandreas or is there a way ELPA could verify that MPI is initialized as required and limit to itself to 1 thread only, maybe as part of the elpa_obj%can_set("omp_threads", ...)?
+Ok, I will do the following for the upcoming release:
+1.) When ELPA is build with OpenMP support, at runtime it will query the supported MPI threading level, and if not sufficient
+limit the number of OpenMP threads (internally to ELPA) to 1. And print  a warning on stderr
+2.) If this is possible (have to see): Check the MPI-threading level support during the configure step. (This will only be doable on machines where you can run a MPI application; thus I need some logic around this)

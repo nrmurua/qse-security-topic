@@ -1,0 +1,32 @@
+Currently, BQM.num_variables, BQM.num_interactions and BQM.shape are all properties rather than methods. I think that it would be better to make them proper methods.
+Pro:
+Con:
+Additional context
+If we don't want to break backwards compatibility through a deprecation period
+works out of the box. Though getting it to raise a deprecation warning if it's not treated as a callable would require something like
+Also .vartype while we're at it...
+Functionally, it makes perfect sense to me to keep all of those as properties.
+num_variables (or num_interactions or vartype) is a property of BQM, regardless of implementation details, and the fact that determining the actual value involves some calculation, or it has > O(1) complexity.
+OTOH, I also get the performance argument, and "property calc should be cheap".
+A middle ground would be caching. Either of property/method result (in which case invalidation is a pain I assume), or keeping actual num_variables/etc attributes up to date on each operation?
+To hone in on a specific example that this has already come up on, let's compare BQM.vartype (property) and QM.vartype(v) (method).
+If I want to write a function that takes either, I have to do something like
+whereas, if we implemented vartype as a method in BQM
+for BQM, we could have nice generic code.
+I think the main reason for the proposal is that methods are more flexible in the long run, they more easily allow extensions later (like the above).
+I hear the extensibility argument. If we proceed, I would be careful to keep interfaces segregated, unless BQM will subclass QM.
+Of course, though they do already share part of their interface by inheritance (QM, BQM).
+In my view a set of generic interfaces across all quadratic models makes sense.
+I tried a few approaches, and I think
+ends up being the best.
+I really wanted something like
+to work, but sadly it mostly gets bypassed.
+Another approach would be to fully use numbers.Integral abc, but that gets very tedious and IMO error prone.
+Another approach, based on a suggestion by @thisac, would be something like
+future.py
+myclass.py
+main.py
+This is nice because it allows individual namespaces to decide to opt into the future behavior. On the other hand, it's CPython specific and requires a pretty expensive lookup on each method call.
+I like the from future import feature approach because it's simple-ish and explicit.
+If performance hit is too high (TBD?), we can break compatibility only once, but max twice:
+FWIW, the proxy route seems too messy, as there will surely be edge cases we'll miss. OTOH, automating the second approach to infer if the next op in ~dis.dis(stack_frame) is a call (return lambda) or not, seems too finicky (and reminds me of our @vartype_argument saga from the old days).

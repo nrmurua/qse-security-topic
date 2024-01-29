@@ -1,0 +1,28 @@
+I've been giving some thought spurred by the recent Cirq Cynq discussion for #1657 . There are a few open issues about how the protocol methods behave, including #1527 , #1648, #1163  I think we need a clear idea of what the variety of utility protocols we have for these concepts mean and how they interact. This issue is essentially my proposal for how it seems they should work. Where appropriate, tests to make sure the protocols behave consistently are necessary to be added.
+Protocol methods should look in more than one place to satisfy their task, such as apply_channel trying checking if there is a mixture or unitary implementation or channel checking for mixtures or unitaries. These checks should be made by looking for underscore methods to avoid redundant/wasteful calls rather than by calling other protocol methods.
+The cirq.has_X and cirq.X protocols should all fallback to decompose. If you provide cirq.unitary with a unitary ndarray, it should just spit the array back. Likewise for however we decide to represent channels and mixture_channels.
+cirq.channel(foo) checks for (in order): _channel_ -> _mixture_channel_ -> _unitary_.
+If this fails attempt to construct the channel via foo._apply_channel_ method if it exists.
+There isn't a unique way to do this, so a default choice of Krauss operators would be necessary and the user should be able to provide their own instead. One imagines the use case where the user supplies their own operators as the user trying to find the coefficients for the operators.
+cirq.mixture_channel(foo) checks for: _mixture_channel_ -> _unitary_.
+If this fails attempt to construct the mixture via foo._apply_mixture_channel_ method if it exists. Ditto for the "uniqueness" issue.
+cirq.unitary(foo) looks to see if cirq._unitary_(foo) is implemented and returns that. If not, it constructs the unitary via foo._apply_unitary_ method if it exists.
+cirq.mixture(foo) falls back to cirq.mixture_channel(foo)
+cirq.mixture can be used to represent more general concepts, like a mixture of quantum states.
+cirq.mixture_channel specifically means a mixture of unitary objects. This specific use probably merits switching name to unitary_mixture
+In cases where "falling back" happens, the output should be formatted in a way that reflects the function being called.
+For example, in the strange but possible case that someone calls cirq.channel() on a gate foo that only has _unitary_ implemented,
+cirq.channel(foo) may return cirq.LinearCombinationOfGates({foo._unitary_}:1)
+and cirq.mixture_channel(foo) returns ((1, foo._unitary_),)
+Objects with  _mixture_channel_ methods should return Gates/Operations instead of the numpy arrays of their unitaries in the mixtures for simulation efficiency or perhaps have useful _apply_mixture_channel_ method.
+Natively defined _channel_ methods should do the same when possible (but in that case should really have just defined a _mixture_channel_ method instead)
+I don't think the returning Gate/Operations property should be enforced but rather encouraged. The cirq.apply_X methods need to be written to accommodate either case.
+cirq.has_X(foo) returning True implies that cirq.X(foo) gives you an X (proper formatting and all). As such, cirq.has_channel should fallback to cirq.has_mixture_channel which should fall back to cirq.has_unitary to be consistent with the above described behavior.
+It should be made clear what simulator cirq.apply_X is meant for. A native apply_unitary would look differently if the user thought the unitary was being applied to a wave function rather than a density matrix, for example.
+cirq.apply_channel naturally fits with the DensityMatrixSimulator
+cirq.apply_mixture_channel seems like it could be compatible with DensityMatrixSimulator and the Monte Carlo simulator
+cirq.apply_unitary naturally fits with the Monte Carlo simulator
+Since the _apply_X_ methods are written with that in mind, the cirq.apply_X methods need to search to see if the underscored methods exist and utilize them appropriately. In order to avoid the fallback sequence from hitting the same check twice, look for the underscore methods instead of calling protocols.apply_X.
+cirq.apply_channel looks for _apply_channel_ -> _apply_mixture_channel_ -> _apply_unitary_ -> cirq.channel
+cirq.apply_mixture_channel looks for _apply_mixture_channel_ -> _apply_unitary_ -> cirq.mixture_channel
+cirq.apply_unitary looks for _apply_unitary_ -> cirq.unitary

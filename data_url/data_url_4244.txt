@@ -1,0 +1,23 @@
+Based on to the answer to #85, the reason MainEngine.__del__ exists and the reason atexit is used in MainEngine is to avoid issues caused by qubits being deallocated during sudden shutdowns (e.g. user hitting ctrl+C).
+There are actually several places in the code doing acrobatics to work around the issue. And anytime a test fails, you tend to see a bunch of extra failures get tacked on due to the qubit deallocations running over code that failed halfway through in a bad state.
+For example, here is a failing repro test:
+This test fails not once but twice. Both times on the assert not self.was_in_middle_of_receive line. One due to the manual call to q.__del()__, and another in atexit while the interpreter is shutting down.
+To fix this problem, we need to make engines re-entrant safe against qubit deallocations. I suggest introducing a defer_deallocate_qubit method that puts the deallocate command into a queue. Then, before each non-reentrant call to receive, the engine drains that queue.
+So, during shutdown, the command will go into a queue and just not do anything. But during actual use, the user will call Allocate or Flush or H | something, and the deallocate will appear in the same order as usual. The main change will be that circuits may be missing deallocates at the end, but those deallocates don't matter anyways.
+More concretely, I'm going to make all of these fixes (most have to happen at the same time because they depend on each other):
+The reason I'm adding a new method, instead of replacing receive, is that this method is not intended to be overridden. It's a breaking change that should be considered separately.
+Actually, most of this was done to have the same behavior, whether qubits are allocated within a function or not. If one allocates a huge number of qubits and then does nothing to them, the optimizer should be able to remove these qubits. Thus I think Deallocate gates are important.
+The issue with qubits being deallocated multiple times can be fixed easily: The qubit should set its own id to -1, then send a BasicQubit with the original ID to engine.deallocate_qubit.
+Setting the id to -1 only happens after the call to Deallocate. When a broken engine throws an exception during the deallocate call, an infinite loop where the del method keeps running and failing again and again can happen.
+But that's exactly what I'm saying: Changing the order in which this happens fixes the issue.
+In del:
+Ah, yeah making a weak copy also works. I'll update #95
+Cool, thanks!
+Ah, there's an issue. One of the tests fails; it seems to expect the id to be preserved on failure:
+I'm just going to cut the test. When del fails, bad things are afoot and you shouldn't be continuing to use that qubit.
+I agree, except that in this case we're testing for a feature of the simulator. I'd recommend removing the measurement.
+There will be no "second" deallocation so the measurement is no longer required.
+Ah, right of course. I meant cut the specific implicit assertion that measurement worked afterward.
+Here's something simple/gross that might work:
+But I think it only handles the Ctrl+C case, not the exception during test case.
+Also, this kind of logic is very prone to causing bugs during normal shutdown.

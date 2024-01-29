@@ -1,0 +1,16 @@
+Following recent changes, users should not pass backend_options anymore to transpile and execute. Instead, they should set the options data member of the backend object, before the call.
+In particular, the simulation method that's specified in the backend_options parameter does not affect the basis gates that are sent to the transpiler. This causes a bug, where the transpiler returns a circuit that contains gates that are not supported by the simulation method. See #1004.
+There are a couple of choices to make here:
+@chriseclectic What is your opinion regarding the choices?
+A user still can pass backend options to assemble/execute. The deprecation is to pass them by kwargs (**backend_options) like other qobj config settings instead of a dict (backend_options=backend_options).
+The simulator method option never effected basis gates when passed as backend_options to run so you always had to be specific when transpiling. This has not changed, nor been deprecated.  The point of the new change is if you have a configured backend it can be used by other terra functions (like transpile/assemble/schedule) with the updated gates / configuration / properties etc so this does not have to be done manually anymore (but you still can if you want to).
+The real issue here is we added support for a lot of additional standard gates to the statevector and density matrix simulators which are not supported by the MPS simulator yet. Previously all the non-stabilizer simulators supported basically the same set of 1 and 2-qubit basis gates and the differences in gatesets were mostly rarely used optimized gates like multi-controlled gates. So basically people just "got lucky" that their circuits ran without using custom basis gates for transpile.
+I think the best solution is to update all examples using specific simulator methods to use the configured backend to encourage safer usage going forward. This can be either
+or
+and to add support for the other standard 1 and 2-qubit gates to the MPS simulator so if people "forgot" to do this it will most of the time still work like before.
+I don't think adding more warnings is the correct thing to do when the simulator already returns an error for unsupported basis gates (which was recently fixed so it returns the correct set of unsupported gates). A second warning would just be doing the same thing but would get triggered even for cases where the circuit could still run.
+If no error or warning is required, can I close this issue?
+After an additional thought, I don't want to close the issue. I understand that
+was never equivalent to
+or
+But it is totally reasonable from a user to expect them to be equivalent, with the only difference that using backend_options as a function parameter uses the specified options only locally in that function. The fact that they are not equivalent is a bug in the interface, and as such it has to be fixed (or, much less preferably, communicated to the users). One way to fix it is to remove backend_options from the list of parameters of these functions, or at least to display an error when it is used in conjunction with Aer. Our specific issue with MPS gates is indeed going to be fixed by adding these gates, nevertheless we have to do something about this non-equivalency, which will remain and may cause other trouble in the future.

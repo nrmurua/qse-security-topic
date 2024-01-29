@@ -1,0 +1,13 @@
+https://github.com/Qiskit/qiskit-terra/blob/5a1768f8a0522513ca6ec2a93b36752f103b18ba/qiskit/dagcircuit/dagcircuit.py#L1380
+This function was introduced recently in #5431. It currently has some filters (e.g. don't collect conditional ops or ops that act on classical bits). These filter conditions are necessary to avoid collecting nodes which cannot be simulated to a unitary, then resynthesized later. But some things currently pass through this, notably delay and reset instructions. A quick fix would be to add these to the filter. But also a more elegant solution probably exists to formally define what kind of ops are atomic (i.e. don't have a def in terms of other gates).
+Hi, I took a look at this one. Not sure if this is the correct way to solve it.
+With the above patch I see delay() and reset() not being collected
+@ajavadia would it be sufficient to add an isinstance(node.op, Gate) to the filter function? Or are there cases where we'll have custom instructions which can be defined as other gates that aren't a Gate subclass?
+I am also running into this with the Delay instruction after updating the mock backends in #5577.
+@ajavadia would it be sufficient to add an isinstance(node.op, Gate) to the filter function? Or are there cases where we'll have custom instructions which can be defined as other gates that aren't a Gate subclass?
+#5570 seems like a solution that may enable the latter case as well.
+Updating the filter function to cover all the cases here will be a little tricky. Ultimately, the behavior we'd like is something like "collect every 1q instruction that's unitary/that we can join together with Operator, remembering to break at Barriers."
+#5570 is a step in the right direction, but Operator looks to Instruction.to_matrix and Instruction.definition, so a custom 1q gate would end up left out of the optimization.
+@ajavadia would it be sufficient to add an isinstance(node.op, Gate) to the filter function? Or are there cases where we'll have custom instructions which can be defined as other gates that aren't a Gate subclass?
+Likewise, isinstance(node.op, Gate) would miss 1q circuits converted to instructions, and incorrectly include 1q opaque gates.
+I think the best path forward here is to update #5570 to check isinstance(node.op, Gate) and hasattr(node.op, '__array__') (to resolve #5556 and unblock #5577) and leave this issue open to discuss a more robust way for the transpiler to identify atomic or non-unitary instructions.

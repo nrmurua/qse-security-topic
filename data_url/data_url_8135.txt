@@ -1,0 +1,57 @@
+Dear qutip admin,
+I have a question related to the question about mesolve returning only final state. Here, I would like to ask how to save only the propagator matrix at the final time from qutip.propagator without saving the propagator matrix at all time steps? If I followed the method given in the previous thread titled "mesolve returning only final state", the method does not work. Basically if I declared H as QobjEvo and use it in qutip.propagator, I got the following error message "Invalid time-dependent format".  Any idea how to rectify this problem? Below is the code
+import qutip
+import numpy as np
+fast_ts = np.linspace(0, 1, 1001)
+omegalist = 2.91e2fast_ts
+fast_xs = 2.9e3np.pi * np.cos(2*np.pi * omegalist * fast_ts)
+H = qutip.QobjEvo([[qutip.sigmax(), fast_xs]], tlist=fast_ts)
+rho = qutip.basis(2, 0).proj()
+times = np.array([0., 1])
+e_ops = [qutip.sigmay()]
+options = qutip.Options(nsteps=10_000_000, atol=1e-14, rtol=1e-12)
+two_times = qutip.mesolve(H, rho, times, e_ops=e_ops, options=options)
+many_times = qutip.mesolve(H, rho, fast_ts, e_ops=e_ops, options=options)
+U = qutip.propagator(H, times, [], options=options)
+print(U[1]*rho)
+Dear qutip admin,
+Basically, the issue is my Hamiltonian is a large matrix and my time grid is very large. So there is not enough memory to store the propagator matrices at all times. If anybody knows a way to save only the initial and final propagator, please let me know. Otherwise, may I kindly ask for this feature to be included in qutip.
+You can compute the propagator with mesolve by passing it an identity matrix as the input state:
+U = qutip.mesolve(H, qutip.qeye(H.dims), times, options=options).states
+QobjEvo should be supported by propagator, I will add it to my to-do for the next major release.
+Hi Ericgig,
+Thank you for your reply. Have a nice day.
+Hi Ericgig,
+The method that you mentioned actually does not work. I cannot get the propagator at the final time by using the method that you mentioned last time. Here is my complete program:
+import qutip
+import numpy as np
+fast_ts = np.linspace(0, 1, 1001)
+omegalist = 2.91e2fast_ts
+fast_xs = 2.9e3np.pi * np.cos(2*np.pi * omegalist * fast_ts)
+H = qutip.QobjEvo([[qutip.sigmax(), fast_xs]], tlist=fast_ts)
+rho = qutip.basis(2, 0).proj()
+times = np.array([0., 1])
+e_ops = [qutip.sigmay()]
+options = qutip.Options(nsteps=10_000_000, atol=1e-14, rtol=1e-12)
+two_times = qutip.mesolve(H, rho, times, e_ops=e_ops, options=options)
+many_times = qutip.mesolve(H, rho, fast_ts, e_ops=e_ops, options=options)
+print("two_times =",two_times.expect[0][times.size-1])
+print("many_times =",many_times.expect[0][fast_ts.size-1])
+U = qutip.mesolve(H, qutip.qeye(2), times, options=options).states
+print(" Tr(rhofinal \sigma y) =", np.trace(U[1]rhoqutip.sigmay() ))
+print("U[1] =", U[1])
+The result is
+two_times = 0.938612163510726
+many_times = 0.9386121644261181
+Tr(rhofinal \sigma y) = 0j
+U[1] = Quantum object: dims = [[2], [2]], shape = (2, 2), type = oper, isherm = True
+Qobj data =
+[[1. 0.]
+[0. 1.]]
+As can be seen from above, using your method, I obtained the propagator at final time as an identity which is incorrect. Any idea how to rectify this problem?
+Dear qutip admin,
+May I kindly ask whether there is any resolution to my problem above. Your help is greatly appreciated.
+I think Eric may have meant you can use sesolve, not mesolve in this situation (literally just swap the word mesolve for sesolve), provided you don't have any collapse operators - you want to solve the equation d_t U = -i H U, which is the Schrodinger equation, not the Lindblad master equation.
+Sorry, I meant the liouvillian dimension. Here that would be qeye( [[2],[2]] )
+You can use the liouvillian function on one of the Qobj composing H to get the wanted dims:
+This would work if you have c_ops, if you don't, just use sesolve as Jake said.

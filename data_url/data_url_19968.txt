@@ -1,0 +1,68 @@
+Dear colleagues,
+I came across a test failure on Fedora 38 and fedora rawhide. We use the 0.7.2 release
+https://copr.fedorainfracloud.org/coprs/g/fedora-review/fedora-review-2168929-liboqs/build/5521897/ is the build in question. https://download.copr.fedorainfracloud.org/results/@fedora-review/fedora-review-2168929-liboqs/fedora-rawhide-x86_64/05521897-liboqs/builder-live.log.gz is a log file with errors.
+Could you please take a look?
+Could you please take a look?
+We did (and will continue): Looks like HQC simply doesn't properly work in that distro. How did you get around #1381 ?
+"Some" followup questions: Does everything work OK in F37? If so, what's the difference between F37&38? gcc versions? Is F38 now generally available and would it be sensible/welcome that we add it to our CI? Is this a plain-and-simple x64 machine? Would testing on CircleCI or github be more sensible from your perspective?
+Yes, it runs OK for F37 and fails for F38/rawhide.
+https://copr.fedorainfracloud.org/coprs/g/fedora-review/fedora-review-2168929-liboqs/build/5521897/ lists all the builds for various Fedora versions, and builder-live.log.gz contains the package versions. I think there are more than one differences.
+As F38 is recently forked, I think it's worth adding F38 to CI.
+How did you get around #1381 ?
+I stripped -Werror, and currently build only NIST algorithms and without AVX512 support.
+As F38 is recently forked, I think it's worth adding F38 to CI.
+When checking docker hub, rawhide and 38 are identical -- so is 38 now fixed or still undergoing changes (as I'd assume rawhide is)? So I guess the question is: Should we use fedora:38 from docker hub as the baseline docker image to build a CI image or something else?
+I think yes, fedora:38 is OK
+FWIW, everything builds and tests OK on F38 when using liboqs main branch. This now raises the question how much effort we shall put into finding the problem in 0.7.2 and back-porting the fix: Do you have any concrete customers needing liboqs v0.7.2 in F38, @beldmit ? Could they make do with liboqs v0.7.2@F37 or liboqs main@F38?
+@baentsch I'm currently working on adding liboqs to Fedora. So we need smth to rely on (a release, a release + reasonable set of patches) for our builds. The exact commit is also an option but the least desired.
+@baentsch could you please assist with identifying the changes necessary to apply to 0.7.2 to make it pass the tests?
+@baentsch could you please assist with identifying the changes necessary to apply to 0.7.2 to make it pass the tests?
+I'll give it a try. Hope it's not the major upstream update that corrected the HQC behaviour.... Stay tuned.
+Could I ask you to take a look at this Dockerfile, @beldmit ?
+"Problem": It works without fault. Can you point out a difference as to how you build and test (triggering the HQC problems at the start of this thread)?
+Thanks, I will try to apply the 423b720 tomorrow, currently I use vanilla 0.7.2 with stripped -Werror. Probably that's the culprit
+I tried to build with the 423b720, got a different error.
+My CMake command is /usr/bin/cmake -S . -B redhat-linux-build -DCMAKE_C_FLAGS_RELEASE:STRING=-DNDEBUG -DCMAKE_CXX_FLAGS_RELEASE:STRING=-DNDEBUG -DCMAKE_Fortran_FLAGS_RELEASE:STRING=-DNDEBUG -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON -DCMAKE_INSTALL_DO_STRIP:BOOL=OFF -DCMAKE_INSTALL_PREFIX:PATH=/usr -DINCLUDE_INSTALL_DIR:PATH=/usr/include -DLIB_INSTALL_DIR:PATH=/usr/lib64 -DSYSCONF_INSTALL_DIR:PATH=/etc -DSHARE_INSTALL_PREFIX:PATH=/usr/share -DLIB_SUFFIX=64 -DBUILD_SHARED_LIBS:BOOL=ON -GNinja -DBUILD_SHARED_LIBS=ON -DOQS_ALGS_ENABLED=NIST_R4 -DCMAKE_BUILD_TYPE=Debug -DOQS_USE_AVX512_INSTRUCTIONS=OFF
+As -DOQS_USE_AVX512_INSTRUCTIONS=OFF I expect that `vpcmpeqd' will not be used...
+https://download.copr.fedorainfracloud.org/results/@fedora-review/fedora-review-2168929-liboqs/fedora-38-x86_64/05528439-liboqs/builder-live.log.gz and https://download.copr.fedorainfracloud.org/results/@fedora-review/fedora-review-2168929-liboqs/fedora-rawhide-x86_64/05528439-liboqs/builder-live.log.gz have different errors, BTW.
+As -DOQS_USE_AVX512_INSTRUCTIONS=OFF I expect that `vpcmpeqd' will not be used...
+I'm not a specialist in Intel assembly instructions, but isn't vpcmpeqd an AVX2 extension? What changes when you disable AVX2 (instead of AVX512)? Also FWIW, the problem doesn't reproduce on my machine when executing mkdir /projects && cd /projects && git clone https://github.com/open-quantum-safe/liboqs.git && cd liboqs && git checkout 0.7.2 && git cherry-pick -n 423b720c38985fd3fe8cc4874806fe0c5be6266e && mkdir build && cd build && cmake -GNinja -DBUILD_SHARED_LIBS=ON -DOQS_ALGS_ENABLED=NIST_R4 -DCMAKE_BUILD_TYPE=Debug -DOQS_USE_AVX512_INSTRUCTIONS=OFF .. && ninja && ninja run_tests in the above F38 docker image....
+Do you know of another way to reproduce the build environment you're using?
+Sorry, you are right, it's both AVX512/AVX2 according to https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=vpcmpeqd
+I've disabled AVX2 for the next iteration.
+https://download.copr.fedorainfracloud.org/results/@fedora-review/fedora-review-2168929-liboqs/fedora-38-x86_64/05528439-liboqs/builder-live.log.gz and https://download.copr.fedorainfracloud.org/results/@fedora-review/fedora-review-2168929-liboqs/fedora-rawhide-x86_64/05528439-liboqs/builder-live.log.gz have different errors, BTW.
+When checking these logs, there's something fishy: Your build has 2317 steps while mine (that is passing) has 2309. I now identically cloned your cmake command in my environment -- and still, everything passes. Puzzled....
+https://download.copr.fedorainfracloud.org/results/@fedora-review/fedora-review-2168929-liboqs/fedora-38-x86_64/05528467-liboqs/builder-live.log.gz is the build result with disabled AVX2, btw :(
+https://download.copr.fedorainfracloud.org/results/@fedora-review/fedora-review-2168929-liboqs/fedora-38-x86_64/05528467-liboqs/builder-live.log.gz is the build result with disabled AVX2, btw :(
+Woa -- building with AVX2 disabled should build much fewer files... Lets me check this out.
+https://copr.fedorainfracloud.org/coprs/g/fedora-review/fedora-review-2168929-liboqs/build/5528467/ is the build page
+https://copr.fedorainfracloud.org/coprs/g/fedora-review/fedora-review-2168929-liboqs/build/5528467/ is the build page
+OK -- this section from the log is completely "impossible":
+--> If the disablement of AVX2 (i.e., cmake processing) had been successful, compilation of at most 1234 files makes sense (as all AVX2 optimized implementations were disabled). This exactly happens in my environment, so the question is whether there are differences in how your environment's cmake/CMakeList.txt processing operates.
+Do you possibly run not exactly the result of git checkout 0.7.2 && git cherry-pick -n 423b720c38985fd3fe8cc4874806fe0c5be6266e ? Why otherwise is there reference to "OQS_ALGS_ENABLED", a directive only introduced way after 0.7.2?
+I use the tar.gz from https://github.com/open-quantum-safe/liboqs/releases/tag/0.7.2 and apply the 423b720 and strip -Werror. Should it produce a different result?
+As you see in the Dockerfile, I'm using the tag directly from github and don't even have to strip -Werror. Can you share the exact script you're running to get to what you compile? There's got to be something broken in the CMakeList.txt's somewhere judging from how little influence the cmake define directives have... In the mean time, let me try the tar.gz....
+I use the rpmbuild -ba using this spec https://dbelyavs.fedorapeople.org/liboqs.spec and this src.rpm:
+https://dbelyavs.fedorapeople.org/liboqs-0.7.2-1.fc36.src.rpm (contains 2 patches and downloaded archive)
+I use the rpmbuild -ba using this spec https://dbelyavs.fedorapeople.org/liboqs.spec and this src.rpm: https://dbelyavs.fedorapeople.org/liboqs-0.7.2-1.fc36.src.rpm (contains 2 patches and downloaded archive)
+FYI, I have no experience with RPM (other than using it to install stuff), so will need some time to learn about it and understand the above. At first glance, there's substantial "messing" with .cmake files that could trigger these problems: Possibly, our cmake files don't handle well whatever this framework does with them. As usual: Stay tuned.
+Thank you very much! Feel free to ping me here or directly
+The log files I refer to contains all the resulting commands so it may help
+@baentsch What I'm concerned is that I see 2307 lines with any build options...
+@baentsch What I'm concerned is that I see 2307 lines with any build options...
+I'm not sure I understand this sentence... What lines are you referring-to? What do you see there?
+Sorry for unclarity. I mean that I get 2307 files compiled with any CMake options.
+Do you mean "...without" any CMake options (?) But that's normal, right? You should see the resultant Makefile options. Are they all there as you'd expect them? The ones I'm interested in of course are only visible in the Makefiles (that are not shown -- or I didn't find them yet).
+Sorry again. I tried a lot of options in the spec file - I changed the values for OQS_ALGS_ENABLED, OQS_USE_AVX512_INSTRUCTIONS, and OQS_USE_AVX2_INSTRUCTIONS. I always see 2307 lines to be compiled.
+Thanks for trying this. This should not happen, as AVX2 files should only be compiled if DIST_BUILD and/or AVX2 is explicitly requested. Could you possibly run cmake with the option -LAHto output the actual variable values set so we can compare our respective settings? Ideally, this is done on the (failing) F38 and the (passing) F37 builds: There must be a difference as the code is identical, right?
+Sure, here it is: https://copr.fedorainfracloud.org/coprs/g/fedora-review/fedora-review-2168929-liboqs/build/5529234/
+Thanks for this run. Please check it out yourself: By just adding cmake debug output, the complete build run succeeds and we wind up with HQC test errors instead. This is frustrating. Is there a way for me to ssh into your build system such as to debug this? Otherwise, please use my docker environment and show me how to reproduce the issue there.
+@baentsch
+Thank you for your efforts!
+I think that the avx2-related failure depends on a specific machine on a farm where the build is performed.
+Could you please confirm that the build directives I pass to CMake are correctly propagated through the make?
+I will continue investigating the problem but probably next week.
+Could you please confirm that the build directives I pass to CMake are correctly propagated through the make?
+I can not confirm this: You pass "-DOQS_USE_AVX2_INSTRUCTIONS=OFF" to cmake but (for example) the variable "OQS_ENABLE_KEM_classic_mceliece_348864_avx:BOOL=ON" is incorrectly reported. This is not the case when I try this locally: setting OQS_USE_AVX2_INSTRUCTIONS=OFF reliably turns off compilation of AVX-optimized code.
+Thank you! It's a sort of confirmation :)
+Found a bug in my specfile. Thanks for your patience, sorry for disturbing.

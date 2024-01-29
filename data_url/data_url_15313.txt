@@ -1,0 +1,42 @@
+Should install qiskit but instead currently fails while trying to build tweedledum.
+I'm hoping there could maybe be a m1 wheel available that circumvents this issue.
+Thanks for the report.  Ideally this is something you'd take up with tweedledum rather than us, but as far as I know, Bruno (the maintainer) has been rather busy recently, so you might not get a very prompt response.  If we can't work out a solution, we might need to consider making tweedledum an optional dependency instead - we don't use it too much internally.
+On a brief glance on its PyPI page, it looks like tweedledum has wheels released for M1 Mac for tweedledum 1.1.0, but not 1.1.1.  Unfortunately, the changelog for 1.1.1 just says "fix wheels on macOS", so I'm guessing 1.1.0 is broken.  Still, you could try pip install tweedledum==1.1.0 qiskit, and see if it works.
+Paul (@nonhermitian): I don't have an M1 - do you know any more about what's necessary here, since I'd thought we'd solved the M1 issues?
+I tried installing it in a new conda env with --no-cache-dir and the 1.1.1 wheel built fine.  This is on Py310
+To be clear, I have not had any M1 problems outside of openblas+scipy issues in recent memory.
+@jakelishman Thanks for the prompt response. I can confirm that pip install tweedledum==1.1.0 qiskit installs on my machine. I agree and I'll start an issue on the tweedledum repo but for documentation purposes I recommend keeping this issue active until it gets resolved just so anyone trying to just pip install qiskit like I did will know what to do till a fix is implemented. I also suggest changing the tag from feature request to something more appropriate as I don't think I can change it myself. Thanks again for the quick response, appreciate it.
+It's quite possible that the build requires having specific C compiler tooling and potentially various header files of C/Fortran libraries available on your system, which may be why you're struggling while other people haven't been.  There's also the chance that a recent update to macOS broke stuff - I saw you're on the macOS-12.3 SDK - as Apple have a very annoying tendency to remove stuff from their header files.
+Either way, as long as it's working for now, that's good.  Hopefully tweedledum can take a look, and if not, we'll have to make a bigger plan on the Qiskit side.
+@jakelishman You reckon it might be feasible to change the requirements to use tweedledum==1.1.0 specifically until the problem gets resolved on tweedledum's end. I assume that won't break anything for people on x86 and would mean new users on m1 can just use pip install qiskit without having to look up the issue. It's a bit of a hack but wondering if thats a possibility. If so I can start a pull just making that switch.
+PS: Totally agree with you on the possible cause, in fact there are some known issues with certain macos versions where it's recommended just to build from source https://github.com/boschmitt/tweedledum#known-issues
+It is a fair question to ask why is it a requirement in the first place?
+@nonhermitian I believe this may answer your question.
+We rely on tweedledum to synthesize phase oracles which is commonly used functionality and several issues have been opened. This use of tweedledum will likely continue to grow so we should just list it as a requirement moving forward.
+Source: 927fd02
+Yeah I know the backstory, but disagree with that decision as I do not think that that functionality is used by many people at all.  I personally have never had to use it, but have run into similar issues as this previously with the builds of tweedledum.  There is no tutorial, and no demonstration of usage beyond a single code block in the documentation (the supp mat does not open for me).  So I push back on the fact that this should be a requirement at all.  If it is a hard requirement then I would expect more demonstrations of value than a single snippet.
+From a Terra dev meeting today: we made the decision to move tweedledum to being an optional dependency. Terra 0.22, which will release in about a month, will still have it as a core requirement because we need to issue deprecation warnings, but it will be removed in 0.23.
+In the mean time, I'll see if we can do anything about getting a macOS ARM wheel for tweedledum 1.1.1, and if not, I might be able to tweak the requirement so that only 1.1.0 is permitted for ARM macs.
+FWIW, my normal suggestion in this case is to do something like pip install --prefer-binary tweedledum qiskit-terra which should install tweedledum from a precompiled binary along with terra.
+@jakelishman environment markers are gonna be a bit tricky here, the easiest way would probably to have 2 entries in the requirements list something like:
+Thanks @jakelishman , do let me know how I could help.
+Hello,
+This is my setup:
+% ARCHFLAGS="-arch arm64" pip install tweedledum==1.0.0 qiskit --compile --no-cache-dir
+I was able to install tweedledum for arm64, but none of the suggestions above worked for me regarding qiskit.
+Qiskit needs tweedledum 1.1+, and your install line there has 1.0, which might be the issue, but without a full error message, I can't be sure.  If you change that to 1.1.0 you might have some success.  In the interim, while we need to wait for Terra 0.23 to remove the requirement entirely, I've made #8818 that will add the required constraint to Terra's install requirements, and should go out with Terra 0.22 early/mid next week.
+Has this been taken care of already? I am having the same issue.
+I also tried installation using
+but that didn't work either.
+I found this thread, but I don't know if the changes are in the current release, hence the options --upgrade and --force-reinstall.
+@croquemadame I was not able to install it with my current python env:
+Of course, the problem is that tweedledum (c++) fails to compile, and even with the pre-compiled binary it does not install properly. The only option would be to install a fresh Python env with x86 instead of ARM and I am not going to do so.
+We've modified the install requirements for the upcoming Terra 0.22, which is what triggered the issue to be closed, but that's not actually released yet - it's due on the 11th of October.
+I'm not sure what might be happening if the pre-built binary for tweedledum 1.1.0 doesn't work on M1 Mac - I hadn't heard of any problems with that before now (as best as I remember).
+@jakelishman
+Main issue with tweedledum:
+have 'x86_64', need 'arm64e'
+Yeah, the "ARM" wheels uploaded by tweedledum actually appear to have x86_64 headers and be named incorrectly.  I have no idea how that's happened, but I don't have control of tweedledum to attempt to fix it.  We're moving to remove tweedledum as a core requirement in Terra - we are starting the process in 0.22, but it isn't planned to become fully optional until 0.23.
+In the near term, you might be best attempting to build tweedledum from source using the instructions on their GitHub, or by using an x86 version of Python through Rosetta.  Sorry I can't offer more than that.
+From Terra 0.22 the problem will be masked, at the very least, because tweedledum won't be imported by import qiskit (it currently is) - you'd need to try and import the tweedledum-specific parts of Terra before it appeared.  Terra 0.22 is due on the 11th of October.
+This works: boschmitt/tweedledum#179 (comment)

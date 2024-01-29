@@ -1,0 +1,16 @@
+There seems to be a performance issue with COSMA (pdgemm) when built with OpenBLAS. Running the input file below with COSMA versus ScalaPACK exhibits a slowdown of ~10x. This is when installing CP2K with the ./install_cp2k_toolchain.sh script and default parameters.
+The issue is most certainly related to OpenBLAS, because building COSMA with MKL (locally) or LIBSCI (on daint and eiger) leads to similar performance between COSMA and ScalaPACK.
+The tests were run using the psmp executable and the latest CP2K git commit. The slowdown happens irrespective of the number OMP threads and MPI ranks.
+Input file:
+This seems very much related to #1826 and #1861.
+could you try with:
+More references at https://github.com/xianyi/OpenBLAS/blob/974acb39ff86121a5a94be4853f58bd728b56b81/USAGE.md#how-could-i-disable-openblas-threading-affinity-on-runtime
+I just tried: there is no noticeable difference in the timings.
+OK, one more check then: could you remove USE_THREAD=1 when building OpenBLAS at line in this file? Add NO_AFFINITY=1
+Reading up on #1861, I tried completely disabling OpenBLAS threading support by setting USE_THREAD=0 and USE_OPENMP=0 in the toolchain installation script. This helps and timings are similar between COSMA and ScalaPACK.
+OK, one more check then: could you remove USE_THREAD=1 when building OpenBLAS at line in this file? Add NO_AFFINITY=1
+I'll try that too!
+Indeed, it is definitely a OpenBLAS misconfiguration... Just a side note, we need OpenMP enabled because we have nested calls, so OpenBLAS has to recognize that. But then you can set:
+to disable nesting (OpenMP should do it by default though...)
+I can confirm that setting NO_AFFINITY=1 and removing USE_THREAD=1 from the OpenBLAS installation script works. Exporting OMP_MAX_ACTIVE_LEVELS=1 is not necessary, at least on my local machine.
+This closes this issue, as in the end, this is one and only problem together with #1861.

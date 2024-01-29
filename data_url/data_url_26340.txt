@@ -1,0 +1,25 @@
+The latest COSMA release makes use of the NCCL and RCCL libraries and GPU-aware MPI to improve the performance on GPUs. Currently, we do not make use of this for COSMA. What are the possible benefits and who can have a look at it?
+For NCCL, I would only consider it for nodes with multi-gpus. Note that NCCL requires itself the system network support. Furthermore, there is the limitation of having a single rank/GPU.
+On a system with MPI GPU-direct (e.g. Piz Daint) the benefit can be quite significant. For systems like LUMI, where GPUs are directly attached to the network cards and GPUs have large memories, this is definitely a winning solution.
+I've talked to an Nvidia engineer: The NCCL restriction of one MPI rank per GPU won't go away anytime soon.
+I've also learned that it's difficult to achieve good performance with GPU-aware MPI, because it does not support streams and therefore requires additional host/device synchronizations. Because of this, the difficult to build it, and its overloaded API, I think we should avoid GPU-aware MPI and focus on NCCL.
+Obviously, we also need to continue supporting multiple ranks per GPU. Hence, I'd suggest we automatically disable NCCL when the necessary preconditions are not met.
+So, @kabicm would it be possible to add a config variable to COSMA that allows us to disable NCCL at runtime?
+I've talked to an Nvidia engineer: The NCCL restriction of one MPI rank per GPU won't go away anytime soon.
+Same for AMD...
+I've also learned that it's difficult to achieve good performance with GPU-aware MPI, because it does not support streams and therefore requires additional host/device synchronizations.
+Specifically for COSMA case, this is not true, it works just great with Cray-MPICH. So, this is definitely the way to go there (same for MVAPICH and OpenMPI). Of course NVIDIA is promoting their tool, but MPI guys are doing good as well (and it is portable accross vendors).
+Because of this, the difficult to build it, and its overloaded API, I think we should avoid GPU-aware MPI and focus on NCCL.
+Please note, on Supercomputer you need NCCL to support the network, otherwise it doesn't give any performance. In principle NCCL is only useful if MPI is not optimized...
+Obviously, we also need to continue supporting multiple ranks per GPU. Hence, I'd suggest we automatically disable NCCL when the necessary preconditions are not met.
+I agree with that, frankly speaking I would disable all the way and enable only if users knows what they are doing (and there is good network support).
+So, @kabicm would it be possible to add a config variable to COSMA that allows us to disable NCCL at runtime?
+it's difficult to achieve good performance with GPU-aware MPI, because it does not support streams and therefore requires additional host/device synchronizations.
+Specifically for COSMA case, this is not true,
+Yes, it'll depend on whether there is any CPU work to overlap with. For DBCSR (and DBM) I'd expect that it'll make a noticeable difference because we need the CPU threads for generating stacks.
+Of course NVIDIA is promoting their tool, but MPI guys are doing good as well (and it is portable accross vendors).
+We are already vendor locked-in to CUDA/HIP. So, we might as well take full advantage of that ecosystem. Furthermore, the NCCL code will be cleaner because everything can be expressed in terms of streams.
+Please note, on Supercomputer you need NCCL to support the network, otherwise it doesn't give any performance.
+Yes, proprietary networks stacks require appropriate drivers. This point applies equally to both technologies - so it's a draw.
+I would disable all the way and enable only if users knows what they are doing (and there is good network support).
+My current thinking is quite the opposite: NCCL will give a significant performance boost for multi-GPU systems. On workstations it'll work out-of-the-box and on HPC machines the network drivers will have already been installed. For runs with a single GPU or multiple ranks per GPU we simply disable NCCL at runtime. So, I don't see any disadvantages to building CP2K with NCCL by default.

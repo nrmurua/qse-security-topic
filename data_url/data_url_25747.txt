@@ -1,0 +1,52 @@
+Details
+When workflows are executing, there is a bug when parsing positional arguments for electrons with more than 2 arguments. For example, consider the following electron
+When this workflow is dispatched, the argument model gets interpreted as a pandas dataframe and an AttributeError is raised since a dataframe has not fit method. The error can be cirumvented when passing arguments to electron using kwargs i.e
+Another example:
+Switching the input parameters for some reason seems to work. Something weird must be happening in graph creation.
+Edit: returning loss and optimizer and using the "not working" version of the function now.
+Hey team! Please add your planning poker estimate with ZenHub @FyzHsn @wjcunningham7 @kessler-frost
+Where can I start? I get a gist of the issue, I will set up the project and will try to recreate the issue to better understand what's going on.
+@scottwn
+Could you please assign me this issue? I have started to look into it.
+@venkatBala @kessler-frost
+I tried to reproduce this issue by modifying the examples you have given but I am able to successfully execute the job without any error.
+Another modified simpler example inspired from the covalent docs :) This also runs without any error when parsing positional arguments for electrons with more than 2 arguments.
+This is the versions I have used.
+Could you kindly provide a complete workflow code (with the ct.dispatch and inputs passed into lattice) with versions of cova used so that I can reproduce this issue on my end?
+Hey @WingCode ! So, I think this error only pops up in certain scenarios so in the case where you might've tried to use a custom example it might've not been an issue. But in the optimizer case, it was failing for me if I ran the move_forward_does_not_works function instead. Maybe it has something to do with the names of the arguments - maybe somewhere we are sorting the names and then passing it to the function.
+I realize I've made a small error in the optimize example, editing it now, but it shouldn't have affected the root issue.
+@kessler-frost , Can confirm that
+gives me error.
+@kessler-frost , @venkatBala Thank you for the inputs.
+I made a runnable version from the above scripts you have shared (since points, steps parameters wasn't present in the code.) But unfortunately/fortunately (unfortunate that I am not able to help you with the issues; fortunate that code seems to be okay) the code is not breaking.
+Successful execution shown in the covalent-ui
+
+Thank you for your patience! Without able to reproduce the issue on my end locally, I cannot fix it :(
+@WingCode Thanks for your contributions on this issue. We will circle back to you on updates from our end.
+Cc @santoshkumarradha @venkatBala @kessler-frost
+@WingCode Thanks for the prompt response.
+I'm using Covalent version 0.106.0 with python 3.8.13 on an Apple Silicon M1 MacOS 12.3.1.
+@santoshkumarradha So the reason why our script is not working and @WingCode 's is, has something to do with the name of the optimizer variable if we change that then the move_forward_does_not_works function seems to be working fine:
+@WingCode A very simple example:
+@kessler-frost Thanks for getting back with a detailed explanation! With your code, I am able to reproduce the issue in my local. Let me dig into the code and figure what's wrong 👍
+Finally I have figured out the issue!
+When we solely use only args in ct.electrons, it relies on insertion order of edges into networkx.DiGraph to determine the order of the arguments passed into the function.
+The problem happens when we try to serialise the graph using nx.readwrite.node_link_data before sending it over the network using:
+
+Thereby finding the dependencies for particular node doesn't follow the insertion order and we are solely trusting on the order of the edges to build the args:
+
+Networkx graphs doesn't guarantee insertion order for edges.
+So to resolve this issue we should give args the kwargs treatment by persisting the order of the elements, I believe.
+I would love to work on this issue. I am all ears to any other better ways of tackling this.
+@scottwn / @Emmanuel289  Could you assign this issue to me? Thank you!
+I have to say @WingCode you did a pretty good job on finding, explaining, and documenting this issue! Feel free to start working on a PR to resolve this and make sure you put a [unitaryhack] label in the title of it.
+So to resolve this issue we should give args the kwargs treatment by persisting the order of the elements, I believe.
+Yeah, that is a viable solution. If possible let's try to find a way to solve this without adding additional attributes to the transport graph (using an edge number maybe?, although I'm not sure if something like that already exists in networkx), but if it seems to get to convoluted then we can go the route of storing the order as well.
+@kessler-frost, @scottwn   Reopening this again as seems like few Demo workflows we are writing is still affected by it with Covalent==0.110.2. Do not have a minimum working example as the one we tested in demo was a complicated ML flow and seems to be working with kwargs passed, but throws up error related to argument being different type when passed by args.
+PS: @wjcunningham7  has the demo in which it did not work.
+I'd probably start by recording the argument order "locally", just in the edges between two electrons, rather than keeping track of the global edge insertion order.
+Hi @wjcunningham7, could you share (either here or privately) your reproducer?
+@cjao see PR #818.  The workflow function needs to call construct and fit electrons using kwargs else it fails.
+Here is a potential problem.
+We can't track edges just by their parent nodes. In the extreme case where all nodes share the same parent, the edge sorting procedure has no information about the edge order:
+@wjcunningham7 's DNN workflow probably breaks when using args because the multiple construct and fit electrons share the same inputs.

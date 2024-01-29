@@ -1,0 +1,26 @@
+Note that as currently defined, remove_final_measurements() is supposed to remove the measurements plus the classical bits. But evidently it does not do that (looking at the two circuits above). Still, the clbit is unusable.
+Which version of terra are you using. I made some recent changes to this path (on main only in #7039) and want to determine if this is a long standing issue or a bug that PR introduced. I didn't really change the clbit path so I expect it to have existed prior to that.
+There are two hidden bugs here:
+Clbit is unusable since circuit.clbits are cleared even if the classical register was not removed (see https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/circuit/quantumcircuit.py#L2228).
+Classical bits are not being removed because RemoveFinalMeasurements tracks only the clbits that had a measurement attached to them but fails to realize that even the rest of the classical bits in the register are idle, e.g this works fine
+On a related issue, RemoveFinalMeasurements leaves the dagcircuit malformed, e.g
+The problem is that it deletes the entry of the classical register from dag.cregs but it should also update dag.clbits, (dag._wires?) and remove DAGIn/OutNode with removed classical bits.
+Which version of terra are you using. I made some recent changes to this path (on main only in #7039) and want to determine if this is a long standing issue or a bug that PR introduced.
+the version i was using had that commit in it.
+Thanks @georgios-ts. Yes I think the fact that classical bits are removed but register stays is a problem, probably introduced here: #5808
+And apparently you discovered that the pass version of this removes the register but leaves classical bits.
+The idea with register-less circuits was that eventually the circuit would be defined solely with its classical bits. The registers would be optional addons that point to a collection of circuit bits. So if I remove a register, I'm just removing some pointer to the bits; the bits themselves stay. If I remove bits, however, the registers that pointed to them are also removed.
+@kdk thoughts?
+Agree with @georgios-ts here:
+The idea with register-less circuits was that eventually the circuit would be defined solely with its classical bits. The registers would be optional addons that point to a collection of circuit bits. So if I remove a register, I'm just removing some pointer to the bits; the bits themselves stay. If I remove bits, however, the registers that pointed to them are also removed.
+@kdk thoughts?
+Agree, though this is not a case we've thought about much because removing bits is rare and involved (need to check that no instructions use the bits you're removing). Though in this case we should preserve the behavior of remove_final_measurements (in that both the register and bits are removed) and call out in the documentation that we're removing the bits in addition to the registers.
+While working on this, I noticed that the current behavior of the RemoveFinalMeasurements pass doesn't match its doc string. Specifically,
+Measurements and barriers are considered final if they are followed by no other operations (aside from other measurements or barriers.)
+Currently, a measurement or barrier is only removed if it immediately precedes a qubit's output node in the DAG. Only the final measurement or barrier will be removed in a chain of successive measure and barrier calls.
+What's the correct behavior here? Perhaps we should add a parameter to support either scenario. In that case, I wonder which should be the default?
+I'm happy to address this while fixing the other issues discussed so far here.
+@mtreinish @georgios-ts @kdk @ajavadia
+I'm happy to address this while fixing the other issues discussed so far here.
+I rewrote the final op determination logic to match the original doc string, while preserving @mtreinish's bottom-up approach, and resolving a bug that existed in the implementation even before #7039.
+Working on fixing other discussed issues with creg removal currently.

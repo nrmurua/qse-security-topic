@@ -1,0 +1,30 @@
+Unexpected behaviour in Qobj.permute() in dev.major branch.
+To Reproduce
+E.g. take any permutation of identity matrices for 'large' system size (e.g. n>=16), which should still result in the identity matrix:
+Expected behavior
+In this example, the permutation should do nothing and full matrix should be diag(1, 1, 1,...), but it is giving diag(0, 1, 1, ...). This occurs for me at n>=16. Note, the error is of course not confined to trivial permutations of the identity operator, but this seemed the cleanest case to present.
+Your Environment
+QuTiP Version:      5.0.0b1.dev0+b862fe9
+Numpy Version:      1.19.2
+Scipy Version:      1.5.2
+Cython Version:     0.29.21
+Matplotlib Version: 3.3.2
+Python Version:     3.7.9
+Number of CPUs:     4
+BLAS Info:          INTEL MKL
+INTEL MKL Ext:      True
+Platform Info:      Darwin (x86_64)
+Additional context
+This affects the expand functions (e.g. expand_operator, gate_expand_2toN).
+I do not get this error in v4.5.
+Thanks for finding this (and the excellent bug report!).  I'm fairly sure this must be a bug in core.data.permute._indices_csr_full for large matrices, but the fact that it even called that function shows that there's an unchecked 32-bit integer multiply.  So that's two bugs for the price of one. I'm looking into it now.
+By the way, do you see any speed increases for permute in dev.major on your machine (bugs aside)?  The aim of rewriting it was to eliminate some intermediary COO matrix usage, but as a side-effect I measured that it should boost expand_operator's speed as well.
+Hi Jake,
+Thanks for this, yeah I started looking into it but realised it would take too long for me to track it down.
+And definitely I have found some speed-ups in dev.major for some matrix operations compared to v4.5. Actually, I have been working a bit with Eric and Nathan to make a PR soon on something related to this, where I have been doing fairly rigorous speed testing. If you like, I can loop you in on this thread (I read your blog a bit and have been using the new Dense data layer -- this opens up some new possibilities).
+
+if n: ignore it completely and assign the wrong variable...  This is the main problem.
+
+And here's the offending unchecked multiplication.  That test is actually off from what I intended, which was hiding the buggy function call below it.  The unchecked 32-bit overflow punched through the test and revealed the problematic function.  In worse matrices, this would have actually been a huge segfault - the identity was only safe because it has the same number of elements in each row.
+That's exciting that someone else is trying it out!  I'm glad there are speed-ups.  If you've got issues let me know and I can maybe help out with some of the internals (my email's in my github profile).  I'm fine to wait to check out a PR if you guys are working on something between you.  I still need to find the time to finish off the dispatching system and pull the OpenMP parts back into dev.major...
+great, thanks for this!

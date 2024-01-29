@@ -1,0 +1,16 @@
+Description of the issue
+I get a TypeError when using cirq.kraus on this gate.
+How to reproduce the issue
+Produces:
+Cirq version
+I get this error both for 0.12.0.dev20210630205305 and 0.12.0
+Seems like this is an error in the kraus protocol; it should call cirq.unitary to get the unitary representation of the object in question, rather than looking for a _unitary_ method directly, because PhasedXZGate does work with the unitary protocol:
+We could also implement _unitary_ directly on PhasedXZGate; currently it has to decompose the gate to get the unitary.
+I see the same issue in mixtures as well
+The problem is that has_[kraus|mixture] methods check only for _has_[kraus|mixture]_  member functions and then fallback on kraus/mixture methods to check for _kraus_ | _mixture_. However, the former has a allow_decompose argument but the latter doesn't.
+I can send a PR to fix this but I have a question -- do we need a allow_decompose argument in kraus, mixture protocols? unitary protocol doesn't have the allow_decompose argument even though has_unitary does, but they both work fine because has_unitary doesn't depend on unitary as a fallback.
+Note that simply using cirq.unitary instead of checking for _unitary_ is not enough. In has_kraus, we check whether all(has_kraus(val) for val in decomposed_operations) then the primary operation also has_kraus. Therefore, in the kraus method, we will need to recursively compute the kraus of all decomposed operations and combine their kraus operators by serial concatenation.
+This will be useful, for eg, to automatically compute the kraus operators of a PauliMeasurementGate (requested in #4127) which decomposes into pauli operations + measurement gate -- both of which have different types of kraus operators (unitary vs measurement).
+This is a duplicate of #3965, which came to a similar conclusion (add allow_decompose to kraus/mixture). It's important to note that limits must be placed on this decomposition, as number of Kraus operators / mixture elements can exponentially explode.
+This issue is stale because it has been open 30 days with no activity. Remove stale label or comment or this will be closed in 30 days
+This issue is stale because it has been open 30 days with no activity. Remove stale label or comment or this will be closed in 30 days

@@ -1,0 +1,48 @@
+This will make dataset setting (e.g. #422) nicer.
+Delineating and documenting what parts of the ndarray/numpy api can and should be implemented is tricky.
+AFAICT we only do homogeneous lists currently anyway. Might be more appropriate to actually drop the lists and support only C/F-contiguous arrays of fixed shape and certain fixed dtype (very much the same restriction like numba/cython). And no additiional numpy function support, broadcasting, ufuncs, ma, recarrays, fancy indexing.
+Our lists, just like Python's lists, are internally contiguous arrays.
+But if they are required to be homogeneous and keep contents by value and not reference then they are unlike lists and much more like numpy arrays.
+By value? How exactly can that happen with NumPy? Or C for that matter?
+No magic involved. In a numpy 2D array, the element with index (n,m) is known to be at memory offset stride[0]*n + stride[1]*m from the start of the array without indirection through pointers to the inner arrays. The values of the inner dimensions are fully owned/contained in the array. This is unlike lists in python.
+Oh you mean INNER arrays passed by value. That's doable, sure, perhaps as an addition to lists.
+I think in general we're not going to want to do anything in a kernel with Numpy that goes much beyond setting/getting array values with boring explicit (n,m)-type indexing, because the soft processor is probably going to be too slow for heavy duty math or fancy indexing tricks (I am not as sure about the latter, depends on how it is actually implemented).
+The main issue we are having right now is that we would like to be able to set up an array of parameters to scan, or of data to return, in the build method using numpy, pass them to the kernel to use during execution (either pulling values to output or loading a preallocated array with values from the inputs), and then have those returned to the analyze method as numpy arrays so they are easy to work with for the data analysis.  We can hack something up like this with a preallocated 1D python list and manual indexing in the kernel, but it would be nice to have it more seamless/transparent to the user to do these things, without the latencies from #422 .
+So to @jordens comment from above, I would be happy with:
+The trickiest case that I can think of is photon arrival times, since there will be varying numbers for each experiment.  Am I correct that photon arrival times are essentially popped from the input FIFO one at a time by the TTLInOut.timestamp_mu() method?  And once the FIFO is empty further calls return a negative number?  In this case, populating a preallocated array (of sufficiently large size to accommodate up to the max number of photon counts) would not be a problem,
+Yes. There would be no methods, no ufuncs, no views, only single element load and store, no boundary checks, stride fully determined by (fixed) shape and dtype. And all the many implications. Probably static allocation. That's a very small subset of numpy/ndarray but it maps well.
+But this is not only for input data. You would also use it for e.g. gate/pulse sequence tables, either jumping around in them, building them to be executed later or building them for DMA.
+You would also use DMA to fill such arrays.
+And they support the usual data aggregation and processing that is done in kernels: aggregate by time or by value.
+We can hack something up like this with a preallocated 1D python list and manual indexing in the kernel, but it would be nice to have it more seamless/transparent to the user to do these things, without the latencies from #422 .
+By itself, Numpy in kernels will not significantly help with the latency/delays.
+OK, I misspoke here, agreed this is not an issue directly relevant to set_dataset() or mutate_dataset().  The issue is that one cannot currently pass a numpy array to the kernel and have it work with it -- it needs to be converted to a python list.  It would be more user-friendly to be able to use numpy arrays directly in the kernel.
+To start with, I think the following would be quite straightforward:
+This fits well with the use of numpy ints in kernels, and solves the problem of RPCing set_dataset (that expects numpy arrays) from kernels.
+This is essentially making an alias for lists. Which is, indeed, trivial, except for np.full, which needs module support...
+Depends on #408.
+@whitequark ping
+@sbourdeauducq Do you need numpy.full? numpy.array([0])*100 will work just fine
+Oh, wait, the * does a completely different thing for lists than for numpy arrays, lovely. Should I add support for that or just disallow it for now?
+@sbourdeauducq I've implemented basic numpy array support.
+What's absent:
+What's present on top of what you've requested:
+I'm not yet sure how to best inject the functions above (which have to be builtins on the coredevice) into the numpy namespace during embedding, but I'll figure something next morning.
+Why not expose the numpy ints and np.array as they are exposed in CPython? I thought the module support was supposed to allow that.
+Users will typically do import numpy as np or import numpy and then happily mix them in kernels and host code (especially analyze). Having two names for the same thing is messy.
+How can one create an empty array of more than a few elements if np.full is not available?
+Why not expose the numpy ints and np.array as they are exposed in CPython? I thought the module support was supposed to allow that.
+That would result in an RPC every time you create one, without some additional work.
+Users will typically do import numpy as np or import numpy and then happily mix them in kernels and host code (especially analyze). Having two names for the same thing is messy.
+Yes, I agree. The second names are primarily added for the tests that aren't using embedding. I'll remove them from the prelude for embedded code.
+How can one create an empty array of more than a few elements if np.full is not available?
+Currently you can not.
+That would result in an RPC every time you create one, without some additional work.
+I was referring to your comment #424 (comment) and yes, work on it.
+All done.
+Still can't use np.full.
+not working on artiq3.6
+Will np.full be supported?
+What is the error message?
+#1051
+Doesn't happen when it's not NaN.

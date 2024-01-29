@@ -1,0 +1,39 @@
+Hi all!
+thank you for building pqclean! Very enjoyable experience compared to a lot of crypto code out there :D
+libsodium is the natural companion library to pqclean for protocol implementation.
+Unfortunately, linking libsodium and pqclean throws errors unless extra steps are taken because both export the randombytes symbol.
+I was able to workaround this by removing the randombytes symbol, but this doesn't really allow for packaging pqclean in a portable way.
+Implement a namespace isolation feature; e.g. a weakly linked pqclean_randombytes function which can be overwritten by a user binary.
+What's the API of libsodium's randombytes() function? If it's compatible you should just leave out PQClean's.
+Unfortunately, the randombytes() api stems from NIST's API choices, a lot of which are not great.
+They are compatible and workarounds…work. Unfortunately, this collision relatively consistently increases development effort; it also makes using a prepackaged version of pqclean harder as any .so or .a would contain the symbol…
+The application I am working on is written in rust and uses the pqcrypo crate; I cannot change the build config of that crate…
+Maybe a macro-based switch would be possible? Providing a namespaced version as an opt-in feature which could easily be used by the crate?
+PQClean is not a library. Anyone packaging PQClean is expected to bring their own implementations of randombytes, the AES stuff, etc, though it's possible to use our common files.
+PQClean collects implementations that we promise use a certain format (the namespaced API functions, etc); but because we also wanted to as be compatible with the NIST requirements for reference implementations as possible this means that certain function calls like sha256 and randombytes are not namespaced.
+I'm afraid this is something that should be solved in projects that consume implementations from PQClean. rustpq/pqcrypto could (should?) provide its own variants of randombytes.h, fips202.h, where it defines #define randombytes PQCRYPTO_randombytes and that way avoids possible collisions.  OQS solves problems similarly.
+A bit of further thought brings to mind the possibility of doing the same in PQClean's header files, actually; but I need to think a bit if that has any other consequences...
+OK, thanks for the feedback…
+Hmm…you are probably right; I'll consider just moving to the oqs crate which you're maintaining too it seems, thank you for that :D
+(I was going open an issue in the rust pqcrypto repo…since you're maintaining that too I'll avoid spamming you).
+Let me point out though, that by having bindings to other languages and such, pqclean is essentially a de-facto library…
+I think the issue here is partially that a #define randombytes seems quite hacky; a PQCRYPTO_RANDOMBYTES macro with a default value of randombytes using #ifndef would be a lot cleaner an signal to users how the implementations are to be used. Maybe some feature flags such as PQCRYPTO_EXTERNAL_RANDOMBYYTES could be used to signal that that's an option along with PQCRYPTO_SODIUM_COMPAT to enable the right set of flags to integrate with libsodium.
+This would produce the same symbols by default but communicate "hey, you might want to see if any of those flags are right for your project"…
+I should probably point out that I was answering all the discussion in this thread with my PQClean hat on; and that hat is telling Thom with the pqcrypto crate maintainer hat that he's done a bunch of things pretty sloppily. See also the discussion about another issue with randombytes on WASI targets.
+There's probably a bit of re-engineering to do with the pqcrypto series of crates, but I need to find a bit of time to solve those issues.
+Let me point out though, that by having bindings to other languages and such, pqclean is essentially a de-facto library…
+With my PQClean hat on; those other projects aren't bindings, they re-package code that they copy from PQClean (the only supported use case).
+I think the issue here is partially that a #define randombytes seems quite hacky; a PQCRYPTO_RANDOMBYTES macro with a default value of randombytes using #ifndef would be a lot cleaner an signal to users how the implementations are to be used. Maybe some feature flags such as PQCRYPTO_EXTERNAL_RANDOMBYYTES could be used to signal that that's an option along with PQCRYPTO_SODIUM_COMPAT to enable the right set of flags to integrate with libsodium.
+I'm imagining the following header file:
+then in all files that import randombytes.h, the symbol would automatically be renamed, while switching to a different symbol name would be as easy as specifying another header file (e.g. through the compiler's -I options, or by copying another one).
+The problem with adding lots of configuration options in PQClean, from PQClean's point of view, is mainly that all of that would be untested. The entire existence of randombytes.c, etc, in PQClean, is solely to support the tests.
+I should probably point out that I was answering all the discussion in this thread with my PQClean hat on; and that hat is telling Thom with the pqcrypto crate maintainer hat that he's done a bunch of things pretty sloppily. See also the discussion about another issue with randombytes on WASI targets.
+I appreciate the complexities of your hat closet 😆
+There's probably a bit of re-engineering to do with the pqcrypto series of crates, but I need to find a bit of time to solve those issues.
+🙏
+I'm imagining the following header file:
+I think that would work; personally I would go for something like this just to avoid #defineing tokens which are not expected to be defines, but I think your solution solves the most important issue so this is more a matter of taste.
+Note that I am unsure whether this would clash with any "proper" randombytes symbols, but I think it would not…
+personally I would go for something like this just to avoid #defineing tokens which are not expected to be defines, but I think your solution solves the most important issue so this is more a matter of taste.
+randombytes.h isn't part of api.h so I think it will be fine.
+🥳

@@ -1,0 +1,40 @@
+8.4 only has a few OQS algorithms at the moment. We should add the rest in once we deal with #89 and #90
+So by working this issue, we decided to postpone #89.
+Now, when following the build-and-test instructions in the documentation, make tests fails:
+--> Looking at oqs-test/run-tests.sh I suppose this is a known failure and missing in the set-up documentation, right?
+Also "irritating" is that no OQS tests get executed when doing as documented:
+Again, is this a case of missing documentation update @xvzcf ? I'm now operating on branch "mb-v8test" in case you'd like to correct the updates regarding documentation and tests that I'm making so I'm not chasing wrong goals when moving to Ubuntu 20 and extending the algorithm list...
+Edit: The tests run_tests.sh and try_connection.py worked identically OK in Ubuntu18 and 20. Good. Even after adding "dilithium-aes". Even better.
+Surprising: try_connection.py only works after run_tests.sh has been executed before: Is that intentional? Problem is that the shellscript takes ages to complete and the python script (if run to test all algorithm combinations) also takes a very long time (170 tests/seconds after just adding dilithium-aes).
+Then: Should the description in the README (for "manual" SSH setup and execution) work OK? Already on the unchanged code, if I try it for "dilithium2", it fails:
+--> Do I have to dig deeper into the openssh-8 logic or are these issues for you expected/easy to rectify, @xvzcf ?
+Now, when following the build-and-test instructions in the documentation, make tests fails:
+--> Looking at oqs-test/run-tests.sh I suppose this is a known failure and missing in the set-up documentation, right?
+Yes this does look like a known failure. Does oqs-test/run-tests.sh pass?
+Again, is this a case of missing documentation update @xvzcf ? I'm now operating on branch "mb-v8test" in case you'd like to correct the updates regarding documentation and tests that I'm making so I'm not chasing wrong goals when moving to Ubuntu 20 and extending the algorithm list...
+Yes this is a case of missing documentation. The current (incomplete) set of test commands can be found in the config.yml, and I can update the README in OQS-v8.
+Surprising: try_connection.py only works after run_tests.sh has been executed before: Is that intentional? Problem is that the shellscript takes ages to complete and the python script (if run to test all algorithm combinations) also takes a very long time (170 tests/seconds after just adding dilithium-aes).
+Yes, this is intentional (so that the python script does not have to set up the ssh{d}_config, keys, etc). It is possible to do just the setup without running all the regression tests (something like make tests -e LTESTS="" I believe) and this could be added to the python script perhaps. The python script also does not test all possible combinations, just picks a random signature and key-exchange algorithm and sees if the tests work with the choices.
+Then: Should the description in the README (for "manual" SSH setup and execution) work OK? Already on the unchanged code, if I try it for "dilithium2", it fails:
+--> Do I have to dig deeper into the openssh-8 logic or are these issues for you expected/easy to rectify, @xvzcf ?
+I'm not sure off the top of my head what's going on here, but it seems like there's a good lead sign_and_send_pubkey to follow up.
+The python script also does not test all possible combinations, just picks a random signature and key-exchange algorithm and sees if the tests work with the choices
+No longer :-) If you give it a parameter, it iterates through all alg combinations.
+I'm not sure off the top of my head what's going on here, but it seems like there's a good lead sign_and_send_pubkey to follow up.
+OK, will debug into it.
+No longer :-) If you give it a parameter, it iterates through all alg combinations.
+A potential problem here is that we'd be taking ~2 hours to run the tests, just like before. I avoided doing all the combinations for that reason. My preference would be to augment the built-in regression tests first before looking at try_connection.py.
+My preference would be to augment the built-in regression tests first before looking at try_connection.py.
+I'd also prefer that for regular (CI) operations. But this parameter delivers a fast way to check end-to-end if everything works: I wasn't exactly anxiously looking forward to diving into understanding the openssh test suite logic....
+@xvzcf FYI an update: try_connection.py now changed to run each QSC algorithm exactly once (run here) if passed the parameter "doone": Fast and (reasonably) thorough, so a good compromise. If given no parameter, it still only tests one combination randomly; if given the parameter "doall" it exercises all combinations.
+run_tests.sh unfortunately begins to fail now with too many algorithms enabled; so one more thing to debug... --> Should we again add an algorithm enablement option in generate.yml? If so, which algorithms should we enable by default? Was there an upper limit to the number of algs that could be supported in openssh-7.x that you can recall?
+Edit: Found a limiting constant: 
+Was there an upper limit to the number of algs that could be supported in openssh-7.x that you can recall?
+Answering my own question: Yes, this switch alone makes more than 64 (maybe only 32 for small platforms?) signature algorithms a bad idea: 
+--> Adding sig-algorithm en/disablement logic into the code generator (YML and logic).
+But even then, basic tests on simple algorithms begin to fail after only adding half the algorithms... Quite some more debugging required....
+Edit: And this debugging isn't fun: sshd goes to 100% CPU utilization for 1-2 minutes until it responds -- ultimately the client exists with
+--> Does this look familiar? This is going "deeper" than I'm comfortable with (and wanted to spend time on).
+Problem was a buffer size limitation: 
+Merging #97 closes this issue for good.
+Closed by #97

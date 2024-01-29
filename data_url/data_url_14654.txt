@@ -1,0 +1,27 @@
+In recent PRs that provided ordering of parameters and anonymous assignment of parameters in gradient framework, the new class ParameterView was implemented.
+ParameterView was supposed to be deprecated, but with automatic ordering of parameters, it simplifies multiple parts of opflow.
+Proof of concept here: #6074
+Summary:
+Sorting would be provided automatically by one class, no need to worry about it in different modules.
+Hi @ewinston @kdk
+you might want to take a look or comment on this issue to move it forward.
+I like the idea of having an object to keep track of the parameters. Concerning your points from above:
+Another question we should address is:
+Hi there.
+and
+It’s not only performance. By subclassing set, you get all set methods for free.
+Sure, you can subclass MappingView and use set internally to implement all set methods yourself, but it’s just more lines of code with no benefit.
+I don't think ParameterView should be a set or have the set methods. Right now they are just there to keep our 3-month deprecation policy 🙂
+There is a lot going on here. Here's one thing: The code above
+reveals a bug. Copies of Parameter('c') are inserted 10000 times to the list. And the search is O(n). This is the source of the poor performance.
+I think it'd be better to postpone implementation details until we decide on how we want to proceed with this. As you're saying there's a lot going on and we should have a plan before moving along 🙂
+@jlapeyre This is because Parameter.__eq__ compares UUIDs, not names (maybe it should raise error for the same name, but different UUID?)
+You will get same outcome on the set:
+The poor performance is because ParameterView is storing parameters in the list and checks if parameter is in, instead using set.
+However, there is a bug in ParameterView.update:
+This works on Parameters, which is just wrapper around set.
+@molar-volume As, I wrote that comment, I tried inserting Parameters in set and saw the same thing. I assumed that your implementation did something to get around it. But, it now looks like the difference in performance is that before insertion, one does either a linear search or a hash table look up.
+There is another efficiency issue I could mention. But, I notice that @Cryoris has restricted comments to the biggest design issues. I agree with this. In particular it is very unusual to allow indexing into a set, (or ordered set). I'm suspicious of a design that requires it.
+It makes sense to me that one should not be able to create two Parameters with the same name in the same "context" (suitably defined). So creating a Parameter implies a symbol table. But, this idea belongs in some other issue.
+@jlapeyre In context of QuantumCircuit there exists ParameterTable that raises Name conflict on adding parameter, but not in OperatorBase.
+SortedSet implements __getitem__ and other sequence methods as well, but I am not well-versed in that area and I trust you on this 👍

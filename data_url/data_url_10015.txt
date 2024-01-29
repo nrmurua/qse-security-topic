@@ -1,0 +1,32 @@
+Application
+It is sometimes useful to know the range of biases used in a bqm.
+Proposed Solution
+Could make an attribute on LinearView and QuadraticView, so
+Alternatives Considered
+This does not save significant code relative to the current method min(bqm.linear.values()) and might be considered confusing since min(bqm.linear) would return the minimum label rather than the bias.
+We could also make it an attribute rather than a method, but a method allows things like
+That looks helpful. Have you considered linear_min, linear_max, quad_min, quad_max = bqm.ranges()?  Maybe ranges is quite right, bounding_box seems more appropriate.
+I like bounding box! It could also similarly do (lmin, lmax), (qmin, qmax) = lrange, qrange = bqm.bounding_box()
+It would also be nice to be able to calculate things like mean, median, standard deviation etc.
+Since all these (min/max/mean/quartiles/etc) are one-liners, I'd vote to add only the most frequently used ones.
+That is, unless you planned to distribute calculation over bqm modify ops (which would be easy to do for some, like mean, but would require O(n) space for min/max; again worth doing only if used very frequently).
+Nice! I missed that package, joys of dropping 2.7...
+One reason to implement some of these directly is that for BQM.quadratic, especially on the large cyBQMs, the performance difference will be very noticeable.
+Example:
+Gives times of
+That's nice! There's no doubt all these could be sped up with cython, I was just wondering is reimplementing the statistics module justified by usage.
+However, having fast min & max supports a very important use case from dwavesystems/dwave-system#300, so I would start with those.
+FWIW, using to_numpy_vectors() (which, yeah, takes O(n) space) gives a pretty decent result on the bqm from your example:
+Only 3x slower than pure cython (on my machine).
+I've been looking at the different ways to implement these min/max methods and here is a summary of what I've tried, including the above discussion:
+In terms of syntax:
+I tried looking at existing libraries to find examples. The closest one I could find was in Pandas, with pd.Series.array, with which you can either do pd.Series.min() or pd.Series.array.min(), and both would work. In NumPy, there are multiple ways to do the same thing (such as np.ndarray.min() and np.amin(array)).
+Not sure if it's excessive, but we could implement both and just allow the user to choose. If it is excessive, I personally find bqm.linear.min() to be more straightforward (as opposed to .lmin(), or .bounding_box()).
+In terms of implementation:
+I've tried some different test cases with the implementations listed above and as they've been described, the cython implementation is generally the fastest (with some exceptions where the np one was faster). While the np implementation is not that much slower than the cython one, it makes sense to me that we would use whichever implementation is usually the fastest.
+I am actually fine with doing both (although one obviously calling the other).
+For implementation, one issue with the numpy approach is the space complexity. The testing I did was at 1k variables, but really we want the BQMs to work up to 20k, where that extra copy will hurt.
+It would be cool if python supported something like __min__ and __max__ methods that would the built-in min/max call. But it doesn't.
+I vote for min/max view methods. Also since we're actually doing this, it makes sense to implement it optimized in cython, and make our min/max worth using. 😄
+Okay, cython it is then!
+As for syntax, I'll implement them on the views first and make a pull request. And if later on we want them on the model as well, we can do so.

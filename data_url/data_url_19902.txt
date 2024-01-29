@@ -1,0 +1,93 @@
+Ideally, this project should be compilable via emscripten to WASM. Adding compatibility and documentation to make this possible should exist.
+We haven't tried this before and don't have experience with WASM.  Is this something you've tried?  If you have specific CMakeFile changes that have to be made to make it work, feel free to submit that as a pull request.
+I'm going to leave this here for now that way I can look into making liboqs compatible with WASM: https://stackoverflow.com/questions/70311540/compiling-c-with-external-library-to-wasm-using-wasmer
+If you'd like us to look into this, please point to information how to install all required tooling for this sample build script to work? Are there docker images containing such tooling? A quick install on my local machine yields
+--> Where does this reference to "clang-9" come from (I've got 14 installed on the machine)? Why is the architecture reported to be "x86"? It's x86_64:
+Here's the result of running the "simple" wasienv install script: Pretty unhelpful output...
+
+I notice there is 36% of assembly code in this project. The design goal of WASM is not to handle any hardware vendor-specific native assembly code. Are there any configuration switches to bypass the assembly code and replace it with its C equivalent code (at the expense of performance, most likely)?
+If the native assembly code is mandatory, WASM build will be impossible.
+Are there any configuration switches to bypass the assembly code and replace it with its C equivalent code
+No, a single such liboqs build option does not exist "out of the box". Arguably, all code/components do exist for most (i.e, the PQClean) algorithms that would allow adding such switch to the cmake build structures in the project, though.
+You could get very far already using the build option combination OQS_DIST_BUILD=OFF OQS_OPT_TARGET=generic OQS_USE_OPENSSL=OFF as that combination should disable including all optimization code parts (i.e., assembly code).
+So, please give the above a try, feel free to do a PR if you need this or provide us with information why we should spend work cycles on this: I personally have doubts anyone would want to use slow-running cryptography... If you know of concrete use case(s), please let us know.
+Thanks to the advice from @baentsch, the oqs WASM build works now. Here is a mini doc.
+Install the the Emscripten 
+Similar to the oqs build process, the WASM build process is prefixed with the Emscripten command as follows:
+By the way, wasmer should work too if you use the above -D switches.
+The oqs source code seems structured very well. It has a "generic" target. Its assembly code does not prevent those pure C code from working. Its runtime fails graciously when the build target is not compiled to fulfill a task, most likely because the target like WASM cannot accept assembly code. For example, instead of crashing, it would print out something like this: KEM algorithm BIKE-L1 not enabled!
+Keep up with the great work. Thanks.
+Just a friendly reminder. I hope you keep in mind that WASM, representing the web, should be considered a legitimate target. If it is considered "generic", that is fine, as long as it contains only pure (free from assembly code, inline or not) C/C++ code that is not contaminated by the vendor-dependent features such as Linux/Windows system calls.
+I hope you keep in mind that WASM, representing the web, should be considered a legitimate target.
+Valid point. Three questions to this:
+a) Would it be OK we add reference to the above as a section to https://github.com/open-quantum-safe/liboqs/wiki/Platform-specific-notes-for-building-liboqs ?
+b) Would you consider contributing a WASM-ready demo environment/docker image (at https://github.com/open-quantum-safe/oqs-demos)?
+c) Would you consider contributing to https://github.com/open-quantum-safe/profiling, adding comparative (performance) tests between classic and QS-crypto using WASM (e.g. comparing to WebCrypto)? I personally still have doubts WASM-compiled crypto code can be useful if too slow... But then again, signature operations are not necessarily performance-sensitive (unlike heavy-duty stream ciphers or KEXs).
+@DevelopDaily When trying out your steps above, the following error appears:
+Any idea what's going on here?
+To reproduce: docker run -it ubuntu and in it
+@baentsch
+a) Would it be OK we add reference to ...
+b) Would you consider contributing a WASM-ready demo ...
+c) Would you consider contributing to ...
+Yes for a)
+For b) and c), I can try...
+@baentsch I only tried the procedure on a full-blown Ubuntu 20.04 Desktop and it worked perfectly.
+I will try to do it in a docker container and let you know my testing results.
+@baentsch I only tried the procedure on a full-blown Ubuntu 20.04 Desktop and it worked perfectly.
+I will try to do it in a docker container and let you know my testing results.
+Thanks. I also tried on a desktop (VM) but got the same error messages. If you simply run the commands above the error message is output straight away. What really is surprising is that the pretty strange error message "a function declaration without a prototype is deprecated in all versions of C" is output: This simply cannot be the case as liboqs is built with many different versions of C compilers -- and none of them (bar this /emsdk/upstream/bin/clang) complains about this... I'd have the impression it doesn't find the header files, but -Iinclude is present on the compiler invocation... Will wait to hear from you before adding the instructions to the "Platform build" wiki.
+@baentsch
+Actually, that is a legitimate error in the oqs source code.
+In the header file kem.h:
+OQS_API int OQS_KEM_alg_count(void);
+In the kem.c:
+OQS_API int OQS_KEM_alg_count()
+The void matters to the cutting-edge C compilers such as clang, which thinks the function in the kem.h does not have an implementation and the one in the kem.c is "a function declaration without a prototype." It is easy to fix the problem by just adding the void to the function in the kem.c. That being said, I guess it would take you some time to fix all the missing void errors.
+The WASM build succeeded on my local machine because it used a slightly older compiler, which does not enforce the function prototype. The docker image always uses the latest compiler, which is supposed to fail the build.
+Thanks for the analysis, @DevelopDaily !
+After the issue #1204 is resolved, you may build a local docker image to build the WASM. I use Ubuntu. I've made a very simple Dockerfile
+Here is the procedure.
+Thanks for the walk-through, @DevelopDaily . Based on this, it should be possible to build a fully working WASM environment in the above even before #1204 is resolved by simply removing one line: 
+@baentsch You are correct.
+After removing that line, I just built the WASM in the container successfully.
+You may polish the image however you see fit. That pretty much fulfills your earlier request:
+b) Would you consider contributing a WASM-ready demo ...
+If necessary, I may add a a little description later for the demo. Basically, all the out-of-the-box oqs tests under /src/liboqs/build/tests should work automatically, albeit with reduced capabilities because of the skipped assembly code.
+For example, you can create a test file whatever_to_be_hashed.txt. Then, run
+node test_hash.js sha256 < whatever_to_be_hashed.txt
+You should see the hash of that file.
+Thanks for the confirmation, @DevelopDaily ! As I have 0 knowledge of WASM, (where) are there specific crypto tests (beyond hashing as per your suggestion) that we could run/trigger QSC? Or is it as simple as running "our" speed_kem etc. tests? Do they become "WASM executables" or is there a JS-wrapper required to trigger them?
+@baentsch
+Precisely, it is as simple as running "your" existing tests. There are JS-wrappers to trigger them. A "WASM executable" is composed of two files. Take the speed_kem as an example, they are speed_kem.js and speed_kem.wasm. You run it like this:
+node speed_kem.js
+Under the hood, the speed_kem.js is going to deal with the speed_kem.wasm. The beauty is that the WASM build process uses "your" existing scripts, without any modification, to take care of everything to produce the "WASM executables".
+@baentsch This may help visualize how it is run. By the way, some results look unusual. But, that would be a different story worth investigating later.
+Thanks for the explanations and test-run, @DevelopDaily ! At first glance this looks like 5-15% of native performance: Is that expected for WASM code? Some papers claim the gap should be smaller. Any idea how to compare this with "classic crypto" used via WASM? e.g., is there a way to compile openssl (3) for WASM? We could then run classic and QS crypto "head-to-head"...
+@baentsch
+is there a way to compile openssl (3) for WASM?
+Yes, but it is more difficult because openssl is quite an old-school project. I'll see what I can do...
+@baentsch
+... compile openssl (3) for WASM? We could then run classic and QS crypto "head-to-head".
+I have built the openssl perfectly. Unfortunately, however, I am afraid a "head-to-head" comparison won't be useful because the WASM openssl speed is excruciatingly slow (up to minutes and hours) for three reasons:
+... this looks like 5-15% of native performance: Is that expected for WASM code? Some papers claim the gap should be smaller.
+Performance benchmark is a very complex issue, on which I am not an expert. Here is my understanding. The near-native performance claim of WASM is based on pure C/C++ code, which must be well-written and straightforward enough to give a modern compiler a chance to apply its optimization strategy to produce high quality assembly code. It may never beat hand-crafted assembly code in some occasions, but, in most cases, it should outperform its hand-crafted counterparts. I usually refine my C/C++ as much as possible, unless I have to write assembly, as a last resort.
+For pure C/C++, I did some casual benchmarking on this code:
+Native build and run:
+WASM build and run:
+As you can see, the WASM run is actually much faster.
+openssl speed is excruciatingly slow
+No question, if it runs through all algorithms. What I meant to ask is: What is the relative WASM performance of functionally comparable algorithms, say for signatures, i.e., openssl speed -seconds 5 rsa compared to openssl speed -seconds 5 dilithium3?
+openssl uses assembly language too. After it is disabled, that presumably makes the system very slow
+If you use the commands above, it should allow you to compare non-assembly crypto implementations (classic vs. QS) with the same testing overhead in both cases.
+The openssl benchmark program speed itself may contain bugs.
+It might -- but this is highly improbable as this is pretty "seasoned" code as you also point out. It surely has not been written with WASM in mind -- but so did none of the QS algorithms.
+As you can see, the WASM run is actually much faster.
+Agreed -- but then again this sample basically runs two, probably differently optimized library functions against each other, not real, external code as the two commands suggested above would do.
+@baentsch
+If you use the commands above, it should allow you to compare non-assembly crypto implementations
+WASM run:
+Native run:
+Both tests failed on the WASM openssl. If you have some other specific commands to run, I can do it. I update the docker file and you can build your own as well.
+Dockerfile
+In the docker image, follow this procedure to build:

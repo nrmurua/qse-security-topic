@@ -1,0 +1,17 @@
+Description of the issue
+Cannot serialize a gate with the cirq.google.PhysicalZTag
+How to reproduce the issue
+Cirq version
+0.10.0
+You need to use an instance of PhysicalZTag, rather than the class itself:
+Admittedly, this is a bit annoying for tags like PhysicalZTag that are clearly singletons, so we should see if there's a way to clean that up.
+I see; thanks for pointing out my mistake. I suppose this also means that all the gates I thought were actually physical Z gates are actually not...
+I think it would make sense for with_tags to check the type and raise an exception with informative error message to avoid this in future.
+@viathor, currently with_tags doesn't do any checking about what kind of objects are used as tags. I seem to recall that we discussed requiring all tags to inherit from some marker trait (a hypothetical cirq.Tag) but decided against this to avoid over-constraining the tag semantics (e.g., there may be cases where you want to use str or some other type you don't control as a tag, and can't change it to inherit from a marker trait). We may want to revisit that decision.
+Another possibility in this particular case would be to change our serialization code to check for the PhysicalZTag class or instances of that class and treat them the same way to avoid this particular pitfall. Or, we could change the class to _PhysicalZTag and make PhysicalZTag be a singleton instance of it (with a __call__ method that returns itself for compatibility). It has always irked me that we have to create instances when this is clearly a singleton, and it's clear from this issue that this is confusing for others as well.
+We could also special-case the type type:
+(This will certainly upset mypy. There is a longer better way of writing this. This snippet is just to get the idea across.)
+Downside here is that if someone passes a tag class whose ctor requires arguments the error message may be even more confusing...
+My input is that a Union[str,cirq.Tag] type signature would be a good direction. Allows for str tags as well as any instance of cirq.Tag. Also +1 for adding singletons for cirq.google.PhysicalZTag and a privagte _PhysicalZTag class - this would help in syntax.
+Useful discussion on "why not use strings for tags?" can be found in #2407.
+just wanted to +1 @viathor's suggestion for an exception to be raised if you don't use an instance. This has also come up for me with NoSyncTag() in the past.

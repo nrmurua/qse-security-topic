@@ -1,0 +1,70 @@
+As per issue #18 the compiler should provide information about the mapping between qubits of the input circuit and the output, possibly in JSON format.
+Awesome! Thank you.
+On second thought, I am not sure if my earlier suggestion of the JSON format is proper. I mean, if the mapping relationship is simple enough, a simple text output file would suffice, as log as it can be parsed easily.
+One of the beautiful things I appreciate very much about staq is that it is so useful yet its dependency on other libraries has been kept at a minimum.
+JSON output is nice, but introducing a new dependency on a JSON library may be an overkill.
+I've added information about the physical layout via comments in the openQASM output. I'll leave this open since there might need to be some tweaks depending on feedback. This seemed like the most sensible option to me rather than a separate file.
+The mapping feature for the square described in the issue #18 has been implemented correctly. Thanks.
+But, when I tried the procedure in the issue #18 by using tokyo instead of square, it does not produce the expected result based on the mapping relationship in the output QASM. Could you please try that?
+If you want me to elaborate on my tokyo result, I will post it.
+It seems to me that the circuits are the same, accounting for the different mapping. This is what I get:
+Square:
+Tokyo:
+The outputs only differ in that q[4] in the square mapping is replaced by q[6], which both correspond to q[2] in the input circuit. Do you get the same output?
+Thanks for taking the time to test this!
+Shame on me. I made a stupid error in my spreadsheet that is used to tally and analyze the results.
+You are correct. I am going to run all my test cases and keep you informed.
+Again, thank you for this amazing tool.
+No worries at all! Glad to hear it appears to be correct. Let me know if you encounter any other issues.
+I tested all the available devices (tokyo|agave|aspen-4|singapore|square|fullycon) to create two contrived states (equal probabilities and ascending probabilities). All perfect.
+What I haven't done and plan to do is to find out how the QFT gates (up to 16 qubits) in my system will behave when they are mapped to the physical devices.
+I use a customized qelib1.inc and the result does not seem to be correct. The qelib1.inc comes from the  qpp project. The major differences are these:
+The standard version of the qelib1.inc specified in the OpenQASM:
+The qpp version of the qelib1.inc:
+Then, I use a simple input.qasm like this:
+Run this with the standard qelib1.inc, which is present in the current directory of the input.qasm.
+./staq -m -d square -f qasm -o output_standard.qasm input.qasm
+Run this with the customized qelib1.inc, whose rx and ry gates are replaced.
+./staq -m -d square -f qasm -o output_custom.qasm input.qasm
+The two output files are significantly different. I mean, they may look very similar, but they will produce drastically different final states.
+The standard output:
+The custom output:
+The results do not necessarily mean the staq is wrong. If you can give the staq a clean bill of health, I will move on to the qpp project to file an issue.
+Thanks.
+Hmm, this one is a bit difficult. Neither result is incorrect as far as I can tell --- they both expand the gates correctly given the version of the standard library. In the qpp case, the final gate differs by Rz(pi), which seems consistent with the discussion from the qpp project where it was found that the standard library implements H up to phase.
+So, the question now is what to do. What I'm thinking is to provide an alternate qelib in the repository for compatibility with qpp. That way programmers can choose which version, e.g., either by importing qelib1.inc or qelibqpp.inc
+When I run the standard staq output with the qpp testing tool qasm2 like this;
+./qasm2 output_standard.qasm "2 3 4 5 6 7 8"
+I get this:
+Run the customized staq output
+./qasm2 output_custom.qasm "2 3 4 5 6 7 8"
+I get this:
+So, from the point of view of qpp, the final state of the output_custom.qasm is wrong. If the ry(pi) q[1]; is added to the end of the output_custom.qasm, its final state will match that of the output_standard.qasm.
+Since the final states actually differ by ry(pi), I scrutinize more of the ry definition in the qpp customized qelib1.inc. The gate ry is backed up by the gate r. I speculate there may be a parse error in the staq or one of its dependencies. Here is a test.
+If the qelib1.inc has this line:
+gate r(theta, phi) a { u3(theta,phi-pi/2,-phi+pi/2) a; }
+The staq outputs this line:
+U(-0.339837,(pi/2)-(pi/2),-((pi/2)+(pi/2))) q[1];
+If the qelib1.inc has this line:
+gate r(theta, phi) a { u3(theta,phi-pi/2,pi/2-phi) a; }
+The staq outputs this line:
+U(-0.339837,(pi/2)-(pi/2),(pi/2)-(pi/2)) q[1];
+The difference between -phi+pi/2 and pi/2-phi in the qelib1.inc should not trigger any different outcomes of the staq. The expressions -phi+pi/2 and pi/2-phi are equivalent in that context, aren't they?
+Good catch, I hadn't noticed that. They are equivalent in the context. The parser didn't have the correct precendence for the unary - operator in this case, so it was being associated incorrectly. This is fixed now.
+Thanks!
+Here is a test case to reveal another bug.
+Run this:
+./staq   -S   -m   -O1   -d   square   -M   swap   -l   linear   -f   qasm   -o   output_linear.qasm   linear.qasm 
+The result in the output_linear.qasm looks like this:
+Note that the 3 qubits have a straight 1 to 1 mapping relationship, thus one expects the linear.qasm and output_linear.qasm would produce the same final state. In reality, they don't.
+The final state of the linear.qasm:
+The final state of the output_linear.qasm (after discarding the unused qubits 3-8):
+Right, with the swap mapper the layout at the end of the circuit is not necessarily the same as the mapping at the beginning. I had overlooked that when outputting the layout since the steiner algorithm operates differently.
+Thanks for bringing this to our attention! I'll try to fix this ASAP, but I'll have to rethink a few of the details of the implementation first.
+As an aside, that's not a great circuit it synthesizes for this case. I'd like to improve that if possible at the same time.
+The latest commit should fix this. For the command ./staq -S -m -O1 -d square -M swap -l linear -f qasm -o output_linear.qasm linear.qasm the compiler now outputs the following:
+The final layout gives the output amplitudes, as given in the previous comment. It's a bit confusing because the original circuit actually performs a swap, so the swap on q[0] doesn't show in the output mapping which only reports which virtual qubit a physical qubit is assigned to at the end of the circuit.
+All of this is to say, the steiner mapper is really the way to go (IMHO). No multiple levels of indirection to juggle and better CX counts.
+Great. Thanks.
+Now, I can run some non-trivial circuits, and will let you know the results.
+Awesome, thanks for all your feedback so far! I'm closing this issue now.

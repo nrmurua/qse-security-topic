@@ -1,0 +1,14 @@
+As discussed in #56 , the code has potentially several places where switching from GPU and CPU is a requirement in order to bypass the memory limitation.
+We should propose a strategy to deal with this issue consistently in all parts of the code.
+@stavros11 I think this has been already fixed at the level of config.py, could you please confirm?
+I think we are not fully addressing this yet. We have a mechanism to fall back to CPU for measurements but the cut-off defined in config.py is very specific to this case. If I understand this issue correctly, we would like to have something more general and fall back to CPU for any calculation the GPU memory is not enough. For example now if we try to run 28 qubits it will just fail. Ideally we would like it to switch to CPU, right?
+Right, thanks for pointing this out.
+Concerning this issue. If I understand correctly we could propose a circuit method and functions which:
+I think point (1) may not be required, we could try to intercept the tensorflow OOM error and go for 3.
+There are several ways we can avoid point (1). If we want to intercept the OOM error, perhaps the easiest approach is to modify circuit.execute as follows:
+or instead of falling back to CPU automatically do something like raise RuntimeError("State does not fit in GPU memory. Please use the CPU"). This would work without returning a new circuit.
+A cleaner approach would be to associate a device with the circuit, which can be passed during initialization eg. c = models.Circuit(20, device="/GPU:0") and do:
+The user could then switch the device and retry the execution.
+Let me know how these approaches sound and I can open a PR for this.
+I think both approaches you have proposed are interesting. At this point I would avoid falling back to cpu but rather print an error message.
+The second approach looks simple and clean. We could have a set_default_device function in config.py that flips the default to gpu or cpu, or simply store if a variable if the gpu is detected.

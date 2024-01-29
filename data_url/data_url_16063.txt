@@ -1,0 +1,14 @@
+Since 296a745b the nightly benchmarks have flagged a regression in the benchmarks measure parameter binding. This appears quite severe as the number of parameters grow, for example:
+https://qiskit.github.io/qiskit/#circuit_construction.ParameterizedCircuitBindBench.time_bind_params?machine=dedicated-benchmarking-softlayer-baremetal&os=Linux%204.15.0-46-generic&ram=16GB&p-width=20&p-gates=2048&p-number%20of%20params=2048&commits=296a745b
+which is showing a 69.11x performance regression.
+Bind parameters on a circuit, the benchmark code showing the regression is here:
+https://github.com/Qiskit/qiskit/blob/master/test/benchmarks/circuit_construction.py#L88-L102
+No performance regression
+Fix the performance regression
+While this is mostly fixed for circuits with large numbers of parameters there is still a substantial performance regression:
+https://qiskit.github.io/qiskit/#circuit_construction.ParameterizedCircuitBindBench.time_bind_params?machine=dedicated-benchmarking-softlayer-baremetal&os=Linux%204.15.0-46-generic&ram=16GB&p-width=20&p-gates=131072&p-number%20of%20params=32768&commits=cb211095-79cb4757
+and
+https://qiskit.github.io/qiskit/#circuit_construction.ParameterizedCircuitBindBench.time_bind_params?machine=dedicated-benchmarking-softlayer-baremetal&os=Linux%204.15.0-46-generic&ram=16GB&p-width=20&p-gates=131072&p-number%20of%20params=8192&commits=cb211095-79cb4757
+(these were places that after the initial regression things were exceeding the timeout until #6027 merged)
+Those are 2x and 18x slower so we should definitely see how else we can try to fix this prior to 0.17.0.
+From profiling, looks like half of the time in these benchmarks is being spent on calls to self._unsorted_parameters from https://github.com/Qiskit/qiskit-terra/blob/79cb475/qiskit/circuit/quantumcircuit.py#L2020 . Could consider hoisting the self._unsorted_parameters call outside the loop, or using a set operation like params_not_in_circuit = set(_unrolled_param_dict).difference(self._unsorted_parameters).

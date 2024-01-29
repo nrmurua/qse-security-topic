@@ -1,0 +1,15 @@
+Description of the issue
+Calling cirq.optimized_for_sycamore on a circuit with a CircuitOperation is expected to optimize only the contents of the CircuitOperation while preserving the structure, but the circuit is instead flattened.
+How to reproduce the issue
+Cirq version
+0.14.0.dev20220228000741
+This is a known issue.
+We need to add support for a deep=True flag to all transformers so that when the flag is True, the transformer runs recursively inside a circuit operation, or else it directly inspects the contents of the circuit operation and treats it as a "single operation".
+Note that directly inspecting contents of a circuit operation can be useful, for example if we have a 2q circuit operation which implements a unitary that can be more efficiently re-written using an analytical decomposition. We can still brainstorm on whether the newly re-written unitary in this case should be wrapped inside a circuit operation (in the sense that it "preserves" structure) or not.
+I don't think deep/shallow fully describes this issue. Consider:
+In order to make this Sycamore-friendly, both the H and the CX must be converted, which requires stepping into the inner CircuitOperation (i.e. deep=True behavior), but we also want to keep both CircuitOperations, which IIUC is part of the deep=False behavior you describe.
+The ConvertToSycamoreGates class already has the desired behavior, but it seems like this is now overridden by other sections of optimized_for_sycamore.
+In my description, deep=False will treat the circuit operations similar to other operations in Cirq -- i.e. try to get a unitary and do an optimal decomposition. If not possible, fallback to cirq.decompose. Specifying deep=True will inspect the type of an operation, and if it's a circuit operation, it will recursively run the same transformer on the wrapped circuit.
+Consider the following example (similar to yours, but the internal wrapped circuit op is unitary and does not contain measurements).
+In my description, deep=False will treat the circuit operations similar to other operations in Cirq {...}
+Thanks for the clarification - I misunderstood the intent before. The deep=False/True dichotomy described above fulfills the requirements as I understand them.

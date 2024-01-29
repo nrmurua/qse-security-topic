@@ -1,0 +1,10 @@
+The qasm exporter creates a unitary gate with empty definition.
+Run the code:
+Output:
+Run this code to read back the exported qasm:
+But it gives an error because the qasm is incorrect, since it has gate unitary139827973619136 which is empty. Output:
+The generated qasm should include the definition of the gate. This works if the optimization level is lower or if we set the registers to use 2 bits. This is odd, since the correctness of the exported qasm should not depend on the size of the circuit or on the optimization level.
+It must be connected to the optimizations running on optimization level 3 and it must depend also on the size of the registers. It could be curious to see, maybe in the test suite there was a test case testing a similar case but with a smaller size of register and it passed there, whereas with 3 or more bits as size of the registers it fails. This is just speculation.
+Looking forward to your feedback, thanks in advance.
+The empty definition is clearly correct here - transpilation at level 3 does full unitary re-synthesis, and discovers that the single-qubit unitary is a simple identity, and so it doesn't need to do anything.  Lower optimisation levels don't do the same level of resynthesis (because it's expensive), and since there's no basis_gates supplied, they don't need to do any synthesis.  The bug component of it is that the output gate statement doesn't define any qubit operands, even though it takes two.
+Similar #8222, this will be because of UnitaryGate's very questionable special case for how it constructs a definition for itself in OpenQASM 2.  On a quick look, I can see that it builds up the argument list by looking at the subinstructions in its definition, rather than using the qubits directly from the definition circuit.  Since this no-op gate has no instructions, it doesn't add any qubits.  I can't see a reason why things are that way - the gate is always going to be called with number of qubits in the definition circuit in that order, so I don't know why there's any logic that allows the definition to have a different number and order of the qubits.

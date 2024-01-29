@@ -1,0 +1,16 @@
+We want to avoid using lhs-reallocs because they can introduce hidden copies, which can be hard to debug performance issues. Furthermore, it can hide out-of-bounds bugs. Generally, most Fortran developers are not aware of the feature and expect allocatables to behave like pointers.
+Recently, our toolchain tests missed the introduction of reallocs in an OMP REDUCTION. To catch those in the future, I'm considering to add -Werror=realloc-lhs to all toolchain arch files. Unfortunately, for newer GCC versions one then also has to use -finline-matmul-limit=0, which is why we current only have it in sdbg and pdbg. While inlining helps the performance, the potential reallocation will hurt it. So, maybe disabling inlines is still a net-win?
+Alternatively, we could just enable OpenMP for sdbg and pdbg.
+We want to avoid using lhs-reallocs because they can introduce hidden copies, which can be hard to debug performance issues. Furthermore, it can hide out-of-bounds bugs.
+No, what we really want is to avoid unnecessary allocations and specifically allocations/deallocations in tight loops. Outside of tight loops lhs-reallocs may have perfectly valid use cases.
+Generally, most Fortran developers are not aware of the feature and expect allocatables to behave like pointers.
+Recently, our toolchain tests missed the introduction of reallocs in an OMP REDUCTION. To catch those in the future, I'm considering to add -Werror=realloc-lhs to all toolchain arch files. Unfortunately, for newer GCC versions one then also has to use -finline-matmul-limit=0, which is why we current only have it in sdbg and pdbg. While inlining helps the performance, the potential reallocation will hurt it. So, maybe disabling inlines is still a net-win?
+No. The "problems" fixed in #725 were valid cases for LHS allocations which are hidden now. There will still be allocations by the OMP runtime due to the variables being declared private (in our case implicitly due to the reduction clause).
+Following Goodhart's Law I'd say it's nice trying to achieve as few warnings as possible, but if a developer is sure she knows what she's doing she should be able to disable the warning. Because it's just that: a warning that there's a chance something's going wrong.
+Alternatively, we could just enable OpenMP for sdbg and pdbg.
+IMHO we should stop supporting building without OpenMP. We can however internally set OMP_NUM_THREADS=1 if we detect the executable to be cp2k.s* (or in general) and/or add some logic to automatically spawn as  many additional OMP threads to occupy all CPUs.
+Given current and upcoming architectures we can't get away with proper OMP support anyway.
+I'm not saying there are no benign uses of lhs-reallocs. My point is that this feature provides no real advantage. Yes, maybe one can occasionally save a line of code by relying on an implicit reallocation, but this will be at the expense of confusing pretty much every future reader. On the other hand there are real risks as outlined above. So, since there is no upside, but a clear downside, my conclusion is that we should not use this feature.
+IMHO we should stop supporting building without OpenMP.
+I totally agree and opened #729 for further discussion.
+Done via #736.

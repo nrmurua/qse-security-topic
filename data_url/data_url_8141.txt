@@ -1,0 +1,54 @@
+Describe the bug
+See discussion here:
+https://groups.google.com/g/qutip/c/2lod1DuFZiE/m/y8Bj6dKHDAAJ?pli=1
+To my surprise, my PhD student had this problem again today, I am a bit surprised nothing has been done about this.
+At least making es the default solver for correlation and spectrum, updating the docs to give a warning to only use the es solver (for now?), and maybe longer term figuring out why the other solvers are not handling it properly
+To Reproduce
+https://github.com/gsteele13/gary-exploring-qutip/blob/master/Correlations.ipynb
+Expected behavior
+Correlation should have an imaginary component and quantum PSD should not be symmetric about f = 0
+Your Environment
+Software	Version
+QuTiP	4.4.1
+Numpy	1.17.4
+SciPy	1.4.1
+matplotlib	3.3.4
+Cython	0.29.14
+Number of CPUs	4
+BLAS Info	INTEL MKL
+IPython	7.9.0
+Python	3.7.5 (default, Oct 25 2019, 10:52:18) [Clang 4.0.1 (tags/RELEASE_401/final)]
+OS	posix [darwin]
+Wed Mar 10 08:51:15 2021 CET
+Additional context
+Add any other context about the problem here.
+hi gary,  thanks for making this an issue, i think it fell through the cracks on the google groups.
+I think the problem is with how the expectation values are calculated.  Mesolve() returns the correct states, but they are wrongly flagged with isherm=True, even when they are not actually hermitian, so when expect() is called it takes the real part.  I think this incorrect flagging happens here for the output states
+
+and here for collating the expectation values
+
+@Ericgig is there any issue with just removing this isherm=True flag here, and fixing the hermiticity check in the expectation values output call? i guess all this is getting replaced with your solver rewrite anyway, but if not it might make a good ''first issue'' for gsoc?
+hi gary, thanks for making this an issue, i think it fell through the cracks on the google groups.
+I think the problem is with how the expectation values are calculated. Mesolve() returns the correct states, but they are wrongly flagged with isherm=True, even when they are not actually hermitian, so when expect() is called it takes the real part. I think this incorrect flagging happens here for the output states
+
+Actually sorry, this is just for the final state.  For the full output list this happens
+
+where the mc-dm option forces an isherm=true for some reason?  (presumably for speed reasons)
+Qobj has some fast-path constructors that are basically the solvers saying "this data is valid, just trust me", causing it to skip sanity checks.  There are a few slow points that can be skipped: copying unnecessary data, parsing/verifying the dims data, and determining the properties (isherm, iscp, etc).  All of those add on very non-negligible construction time, but at most points in QuTiP we know the values when passing them.  Old-style code uses these magic "fast-path" constructors, but the new 5.0 branch gets rid of all of them - you can achieve much more, and more explicitly, by using the kwargs, and function-specific logic stays at the call location, rather than being bolted into Qobj.
+We still want to maintain passing isherm to Qobj when we know it for speed reasons, especially when we know the most common use of the Qobj created by mesolve is for finding expectation values.  However, you can set the value based on the hermicity of the input density matrix; if you're passed a true density matrix, you'll always get a Hermitian matrix out, whereas you'll generally be in an unknown state if you're not.  The test can be
+which forces isherm=True if that's known, but leaves it unset if not.  This is approximately how we handle things in 5.0, which is in part why we have huge reductions in Qobj construction time in the new version.
+This is a little tricky, but yes this could be a good first issue.
+With master using fast="mc-dm", the Qobj constructor ignore isherm input.
+Also, to add a hermicity check for the state in expect, you need to be careful about column-stacked dm.
+Except for setting the type of the Qobj (which is deleted at the end of Qobj.__init__), there's no need for the 'mc' or 'mc-dm' fast-paths to exist in Qobj.__init__ at all, even in master.  If we were to fix the handling of a passed type - nothing else is overwritten if passed explicitly - you could achieve all the same effects at approximately the same speed with correct application of the kwargs, such as
+providing data is actually of a valid (fast_csr_matrix) format. Technically the Qobj.data attribute will be a new object that wraps the same numpy arrays as was passed, rather than the same fast_csr_matrix.
+In various forms, expect already does check the Hermicity, that's why mc-dm is careful to set it to avoid recalculating it.  The expect functions in qutip.expect do this directly, and aren't aware of column-stacked density matrices - they'll just raise a TypeError.  mesolve and mcsolve now bypass the Qobj stage and go direct to Cython - in 5.0 it might not be a terrible idea to route everything back through the Qobj form, since the performance issues there are solved (a column-stacked dense matrix can be directly wrapped by an f-ordered Dense type), and it's the natural central point of the code (and those parts are called from Python-space anyway, so no C concerns).
+Here though, the problem is actually that the expectation generator in mesolve correctly calculates the dtype of the output expectation array using both the state and the expectation operator, but then it does it incorrectly in the loop, and passes the hermicity down to Cython using only the expectation operator, which promptly throws out the complex part.
+So setting fast='mc-dm' in Qobj is a symptom of the same root cause as the problem here, rather than the cause itself.  At the start of mesolve we don't assume that the state is Hermitian, but then inside the integration loop we do.  We can still keep the speedup - if the output was created with a complex dtype, we can always safely say that we're passing in non-Hermitian operators, even if coincidentally at one timestep they happen to be anyway.
+See 
+For a first issue, it could be solved with little changes or by going down the rabbit-hole.
+There could also be a discussion about always returning complex expectation values.
+There's no rabbit hole - it's just a bug on line 511 of mesolve.py and 526 of mcsolve.py.  The output dtype is correctly calculated, it's just a bug in generating values for the output array.  There's a similar bug in the states output caused by the use of fast='mc-dm' that requires a more effort to fix, and should be at some point, but that's not so important right now.
+Having qutip.expect return real values for Hermitian operators and states I'd say is the correct behaviour.  It's by far the most common use-case, and it allows them to be directly plotted without generating a load of warnings.
+Hi everyone, I would like to solve this issue. Is anyone working on it already or should I just go for it?
+No-one that I know of is working on it - we've left it open for somebody to come and have a starting issue to work with.  Thanks for taking it!

@@ -1,0 +1,36 @@
+Hello,
+when trying to run the examples from the User Guides in the Bloch-Redfield master equation section
+( http://qutip.org/docs/4.0.2/guide/dynamics/dynamics-bloch-redfield.html ) I get an error
+I'm running the code in a conda environment using ipython on Windows 10, the details of the packages installed at the end of the post.
+To reproduce the error:
+The code runs fine until the last line which gives the following response:
+Output of version_table()
+Other examples (like this one https://nbviewer.jupyter.org/github/qutip/qutip-notebooks/blob/master/examples/brmesolve.ipynb ) run without errors.
+Good catch, this seems to be a problem with how the arguments are structured in the function signature for brme_solve. For the tensor formation,
+def bloch_redfield_tensor(H, a_ops, spectra_cb=None, c_ops=[], use_secular=True, sec_cutoff=0.1):
+In this case, the spectra_cb  is given the [ohmic_spectrum] argument, which is the correct argument. However, for the brme_solve, the signature is
+If you run the same code with
+output = brmesolve(H, psi0, tlist, [sigmax()], e_ops, spectra_cb = [ohmic_spectrum]) 
+the code will run perfectly. However, this is an issue we should fix since spectra_cb is a depreciated argument and technically the c_ops list should accommodate arbitrary noise power spectrum functions that spectra_cb handled before. The error seems to be originating because ohmic_spectrum is of type function but the safety checker expects either a Qobj or a tuple. Also, once we fix the documentation/code on how to use c_ops, we also need to add depreciate warning to bloch_redfield_tensor to maintain uniformity.
+Thanks for the quick reply.
+Will this error affect other examples and notebooks present on the website where a spectra_cb is needed? Because right now I'm trying to run this example ( https://nbviewer.jupyter.org/github/qutip/qutip-notebooks/blob/master/examples/brmesolve-time-dependent-Liouvillian.ipynb ) and the code hungs on the 8th cell, from the Jupyter terminal I get the following message
+AttributeError: Can't get attribute 'brme_step' on <module '__main__' (built-in)>
+Conda env is the same as the above.
+That notebook seems to be running fine for me and terminates. Did you interrupt it manually, if not can you post the trace of the error ?
+BTW when I run the fixed comand I get
+Shouldn't I have three num_expect?
+That is true. I'll try to look into why this is the case. However, it does have three expectation calculated. You can check this with output.expect !
+Edit:
+So, I just realized that the noise-spectrum is associated with the coupling operator [sigmax()], I think the correct call to brmesolve must infact be (updated to current qutip standards)
+output = brmesolve(H, psi0, tlist, [[sigmax(), ohmic_spectrum]], e_ops)
+This is in line with the notation we use in example (https://nbviewer.jupyter.org/github/qutip/qutip-notebooks/blob/master/examples/brmesolve-time-dependent-Liouvillian.ipynb)
+I will make a pull request updating both the example notebook (http://qutip.org/docs/4.0.2/guide/dynamics/dynamics-bloch-redfield.html ) to reflect this and make sure we depreciate the spectra_cb argument in bloch_redfield_tensor to eliminate the confusion. Thanks for bringing this to notice !
+Just a quick reply.. for the original problem, the documentation you were looking at is out of date, better to check the latest version
+http://qutip.org/docs/latest/guide/dynamics/dynamics-bloch-redfield.html#bloch-redfield-master-
+equation-in-qutip 
+I think the example there works fine.
+For the incorrect num_expect, I think there was another issue raised about this. let me check.
+Ah no, it was a similar bug for num_collapse in mesolve().
+https://groups.google.com/forum/?utm_medium=email&utm_source=footer#!msg/qutip/le1WMvv_sPc/tKTPmO2IGwAJ
+Thanks for pointing that out, completely missed that :P
+Do we still need to depreciate the spectra_cb in bloch_redfield_tensor, it seems to be present in the latest dev version as well ?

@@ -1,0 +1,27 @@
+In qiskit-terra 0.24.0, qiskit.transpile fails to transpile controlled phase gates (and possibly other gates) when the optimization level is 3 and a backend is passed.
+The transpiler call fails with:
+This behavior is new in qiskit-terra 0.24.0. The test below fails in 0.23.2, showing that transpilation works against a backend for all optimization levels as expected.
+Define a minimal backend with a target featuring a complete gate set. The test below passes in qiskit-terra 0.24.0, showing that transpilation at level 3 fails against the backend, but not against the backend's target's basis gate set if passed explicitly.
+The test above should fail in qiskit-terra 0.24.0, like it does for qiskit-terra 0.23.2.
+For this minimal example, transpiling against backend=backend  or against basis_gates=backend.target.operation_names should be equivalent and succeed in both cases, independently of the optimization level.
+No response
+Thanks for reporting this. It definitely is a bug, it looks like an issue introduced in the changes to unitary synthesis that were done in 0.24.0 to select a decomposition based on the error rates in the Target. It looks like the code does not correctly handle the case where the 2 qubit basis gate takes a parameter and the checking it's doing to see which types of decomposers to try fail because it's trying to check if the gate is controlled, supercontrolled, etc using the unitary representation (which it can't find with a gate in the target with an unbound parameter). The pass will need to be updated to take into account a 2q basis gate that is parameterized.
+By default we only run this pass as part of the 2q kak optimization in level 3 which is why the failure is isolated to level 3. It also works with using the gate names because in that case the extra information the Target provides isn't available so the transpiler doesn't know for sure that rxx is an RXXGate it just assumes it is but  doesn't do this extra checking for error rates and available decomposition methods.
+Here is more stripped-down code to trigger the bug:
+If you change this https://github.com/Qiskit/qiskit-terra/blob/0e44c5e38066c26e06d19fe5fcbc947eb1d25472/qiskit/transpiler/passes/synthesis/unitary_synthesis.py#L709-L715
+with except (QiskitError, TypeError) (and the same for is_controlled) transpilation runs to completion.
+However the output circuit for the example included in this bug report with optimization level three is apparently worse by any reasonable measure than the one you get with qiskit-terra v0.23.3.
+I am guessing that the quality of the result is degraded because this fix is not sufficient, and not because of an unrelated change between 0.23 and 0.24. But I am not yet sure.
+So looking at how this was done on 0.23.3, it looks like for rxx it checked that rxx was in the supported instructions and then used RXXGate(pi/2) as the KAK gate.
+https://github.com/Qiskit/qiskit-terra/blob/0.23.3/qiskit/transpiler/passes/synthesis/unitary_synthesis.py#L43-L79
+I think for the bugfix/backport we maybe should just do a hard coded fallback check for rxx and rzx by doing: Target.instruction_supported(operation_class=RXXGate, parameters=[pi/2[) and use that if it's available.This should method should return True for a parameterized RXXGate in the target. This will restore the functionality that we previously supported even if it's not the general fix for all parameterized 2q basis gates.
+Good info, I was just checking now.
+I tried modifying is_controlled and is_supercontrolled to copy the gate on failure and then replace symbolic params by 1.0 and reanalyze. This seems to work ok. But you still need an intelligent choice of hardcoded params to pass to the routines. If pi/2 is always used in 0.23 (I didnt look yet), I can just use that value for all gates.
+I'll look at 0.23.3 to see how many gates are checked; rxx and rzx, and others ?
+If people want a working master or we are doing a patch release soon, then I agree we should do an easy, imperfect fix. Then follow up with a more robust one.
+EDIT: If there is a handful of angles that typically give good synthesis results, we could include all of them. Determining if that's true and if it's worth the time and complexity would take a bit of investigation. For example, I see this line:
+Thanks for the feedback and the investigation!
+I'm not familiar with the concepts involved in unitary synthesis so I fear not to have very useful insight for resolving the issue.
+Do I understand correctly that the selected kak_gate determines which sole 2-qubit basis gate is used for the KAK decomposition?
+Similar to @jlapeyre's #10082 (comment): if the basis gates are parametrized, could one achieve better synthesis results by varying the angle within a single decomposition? (possibly in a range given by the Target?) This sounds quite non-trivial but would be a nice optimization if it is effective (assuming that the target hardware actually implements the variable angles natively, which is typically the case).
+I opened a PR with a minimal fix. It provides as much flexibility and intelligence as 0.23 did.

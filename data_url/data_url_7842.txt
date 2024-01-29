@@ -1,0 +1,47 @@
+The sparse eigensolver can fail when eigenvalues are purely imaginary.
+All unique eigenstates should be returned.
+No response
+I see a similar issue with just calculating the eigenstates of a simple $\sigma_x \otimes \sigma_x$ operator
+The sparse=True gives eigenstates
+whereas sparse=False and the scipy.linalg.eigh give the correct states
+Hi @pschindler, thanks for reporting this! Although the eigenenstates are different for both cases (sparse=True and sparse=False) I believe that they are both equally valid since the operator has degenerated eigenvalues. The approach for the computation of the eigenstates for both sparse=True  and sparse=False is different so that may explain why you see different results.
+For the case that @Ericgig presented though, the eigenvalues are non-degenerated. I tracked down the issue and it is related to how we compute these eigenvalues. When we ask for all the eigenvalues what we actually do is to compute the smallest half in with one method (scipy.sparse.linalg(which='LR')) and the largest half with a different method (scipy.sparse.linalg(which='SR')).  Smallest half and largest half here means relative to the real part of the eigenvalue. This makes complete sense for the cases where the eigenvalues are real but unfortunately not so much sense when we only care about the imaginary part. This is what the which is doing, is selecting the values with smallest/largest real part.
+If we include a small real component the bug completely disappears:
+Because now there is a real part to use in the ordering.
+The behavior of eigenstates is definitely wrong and one way of solving it would be to not use both LR and SR options when all the eigenvalues are required and instead chose internally just one. This would still return results ordered by their real part but at least all the eigenvalues would be present (only once).
+We may want to extend the behavior of eigenstates to not only accept sort=low  and sort=high and instead have a similar behavior to the one provided by scipy and allow sorting by imaginary part or absolute value.
+Hi @Ericgig
+Thank you for the clarification. You are right for the $\sigma_x \otimes \sigma_x$ operator, the eigenvectors span indeed the same space.
+I stumbled upon weird behavior of eigenstates()  when calculating the eigenstates for following operator (shift operator on a qudit):
+Here I get differing eigenvalues for the sparse=True and the other two methods:
+Hi @pschindler,
+Indeed, the behavior you show is a bug in qutip 4.7.0. Thanks for reporting this! However, it is actually a bug in the sparse=True case.  The scipy case gives a different result compared to qutip sparse because of the method used. eigh assumes the input is hermitian but op is not. You can see the correct eigenvalues using:
+I am genuinely surprised that the sparse=False is bugged in the latest version of qutip. Fortunately, I tested this in the master branch of qutip (this contains the qutip 5.0.0 alpha version) and the bug seems to be solved there. This operator is indeed subjected to the same bug Eric shows (it is non-hermitian). However, due to the real part of the eigenvalues, it actually shows the correct answer (similar to the example I showed in my previous comment).
+I will try to find the source of the error but it seems very likely that we incorrectly label the operator as hermitian and hence uses the wrong method to find eigenvalues.
+Hi @AGaliciaMartinez . Good to hear from you again ;)
+It seems that the hermitian check for the operator op evaluates as True
+Also, if I add op.isherm = False to manual set isherm it seems to work:
+Hi @AGaliciaMartinez . Good to hear from you again ;)
+Hi! 😄
+It seems that the hermitian check for the operator op evaluates as True
+Yes, this is definitely the source of the error. Nice catch! I will try to compare the 4.7.1 version of qutip with the new pre lease of version 5.0.0 and see if we can provide a quick fix for it.
+Fixed in #2082, I believe.
+Nope, the original issue is not fixed.
+We could close it as a won't fix, and refuse to compute all eigenvalues when using the sparse eigen solver as scipy does.
+But there is place for improvement that I think we should implement before closing.
+Hello @AGaliciaMartinez,
+I would like to work on this issue. Can you give some details on where to start ?
+I do not think it's a good first issue...
+There are multiple possible solutions and it is not clear which is the best one:
+I would personally go for either 1.2 of 3.
+Adding different sorting options in Qobj methods (2) and removing them from the dispatched functions, could be nice, but it's not a fix.
+The place to start would be to debate on the solution. If you have some opinion on the matter, please let us know.
+Once we've made up our mind, you can implement it, but only 5 would be an easy fix in line with other good first issue.
+5 seems also fine for me. We default to the dense solver when all the eigenvalues are required, even if sparse=True and we then raise a Warning explaining why we do this and how to stop the warning. IIf I understood it correctly, 3 would be raising an Error instead of a warning, which may be a little bit more annoying for someone that just wants the code to work (?). I am fine with both though and I think they could be suitable issues for a "medium" level "good_first_issue" (if that makes sense 😅 ).
+1 and 4 seem indeed too much work right now (but perhaps they can be tackled in the future). 2 may actually be separate an enhacement, that could be useful for some specific scenarios (?). But maybe it is best to wait for when this scenario is present to actually motivate the enhancement (?).
+By (3), I meant removing the csr specialisation from the dispatched function and call the function directly when not all values are desired. When Qobj.eigenstates is called, the sparse operation being not available, it would defer to the dense code, no warning nor error.
+We can't fully trust eigs_csr as it is, so I would like to make it fully working (1) or remove it from the dispatch (3).
+Yes (2) can be seen as separate enhancement.
+For me (5) was purely documentation, a warning is fine, but when sparse is specified, it would use eigh_csr and too bad if wrong results are obtained...
+(3) would also mean removing the
+since they are no longer used (spectrum.py, floquet.py, qobj.py) and reviewing the tests cases.

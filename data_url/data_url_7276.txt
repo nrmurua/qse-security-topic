@@ -1,0 +1,24 @@
+I (Stefan @Krastanov ) edited this issue to give some context. @Mulliken reported below a performance issue due to using a sparse initial state matrix in timeevolution.master. A large array of sparse (datastructure) matrices was created for matrices that are not at all sparse, causing enormous performance penalties. We should either warn or automatically call dense in these functions.
+Hello QuantumOptics.jl community!
+I have a question about the performance of QuantumOptics.jl, stated as follows. This is the first time I wrote code in Julia. Please forgive me if I made silly mistakes.
+I am experiencing a performance issue with a simulation script in QuantumOptics.jl, specifically for a three-level atom coupled to two modes (5 states each). The two modes are subject to some Lindblad dissipations. The script, named three-level.jl, simulates a system with a Hilbert space dimension of (3*25, 3*25) and is set to run for 500 steps.
+Based on the simplicity of the simulation, I anticipated that the execution would take less than 1 minute.
+The script took over 10 minutes and still would not stop my Windows PC, which is considerably longer than expected. A similar simulation written in Python using QuTiP (three-level.py) completes in just a few seconds.
+I've also implemented a comparable simulation in Python using the QuTiP library, which runs significantly faster. I'm attaching the Python script (three-level.py) and Julia script for reference.
+Are there any known issues, optimizations, or alternative approaches that could improve the execution time of my script?
+Thank you for your assistance and looking forward to any suggestions or insights you can provide.
+Julia script three-level.jl
+Python (qutip) script three-level.py
+Hi there!
+For debugging, it helps to make the example smaller and independent from plotting and other distractions. It also helps significantly if the example is shortened so that it can evaluate fast. Lastly, in julia it is valuable to use BenchmarkTools.@benchmark when evaluating the performance of a piece of code (and in ipython that would be that %timeit magic).
+I changed to t_max=0.002 in order to evaluate your code more rapidly. Then we get these results:
+That immense amount of allocations is a very big red flag. The function seems to be spending more time reserving and unreserving memory than actually running computation.
+In comparison, in python you get:
+Way faster in python. But what caused all of this? Check the output of each of these functions. In julia you will notice that your ρt is an array of sparse matrices, a terrible choice for dynamics that do not have a reason to preserve sparsity (but maybe a good choice for iterative steady-state solvers).
+Anyway, fixing this in julia by changing your input to a dense matrix:
+A bit faster than python's qutip... Not too bad. And probably it can be made another order of magnitude faster if you play with the diffeq solver settings.
+Thanks for bringing this up! We should probably print a warning or something in situations like this (beeing given a sparse matrix for the state when the evolutions should use a dense matrix).
+Edit: the %timeit for qutip was incorrect in the original version of this post (I forgot to change the number of steps)
+Hi Krastanov,
+Thank you for your help in pinpointing the issue and directing me to the benchmarking tools! Should I come across any other problems, I'll make sure to provide minimal working examples for clarity. Thank you once again for your support!
+Just one comment here: if we opt for the autoconversion to dense, there might be memory issues. A valid use-case for sparse states is when a user knows the evolution will not populate many entries in a density matrix and the system is very large. Granted, this is quite a special case, but we somehow have to offer the possibility of keeping things sparse, i.e. the current behaviour should still be available to users. Yet, I agree that a sensible default is to make everything dense.

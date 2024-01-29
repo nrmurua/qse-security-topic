@@ -1,0 +1,91 @@
+Here is the issue. I am still new to quimb. I am trying to apply a three-qubit unitary gate onto my circuit. The unitary gate is constructed by writing a 8 by 8 unitary matrix manually called 'mat' and its type is a numpy array, and make it as an operator:
+op = qu.core.qu(mat, dtype=complex, sparse=True)
+Now when I try to apply it to my circuit using apply apply_gate_raw:
+circ.apply_gate_raw(op,[0,1,2])
+I get the error message as follows:
+ValueError                                Traceback (most recent call last)
+Input In [27], in <cell line: 4>()
+2 op = transform_to_tensor(nhssh_mat,complex)
+3 index_list = [0,1,2]
+----> 4 add_dissipation_oracle(circ,op,0,1,2)
+Input In [25], in add_dissipation_oracle(circ, operator, phy_site1, phy_site2, ancl_site)
+8 def add_dissipation_oracle(circ,
+9                            operator,
+10                            phy_site1,
+11                            phy_site2,
+12                            ancl_site):
+13     index_list = [phy_site1,phy_site2,ancl_site]
+---> 14     circ.apply_gate_raw(operator,index_list)
+File ~\anaconda3\envs\quimb\lib\site-packages\quimb\tensor\circuit.py:822, in Circuit.apply_gate_raw(self, U, where, tags, gate_round, **gate_opts)
+820     tags.add(f'ROUND_{gate_round}')
+821 opts = {**self.gate_opts, **gate_opts}
+--> 822 self.psi.gate(U, where, tags=tags, **opts)
+823 self.gates.append((id(U), *where))
+File ~\anaconda3\envs\quimb\lib\site-packages\quimb\tensor\tensor_1d.py:722, in TensorNetwork1DVector.gate(self, inplace, *args, **kwargs)
+720 @functools.wraps(gate_TN_1D)
+721 def gate(self, *args, inplace=False, **kwargs):
+--> 722     return gate_TN_1D(self, *args, inplace=inplace, **kwargs)
+File ~\anaconda3\envs\quimb\lib\site-packages\quimb\tensor\tensor_1d.py:219, in gate_TN_1D(tn, G, where, contract, tags, propagate_tags, inplace, cur_orthog, **compress_opts)
+216 tags = tags_to_oset(tags)
+218 if (ng > 2) and contract in _TWO_BODY_ONLY:
+--> 219     raise ValueError(f"Can't use contract='{contract}' for >2 sites.")
+221 G = maybe_factor_gate_into_tensor(G, dp, ng, where)
+223 if contract == 'swap+split' and ng > 1:
+ValueError: Can't use contract='auto-split-gate' for >2 sites.
+Is there a solution for it? Thank you.
+Yes for the moment the 'auto-split-gate' method should probably just ignore 3+ qubit gates rather than trying raising (ideally it would find a low rank decomposition).
+As a workaround you should be able to supply contract=False when calling apply_gate_raw.
+Thank you for your answer! May I update that this solution seems to work well, but only if I supply sparse=False  in:
+op = qu.core.qu(mat, dtype=complex, sparse=False)
+In my previous code shown above, if I supply sparse=True, then I will get the following error:
+ValueError                                Traceback (most recent call last)
+Input In [27], in <cell line: 1>()
+----> 1 circ.apply_gate_raw(op,[0,1,3],contract=False)
+File ~/opt/anaconda3/envs/quimb/lib/python3.10/site-packages/quimb/tensor/circuit.py:822, in Circuit.apply_gate_raw(self, U, where, tags, gate_round, **gate_opts)
+820     tags.add(f'ROUND_{gate_round}')
+821 opts = {**self.gate_opts, **gate_opts}
+--> 822 self.psi.gate(U, where, tags=tags, **opts)
+823 self.gates.append((id(U), *where))
+File ~/opt/anaconda3/envs/quimb/lib/python3.10/site-packages/quimb/tensor/tensor_1d.py:722, in TensorNetwork1DVector.gate(self, inplace, *args, **kwargs)
+720 @functools.wraps(gate_TN_1D)
+721 def gate(self, *args, inplace=False, **kwargs):
+--> 722     return gate_TN_1D(self, *args, inplace=inplace, **kwargs)
+File ~/opt/anaconda3/envs/quimb/lib/python3.10/site-packages/quimb/tensor/tensor_1d.py:221, in gate_TN_1D(tn, G, where, contract, tags, propagate_tags, inplace, cur_orthog, **compress_opts)
+218 if (ng > 2) and contract in _TWO_BODY_ONLY:
+219     raise ValueError(f"Can't use contract='{contract}' for >2 sites.")
+--> 221 G = maybe_factor_gate_into_tensor(G, dp, ng, where)
+223 if contract == 'swap+split' and ng > 1:
+224     psi.gate_with_auto_swap(G, where, cur_orthog=cur_orthog,
+225                             inplace=True, **compress_opts)
+File ~/opt/anaconda3/envs/quimb/lib/python3.10/site-packages/quimb/tensor/tensor_1d.py:94, in maybe_factor_gate_into_tensor(G, dp, ng, where)
+92     G = ops.asarray(G)
+93     if ng >= 2:
+---> 94         G = reshape(G, [dp] * 2 * ng)
+96 elif not shape_matches_nd:
+97     raise ValueError(
+98         f"Gate with shape {G.shape} doesn't match sites {where}.")
+File ~/opt/anaconda3/envs/quimb/lib/python3.10/site-packages/autoray/autoray.py:300, in reshape(x, shape)
+298 """Array reshaped."""
+299 try:
+--> 300     return x.reshape(shape)
+301 except AttributeError:
+302     return do("reshape", x, shape)
+File ~/opt/anaconda3/envs/quimb/lib/python3.10/site-packages/scipy/sparse/base.py:119, in spmatrix.reshape(self, *args, **kwargs)
+87 """reshape(self, shape, order='C', copy=False)
+88
+89 Gives a new shape to a sparse matrix without changing its data.
+(...)
+115                        matrices
+116 """
+117 # If the shape already matches, don't bother doing an actual reshape
+118 # Otherwise, the default is to convert to COO and use its reshape
+--> 119 shape = check_shape(args, self.shape)
+120 order, copy = check_reshape_kwargs(kwargs)
+121 if shape == self.shape:
+File ~/opt/anaconda3/envs/quimb/lib/python3.10/site-packages/scipy/sparse/sputils.py:322, in check_shape(args, current_shape)
+319         raise ValueError('can only specify one unknown dimension')
+321 if len(new_shape) != 2:
+--> 322     raise ValueError('matrix shape must be two-dimensional')
+324 return new_shape
+ValueError: matrix shape must be two-dimensional
+Glad it works! Yes, you will need to supply the gates as ndarray like objects, scipy sparse matrices are two-dimensional only, and their purpose somewhat orthogonal to the tensor network functionality.

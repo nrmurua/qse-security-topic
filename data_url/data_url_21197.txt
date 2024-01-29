@@ -1,0 +1,12 @@
+On latest master (a2fbcb8) this causes an assertion error in artiq_ir_generator:
+Any idea why we are not requiring TInt32 (or, more generally, ssize_t) for array indexing in general? https://github.com/m-labs/artiq/blame/a2fbcb8bfd64d5d97ba37b16b501aa99a0fb3bfb/artiq/compiler/transforms/inferencer.py#L235-L247
+It seems like we are currently just silently accepting (and truncating?) TInt64 indices in other places. I wonder whether this is worth preserving, or whether it would be fine just to strictly require TInt32 for all indices.
+@sbourdeauducq (and @thomasfire / @SquidDev): Any thoughts on requiring TInt32 (assuming 32 bit targets) for array indexing?
+The alternative would be to consistently cast the TInt32 to TInt64 if required first for bounds-checking, and after knowing that the value is in-bounds, truncate to TInt32.
+The latter might strictly speaking be more backwards-compatible, but I'm leaning towards the former, as integer type semantics in ARTIQ Python are already confusing enough.
+@sbourdeauducq (and @thomasfire / @SquidDev): Any thoughts on requiring TInt32 (assuming 32 bit targets) for array indexing?
+We are planning to support RFSoC which is AArch64. Though NAC3 will likely be released before.
+Not sure what the consequences of that should be. Do we want to support arrays > 2^31 elements in ARTIQ Python on those targets? Even if so, this still is largely orthogonal to the question of whether we should implicitly allow 64 bit indices on 32 bit targets and take care of the conversions behind the scenes.
+Just to be clear, the question here is just how to resolve the original issue, where the problem is that the multi-dimensional indexing code (sensibly) ends up working with TInt32 internally, but the type checking in the frontend allows the values in […, …] to be TInt64.
+I can of course just make sure this is handled correctly (inserting truncations conversions at the right point, after bounds-checking), but wider integers than ssize_t being allowed as array indices seems like a bit of a quirky design choice. (Perhaps it helps with usability, though, given the attribute writeback type stability issues?)
+I was only pointing out that we will have a 64-bit target in the future, since you said "assuming 32-bit targets". Limiting array sizes everywhere to what a 32-bit value can index sounds OK to me.

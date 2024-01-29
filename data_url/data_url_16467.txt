@@ -1,0 +1,51 @@
+Unless there is something I am missing, it is difficult to add gates mid-circuit without using private QuantumCircuit variables such as _data. The best work around involves merging two circuits together like in the following example, but it would be great to be able to add new gates to a predefined circuit.
+
+Technically this is quite straightforward to do, the difficulty lies in how to specify where you want to insert gates?
+Say you have a circuit looking like
+and want to go to
+How would the syntax for this look like?
+(Though if we find a way to define this properly I think this would be a great feature!)
+I know that you can index a circuit to return gates and associated registers in the order of the circuit (what inspired the approach above, but here you stitch together two circuits), but it is still not intuitive to insert random gates using this technique. So perhaps in a manner like circuit.gate(qubit).at(index)?
+Though the method of splicing circuits may cause an inconvenience for bigger circuits as the instruction order would need to be found.
+e.g.
+Looks the same as
+So adding a Y gate between the column of H and X by adding qc.y(qr[0]) in line 3 pushing original line 3 and 4 down would work in the first scenario but not the second.
+A possible solution to this I was thinking of is:
+i is essentially an index number for the to be added gate position on the bit.
+instruction_index in each bit is a tuple which holds the index numbers to instructions in self._data which attach something to this bit.
+Since there are several gates, I have implemented and tested this for the h gate on a branch of mine, I've added examples below
+i is the user input for which attachment on the bit this gate needs to be put before, or another way of looking at it is if the line gaps between gates are visualised as numbers e.g. (0) -- H -- (1) -- X -- (2)
+This works by the circuit checking if i is in between other gates on a bit using length of instruction_index, if it is, then self._data is split and this instruction is inserted/'slid' in just before the instruction for the gate in front.
+For gates such as cx, an arbitrary choice would have to be made in which either the control or target bit i is given for, though I suggest the control bit for ease of top down viewing.
+It may be better to share a link to my branch as three tests which compare bits fail when running make test due to the extra attribute.
+master...Vismai-Khanderao:issue4736branch
+Help would greatly be appreciated for testing, and further implementation as I've recently picked up qiskit.
+I'd love to discuss further on this.
+Update: Made a pull request with aforementioned implementation
+Also to mention, the three tests which fail are:
+test_qasm_text
+test_from_ast_to_dag
+test_lookahead_swap_maps_measurements
+Update Below
+I have made a commit to the pull request, I got rid of the added attribute in the Bit class so now the tests do pass and def _append is now reverted to it's original state. The parameter i is now index for clarity.
+Change comes through an addition to def append, the add gate instruction is now appended at the end of self._data as before. Since instructions in _data are listed chronologically in the order they are run, the function now loops through self._data and counts the number of gates attached to the qubit in question. Once the number of gates is equal to the index number intended, the instructions are split using an instruction count in the loop and the last instruction is now moved in between, same as the initial commit.
+Otherwise, if index is None or is greater than the number of gates attached, then the gate added remains at the end of the qubit.
+Functionality is same as mentioned before, this implementation may be slower for large circuits but is neater and more compatible.
+@knsmith I did try to implement your method of circuit.gate(qubit).at(index) as it would be a neat solution, but the circuit.gate(qubit) functions return instruction sets, to which the circuit._data is not available to.
+@Vismai-Khanderao neat solution! When I originally proposed circuit.gate(qubit).at(index), I was thinking the index would be the gate index in the entire list of gates for a circuit object. Your implementation, however, is much more elegant and will be easier to use. Does your method allow you to delete gates in place?
+@knsmith Thanks! For now I haven't thought of a delete gate function, though it may be quite simple as the same method that's used to find the gates on a qubit can be used to pop an instruction. When we match the gate, qubit, and it's index on bit we can use the instruction index counted to pop the instruction from _data. @quantumjim did layout the popping method in https://quantumcomputing.stackexchange.com/a/5209, it would be handy for bigger circuits if a function could handle it, maybe qc.delete_gate(qubit(s), gate, qubit_index)?
+What's all this about ._data being private? Is it different to .data? Is .data getting deprecated?
+@quantumjim .data isn't being deprecated.
+For example circuit.h(qr[0]) returns an InstructionSet, the instructions in this instruction set is stored in instruction_set.instructions, these are also a part of circuit._data whose entire instruction list can be retrieved with the getter circuit.data or circuit._data
+Making a function def at(--- in InstructionSet would require the passing of the QuantumCircuit into it, i.e.  circuit.h(qr[0]).at(circuit, index=1), then only can the circuit instruction list be retrieved in the InstructionSet class with circuit.data or circuit._data and the order can be changed to add a gate mid circuit.
+(ideally circuit.data should be used outside of QuantumCircuit as PEP 8 standards)
+Hence, I proposed the qubit gate index be passed within the gate itself as circuit.h(qr[0], index=1)
+@Vismai-Khanderao I like the idea of being able to insert and delete in the case where you may be running/tuning a circuit in a hybrid quantum classical implementation so that you don't have to rebuild the circuit every time. I agree that your indexing approach for each qubit may be great for that!
+@knsmith that would indeed make things much smoother. I'm making a push to the draft pull request soon, from my initial testing, I have got 2-qubit gate commands such as qc.cx(qr[0:3], anc[0], index=[2,1]) to work, this would puts three CX gates with individual control bits as q_0, q_1, q_2 and the target bit as anc_0 at indexes 2 for the q's and 1 for the ancilla. A circuit error is raised if for example, there is another CX gate at q_0 index 2 and anc_0 index 0, as the instructions cannot be rearranged while maintaining gate orders.
+I haven't got it to quite work with 3+ qubit gates such as a CCX gate, and I would be cleaning up code with additional helpers and clearer variable names with future commits.
+I'm not sure if this feature worths the effort and the complicated API that might create. What's the problem/use-case to solve?
+Creating circuits/gates is kinda easy... editing existing circuits/gates seems like it might create a lot of methods with complex parameters...
+@1ucian0 I agree, I did eventually get it to work with 3+ qubit gates and did simple testing but it's needlessly complicated and since some gates have different internal attributes, e.g barriers, it's difficult to test a robust general solution to all gates. I'll be closing my WIP PR #4809 . It seems easier in most cases to build a new circuit, especially when it's not too large.
+@knsmith?
+Alternative, a gate can be set as placeholder and be replaced by concrete instances.
+I'm closing this as wont fix. If a use-case is not covered by these approaches and you can make a stronger case to justify increasing the API complexity then please reopen.

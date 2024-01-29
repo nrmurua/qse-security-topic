@@ -1,0 +1,27 @@
+Description of the issue
+Following #2626 it was discussed that instead of always producing GateOperations, one should instead check that gate(*qubits).gate == gate.  However this fails for PauliStringPhasorGate:
+prints
+The issues seems to be that DensePauliString#on drops the I.
+prints
+Cirq version
+v0.15dev
+Ick, I'd say if this isn't trivial, then ignore my comment in #2626 and go for the gold. Having everything that has a gate be a plain GateOperation (i.e. not a subclass of GateOperation either, just a GateOperation containing the gate) would be a nice improvement.
+@dabacon Now that #5354 is merged, can we close this issue? (Or at least take it off of before-1.0)
+We can't close this is as it is still broken.  Gate round tripping is tested, but there is a carve out for this class.
+PauliStringPhasorGate fails roundtrip because the underlying cirq.DensePauliString itself fails the roundtrip; which I think is the bigger issue here.
+This happens because dense pauli strings preserve the identity but pauli strings drop the identity.
+The fact that gate.on().gate is not consistent for dense pauli strings was also identified in #4270; but it looks like it was only partly fixed (there was an issue with qubit ordering as well earlier); but this fact that identity gate gets dropped was missed in the earlier issue.
+We should first try to address this if we want to make all gates consistent, and then pauli string phasor should automatically get fixed.
+I think the core of the issue is that some code considers identity a Pauli, and some doesn't. Should identity be Pauli or not?
+I think making the change to PauliString is a major change in it's API, and I worry that there are a ton of people depending on this now.  Let me do a PR to see how this impacts things and then we need to decide whether to go that route or  #5510
+Yeah changing the API of PauliString isn't going to work, that's a major breaking change that goes to the core of how that class is used.  PauliString is an operation and has a notion of qubits, and doesn't allow identities.  DensePauliString is a gate and has no concepts of qubits.  When you use this gate on qubits it turns into a PauliString, dropping the identity components.
+Another alternative is to completely deprecated PauliStringPhasorGate and PauliStringPhasor and just create a new gate DensePauliStringPhasorGate (or a better name) that uses the DensePauliString.  Trying to retrofit PauliStringPhasor to use DensePauliString would also be possible, but in a pretty challenging way as you'd have to support both during a deprecation cycle.
+@tanujkhattar @daxfohl thoughts?
+I know there are a couple places that use PauliStringPhasor directly, so it might be hard to deprecate (otherwise I'd have probably done exactly that when I created PauliStringPhasorGate). Though IIRC they're all in contrib so maybe it doesn't matter? Otherwise I'm completely on board with that option.
+Another option (forgive me if this is dumb), would it make any sense to create a _PauliI class, and make I an instance of that like we do for X, Y, and Z, such that identity can be used in PauliString?
+That would work, but again it would change the behavior of the PauliString class, and I worry that is too big of a breaking change.
+This is in kind of annoying state.  PauliString should have allowed identity.  If there was a need for sparse versions, then there should have been a way to convert this to the sparse version.  It also has a really wacky constructor, that can take both a list and a map (!).  You can pass identity into the map, but not into the list!  DensePauliString gate should then have been PauliStringGate, and it's natural action is to convert to a Pauli string, including identities.  PauliStringPhasorGate would use PauliString which allowed identity.   Oh and I don't even know what SingleQubitPauliStringGateOperation is for.
+It looks like the only reason to have PauliStringPhasor is to allow some merge operations, and pass_operations_over, which each could  have been handled without a class.
+To beat a dead horse, could we add an optional allow_identity=False argument to the PauliString constructor and DensePauliString.on? Then the existing behavior would be preserved by default, but identity would be allowed if desired. Then in a subsequent release we can switch the default to True, (with prior warning messages that behavior will change) similar to how @tanujkhattar did for Gateset.allow_global_phase.
+Otherwise I'm fine with killing off the existing phasors and replacing with DensePauliStringPhasorGate (but different name hopefully). Or just prohibiting identities from the existing PSPG is reasonable too if it's easier.
+Nvm, the above. I see there's enough other stuff that expects pauli is either x, y, or z. Given that, I don't have a strong preference from my perspective. Either option seems fine.

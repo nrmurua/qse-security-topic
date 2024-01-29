@@ -1,0 +1,30 @@
+MeasurementGate is an example of a gate that can act on a variable number of qubits and turn into a GateOperation on these qubits.  We can imagine also a gate that acts on multiple qubits (a control^k-X gate for example) but that the number of qubits it acts on is not determined until "on" is applied to qubits.  This causes a problem.  Suppose you want to evaluate a protocol on an operation, for example cirq.unitary or cirq.channel.  Then if you call this on the operator, it can only delegate to the gate, and the gate doesn't know how many qubits it acts on.
+There are a couple of ways out of this.
+I was leaning towards 1, but the more I think about it, I'm not quite convinced that 2 isn't slightly better.
+Thoughts?
+@Strilanc @kevinsung @viathor
+Oh another option:
+3. Have the protocols return the object that they known how to construct because they know how many qubits they act on, or a function which takes the qubits to act on (or number of qubits).
+How about:
+4. The protocols are undefined for those Gates. They must be applied to the GateOperations.
+5 is what we do already for decompose
+Our abstractions are currently layered like this:
+The conundrum above stems from the fact that we have not explicitly specified whether Gates know the answer to a related question: how many qubits do I act on?
+We should fix this.
+Consider two abstractions: XPowGate which knows the number of qubits it acts on and MeasurementGate which doesn't. We currently pretend these are both Gates, i.e. we place them at the same level of our abstraction hierarchy. In reality, MeasurementGate is more abstract and XPowGate is more concrete. In fact, MeasurementGate is more like a "gate factory": only once you feed it a number of qubits to act on will it give you back something that's equivalent (in terms of concreteness) to other gates like XPowGate.
+I'd argue that our design is cleaner and easier to evolve in future if we follow this principle: all abstractions in a given layer should have similar degree of concreteness.
+This suggests solution 2 above since it makes MeasurementGate know its number of qubits like all other gates do.
+An alternative would be to introduce a concept of gate factories as a third layer, but this seems like an overkill at this stage.
+What are some drawbacks of 2?
+I think 2 would allow us to remove a bunch of number of qubits variables from qasm and circuit diagram args.
++1 to viathor, option 2 seems most intuitive. MeasurementGate could also be seen as "template gate" (like templates in C++) with number of qubits as parameter.
+I like the idea of being able to specialize the gate before sending it to a method that wants a specific number of qubits. Something like cirq.QFT.for_qubit_count(2). So cirq.QFT can be applied to any number of qubits in order to create an operation, but it's not able to give a clear answer to how many qubits it applies to. Whereas cirq.QFT.for_qubit_count(2) knows how many qubits but can't be applied so generally. You'd use cirq.QFT(a, b) when writing code, and cirq.QFT.for_qubit_count(x) when passing into a method that needed a qubit count.
+I don't like cirq.MeasurementGate(2).on(a, b), because that implies anyone doing a measurement has to repeat information (you have to make the qubit count and the qubit args match).
+We could introduce the notion of a "default qubit count" that methods would prefer when in doubt. But I suspect that doesn't ever make sense in practice.
+The objection about repeating isn't really fair because you'd almost always add helper functions
+cirq.measure(a,b)  These simple factory functions are always simple to write and are usually more readable (xxxxGate being explicitly constructed are almost always slightly worse than all the helpers we write).
+I have PR that does this so we can at least take a look.  I think we need to make a decision about this and be consistent, because right now we do this at least 2 different ways, and there are extra functions we have piped through that we wouldn't need if the gate was aware of the number of qubits it acts on.  These 2 also end up being extremely hard to read (_with_qubits means is hard to discover, having protocols with optional args leads to difficulty in understanding what you should implement...or at least you have to dig through a lot of documentation to understand this.)
+See #1298 for moving over to making measurement gate depend on number of qubits.  In practice, for users, this ends up mostly just meaning that you rarely use MeasurementGate(n, key) but instead rely on measure(q1, q2,, ..key=key).    This is the way Craig doesn't like.
+#1332 adds an abstract method for number of qubits to gate.
+@Strilanc you also want a factory level above this?
+Factories should be provided as needed.  For measurement it seems the result is fairly usable.

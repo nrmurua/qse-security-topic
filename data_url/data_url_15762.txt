@@ -1,0 +1,12 @@
+A profile of SabreSwap shows that spends most of the item accessing the layout item https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/transpiler/layout.py#L100-L105 and the coupling map distance values https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/transpiler/coupling.py#L176. These methods are fast but are called a huge number of times, so every tiny overhead occurred by a check starts accumulating. For example, transpiling a 100-qubit random circuit in a grid topology takes 388.71 sec. If instead sabre accesses directly the appropriate private fields of Layout and CouplingMap, the same code runs in 174.02 sec.
+The issue here is to discuss appropriate solutions (e.g whether we should access private fields or provide unchecked access methods) and collect other performance critical places that share the same problem.
+The benchmark was to done using
+The single change made was this line
+https://github.com/Qiskit/qiskit-terra/blob/685622de76b1b9074f41f6a674e1bc15af8c3c3c/qiskit/transpiler/passes/routing/sabre_swap.py#L332
+to
+The profile before
+
+and after the "optimization"
+
+We had a similar issue in: #6493 the way we fixed it there was to re-architect things to provide a stable fast path api. In this case though I don't think we need to do a huge change with introducing new classes. The methods there now are nice for direct user facing things that people are manually interacting with, but that doesn't need to be speed optimized, but for transpiler passes we should support the fast access patterns so we don't waste a ton of time on pointless input validation, when we know the context.
+I think for both layout and coupling map we should make the internal arrays public instead of private and then also slot the attributes of the class to improve access time further. Also for coupling map we should make compute_distance_matrix() public too.

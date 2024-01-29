@@ -1,0 +1,55 @@
+Several RTP tests show large deviations from the reference values using the Intel compiler (classic as well as oneAPI). This problem was introduced with commit d463602.
+@edditler Can you check it?
+I can have a closer look tomorrow. Unfortunately, I'm not sure if I have access to an Intel compiler.
+The last time the Intel compiler behaved differently for me was in #1706 (comment), where I didn't nullify some pointers before using them. Would you have a pointer towards what else might be wrong?
+Additionally, in #2577 a bug related to RTP, that I introduced, was fixed. (@mattiatj)
+@edditler The Intel oneAPI HPC Toolkit can be downloaded here. Alternatively, you can run the CP2K docker file.
+The CP2K binary created with the Intel compiler gives correct/consistent results with different MPI ranks for the test QS/regtest-rtp-5/H2O-dens-pulse.3.inp, but as soon as OMP_NUM_THREADS is larger than 1, the results show the variation detected in the regression tests.
+I'm not entirely sure how the errors in the RTP code are related to the changes I made. So far, I focussed on the VCD code by attaching to the docker build by
+Running the regtest h2o_aat.inp repeatedly by
+I find segmentation faults mainly in https://github.com/cp2k/cp2k/blob/master/src/qs_vcd.F#L908-L909
+and sometimes also in
+An example stack trace is here: https://gist.github.com/edditler/7e6f7ee16c0322113d0eebc3e5465330.
+I'm quite puzzled, to be honest. A mistake in the logic should also appear in one of the GCC builds. That leaves some kind of undefined behavior which is triggered by the Intel compiler but not by GCC, right?
+There's also many Intel MKL ERROR: Parameter 10 was incorrect on entry to DGEMM .. I tried pinpointing the specific call to dgemm that is at fault, but wasn't able to find unusual parameters.
+Do you have suggestions on how to proceed to debug?
+There's also many Intel MKL ERROR: Parameter 10 was incorrect on entry to DGEMM .. I tried pinpointing the specific call to dgemm that is at fault, but wasn't able to find unusual parameters.
+Have you tried MKL_VERBOSE=1 environment variable? You can read about it in the documentation (MKL). Anyway, I recommend piping the results into a file (appears on stderr I guess). Also, try limiting the execution time such that the logfile/verbose output stays reasonable in size (it can grow quite large/quickly). The verbose output can be grep'ed or whatever.
+On another note, stacktraces seem to suggest the point of error. However, anything like out-of-bounds access earlier can produce an unrelated trace (like overriding the stack, etc). Perhaps make sure you have something like ulimit -s unlimited.
+The issue seems to be related to the routine
+build_com_mom_nl
+in which an ASSOCIATE statement was introduced.
+I did not yet run all tests with the intel compiler
+It can also help bisecting the source files / translation units (perhaps it's limited wrt RTP) and omit the -qopenmp flag for one or another unit. On a further note, classic Intel Compiler treats -fopenmp the same as -qopenmp. As far as I know, "next gen" Intel Compilers deviate, i.e., -fopenmp refer to LLVM's compiler phases wrt OpenMP wheras -qopenmp is Intel's flavor.
+@edditler Note, that Intel needs an increased OMP_STACKSIZE=16M or more in addition to ulimit -s unlimited. The default value (4M for 64 bit systems, if I am not mistaken) is too small for Intel and weird MKL errors and other errors will pop up.
+Have you tried MKL_VERBOSE=1 environment variable? You can read about it in the documentation (MKL). Anyway, I recommend piping the results into a file (appears on stderr I guess). Also, try limiting the execution time such that the logfile/verbose output stays reasonable in size (it can grow quite large/quickly). The verbose output can be grep'ed or whatever.
+Thanks for the hint. I now see in the output
+to me this looks fine actually.
+I get this output after running per your suggestions
+but the result of the test is still not constant between runs. The segmentation faults occur at different points during execution, or not at all.
+MKL_VERBOSE DGEMM(N,N,4,1,16,0x4145728,0x154921325440,160,0x15492a804d40,4,0x4145730,0x154921091480,160) 50ns CNR:OFF Dyn:1 FastMM:1
+Seems like MKL highlights the wrong parameter(s), and it's truly wrong. MxNxK=4x1x16 but LDB=4 which is smaller than K and hence wrong.
+Btw, pretty degenerated GEMMs like matrix times vector...
+It can also help bisecting the source files / translation units (perhaps it's limited wrt RTP) and omit the -qopenmp flag for one or another unit. On a further note, classic Intel Compiler treats -fopenmp the same as -qopenmp. As far as I know, "next gen" Intel Compilers deviate, i.e., -fopenmp refer to LLVM's compiler phases wrt OpenMP wheras -qopenmp is Intel's flavor.
+Our Intel testers still rely on the classic Intel compilers (icc/ifort). The Intel compiler flags, however, have been updated recently. -fopenmp has been dropped and the Intel specific flags -qopenmp and -qopenmp-simd are employed now. The issue with the RTP tests appeared, however, already before -fopenmp was replaced.
+If the ASSOCIATE construct is truly at fault for the RTP results, something similar is probably wrong with the VCD code, so I will have a look after those tests finish running. Seems weird, otherwise, that the arguments to DGEMM are fine for GCC but not for the Intel compiler.
+Btw, pretty degenerated GEMMs like matrix times vector...
+It's a single SZV-GTH water molecule on two MPI ranks ;)
+I wonder if the faulty GEMMs come from the MATMUL intrinsic (at least build_com_mom_nl uses a lot of MATMULs). If so, -qno-opt-matmul should avoid this (in fact I think opt-matmul is opt-in rather than opt-out but I can be wrong).
+The issue seems to be related to the routine
+build_com_mom_nl
+in which an ASSOCIATE statement was introduced.
+I did not yet run all tests with the intel compiler
+@mattiatj Thanks, it seems #2674 has indeed fixed this issue with RTP tests.
+Wait, are ASSOCIATE statements now considered dangerous?
+Apparently, they are apparently only dangerous if you combine them with OpenMP. Ironically, the OpenMP 4.0 standard specifies how to deal with ASSOCIATE in the context of OpenMP but as always, compilers don't always obey these rules.
+so should I remove those to make the vcd regtest pass?
+Apparently, they are apparently only dangerous if you combine them with OpenMP.
+Is there a clear rule to identify these dangerous situations?
+Otherwise, we should probably ban ASSOCIATE all together. So far it's only used in about 100 places.
+I am not sure. One should check it. There is a clear rule provided in the OpenMP specification (see ([. 107](https://www.openmp.org/wp-content/uploads/OpenMP-API-Specification-5-2.pdf], but specified in version 4.0).
+The essence is that the identifier inherits the clause (private, shared, ...) from its selector.
+There are no problems if
+The association resulting in the issues with Intel violated the second rule because the selector was declared shared, not private. Probably, it lead to a race condition.
+I am not in favor of banning ASSOCIATE because it allows to create shortcuts and ensures that the identifier is constant.
+It seems that the main purpose of ASSOCIATE is to improve the readability of the code. Following this discussion, it has no major impact on the code performance in most cases and, therefore, it is rather "syntactic sugar". I would not ban, however, ASSOCIATE completely and just use it where it improves the readability of the code. On the other hand, we should not combine it with larger or complicated OpenMP constructs which mostly challenges the compiler. In the current case of commutator_rpnl.F, I do not see that ASSOCIATE makes the code simpler, better or more readable compared to just using a local pointer as in the original version. We should check all other usages of ASSOCIATE in this respect, critically.

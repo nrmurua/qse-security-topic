@@ -1,0 +1,39 @@
+Sorry,  I feel I'm generating a lot of issues...  :(
+But I was just looking at the waveforms outputted by PyRPL and noticed what seems to be some discontinuities:
+
+To reproduce this,  I used the following setup code:
+triggered off ch1 (which means basically random triggering) and then say, every  so  often, the  discontinuity flashed by.
+Maybe this has something to do with the  reset  of the phase accumulator in the DDS? I saw it before in the spring with the  PyRPL  ASGs too (and it was absent when we used the SCPI generators)
+Cheers,
+Gary
+This data was acquired with the pyrpl scope? Which command was used for that? I'm just trying to make sure the data acquisition is not the problem here.
+Yes, it was acquired using the pyrpl scope
+You can  find the full code here, I've written a small "live display"  oscilloscope using Bokeh:
+https://gitlab.tudelft.nl/gsteele/red-pitaya-control-notebooks
+Feel free to clone it and give it a try :).  I had to hack it a bit with an try /  except  to deal with the  change of "duration_options"  to "durations" so that it works with the latest pip release and the development branch...
+The basic acquisition code is here:
+Cheers,
+Gary
+(btw, let me know if there is a better / proper way to use the scope object, I seem to be using some internal functions...)
+I would also strongly suspect your data acquisition script rather than the data generation...
+Several remarks:
+I guess a strong motivation for you to rewrite a simple data acquisition function was the awful mess of the scope acquisition code in the master branch: apologize for having such a hard-to-read code. The main reason why the code is so obscure in there is that we want the whole GUI not to freeze when waiting for data from an instrument: since we are using an event-base system, calling "sleep" in a function is not an option. However, using timers and callbacks forces us to split all the acquisition logic in many different functions.
+--> The solution that we have found to improve readability is to use the new async support introduced progressively in python 3. In the branch python3-only, the whole acquisition code has become much more readable. That branch will very soon become the new master branch (by the way, @lneuhaus , I am now fixing the last failing unittests, and I guess we can proceed very soon with a new release).
+Reading the code in python3_only, acquisition_module.py, line 225., and comparing to your function  get_traces, I see that you are missing the call to self._data_ready_async(min_delay_ms) (or the equivalent in the other branch). This function is there to make sure the full buffer has been acquired in the FPGA before attempting to download it. I think you have to be careful with sleep, IMO, there is no strict guarantee that it will not return slightly before the requested time (you can make a small benchmark, and this is also probably system-dependent)... In this case, this has a catastrophic consequence, because the end of your buffer will be old data that have not yet been overwritten. Could be that the glitches you are seeing are due to this effect (at least I tried several times using the scope acquisition function of pyrpl and didn't see any of these glitches). One very quick-and-dirty test would be to replace in your code sleep(s.duration) by sleep(10*duration) and see if it improves things.
+Also, I would advocate to switch right away towards the python3-only branch... Let me know if it helps...
+By the way, the correct way of getting a scope curve in python3-only is to call scope.single()or scope.single_async()if you are using it within an async framework.
+Thanks, I'll take a look, and make some simple test code to check it out
+BTW, I am now on the develop 0.9.3 branch: does that already include the python3_only branch, or should I clone and pip install the python3_only one?
+@SamuelDeleglise let's try to get #32 (python-3 branch) merged into master asap. And simultaneously we can merge #239 (0.9.3 branch) into master as well. I guess Python3 is based on 0.9.3, so better first merge 0.9.3 and then python3? Maybe we can focus on the following issues:
+This will likely leave the automatic binary builds broken, but I have no bandwidth to fix the corresponding pipelines, so better just go with an up-to-date master branch and see from there?
+Sounds good to you?
+Sounds all good to me at least :)  thanks as well for this great project, am very excited about it
+For now, I'll checkout the python3 branch and play with that
+I think I pulled anyways most of the important stuff from develop0.9.3 into python3-only regularly anyways (for instance the demodulation at 2f, and the synchronize IQs are already there).
+I agree with you that it might make sense to make a last clean release still supporting python 2.7 (pulling develop0.9.3 into master) and then to pull python3-only into master.
+I am not sure what you mean with the automatic binary builds (I haven't followed that), but if this is possible to make at least one clean .exe file with the latest clean version, I would strongly advocate for that since many people I have met have been discouraged by bad bugs remaining in the current .exe file (for instance, I think the GUI instruments freeze ...), which is very bad because it is the first thing they try...
+Okay, all makes sense:
+I am proud to announce that all tests are passing on python 3.7 and 3.8 with branch python3-only. There's already a pull request, but it's very old, I don't know if you want to make a new one ?
+Thanks! I pulled python3-only and changed the code to use scope.single(), and I now no longer see any sign of discontinuities
+Cheers,
+Gary

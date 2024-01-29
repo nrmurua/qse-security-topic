@@ -1,0 +1,63 @@
+Hi ! I am a PhD student at LKB, Paris (multimode quantum optic team).
+I would like to use the Red Pitaya as a lock/hold PID, and synchronize it with a TTL input signal.
+By lock/hold, I mean that the Red Pitaya would alternate between locking with a pid module on an input, let's say In1 (state called lock), and holding the last pid output value before stopping locking (state called hold).
+The altrenance would be triggered by a TTL signal at input In2.
+The issue I am facing, is how to make this triggering event ? I know the Red Pitaya can trigger to launch a scope acquisition. But I don't see how it is done in the code (is it done at the FPGA level ?).
+Finally, my question boils down to:
+How can I get the trigger event ?
+From that, I would be able to trigger a function that switch off the pid, and turn on a DC asg with an offset value equal to the last pid output value.
+Thanks in advance !
+Ganaël
+I had a quick look at the code, and there is in the FPGA pid module a "sync" input that is made for what you want. However, it looks to me like it is not yet connected to a TTL input (we see in red_pitaya_dsp.v, line 148 that it is simply a register of the DSP module, that in the current version is editable via software, see line 281).
+I have the feeling the most direct solution would be to hardcode (line 325) the sync input of the PID modules to be one of the TTL inputs of the redpitaya (really, if your input is a TTL, it makes more sense to connect it to a TTL input than to in2)...
+I am sorry, I didn't see a simple workaround to avoid modifying the FPGA code. On the other hand, if you take the pain to install Vivado and recompile the FPGA, the modifications should be relatively straitforward.
+@lneuhaus, does that make sense ?
+Hello,
+Thank you @SamuelDeleglise for your answer. I have begun looking into the FPGA code. I managed to make the FPGA code compile (less easy than what I thought).
+Now, I would like to make the modification you suggested, but I struggle with the FPGA code. I agree with using a TTL input for the synchronisation, though what port is that ? First, physically on the board, I am not sure which pin it is, but I guess it is one of the DIO. See the figure of the extension pins below. Any difference between the P or N sort ?
+
+Also, in the code, how exactly do you suggest to hardcode line 325 ? How is referenced the TTL pin input in the code ?
+Thanks in advance !
+Hey Ganael,
+sorry for my (probably too) late reply. The feature you want already exists in the branch max_hold_no_iir, see e.g. 
+Whether the pid is paused (aka "on hold") is decided based on (paused or pin high), so one is sufficient.
+Hey Leonhard!
+Indeed, I ended up learning Verilog, and I eventually converged towards the same solution as in the max_hold_no_iir branch.
+At least, it gives me an insurance over my solution. Thanks for the help !
+P.S.: I am not sure why, but the DIO pins of my Red Pitaya are set to high by default (I measured the voltage with respect to the ground and it is 0.3V, while when I send a DC signal at 0V to 1.3V, the pin is set to low, and when I send more than 1.4V, it is set to high). Maybe I should unplug, replug the redpitaya.
+
+Hello,
+First, thank you for your last comment @lneuhaus, this might indeed solve the problem with the pin initialisation (tests undergoing).
+Now, I am actually reopening the issue, because the currently implemented "hold" feature is not exactly what I want. Indeed, I understood that when the pid is paused, its output value is set to the last value in the integrator register "int_reg". I actually would like to implement the hold mode as the pid outputing the last output value before holding.
+Indeed, for our applications, we are sometimes in a regime where the integrator frequency is lower or equal to the hold/lock cycle frequency (we cut light with an optical chopper).
+I modified the fpga code in the file red_pitaya_pid_block.v  (towards line 325):
+assign pid_sum = (pause_p==1'b1 | pause_i==1'b1 | pause_d==1'b1) ? $signed(pid_out) : $signed(kp_reg) + $signed(int_shr) + $signed(kd_reg_s);
+Basically, I re-wire the wire pid_sum to the pid_out register when in hold mode.
+I face an issue, as you can see in this picture. I set the pid setpoint to 0, and its output offset (ival) to 0.1. I send as input the value of asg0, set as DC at 0V. The DIO_P pin is receiving a TTL at 10 kHz. The PID output (in red) should remain constant as the error signal is 0. But you can see that sometimes, when it holds, it holds at a lower value than 0.1 (down peak).
+
+I am a bit confused by this result. Did I made a wrong modification in the FPGA file, or is there somethimg I am missing?
+Thank you for your time!
+Hi,
+I compilied a new version and tested it, and it works. I simply took the before lat value instead of the last value as output (using an intermediate register). See code  in the file red_pitaya_pid_block.v:
+My idea is that the bug shown before may come from some non-synchronised events. Not sure if this is the case.
+So, I let this open, in case you have a better idea to solve it, though it works correctly now.
+And by the way, the initialization of the pins do work with the change in the .xdc file. Thanks!
+Hi, I also want to engage/disengage a lock with a TTL. I use the executable of the aforementioned branch and select the gain to be paused.
+However it seems that the selected gains can only be paused within the GUI. There is no change made by a High/Low on the mentioned DIO pins, although I can trigger on the TTL e.g. with StemLabs logical analyzer.
+Any idea why the trigger event is not recognized?
+Many thanks in advance.
+Simon
+Hi,
+Sorry, I can't say anything for this branch, as I didn't tried it. I only checked that my code was using the same logic to implement it in the fpga codes.
+Though, it should work a priori, since the code for this part is similar.
+Are you sure you use the correct pins ? Maybe try the 3 pins (DIO_P0 to 2), and corresponding pid0-2.
+Also, these pins should receive no more than 3V in the spec, so check that too.
+Did you try the github installation instead of the executable ? (Because it seems surprising to me that each single branch has its own executable.)
+Cheers,
+Ganaël
+I use the executable of the aforementioned branch and select the gain to be paused.
+Hey Simon, it might just be that the executable is totally outdated. pyinstaller changes their logic frequently and at some point I think some of the builds just broke. In case of doubt, maybe check the date when the exe that you used was uploaded, and compare with the latest commit in the branch - my guess is that these differ. So I suggest to try simply running with a pip-editable install from github (pip install -e git+https://github.com/lneuhaus/pyrpl@max_hold_no_iir#egg=pyrpl should do that).
+Hi lneuhaus & ganaël,
+many thanks for your answers. This was exactly the case. The executable was outdated. The installation of the branch from git did the job!
+Best,
+Simon

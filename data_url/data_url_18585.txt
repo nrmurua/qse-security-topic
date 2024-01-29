@@ -1,0 +1,20 @@
+PyQuil will construct the following ISA for a 1q-qvm device:
+This ought to read as: on qubit 0, the gates I, RX(+/- n pi), and RX(theta) are native. The compiler will use this information to construct a list of compilation routines that will move us toward the above native gateset (see compute-applicable-compilers) or keep us within the gateset but produce more optimal output (i.e. shorter gate sequences; see compute-applicable-reducers).
+Given the above ISA, however, the compiler decides that the routine agglutinate-RXs is not appropriate. After some exploration, this is due to the wildcard in all of the "arguments" fields of the "RX" gates in the ISA. Changing the wildcard to be specific (i.e. in this case changing it to 0) fixes the issue. Indeed, (build-nq-fully-connected-chip 1) produces an ISA whose "arguments" are specifically the qubit under which they are keyed.
+There are a few options here:
+I'm not sure why the "arguments" key needs to exist at all. My understanding is that all gates listed under a particular qubit in the ISA ("0" above) apply to that qubit, so repeating that qubit index under "arguments" seems redundant. It's even less clear to me what a wildcard here could mean.
+The above issue was spotted by @jlapeyre when compiling the following
+where bad.isa is the above.
+I vote (a) unless we can think of reason (c) applies.  Maybe "arguments" is only supposed to be a wildcard if "operator" is as well?  See #470
+I take it back. It looks like the changes in #470 only enabled the "operator" field to be a wildcard, but wildcard "arguments" were already permitted.
+I'm not sure why the "arguments" key needs to exist at all. My understanding is that all gates listed under a particular qubit in the ISA ("0" above) apply to that qubit, so repeating that qubit index under "arguments" seems redundant. It's even less clear to me what a wildcard here could mean.
+Did we ever figure out why wildcard arguments are needed? This seems like a relatively recent change to pyquil rigetti/pyquil#1151. Would it make sense to instead update pyquil's convert_gate_type_to_gate_information  to just include the concrete qubits in the arguments field, rather than a wildcard?
+I guess on the other hand, pyquil 2.16 is already released with these changes, so maybe it needs to be fixed in quilc in any case.
+I'm not sure why the "arguments" key needs to exist at all. My understanding is that all gates listed under a particular qubit in the ISA ("0" above) apply to that qubit, so repeating that qubit index under "arguments" seems redundant. It's even less clear to me what a wildcard here could mean.
+Did we ever figure out why wildcard arguments are needed? This seems like a relatively recent change to pyquil rigetti/pyquil#1151. Would it make sense to instead update pyquil's convert_gate_type_to_gate_information  to just include the concrete qubits in the arguments field, rather than a wildcard?
+Sorry for missing this.
+Wildcards are needed in the case of multi-qubit gates.
+For example, you might like to specify that CZ 0 1 is native and CZ 1 0 is not native. You would achieve this by specifying something like
+For brevity's sake, if you want both CZ 0 1 and CZ 1 0 to be native then you would use a wildcard under the arguments field.
+It's not that useful when dealing with 1Q gates, but keeping the syntax symmetric and general is a reasonable ask.
+makes sense. thanks for clarifying.

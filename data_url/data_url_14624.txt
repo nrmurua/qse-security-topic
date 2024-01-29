@@ -1,0 +1,17 @@
+small rotations in generated ansatz are not removed by the transpiler.
+
+to generate the circuit:
+
+and
+
+the rotation with a small angle may be removed.
+add a traspile pass that check for this condition.
+@howie-kuo Can you have a look at #6472? It adds a pass to remove small rotations. (have not tested it a lot yet)
+This is an interesting one. Since the gates are parameterized (and we don't presently have bounds for circuit parameters), there is the possibility in general that the parameter value could be sufficiently large to make the rotation substantial, as you mentioned in the Qiskit slack. Once the parameter values are known, and the circuit is re-transpiled prior to device execution, these small rotations will be removed.
+There may however be a case in the algorithms, where parameter bounds are known, and removing these rotations can be beneficial (maybe in removing a variable for the classical optimizer), but I'm not an expert there. @Cryoris might have some thoughts.
+I have been exploring and come up with a alternative and possibly more informative case.
+
+in this case, we have two stages, the first sandwidges some operation between a rotate forward, and rotate back. Very common when implementing $HxH^\dagger$ type of operations and the small angle was first discovered when I was playing with ANSATZ in the 2021 challenge which is a natural place for this to occure.
+In the above example, two of this stages are put together one after another, and the inner pair of rotate back and rotate forward can be cancelled.
+there are two thing that need to happen here. Firstly, it will be good if we can merge the two rotate that shares a common factor (parameter) and reduce it to (pi/2-pi/2)*x, and then later recongnise when the rounding of pi/2 and -pi/2 in double precision produce a episilon residule, to remove it altogether.
+I think the first pass of factoring out the common parameter and collapsed the coefficients would be a useful addition. The second of rounding this coefficient to 0 will need more thought.

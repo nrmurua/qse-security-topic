@@ -1,0 +1,42 @@
+In the current statevector simulator, when a measurement is performed in mid-circuit, the statevector is set to one of the possible measurement outcomes randomly, according to its probability. This means that the final statevector only represents one possible outcome of the circuit, and statistics dervied from it will not align with the statistics of the whole circuit.
+This can be solved by simulating both possible options for every measurement, and continuing to run the cirecuit for each of them. In mathematical formalism this is equivalent to representing the statevector as entangled with the measurement device, as shown in the attached file.
+Measurement and Collapse in Many-World Formalism.pdf
+Add split_statevector_simulator.py to providers\basicaer
+In this file, the SplitStatevectorSimulatorPy class will be defined (derived from StatevectorSimulatorPy), with specific methods used for the split statevector_simulator will be stored.
+The class has a list of the substates of the vector after its split and another list for the probability of each result occuring (named _substates and _substate_probabilities)
+Users will choose the option to simulate the split in every measurement by selecting to use this simulator
+In providers\basicaer\basicaerprovider.py
+Add the split_statevector_simulator to the SIMULATORS collection
+In providers\basicaer\qasm_simulator
+Change _add_qasm_measure and _update_after_measure to split the statevector if the split_statevector_simulator is running
+Refactor the run_experiment method such that each shot will be performed in a separate method _run_single_shot
+If the split_statevector_simulator is running, return the "data" attribute of the result as a dictionary containing the binary tree of statevectors that resulted from the measurements
+Add a parameter to _run_single_shot to indicate which operation to start from when running the circuit (this will allow running the two possible outcomes of a measurement from the next operation in the circuit)
+For measurement operations, if the statevector was split, recursively call the _run_single_shot method on both its substates
+When running the qasm_simulator for a circuit that has measurements in the middle, the logic of split states can be used in order to derive the statistics of the entire ciruit and run the required number of shots on them instead of running the entire circuit for each shot.
+** This is the implementation of an IBM Israel 70 Quantum Hackathon project **
+Correction: _update_after_measure is a refactored part of the existing _add_qasm_measure method.
+Also, being new to Github, I haven't managed to add the enhancement tag myself, for some reason.
+This was the winning project of the Haifa Hackathon held last Tuesday. @ajavadia if you'd like to assign you or someone else to discuss / high-level review of the issue before PR.
+@shleef one fast question - in the intro you say: "statistics dervied from it will not align with the statistics of the whole circuit.". This may imply to me that you're only interested in statistics of the outcome of the circuit, including all the measurements. For this there may be simpler ways to do it. Still, you're method keeps at any time the entire binary tree. Do you see other usecases beyond the final statistics? A related question, can you suggest a usecase where this is different/stronger than simulating the evolution of the density matrix?
+@yehuda-naveh While getting the right statistics is a benefit from this method, it is not the only use for this implementation. For one, having the entire binary tree at the end of the run allows the users to follow the process of the circuit, and in a sense use it to "debug" it.
+In addition, this allows for a different visualization of the final statevector, clarifying for instance which statistics of the final state would be correlated with each path of measurements leading up to it. which could be useful for circuits recreating experiments in Two-state vector formalism for instance, in which measurements are defined as valid only when the final statevector is the desired Psi state
+So visualization will be part of the implementation?
+Since it is meant to be modular, I think the visualization should be discussed in a separate issue, But generally, yes, visualization should be implemented in order to make the best use of this feature.
+The way you see it, if two paths become the same, will your algorithm identify it? (in other words, is it a tree or a DAG?)
+Conceptually, two paths cannot become the same. Even if the statevectors of both paths are the same, the measurements leading up to them are not, and thus the "full" description of the statevectors is not the same for both. So the implementation is a tree, not a DAG.
+(Generally, two paths could only become the same if classical measurements could be completely deleted, which is impossible by definition when discussing measurements of the quantum system into classical data)
+Hi @shleef @yehuda-naveh, can this be implemented in c++ and added as a backend to Aer? BasicAer is really supposed to be a dumb simulator to do basic simulation of counts/statevectors/unitaries.
+@chriseclectic should weigh in here.
+Good with me. @chriseclectic ? Gilad I assume you're fine with C++..
+@ajavadia @yehuda-naveh  Generally, C++ is not a problem for me, but compiling Aer on windows has been giving me trouble, so that's why I decided to start with the python simulator.
+It might take a while until I get around to setting up the environment to work with the C++, and implementing the same concept for C++ shouldn't be too much work, so I figured it would be better to get the python code out there so that other contributers may help as well, if they want.
+Yes this would be very good to add to Aer and we can open an issue there (or move this one). We have talked about adding measure caching/branching optimization to the Aer simulator for awhile but never gotten around to implement it, and this is a good example of it. Eventually it could be applied to all simulation methods of the QasmSimulator, though the statevector is the best place to start.
+A general comment: since this is a simulation optimization it does not need a seperate backend, rather it should be an optional feature of the QasmSimulator that can be activated if the system has enough available memory to store additional copies of the state for the branches.
+@chriseclectic, the main reason I thought it should be defined as a separate backend is as a way for users to signify that they're interested in the whole tree as an output, rather than just the final state as in the StatevectorSimulator. I figured it would make it more "open-closed" this way than by adding an option to the existing simulator, but it's definitely a decision for someone more deeply familiar with the code than I am.
+I also think the whole tree is useful as output, rather than do all this work, and then just limit the result to a set of shots
+The whole tree is an internal simulator state, which is retrievable using a snapshot command.
+@eliarbel - the issue we discussed, let's try with @shleef to have it moved to aer to be part of the aer architecture. (@shleef , there can be an interesting roadmap of continued development on this - queries, visualizations, noise, etc. But let's start with the basic implementation as part of aer). Eli, the PR is here: #2555
+@shleef @yehuda-naveh did you decide to move this to Aer then? if so can you please move this issue to Aer as well, and close PR #2555 in terra?
+@ajavadia we will move it to Aer. Gilad and team is on exam vacation period, I'll handle the move to Aer.
+Ok sounds good, let's continue the work in Aer.

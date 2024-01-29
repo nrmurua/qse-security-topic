@@ -1,0 +1,20 @@
+When increasing the cutoff of the WF grid for RPA computations, CP2K crashes with the error message "ortho_cxyz_to_grid: Assertion `offset + ub_cube[i] < npts_local[i]' failed." for large memory computations.
+Attached are input and output files as well as corresponding slurm files from the computations performed on Daint.
+TMP_issue_cp2k.zip
+Maybe related to #1785 ?
+The error comes from this line
+
+The problem is the following.  collocate_pgf_product (might also be valid for the collocate function) will branch to the orthorhombic case even if the grid is distributed and the border_width is set to zero. This scenario happens for instance here
+
+for the mp2 simulations. I suspect the RPA code does something similar as well.
+One way to temporeraly solve this issue is to force the orthorhombic parameter to false when the grid is distributed. But a proper fix would be to have an implementation of the orthorhombic case when the grid is distributed.
+The grid code assumes that the region within the cutoff fits into the local part of the grid. If this is not the case then use_subpatch=.TRUE. has to be passed. This distinction allows for a significant speedup of the common case without use_subpatch. For GPW we runs generate_qs_task_list upfront to figure out when use_subpatch is needed.
+So, the fix should be to add  use_subpatch=.TRUE., subpatch_pattern=0 to those collocate_pgf_product and integrate_pgf_product calls in the MP2 code.
+But a proper fix would be to have an implementation of the orthorhombic case when the grid is distributed.
+Yes, this might be useful - one should do an analysis of the expected performance gains.
+There might also be some synergies with the GEEP code, where we essentially need the same functionality.
+Thanks a lot for all the comments and the help! Choosing a replicated grid distribution type seems to work - thanks!
+it should be fixed by PR2097 when it will be merged. Then the replicated grid distribution will not be required anymore.
+Dear Mathieu, thanks a lot - that would be actually very good - replicated grids seems to require a lot of memory. Thanks!
+indeed. each cpu has the full grids that's why it was only a temporary solution. Hopefully the PR will be merged very soon and you can remove the constraint.
+I believe this has been fixed via 493e0c1.

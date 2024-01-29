@@ -1,0 +1,78 @@
+@Nader-Khammassi I took the liberty to put your email here, hope that is OK.
+Hi everyone,
+Based on the discussion we had few days ago, I implemented a first representation of the custom instruction definition which can be supported in OpenQL to offer more flexibility to the users in the short term.
+Here, I propose the following instruction description template and its corresponding implementation in the standard “JSON” format, the current implementation matches the internal
+OpenQL interface for qasm instruction definition as well. I share with you also some notes on some implications of this instruction definition for the current OpenQL compilation stages and the resulting requirements in term of the hardware description.
+You can find attached as well an example of the “JSON” file which uses this paradigm to specify an “rx180” instruction.
+I propose to focus the discussion on the instruction definition at this point, if you have any comments or suggestions, please let me know.
+The custom or “generic" instruction is defined by the following attributes:
+“qasm” : the qasm identifier or name of the instruction, for example: “x180", “ry90”, “abc”… etc (the type of this attribute is a string).
+“parameters” : this is the number of parameters, for instance this value could be 1 if the instruction is acting on a single target qubit or 2 if it is acting on a control and target qubit, etc… (the type of this attribute is an integer)
+“qumis” : this attribute includes the sequence of microcode instructions associated to this qasm instruction, for example: { “pulse 0100 0000 0000”, “wait 5” }  (the type of this attribute is a list of strings)
+“duration” : the duration of the instruction in ns. (the type of this attribute is an integer)
+“latency” : the latency of the instruction in ns. (the type of this attribute is an integer)
+“channels” : this corresponds to the hardware resources used or "kept busy” during the execution of this instruction. For example, this value can be : { “awg0“ , “vsm" }   (the type of this attribute is a list of strings).
+“type” : this field specifies the type of the instruction such as “flux” or “rf” as suggested by Adriaan.
+“matrix” : this field provide a mathematical description of the effect of the instruction on the quantum state when executed, this is required to enable optimizations on the compiler as well as the simulation of the circuit. This attribute is represented as a list of complex doubles. For instance the matrix representation of an “rx180” is {  {0.0,0.0 },  {1.0,0.0},  {1.0,0.0},  {0.0,0.0}  }
+Here is an example of the specification of a working example of the “x180” instruction in the json format, this example can be loaded by OpenQL (tested).
+3.1. Compilation : Custom Gate Decomposition
+The different compilation phases such as the circuit synthesis, decomposition (expansion) and optimization (compression) happens at the qasm gate level, these compilation phases operates usually on  a common gate set (mainly Clifford+T gates since most circuit synthesis/decomposition techniques on the literature operates on this gate set).
+This means that a custom qasm instruction can be handled by the compiler in 2 ways:
+The instruction is introduced “inline” in the gate sequence such as in classical code (inline assembly code can be inserted inline in a c/c++ code for example). In this case the compiler cannot do much about the instruction more than converting it into QuMis code ! The side effect of this is that this will break the circuit into segments of optimisable qasm sequences and consequently would prevent any global optimization on the overall gate sequence if it contains such instruction, this is pretty similar to the effect of the measure instruction.
+The compiler can take into account a decomposition of a custom instruction into the a common gate set (Clifford+T) then operates on a homogeneous qasm constituted exclusively of Clifford+T. In this case a decomposition should be provided by the user as an additional attribute: “decomposition” : { “x180(0)” , “t(1)”, “cz(1,0)”, … } . In this case, these operations can be fully supported by the compiler at all stages. Automatic decomposition of such custom instructions by the compiler into Clifford+T based on the matrix representation can be quite complex and should be excluded at least for now.
+These 2 ways of using custom instructions do not exclude each others and should be discussed later, a good compromise in my opinion is to make the “decomposition" attribute optional to allow more flexibility and allow later works on the second point. For now, the first case should be supported by the compiler.
+3.2. Hardware Description
+On the hardware description side, mainly 2 attributes of the instruction definition are tightly related to the hardware description:
+The first one is the “channels” attribute which specifies the hardware resources used by the instruction, so the values of this attribute (“awg0”, “awg1”, “awg2”, “trigger1” … etc) should be defined in the hardware setup description.
+The second one is the “type” attribute which indicates the type of the operation (Flux or RF …), a matrix of the latencies required by the ordering of the operations (based on their types) should be specified in the hardware description file.
+This simple hardware description could be described in a simple JSON file which contains at least these 2 fields, I am currently working on how to link it to the instruction description.
+@Adiaan: can you provide me with some numbers of the latency matrix ? Thanks.
+Best Regards,
+Nader
+@Adiaan: can you provide me with some numbers of the latency matrix ? Thanks.
+I don't know what format you want the latency but I can give you some typical numbers.
+QWG triggering latency: 80ns
+CBox internal AWG triggering latency: 40ns
+I would like to specify latency on a per channel basis instead of on a per operation basis, but that is a detail and a per operation basis gives more flexibility.
+Exact numbers depend on details like cable length etc and will always be calibrated and updated in this file.
+I have some questions on your format.
+what is the meaning of the int nr of parameters? Should this not be implicit and if it does have arguments, how does that relate to the qumis specified here. In the example you put forward the qumis corresponds only to a specific argument (e.g., target = q0)
+is it possible to specify an operation with no matrix represenation? This would obviously disable some compilation features for that gate but is required for doing e.g. a Rabi or other calibration experiment where we either change the definition of  a certain parameter or it is simply not known. Other examples would be variational eigensolvers (ask Ramiro for details).
+I would argue that the wait instruction should not be part of the qumis definition but instead should be added by the compiler based on what other instructions are being played and the duration parameter.
+It is not clear how multiple instructions go into the JSON file. Will you use it as a dictionary with the name as the key for each operation or will it be some massive list. An example with 2 or 3 operations in them would be better in making this explicit.
+Hope this helps.
+Hi Adriaan,
+Regarding the number of parameters, I mean mainly the number of qubits the instruction is operating on, for instance a "x180" instruction operates only on 1 target qubit while the "cphase" operates on 2 of qubits (so it requires 2 parameters). Knowing the number of qubits will basically allow the compiler to analyse dependencies, to deduce the expected size of the matrix and allow the simulator to simulate the circuit execution... These parameters could be extended later if parameters other than qubit identifiers are required.
+It is ok for the second point, in that case the instruction can be handled similarly to a measurement instruction, so the matrix specification could be just an identity if not known and it will be ignored by the compiler.
+Regarding the wait instruction, this depends on the number of qumis instructions associated to the custom qasm instruction, if we want the qumis sequence to be a black box which can contain any arbitrary sequence of qumis instructions, it would be hard for the compiler to go through the detail of that sequence and introduce code in it. I think the compiler should look only to the attributes of the the custom qasm instruction so to the overall attributes of that qumis sequence and not its details. If the sequence is too complex, the user can just split it in simpler set of custom qasm instructions.
+I am not sure I understood what you meant: do you mean having multiple custom instructions inside the same json file ? (currently, I just created one json file per instruction, that would be the easier for me to implement at least for now... I think it is also more readable than having a very long list in the same file).
+Thanks for your discussion. I think the format defined by Nader should be fine on the compiler side. However, I would like to discuss some difficulty related to the hardware side.
+In previous discussion and implementation, quantum operations are directly bound with QuMIS instructions. It has a lot of benefits to do this. But, I think this is not a good idea, because:
+However, if we use QWG to generate it, then it could be:
+In this case, the compiler optimization routines are somehow bound to the hardware connection. To my understanding, some compiler optimization routines, such as decomposition, should be totally independent of the underlying hardware configuration.
+If we directly bind the operations to some specific QuMIS instructions, then it is a bit difficult to translate parallel QASM into parallel horizontal QuMIS. For example, it is a bit difficult to translate the parallel QASM
+into the horizontal QuMIS:
+Here, I assume a measurement time of 300 ns. However, these QuMIS instructions are difficult to generate because the timing should be taken into consideration.
+Point 2 and point 3 are exactly the pain suffered by Adriann to enable simultaneous gates on two qubits.
+Here, based on Nader's proposal, I further propose a high-level and low-level independent configuration definition.
+The configuration should contain the following parts:
+(I am still working on this. I will give an example file before April 27.)
+@gtaifu , thanks for clarifying these things.
+@AdriaanRol It is ok for point 4, we can put them inside a single file, as a first step it was easier to load a single file by instruction but I can change it.
+@gtaifu Let me go through the details of your comment and see what possible on the compiler side, I will get back to these 3 points.
+Hi all, I have uploaded an example configuration file for discussion.
+This configuration file has the advantage that QASM operations are independent of the underlying hardware (i.e., QuMIS instructions). In this case, we can have a very nice separation between the QASM IR and low-level QuMIS.
+Based on my experience on the physics experiment, this configuration should suffice in many cases.
+But it at least has the following limitations as far as I can see:
+Hi Xiang,
+Thanks for uploading the example configuration. As I understand, there are currently three relevant groups/keys in the JSON dictionary.
+I was wondering why you chose to separate "luts" from "operation dictionary. To me it is more natural/convenient to keep these two together.
+Also your example matrix has a shape 24, I would expect either 22 or 4*4 for a single qubit operation depending on the type of simulation you are doing.
+The operation dictionary does not contain the target qubits. I assume this is on purpose (but I  want to make sure) and if this is the case, I would expect that this is specified in the hardware configuration part in some part.
+What do @imranashraf and @Nader-Khammassi think of this?
+First thank you @gtaifu for your proposition. These are my remarks/suggestion regarding the proposed file:
+First of all, I see in the example file that both the instructions and the hardware specification are all merged in a single file. I suggest to separate the instructions definition from the hardware specification for clarity and for other technical reasons : in OpenQL, software description (kernel/programs) is separated from hardware description (platform), so custom instructions loading happens in a different module than hardware specification loading. Instructions could be defined into a file "instructions.json" and the hardware into a file named "hardware.json" for example. This separation would also allow reusing the same instruction set with a different hardware configurations...
+The second point is related to the qumis code associated to the custom qasm instruction: we had a brief discussion about this issue in the last brainstorming meeting, @AdriaanRol was not there, so I summarise it quickly: Xiang proposed to separate the qumis  from qasm instructions. From the compiler perspective, the custom qasm instruction is supposed to be a black box which exposes only the attributes which are relevant to the compilation process. The compilation/optimization happens exclusively at the qasm-level (hardware independent) except at the last stage which generates the microcode. In other words, the compiler has no knowledge of the meaning of a "pulse" or a "trigger", it generates this micro-code based on the description of the qasm instruction provided by the user in a form of a micro-code sequence. At this point, the compiler do not look into the details of the micro-code or interfere with any micro-code transformations... a least at this point. I am not sure whether we want to go to that level of complexity, especially if we want to target different hardwares...
+We can discuss further this point in the next meeting...
+My last remark is about the hardware specification, I am not sure I understood every detail of the description (may be Xiang can clarify it in the next meeting) but I have the impression that the hardware specification and the microcode are interleaved which is a bit confusing to me. I think it would be wise to simplify the description and go gradually toward a more sophisticated description in the next development steps. At this stage, the relevant hardware information for the compiler is i) specifying whether a hardware resource (channel for example) is used by a given instruction. ii) knowing the latency of a "channel" (which is relevant for the scheduling). iii) The latency matrix which specifies the latencies based on the operation ordering ("rf" after "flux", "flux" after "rf"... etc) and affects the scheduling as well.
+I feel like these information are buried in the details of this file. I think simplification is important for a first step. I suggest we discuss these points in an interactive way in the next meeting.

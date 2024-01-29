@@ -1,0 +1,90 @@
+The function  _wait_for_done(self, timeout) in async_utils.py is no longer working properly with python 3.7. This is a quite critical problem since for instance this causes the scope to never refresh in normal mode.
+The reason is not entirely clear to me, however, it s probably related to some changes in asyncio in python 3.7 that makes the Future objects bounded to a particular event loop, such that the callbak that was registered with add_done_callback(self._exit_loop) never gets called when executing self.loop.exec_()
+I am working on a quick fix that should be available soon in develop 0.9.3, however, in my opinion, all the support for asynchronous acquisition could become 40 dB more readable by using the framework introduced in python 3 with async/await ... The main reason why we still have these low-level Future and callback mess is for the code to stay compatible with python 2. For this reason, I would strongly recommend giving up support for python 2...
+The fix is here
+9024954
+I am not sure if I am supposed to pull this in master myself or if someone (Leo) should make a code review first ?
+Oh and I forgot, it is passing unittests in python 2.7, 3.5, 3.6, and 3.7
+Hi Samuel,
+I finally agree with you that we can sacrifice python 2 support in exchange for more readable code. I propose the following procedure:
+Do you agree with this?
+OK sounds great,
+I will start the pyton3-only as soon as I have some spare time... lots of garbage code should go away then...
+I get the following error when using scope.curve_async( ).result( ) -
+Is this part of the same problem? I am using Python 3.6 on Anaconda (Win 64).
+I don't think that is a bug...
+If you are trying to retrieve the result of a curve that is not yet acquired, you expect this error to happen.
+On the other hand, if you want the function call to block until the result is ready, you should use scope.curve_async().await_result( )
+or equivalently, use the synchronous function provided for that purpose:
+scope.curve()
+I don't think that is a bug...
+If you are trying to retrieve the result of a curve that is not yet acquired, you expect this error to happen.
+On the other hand, if you want the function call to block until the result is ready, you should use scope.curve_async().await_result( )
+or equivalently, use the synchronous function provided for that purpose:
+scope.curve()
+I am trying to follow the exact steps mentioned here in the doc to reproduce it. Am I missing something?
+OK, it looks like there is indeed a bug: the curve never gets ready until the jupyter cell returns. This is definitely related to the issue we are discussing here. Just to make sure, are you using the branch master or develop-0.9.3 ?
+OK, it looks like there is indeed a bug: the curve never gets ready until the jupyter cell returns. This is definitely related to the issue we are discussing here. Just to make sure, are you using the branch master or develop-0.9.3 ?
+I'm on the master branch. Should I try with dev-093? Have you already committed some fixes to this there?
+Yes, Samuels fix is on the develop-0.9.3 branch, commit 9024954. Either you switch to develop-0.9.3, or you just cherry-pick the one commit into your local master branch. There is a lot of different stuff in develop-0.9.3, which is why I have not yet merged it into master..
+Actually, the bug you have spotted is in both branches...
+This section of the notebook was apparently not tested in a long time, because it cannot work this way anymore:
+the function time.sleep() doesn't allow the event loop to retrieve the curve from the redpitaya when it is ready because no other event can be treated while "sleeping".
+The simplest fix I can think of is to replace
+from time import sleep
+by
+from pyrpl.async_utils import sleep
+in the notebook...
+The simplest fix I can think of is to replace
+from time import sleep
+by
+from pyrpl.async_utils import sleep
+in the notebook...
+Thanks, this worked. Should I edit the docs and make a PR?
+That would be cool, yes! Thanks in advance
+OK, it looks like I was to quick in saying the bug was solved (I am talking about the initial one):
+Actually on python 3.6 and 3.7 my fix is causing a bad problem (kernel crash after a few curve acquired with the scope) when interacting with the jupyter notebook (I believe it is specific to Jupyter notebook because unittests are fine...);
+I have located the line that's causing the problem (it s async_utils.py line 122). I am working at finding another way to fix the problem with python >=3.6, but I am not sure how straightforward this will be.
+Another possibility would be to say that the current release supports python 2.7 to 3.5, and the next one only supports python >=3.5.
+OK, the final fix is here:
+a37d468
+That was not many lines of code but testing on 2.7, 3.5, 3.6 and 3.7 on notebooks + unittests was quite lengthy...
+For discussing the unit tests problem, I created issue #353.
+So now this fix works in all the mentioned python versions?
+It passes unittests on all these versions and a quick test of the scope gui is also fine in the notebooks...
+OK, I have already advanced quite a bit on the python3-only branch. The code will be compatible with python 3.5, 3.6 and 3.7. Support for python <=3.4 has to be dropped since the syntax async def some_coroutine() was only introduced in python 3.5.
+The main difficulty is still to find a way to deal with asynchronous programming that integrates nicely in Ipython kernel (with a qt event loop) in all 3 python versions.  The code to perform that is located in a new version of the file async_utils.py: This module provides a function wait(future_or_coroutine) that will stall untill the coroutine is finished (while not blocking the event loop execution). In order to work, the futures need to be sent to the function execution via a custom version of ensure_future and use a custom version of sleep that are provided in the same file. In practice, they simply execute in a dedicated QEventLoop named LOOP that can be waited for by running LOOP.run_until_complete(some_coroutine) (python 3.7), or use the old trick of creating a new QEventLoop on the fly and executing it via loop.exec_() (python 3.5 and 3.6).
+With that, all the mess in acquisition_modules.py, scope.py, spectrum_analyzer.py, network_analyzer.py can be replaced by some highly readable coroutines, but very little change will occur in the interface:
+For instance, the code for single_async is as clear as:
+Note that all the beauty is in the await self._trace_async(0)  that gives back the control to the eventloop untill the result of the other coroutine self._trace_async(0) becomes ready. The big advantage over the Timer/callback approach used previously is that all the code for the successive trace acquisitions is now written sequentially in one single place.
+The main change that I plan to introduce in the interface to make it more consistent is the following:
+I have made curve_async a private function (and renamed it _trace_async) and removed curve since the behavior was essentially the same as single with trace_average=1 (except for the fact that gui was not updated, but that just makes things confusing I believe: if one doesn't want to update gui, he should either turn it off or ask for it explicitly somewhere)
+I also suggests that running_state should be a "read-only property" since it is misleading to load the state of an instrument that is running for instance...
+To launch an instrument, one would have to explicitly call the functions single, single_async or continuous
+This caused a lot of trouble to debug in the unittests for instance when we found out some instruments where acquiring continuously in the background...
+I have worked quite a bit on the unittests for the branch python 3 only: now all the 3 acquisition_modules (Scope, SpectrumAnalyzer and NetworkAnalyzer) fulfill the unittests on python 3.5, 3.6 and 3.7.
+7c26256
+I realized in the process that we need to include the running_state in the setup_attributes such that free() puts back the modules in continuous if it was acquiring before. At the moment, it is a kind of private attribute attribute _running_state that is automatically set to 'stop' for any other state than 'running_continuous'. This way the module gets reset in a clean state when it was interrupted during a running_single or a paused state. I also  made the gui for acquisition module more clear (IMHO) by replacing the 'Restart averaging' button by a 'Stop' button. Moreover, it is now possible to resume a 'paused' module either in 'running_continuous' or 'running_single' (it was for instance a problem when the na was mistakenly launched via the gui in 'running_continuous' mode instead of 'running_single' mode).
+Now I need to work on the Lockbox module, and I think it's probably the right time to include some improvements there as well. For instance, in the experiments, we realized that having 2 lockboxes might be useful when a single redpitaya is used to lock several cavities for instance.
+I also remember that we discussed a long time ago the problem that only 1 pyrpl instance can run in a given kernel. It could be the right time to address this problem. What are your thoughts ?
+I think there is no problem in running multiple lockbox modules in a single pyrpl instance (analogous to multiple NAs etc), given there are enough resources. We would just have to make a button for that i think. But it is probably a good idea to verify that.
+I also think to remember running multiple pyrpl instances in a single kernel without fundamental problems, e.g. one as a property of another one's lockbox.
+Is there a problem to have two GUIs in the same kernel? The only problem i see here that e.g. the scope framerate will be halved. To fix this, we would need to make the read/write functions of the client asynchronous, which is a change with the risk to add a lot of problems. I will add a new issue for that discusion, ok?
+I just did a few tests:
+Having several lockboxes in one pyrpl instance is possible. But we should have a defaualt lockbox with only 1 output, as otherwise there are not enough PIDs for two lockboxes in the default case.
+Running several scopes in parallel on a single kernel is possible, but on my computer it reduces the framerate rougly in proportion to the number of instances. I did the test with hostname='FAKE' which needs about 140 ms on my computer to read both scope channels. So it remains true that we might gain in framerate by not wasting so much time on waiting for the scope data to arrive, but there are clearly limits, as a quarter of the time is simply spent on signal processing with numpy. Here is my test code
+By the way, thanks for the changes in the new python-3 branch, I agree with most of the API changes.
+The only weird thing is to have that private setup_attribute. But for the moment I have no better idea to solve the problem.
+Yes, I went through various possibilities until I went back to this one... Maybe a slightly cleaner option would be to take the private attribute _running_state out of the setup_attributes and only keep a boolean flag run_continuous in the setup attributes. The running_state (without underscore) could then be exposed as a read-only property.
+The idea being that only the 2 working states running_continuous and stopped can be saved and restored latter. All the rest should be implementation details...
+OK I implemented the run_continuous boolean attribute as part of the _setup_attributes... I believe it makes more sense.
+By the way, I have measured something like 20 fps for 1 scope and 10 fps for 2 scopes running in parallel in rolling mode on real hardware (keep in mind that they are limited in practice to 50 fps in rolling mode (I think it is even 25 in continuous normal mode) to avoid making the event_loop unresponsive).
+I think the ratio benefit/effort for the asynchronous read/write is way  smaller than what I had in mind when starting looking at it (to be honest, I don't even have a clue how to attack the problem), so I put that on hold unless a new idea pops up.
+On the other hand, I now have all unittests OK on the branch python3-only (except for one with the IIR that seems to work only in python 3.5, the problem is also there in the other branches I think).  42a704d
+I basically replaced the LoopModule that is used in the lockbox by loops in coroutines. The only minor change to the user interface is lock() --> lock_async() for consistency since the function returns immediately.
+I basically need to add some comments and help-strings. I will try to do that tonight and issue a pull request. But also, I am proposing below a few modification to the Lockbox API for consistency. Moreover, I realize that the unittetsts for these functionalities are quite limited, I will try to add some more unittests as well.
+Two more things:
+The develop-0.9.3 release will have to wait for me having re-setup a working CI+CD system imho. I am playing with running jenkins on my personal computer at the moment.
+How do you run the unittests at the moment? You have any kind of automatization for testing in different python versions? If not, I recomment to translate the travis-script into a command-line script. If you are using linux, I can send you mine.
+No, I have 3 different conda environments and I launch manually the unittests on one after the other. Also, on branch python-3-only, I have added a notebook test that I didn't put in develop-0.9.3. If I understand the philosophy, for anything that's not specific to python3-only development, you would like me to work on develop0.9.3 and only pull them on the branch python3-only afterwards instead of directly working on python3-only.
+I am using anaconda under windows. I think that's also fine to just wait for your continuous integration system if you are confident that this will eventually converge.

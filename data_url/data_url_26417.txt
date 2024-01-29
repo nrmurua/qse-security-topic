@@ -1,0 +1,75 @@
+From what I understand, these examples start the post-HF calculation from a set of PBE orbitals. They proceed on a fairly large number of GPU nodes, yet they begin with a very expensive HF SCF which makes no use of the GPUs and is enormously slow when executed using 1 rank / GPU.
+Wouldn't it be more efficient to use the PBE orbitals for a HF SCF (performed with 1-4 cores per rank, on CPU-only nodes), and use the converged HF orbitals as input for the RI-MP2 part, on GPU nodes? This would avoid the GPU idling during calculation of HFX...
+(I'm testing on LUMI-G, with the provided Easybuild installation.)
+On 64 LUMI-G nodes (4x MI250X, 8 effective GPUs, 64 cores, 512 GB RAM) with 8 ranks per node, I get the following timings for the HF SCF.
+Few questions:
+Thanks for the quick reply.
+This is 2023.1, as installed using the following easybuild:
+Would it be possible to share the install script that was used to run the calculations in the 2023 J. Chem. Phys paper on the GPU implementation of the low-scaling post-HF methods?
+I don't have the full log because I had to cancel the calculation. It would have consumed a very large amount of GPU time (with 0% GPU utilization, as checked by logging into one of the nodes during the calculation) ... I do have the jobscript:
+This is mostly taken from the LUMI docs here
+I cannot see anything wrong here... Still, we don't know where it is actually spending time...
+Could you try to run by setting
+?
+Alternatively you can use https://manual.cp2k.org/trunk/CP2K_INPUT/GLOBAL.html#CP2K_INPUT.GLOBAL.WALLTIME to stop CP2K and get the timers output.
+Setting that env variable doesn't change anything. I'm trying to use the WALLTIME keyword to gracefully stop CP2K after some time but it just keeps on running ... This is the input file (which I believe is not using COSMA)
+mp2-qz.txt
+I'm not a real expert in CP2K, so cannot check your input file...
+Can you post the start of the CP2K log? (where we can see the configuration).
+From what I can see COSMA was compiled with GPU support, but I don't think it is used here...
+You can try to run with https://manual.cp2k.org/trunk/CP2K_INPUT/GLOBAL.html#CP2K_INPUT.GLOBAL.TRACE so we know which functions is calling...
+Though this was from a slightly different run
+well, this is without the DBCSR variable, I assume:
+It should report T (E)...
+Right, so the Easybuild install is essentially useless.
+Any idea which install scripts were used by the developers on LUMI? I believe LUMI was used during GPU acceleration development ...
+What do you mean by useless? Are you saying that setting DBCSR_MM_DENSE=1 (check the configure output) you don't get any improvement in performance? That has nothing to do with Easybuild though...
+I'm one of the persons who ported CP2K on LUMI for the first GPU testings (as part of the HPE/AMD activity), but it was only for the RPA tests. Then, as you see, it is not fully ported. I'm not aware of any other configuration... I see LUMI Easybuild has support for 2023.2, so you can give a try, but I don't expect changes in performance...
+For instance, I mentioned DBCSR where you don't have all GPU kernels (but I'm not sure this is your problem). Please note that LUMI has currently an opening for an hackathon, just in case you are interested in more optimizations...
+Well, it looks like the easybuild config, which is supposed to run on the GPU, does not actually install CP2K correctly to allow it to use the GPU efficiently (i.e DBCSR was not running). I'm assuming this has nothing to do with either the input files, LUMI's modules, or the CP2K code, but simply with the way Easybuild configures and compiles it?
+Setting that environment variable indeed didn't change anything...
+Thanks for your efforts. Given that I cannot reproduce the timings in the paper from @abussy @oschuett with virtually the same input, I'm still kind of assuming that the problem is related to easybuild.
+The 2023.2 easyconfig is CPU-only ...
+Well, it looks like the easybuild config, which is supposed to run on the GPU, does not actually install CP2K correctly to allow it to use the GPU efficiently (i.e DBCSR was not running). I'm assuming this has nothing to do with either the input files, LUMI's modules, or the CP2K code, but simply with the way Easybuild configures and compiles it?
+To be clear: it is not DBCSR that it is not configured, it is actually that it is not fully ported to the AMD GPUs...
+Hmm OK. Well I retried using srun --export=ALL, and now it does in fact show T for multiplication densification. However, it doesn't really solve the issue...
+Generally, standard 4-center HFX is not GPU accelerated. The main bottleneck is the calculation of the ERIs, which is done with the libint library (and only on the CPU). From your initial post:
+On 64 LUMI-G nodes (4x MI250X, 8 effective GPUs, 64 cores, 512 GB RAM) with 8 ranks per node, I get the following timings for the HF SCF.
+We can see that only a fraction of all ERIs are stored in-core, while the large majority is calculated on the fly. This leads to very expensive SCF steps. Ideally, you want all the ERIs to be calculated once and for all at the first SCF step and store them in memory, such that they can be efficiently retrieved for the rest of the calculation.
+The keyword that controls how much memory is allocated to HFX ERIs is MAX_MEMORY in HF%MEMORY, measured in MiB per MPI rank. In the paper you mentioned, I used to run 16 MPI ranks with 3 OMP threads per node, with MAX_MEMORY set up to 25000. In the output above, we see that the estimated max program size after HFX is 7 GiB per MPI rank, which leads to 56 GiB per node if we assume one rank per GPU (8 ranks per node). Since there is 512 GB per node on LUMI-G, you have a lot of room to spare.
+Edit: post-HF is also memory hungry, so maybe don't use the full node memory for HFX.
+Depending on how fast the storage is, even caching the HFX primitive integrals on-disk might be faster than recalculation, in particular on GPU nodes where the CPU might not be as fast as the ones used in CPU partitions.
+We can see that only a fraction of all ERIs are stored in-core, while the large majority is calculated on the fly. This leads to very expensive SCF steps. Ideally, you want all the ERIs to be calculated once and for all at the first SCF step and store them in memory, such that they can be efficiently retrieved for the rest of the calculation.
+The keyword that controls how much memory is allocated to HFX ERIs is MAX_MEMORY in HF%MEMORY, measured in MiB per MPI rank. In the paper you mentioned, I used to run 16 MPI ranks with 3 OMP threads per node, with MAX_MEMORY set up to 25000. In the output above, we see that the estimated max program size after HFX is 7 GiB per MPI rank, which leads to 56 GiB per node if we assume one rank per GPU (8 ranks per node). Since there is 512 GB per node on LUMI-G, you have a lot of room to spare.
+Edit: post-HF is also memory hungry, so maybe don't use the full node memory for HFX.
+When using HF%MEMORY 24000, most integrals are still computed on the fly:
+I'll try increasing it but I'm a bit puzzled by
+Why does he compute the ERI's on the fly if he still has 24 - 6 = 18 GB of RAM available per rank?
+To be perfectly honest with you, I am not sure how to interpret the HFX_MEM_INFO| Total memory consumption ERI's RAM [MiB]: information. What is certain is that after calculation of the ERIs, you are using ~25GiB of memory per MPI rank, as stated by:
+HFX_MEM_INFO| Est. max. program size after HFX  [MiB]:                   25397,
+which is in line with your value of MAX_MEMORY.
+Note that in the paper you were mentioning earlier, I systematically used that ADMM approximation for the ground state calculation. ADMM has a drastic impact on the cost and memory requirements of HFX.
+I tried with ADMM, but couldn't figure the proper input. Would you mind sharing it?
+[...] which makes no use of the GPUs and is enormously slow when executed using 1 rank / GPU.
+I think one needs to put multiple ranks onto each GPU and find a sweet-spot balancing the need for ranks on CPU vs avoiding overhead from sharing/time-slicing the GPU.
+Wouldn't it be more efficient to use the PBE orbitals for a HF SCF (performed with 1-4 cores per rank, on CPU-only nodes), and use the converged HF orbitals as input for the RI-MP2 part, on GPU nodes?
+Do you suggest restarting the calculation w/ GPU acceleration after some initial work on CPU-only?
+Do you suggest restarting the calculation w/ GPU acceleration after some initial work on CPU-only?
+Precisely!
+water64_SOS-MP2.zip
+I tried with ADMM, but couldn't figure the proper input. Would you mind sharing it?
+No problem! In this zip file there is my input and output file corresponding to the 32 LUMI-G nodes GPU data point of figure 9 of the paper
+Thanks, that works!! The system sizes I'd be looking at would be around 300 - 400 atoms, and I'd only need to evaluate the energy. Given the architecture of LUMI-G, would I rather use the cubic or quartically scaling algorithm in terms of GPU efficiency?
+When I monitor GPU usage during a calculation with more or less your exact input, GPU usage is rather spiky (though I didn't bother setting all the environment variables that you set...)
+I believe that the quartic scaling approach has better GPU performance. That being said, 300-400 atoms is large enough that the cubic-scaling approach could become more efficient overall. The short answer is: try both and pick the one that works best for your kind of system.
+@abussy makes sense.
+Does CP2K's restart functionality allow us to enter directly into the RI-MP2 section with a HF-converged restart file? In this way, you'd avoid the GPU idling during the initial HF SCF (which itself is started from a PBE solution)...
+No, this is unfortunately not possible. At least one SCF cycle (where all the ERIs are calculated) is necessary. In principle, I think it could be possible to do a MP2 calculation simply starting from MOs and orbital energies, but CP2K is not implemented that way.
+Note that if GPU usage is your main concern, you can switch to RI-HFX. In this approach, the workload is shifted from computing the ERIs to tensor contraction (which is GPU accelerated). RI-HFX is however rarely faster than standard 4-center HFX, especially for large molecular systems.
+I tried to look into RI-HFX, but it wasn't really clear to me how to specify this in the input file. Does it also use the RI basis for the correlation part? Do you have a (recent) example maybe?
+In its simplest form, switching to RI-HFX comes downs to adding an empty &RI section in the &HF section of the input file. The RI basis it will use is then automatically generated from the orbital basis set according to https://doi.org/10.1021/acs.jctc.6b01041. You can also impose the use of a given basis set by setting the BASIS_SET RI_HFX keyword in the &KIND section. The RI_HFX basis set can be taken to be the same as the RI_AUX basis set for post-HF, but this is not necessary. In particular, if ADMM is used, these two basis sets will be different.
+Another aspect for RI-HFX performance if the choice of the RI metric. The most accurate results are obtained of the RI metric is the same as the HFX potential. However, using shorter ranged metric brings sparsity and improves performance.
+I join 2 examples. One is a TiO2 SOS-MP2 calculation based on an ADMM-RI-HFX ground state with the overlap RI metric (figure 10 of the paper). The other one is a simple PBE0 RI-HFX calculation of 64 water molecules (figure 5 of the paper)
+64water_RI-HFX.zip
+TiO2_SOS-MP2.zip
+Apparently, this issue is solved. Feel free to reopen it, if necessary.

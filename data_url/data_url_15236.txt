@@ -1,0 +1,12 @@
+Backend based primitives can't be saved via dill. Reference primitives can be loaded/saved. QuantumInstance is also serializable. This issue comes from Qiskit Machine Learning where quantum models can be saved to a file, then loaded to continue training or for inference on a real hardware.
+Run a script
+An exception is raised:
+No exceptions must be raised.
+Adding the following method to BackendSampler should fix this issue.
+This should be fixed in Terra, but Terra 0.22.1 has been just released...
+Workaround
+How come BaseSampler and BaseEstimator are overriding __new__?  They don't need to influence the object-creation semantics - it looks to me like everything going on in that method is just instance initialisation, which should be done in __init__.  The __new__ override is the underlying cause of the failure to de-pickle here - derived classes from the primitives shouldn't be needing to override the __new__ method to allow themselves to change the __init__ signature.
+@jakelishman It is legacy and will removed after the deprecation period, but the original introduction reason was a pre-init hook.
+That still sounds odd, unless the primitives API is asserting that the __init__ methods of subclasses have to have a particular signature, which would be very unusual (and make these BackendSampler etc classes invalid).  I'm not sure I understand why that couldn't just have happened at the start of BaseSampler.__init__ - it's the subclass's responsibility to ensure that that base class is initialised correctly (almost invariably by calling super().__init__(...) at some point, for sensible subclasses, and it looks like the primitives would fit this bill).
+Independent of the mechanics of getting the class usable with pickle, as a general rule Backend objects are not guaranteed to be serializeable, this is part (but not the only reason) of why things like the transpiler do not pass backends around because they have to work in a multiprocessing context which implies they'd be serializable. This is because most backends contain inherently unserializable objects like handles to async remote execution, authorized sessions, compiled modules, etc.
+Once I realized that the backend primitives are not serializable that was a call to re-consider model serialization in QML. I was suspecting that despite now I can serialize a backend instance, it is unnatural and a backend might not be serializable. You just confirmed that. Thanks.

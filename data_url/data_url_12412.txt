@@ -1,0 +1,24 @@
+I am working on some quantum generative adversarial networks code and have a discriminator which is a function of some parameters multiplied by some expectation value measurements. For example (see below the code) the variable parameters which I would like to optimise given a loss function are the disc_weights which are multiplied by openfermion commands which measure the X and Y expectation values on qubit 0 and 1 respectively.
+ psi = (disc_weights[0] * QubitOperator('X0') +  disc_weights[1] * QubitOperator('Y0') )
+When I use a keras optimiser, it recognises disc_weights as a tf.variable but clearly has trouble with the QubitOperator commands. How do I exclude these from the optimisation  routine?
+Thanks, for raising this issue. Would you mind providing a code snippet to show what error or problem is happening ?
+I have some qGANs code where the discriminator performs a bunch of Pauli expectation values from which a loss function is created.
+The discriminator looks something like this:
+I then define the loss function for the discriminator which is:
+def disc_loss(disc_weights): psi_exp= discriminator(disc_weights) loss = psi_exp return loss 
+and initialise the optimiser opt = tf.keras.optimizers.SGD(0.4)
+I also convert the parameter I want to tune, disc_weights into a tf.variable : disc_weights = tf.Variable(disc_weights)
+I now want to tune the disc_weights parameters to minimise the loss:
+`cost = lambda: disc_loss(disc_weights)
+for step in range(50):
+opt.minimize(cost, disc_weights)`
+When I run this last section of code, I encounter a large error message which ends with:
+ValueError: Attempt to convert a value (1.0 [X0]) with an unsupported type (<class 'openfermion.ops._qubit_operator.QubitOperator'>) to a Tensor.
+I am guessing, the optimiser is having difficulty recognising the QubitOperator commands as a tf.variable.
+Please let me know if this information is sufficient to trace the problem otherwise I can share more of my code with you.
+Ok, I think this enough information to get a handle on what is going wrong.
+When you write an expression like this:
+psi_exp will not be differentiable and neither will your discriminator function. If you want differentiability through this function, you will need to change the code to use the appropriate TFQ primitives.
+Looking at your code it appears as though you want to have the disc_weights parameters control the coefficients beside each QubitOperator in your overall sum of QubitOperators. If this is the case, you might want to consider something a little closer to this:
+Cirq and OpenFermion on their own do not support TF integration so when you want to make use of TF optimizers and TF variables, you must make sure that you use TFQ features that are differentiable. I haven't looked too closely, but there is also a PR open here: #339 where someone has aslo implemented some kind of quantum GAN which might also be helpful.
+Any updates on this issue?

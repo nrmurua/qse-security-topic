@@ -1,0 +1,43 @@
+We should extend tomography module for QuantumCircuit already existing in qiskit-ignis/qiskit/ignis/verification/tomography. When QuantumCircuit is given, the tomography module adds state preparation circuits and measurement circuits to the given circuit, then the module returns a list of QuantumCircuits for combination of all given bases.
+https://github.com/Qiskit/qiskit-ignis/blob/b65da6186f1181954207e1b849fa0208bf23fb75/qiskit/ignis/verification/tomography/basis/circuits.py#L342-L351
+The problem of giving a pulse Schedule instead of QuantumCircuit is that those objects have no common interface, and they cannot be added each other. We have several options to avoid this issue.
+This is the simplest way of avoiding schedule+circuit issue. When a Schedule object is given as a function input, state preparation circuit and measurement circuit are internally converted into Schedule and added to the given Schedule.
+Pros:
+Cons:
+In this implementation, a pulse experiment is represented by QuantumCircuit. In this case, what the tomography module receives is always a circuit, and we don't need to change the module itself.
+Pros:
+Cons:
+In this implementation, QuantumCircuit and Schedule are unified as, let's say, QuantumInstruction. Of course they can be added. Scheduler takes a set of QuantumInstruction and convert everything into Schedule. - I'm not sure if it make sense.
+Pros:
+Cons:
+Implementing 2. will require promoting a pulse schedule to a circuit. This will require fixing the later transpilation based off of this so as not to force assigning schedule to correct qubits. This has always been a planned feature.  I will bring it up at the internal meeting this morning.
+I think 2 is best because we also want to avoid having the scheduler code in too many places and/or make the schedule code too complicated.
+In the short term 2 can be done with hard coded pulses (it will add a lot of pulses to the pulse library if there are a lot of variations, e.g., like the rabi). In the longer term I agree there should be some type of analytic pass around. The problem is that it needs to get synced to whatever is being considered for parameterized pulses on the backend otherwise it's not useful.
+seems to be better to adopt 2.
+Do we have a plan to provide a pass to revert schedule to circuit? It sounds like the best option to use here. However, for example, a schedule of Rabi pulse with intermediate amps doesn't have an exact gate definition, and it will generate bunch of CmdDefs for each amp. To avoid this, pulse schedule to circuit module should be analytic pulse based.
+Anyways hard coded pulse seems to be the most feasible solution for now.
+https://github.com/Qiskit/qiskit-terra/blob/a0290821af49bd5ee8269ae07831ecad77d4cfe8/qiskit/scheduler/methods/basic.py#L175-L177
+In this case, pulse scheduler requires only gate instruction name and qubits (no params since it is hard coded). We can create helper function to create (e.g. Rabi) Schedule + qubits (dict[channel: qubit]) -> fake gate Instruction (it has only name of original schedule) + (CmdDef) Schedule. Then it creates pseudo QuantumCircuit with the fake gate and adds schedule by CmdDef.add(). Tomography module can take this pseudo QuantumCircuit as an input, then scheduler reconstruct original pulse schedule with extended state prep/meas circuits.
+The helper function has no dependency on Ignis. I think this should be a PR for Terra. I'll make another PR for the fitter of Hamiltonian tomography. This goes to Ignis.
+I noticed an example in which 2 doesn’t work.
+In the case of QPT in Pauli basis, scheduler will generate following schedule.
+Exp1: (A,B) = (Zp, Z)
+Exp2: (A,B) = (Xp, X)
+What we want to generate for Exp1 and Exp2 is schedule having the same t2-t4 interval to avoid error from coherence.
+(After scheduler)
+This is why rescheduler is used, but this just aligns t4 time of experiments. If we align t4 of Exp1 and Exp2, rescheduler gives inconsistent t2-t4 interval.
+(After reschedule)
+Exp1 starts acquisition 20dt after circ, but Exp2 starts 10dt after circ.
+The only way solving this is to implement 1. In this case, scheduler is in tomography module and we can explicitly specify all timing in above example - we can align t1 as well.
+Have you thought about a scheduling pass? It would function over a list of schedules, applying basic "as-late-as-possible" pass to each schedule, but shifting the group of schedules (or prepending with a delay) so that they end at the time of the longest schedule. Would be minimal code and no API changes. (I am assuming that the workflow would be that a user gets the circuit from ignis, defines custom pulses for a backend, then schedules the circuit for the backend.) Would that work for this?
+Yes, I did. If I understand correctly, scheduler works for list of circuits, but they are independently processed.
+https://github.com/Qiskit/qiskit-terra/blob/a0290821af49bd5ee8269ae07831ecad77d4cfe8/qiskit/compiler/schedule.py#L64
+Maybe this can be modified so that alap pass functions for list of schedules, but there is another issue. As you mentioned, Ignis gives a list of QPT circuits and we covert it into schedule with custom CmdDef (Ignis prepares different initial states and run given circuit, then it measures final state in different basis - it returns multiple circuits for single circuit input). Each QPT circuit comprises three blocks, namely, state preparation, given circuit, and projection+measurement. However, this context is lost in QPT circuits because all blocks are integrated to be a single circuit, and scheduler doesn’t find boundary of circuit and projection. What we need to do is extract maximum duration taken by projection among list of QPT circuits, and need to shift measurement so that the interval of time when we get a final state (t2) and time starting acquisition (t4) becomes identical over all QPT circuits - pulse duration of projection is usually basis dependent. Identical t2-t4 interval ensures this.
+However, in Pauli basis case, maximum duration of projection part is up to 10-30dt in recent devices (just tens of ns), and decay of state during the time could be ignored. In this case, we don't need to take care about above problem. @dcmckayibm ?
+Of course I prefer minimal code change, and if there is any workaround, I’m very happy.
+The problem you're describing can even be present in Qasm QPT (not involving pulse at all). I would say if you restrict all singles to be defined only in terms of U3 it solves the problem.
+With the introduction of scheduling, you may think of a barrier that persists across experiments in the same job, but I would push that discussion somewhere else.
+For now I would do just as @lcapelluto suggests.
+Yes. It is also problem in Qasm QPT. Replacing projection circuit by U3 is good direction. But if this problem doesn't degrade QPT result, based on your experience, I'll just ignore the effect of inconsistent projection duration.
+From the viewpoint of scheduling, barrier persists across experiment is also good solution. To have multiple such barrier in a job, maybe it is better to have label for each barrier, and the scheduler aligns the position of the barrier of the same label, and of course avoid optimization across the barrier.
+FYI Issue #283 is somewhat related. I think the issue in #283 is that pulse experiments always return counts over all qubits, not just the ones that we actually care about measuring (which is never really surfaced to the pulse schedule). Think a marginalize_counts call is needed.

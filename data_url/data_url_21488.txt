@@ -1,0 +1,17 @@
+Aux packet errors will be emitted when some types of DRTIO aux packets are transmitted, as tested on: 80115fc, 4660430.
+In attempting transmission of an aux packet for the following actions, aux packet errors will occur (NB this list might be incomplete, and does not specify the exact drtioaux_proto::Packet type since these types of packets have yet to be tested separately):
+However, it is shown that certain actions as follows does not trigger any packet errors:
+The full list of available DRTIO aux packet types is in artiq/firmware/libproto_artiq/drtioaux_proto.rs).
+Example: triggering errors for MonInj actions:
+No aux packet errors will be emitted.
+It is possible that the shift in CPU endianness from big to little in ARTIQ-7 is related to this issue. With reference to possibly relevant changes to DMA (051a14a) and analyser (a833974), I've tried out some solutions that consistently remove aux packet errors (tested between Metlino and Sayma):
+Although not yet verified, I cannot seem to replicate the aux errors for some aux packet types with data of types smaller than a 32-bit. An example is the I2C request packet types. I have been working out a clear explanation for such a difference, but it will take some time.
+Replicated using Kasli v1.1 as master, Kasli v2.0 as satellite.
+[133, 39, 217, 90] should be the CRC32 of [81, 1, 0, 0, 0, 0, 0, 0] in little-endian bytes, but the bytes got padded to 64-bits alignment so the CRC32 was read as 0.
+Seems like another case of CRC32 being in the wrong place: m-labs/misoc@df249b5
+This is caused by the bit alignment assumption in DRTIO gateware, where tx/rx length must be a multiple of data width.
+Inserting the CRC at byte offset 4 (8 bytes alignment) would solve the issue, like the following:
+For example, an monitor request would look like this in the DRTIO buffer.
+drtio recv: [65, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 48, 226, 157, 17]
+There could still be checksum issue if the DRTIO system involves older versions/Zynq. It can be solved by either updating their DRTIO message protocol, or perform checksum verification on both offset 0 and offset 4.
+Let's just change the DRTIO protocol on 7.

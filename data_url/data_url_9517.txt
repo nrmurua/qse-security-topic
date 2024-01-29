@@ -1,0 +1,20 @@
+I'm realising that the serialization of a device with calibrated layouts does not work.
+_to_abstract_representation() returns a dict with all the values properly serialized except for  RegisterLayout in the list of pre_calibrated_layouts. For instance:
+RegisterLayout is of course not json serializable. So we can't save the specs as a json. But we also couldn't deserialize them with the method from the lib because it contains RegisterLayout instances. However the deserialize_device method does account for potential pre_calibrated_layouts:
+I've also notice that there is a _to_abstract_representation() method on the RegisterLayout object. So this should be an easy fix. On the _to_abstract_representation() of the Device model:
+This is a fairly pressing issue as it is blocking the implementation of device specs serialisation for us.
+These internal methods are shallow, they can still include non-serialized object. The idea is that ultimately you will pass them through our custome encoder, ie
+which will recursively serialize all objects (through their _to_abstract_repr() method).
+In other words, _to_abstract_repr() is never intended (and shouldn't) be called directly. It should rather be called by the AbstractReprEncoder when ultimately you dump the object to a string.
+I might be missing something, but won't this solve your issue?
+Isn't it confusing that for the sequence we can (and do) serialise with seq.to_abstract_repr but we cant for the device?
+Is there any reason why such behavior was dropped for the device? or is it also discouraged do use seq.to_abstract_repr?
+(I do note that the device method has the "private method underscore", and not the sequence. However, this is to me still not sufficient signaling)
+Isn't it confusing that for the sequence we can (and do) serialise with seq.to_abstract_repr but we cant for the device?
+Is there any reason why such behavior was dropped for the device? or is it also discouraged do use seq.to_abstract_repr?
+(I do note that the device method has the "private method underscore", and not the sequence. However, this is to me still not sufficient signaling)
+There is nothing preveting us from adding a Device.to_abstract_repr(), the only reason I didn't was because it wasn't something I expected regular users to need. I figured that internally, it would be sufficient to dump with the AbstractReprEncoder.
+That being said, I'd be happy to add this method, even if it's just for being consistent and avoiding misunderstandings (though it seems it will be useful as well).
+EDIT: @awennersteen scratch what I said above, there is already a to_abstract_repr() defined for BaseDevice that should be the default for device serialization.
+UPDATE: I forgot this had been defined, but actually all devices have a to_abstract_repr() method that should be the default way of serializing them. It is defined on the parent class (BaseDevice).
+So, for a given device instance, running device.to_abstract_repr() should give you a correct JSON-formatted string.

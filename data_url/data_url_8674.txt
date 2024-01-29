@@ -1,0 +1,79 @@
+I have also found that using the iterative SS solver with the preconditioner gives invalid answers for large systems. The following code will give negative numbers of particles for both oscillators (the correct values should be 0.1 and 9.7 for a and b respectively :
+from scipy import *
+from qutip import *
+from pylab import *
+import time
+Nc=6                        #Number of cavity states
+Nm=46                       #Number of mechanical states
+alpha=0.311                 #Coherent state amplitude
+g0=0.36                     #Coupling strength
+kappa=0.3                           #Cavity damping rate
+gamma=0.00147               #Mech damping rate
+xvec=linspace(-10,10,500)   #Wigner area and sampling
+delta=0
+idc=qeye(Nc)
+idm=qeye(Nm)
+a=tensor(destroy(Nc),idm)
+b=tensor(idc,destroy(Nm))
+H=(-delta+g0_(b.dag()+b))_(a.dag()_a)+b.dag()_b+alpha*(a.dag()+a)
+cc=sqrt(kappa)_a
+cm=sqrt(gamma)_b
+c_op_list=[cc,cm]
+print('Beginning SS')
+s=time.time()
+rho_ss=steadystate_iterative(H,c_op_list,use_precond=False)
+print('SS Elapsed time: ',time.time()-s)
+numa=expect(a.dag()_a,rho_ss)
+numb=expect(b.dag()_b,rho_ss)
+print('cavity number ',numa)
+print('mech. number ',numb)
+rho_b=ptrace(rho_ss,1)
+W=wigner(rho_b,xvec,xvec)
+wmap=wigner_cmap(W)
+contourf(xvec,xvec,W,100,cmap=wmap)
+colorbar()
+show()
+Actually, the biconjugate gradient method itself seems not to work at large system sizes.  Without preconditioner, the above example takes forever but eventually gives about -1500 quanta per oscillator !!!.  Obviously, something is not right :)
+I can reproduce this bug too. Yeah, something is definitely not right :) Can you solve this problem with the other steadystate solvers? I tried on my machine but it takes for ever and I haven't got any results yet (but plenty of MemoryError...).
+Yes, I can solve it but it takes about 10 minutes per run.  Using the
+standard methods gives me an acceptable answer.  Because we did not write
+the code for that module, I may see if any of the iterative methods give a
+good result.  If so, then we know there is some issue with this method.
+On Tue, Jul 2, 2013 at 5:08 PM, Robert Johansson
+notifications@github.comwrote:
+I can reproduce this bug too. Yeah, something is definitely not right :)
+Can you solve this problem with the other steadystate solvers? I tried on
+my machine but it takes for ever and I haven't got any results yet (but
+plenty of MemoryError...).
+—
+Reply to this email directly or view it on GitHubhttps://github.com//issues/29#issuecomment-20332259
+.
+It appears that the iterative methods do not converge to the tolerance value within the maxiter number of steps.  The bicgstab method is particularly bad.  Another option is lgmres that I have found to give the correct answer with fewer iterations.  I have also noticed that we are still having issues with the preconditioner failing, but that is for another day.
+This issue has now been resolved.  The bicgstab method fails utterly for larger systems.  The LMGRES method is working excellent with the preconditioner that now seems to work much much better now that I have switched to a  higher drop_tol.  For the example above, the new iterative technique solvers the problem in 60sec for a tol=1e-5 !!!! and using tol=1e-3 in 38 sec!!!!  The direct method takes about 550 sec.  So we seem to get an order of magnitude improvement.
+Nice, good job!! How does the performance look like for small problems? Does it make any sense to add an option to select bicgstab or lmgres, or does lmgres beat bicgstab in all cases you have looked at? Anyways, performance for systems is not that important, but we badly need better performing steadystate solvers for large systems so your benchmarks looks very promising :-)
+You can see from the attached figure that it works pretty good, even at lower Hilbert space sizes.  I would be hesitant to add both options because the bicgstab method fails not because of too few iterations, but because of some "breakdown" that can not be figured out.  Since the current method works so well, and the only issues are the number of iterations, which is taken care of by using a preconditioner, it seems that the LMGRES method is the way to go.
+On Wednesday, July 3, 2013 at 11:52 AM, Robert Johansson wrote:
+Nice, good job!! How does the performance look like for small problems? Does it make any sense to add an option to select bicgstab or lmgres, or does lmgres beat bicgstab in all cases you have looked at? Anyways, performance for systems is not that important, but we badly need better performing steadystate solvers for large systems so your benchmarks looks very promising :-)
+—
+Reply to this email directly or view it on GitHub (#29 (comment)).
+I would like to draw your attention to this problem once again. I did some testing with steady state for my high dimensional model. The direct method runs out of memory so I was trying all sorts of iterative methods. My conclusion was that the BicgSTAB method is the best for my particular problem. However, the iterative methods are very sensitive to basically everything this is why there are so many different kinds of them. Moreover, the Scipy realisation of these methods is not the most optimal. PyAMG realisation of bicgSTAB worked better for me than the one from scipy. So, please, keep both of the methods in qutip.
+The SS solver has been heavily modifed since version 2.2.  The bicgstab
+method has been replaced in the development version with the LGMRES solver.
+The bicgstab method would exit with a fatal error.  The new method in
+combination with the preconditioner is quite fast.  However preconditioning
+does fail for some models.
+Paul
+On Jul 9, 2013 5:54 PM, "Vutshi" notifications@github.com wrote:
+I would like to draw your attention to this problem once again. I did some
+testing with steady state for my high dimensional model. The direct method
+runs out of memory so I was trying all sorts of iterative methods. My
+conclusion was that the BicgSTAB method is the best for my particular
+problem. However, the iterative methods are very sensitive to everything
+basically this is why there are so many different kinds of them. Moreover,
+the Scipy realisation of these methods is not the most optimal. PyAMG
+realisation of bicgSTAB worked better for me than the one from scipy. So,
+please, keep both of the methods in qutip.
+—
+Reply to this email directly or view it on GitHubhttps://github.com//issues/29#issuecomment-20661092
+.
+After playing around with PyAMG, I do not see any benefit over our current implementation.  In fact, the PyAMG solvers were breaking down just like the SciPy versions did.  The only issue we are having is the superLU preconditioner fails for some systems.  Once that issue is figured out (hopefully) we will be in a good position with respect to SS solving.

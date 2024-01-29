@@ -1,0 +1,86 @@
+Now that the supported gate set has greatly expanded, we should consider re-standardising their function names.
+For general unitaries alone, we have:
+&
+&
+&
+and meanwhile have many controlled/multi-controlled versions of standard gates:
+&
+&
+Furthermore, the decoherence functions have an unmotivated apply prefix:
+and it may not be insightful to refer to amplitude damping in particular as an error.
+Here are my tentative proposals, though I think these are imperfect and need to be improved:
+rename addDensityMatrix to mixDensityMatrix (a semantic point)
+remove apply prefix and Error suffix from decoherence functions.
+e.g. applyTwoQubitDepolariseError would become twoQubitDepolarise.
+remove oneQubit prefix from decoherence functions, to bring them inline with unitary vs twoQubitUnitary.
+e.g. with the above changes, they'd become damping, dephase, depolarise, twoQubitDephase, twoQubitDepolarise, and pauliChannel would become an exception.
+Some other purely stylistic changes that I'm indecisive about:
+abbreviate controlled prefix to ctrl.
+e.g. controlledTwoQubitUnitary becomes ctrlTwoQubitUnitary
+change multi prefix to many.
+e.g. manyCtrlManyQubitUnitary
+Just to be absolutely clear in my head about this you are proposing changing the API?
+Yes there is quite a zoo! Mind you, there are advantages to having so many ways to do similar things -- in particular I think it makes code easier to read -- i.e.
+controlledPauliY
+tells a human reader so much more than
+twoQubitUnitary with appropriate parameters for controlledPauliY
+Here are my tentative proposals, though I think these are imperfect and need to be improved:
+I'm OK with these.
+abbreviate controlled prefix to ctrl.
+e.g. controlledTwoQubitUnitary becomes ctrlTwoQubitUnitary
+Mmmm why? That's not standard in the field. I'd say either controlledTwoQubitUnitary (preferred) or cTwoQubitUnitary
+change multi prefix to many.
+e.g. manyCtrlManyQubitUnitary
+Yuk. What's wrong with multi? It includes two and three, whereas many implies 5+ I reckon.
+Just to be absolutely clear in my head about this you are proposing changing the API?
+Yep!
+I'm OK with these.
+Hmm though I'm already thinking it's a shame (by removing the apply prefix) that the noise functions would then not have a common prefix, like the calc functions (calcPurity, calcFidelity, etc) and initfunctions (initPlusState, initClassicalState, initZeroState, etc) and get functions (getProbAmp, getNumQubits, etc).
+Can anyone think of a short 'imperative' prefix for the noise functions, which doesn't necessitate a Channel or Error suffix?
+E.g. if we change dephase to dephasing and depolarise to depolarising, we could have
+applyDamping, applyDephasing, applyDepolarising, applyPauli [last may need suffix], applyTwoQubitDephasing, applyTwoQubitDepolarising.
+Would addDamping, addDepolarising, addDephasing work (and we'd keep addDensityMatrix since it kind of relates as a more general process)?
+Does mixDamping, mixDepolarising, mixDephasing (and switch to mixDensityMatrix) flow poorly?
+Obviously I'm incredibly indecisive about all this, which may indicate there's a better naming convention to adopt :)
+Mmmm why? That's not standard in the field. I'd say either controlledTwoQubitUnitary (preferred) or cTwoQubitUnitary
+Yuk. What's wrong with multi? It includes two and three, whereas many implies 5+ I reckon.
+I guess I'm just trying to make multiControlled more concise since it sometimes "dominates" the function name, but I'm now reconsidering whether this is a bad thing.
+unitary, cUnitary and mcUnitary are very concise but it would be a shame to create the otherwise unneeded use of one-letter abbreviations in the API.
+So fine, you've assuaged me :)
+Well, rather than "applyDamping" etc, we could say "undergoDamping" which is normal language (i.e. to undergo a process). Or more formally "sufferDamping" etc.
+I was hoping for something shorter than apply!
+Currently the definitions of the noise functions describe the action on the density matrix as "Mixes", so maybe mixDamping and mixDepolarising aren't terrible:
+
+I've furthermore realised addDensityMatrix would be better as mixQureg
+Sure, 'mix' then I guess.
+mix sounds OK, but damping for example decreases mixing -- drives towards a pure state.
+What do you think about 'doOneQubitDephasing', 'doOneQubitDepolarising'...?
+It could be later used for 'doOneQubitKrausMap' and 'doOneQubitProcess' as well.
+Having inconsistent names is frustrating, but have to balance that against the fact that any change to the API is a big annoyance for users. While we can change the naming convention and release as v3.0, I'd argue that we should change as little as possible to prevent users having to rewrite their code. So more aesthetic things like changing calculate to calc and multi to many don't seem worthwhile to me.
+We should also consider supporting the old versions of the functions for a few versions as well as the new API for a few releases, to make the transition easier.
+I agree with Ania, QuEST is being used by external people nowadays and you need to think very carefully before you start breaking their code - it's not a great way to encourage people to use it as their core library if it appears to them that the interface changes regularly.
+@BalintKoczor damping sometimes increases mixing though (e.g. if one started in |1>). I think one of the mix functions being additionally able to decreasing mixing is an acceptable evil. I think do is a little too generic (why wouldn't we say doHadamard?) - it would be good to have a prefix meaningful to mixing/decoherence.
+@aniabrown Sure, but these aren't frivolous changes; the scope of QuEST has grown and invalidated some early naming/design choices. I think the future growing user base will be more affected by an inconsistent API than previous users choosing to upgrade QuEST will be affected by some function renames. Keep in mind QuEST doesn't "install" - users can always keep their old QuEST versions for their specific projects which used them, and use newer QuEST versions for new projects. I think that gives us a lot of freedom in correcting the API between releases.
+Note that QuEST v3 isn't just an API change, it also adds (see new_gates):
+I've made a new thread to discuss redesign of ComplexMatrix2 and ComplexMatrixN (issue #161). We should definitely use changing the API and incrementing the QuEST version as a chance to fix the design problems with these matrix structs.
+@TysonRayJones You're right that it is definitely better to fix inconsistencies with the naming now before we get more users, as long as we make sure that the changes really are substantial (eg leave out changing calculate to calc), and as long as we support the old API for some time -- users doing a git pull and having all their code break on them looks really bad.
+Having talked about it here we think the easiest way to do this is to add some light changes to QuEST.h to duplicate the old API for 2-3 release versions, and make sure to advertise the changes. This means that the changes won't break existing user code without significant warning, but we can switch to using the sensible names in the core of the code immediately.
+Unfortunately I disagree with that solution; a somewhat drastic interface change is needed anyway to address #161 which can't (or shouldn't) be softened this way. I'm not sure the alleged git-pull-trigger-happy community exists yet, nor do I agree further cluttering and confusing the API is worth adding backwards compatibility between major releases. We document 'API-breaking changes' in the release notes, and this is a major new release - on what grounds should we now make an exception?
+Breaking one or two functions here or there is by the by and somewhat expected with releases. Renaming the majority of your API with no warning is simply bad practice.
+How many people do you know who use old versions of software because they work the way they're used to? I suspect the answer is non-zero.
+Adding a few function pointers to the API for the duration of the switchover (i.e. one or two releases, the duration of which you clearly state with the API release) is hardly cluttering the API, they may not even appear in the doxygen help, but just give some backwards compatibility to those who have scripts that exist, so they can test the new version without rewriting everything.
+We know we have people who are hooking into the code at a lower level, why break their code immediately and force them to rewrite it with the new release rather than giving them a release cycle to change without everything breaking.
+When you do choose to update it, it might be worth releasing a script to convert all existing circuits to the new format, e.g. sed bash script and powershell replace script, just to give people a no-effort conversion to the new version.
+There are two decisions here -- first, a simple renaming of certain functions (have I missed any?):
+The cost of putting a macro in QuEST.h that maps the old function name for 2-3 releases is pretty much free, and as Jacob mentioned, there are good reasons to do this.
+The more difficult decision is whether everything that currently uses ComplexMatrix2, ie the unitary (but not compact unitary) functions, should be changed. I agree that making this change backwards compatible could be more messy than is worthwhile. Of the existing functions, this would affect (again, have I missed anything?):
+Which probably falls within the expected number of API changes with a major release if we don't maintain backwards compatibility here.
+Breaking one or two functions here or there is by the by and somewhat expected with releases. Renaming the majority of your API with no warning is simply bad practice.
+Fortunately we're discussing the 9 functions Ania summarised above, which is 13% of the new API.
+How many people do you know who use old versions of software because they work the way they're used to? I suspect the answer is non-zero.
+I would have thought that bespeaks that we can fix the API, and users can continue to use their old versions without any problems..
+The more difficult decision is whether everything that currently uses ComplexMatrix2, ie the unitary (but not compact unitary) functions, should be changed
+ComplexMatrix2 (and the not-yet-released ComplexMatrix4) must definitely be changed - their very design, as I think @oerc0122 would agree, is bad practice. Ergo this major release cannot maintain backwards compatibility (unless one proposes a new strategy) and this deliberation seems moot.
+Here are my proposed changes, to come on the heels of the ComplexMatrix* type refactor in issue #161 (pull req #169)
+To help put this in context, here is the API after the change:
+Merged into develop

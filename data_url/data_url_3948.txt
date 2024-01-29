@@ -1,0 +1,75 @@
+Main Goal: Enable triggering of single-qubit flux operations using CC-Light/QCC
+Challenge: Certain algorithms require that flux operations be applied on all qubits of a quantum processor simultaneously (on the same 20 ns cycle). Since the current definition of a flux operation is an operation that affects a qubit pair (tuple), doing this would be impossible, for example, for Surface-7, whose topology is presented as:  This is because with 7 qubits, there is always an extra qubit that does not have a pair. Therefore, to specify flux operations on all qubits, at least a qubit would be subject to two operations (either a target of both, or the control of one and the target of another), which should be forbidden.
+Addressing the challenge: CC-Light and QCC currently support a way to achieve single-qubit flux control, even though it should technically not be possible. The reason for this is that, if a qubit is a target of a 2-qubit operation and the control of another (for a gate that does not affect the control qubit), the codewords sent to this qubit are simply combined. Therefore, if the gate for which the qubit is a control, does not affect the qubit (does not trigger a codeword for the control qubit on the control store), then only one codeword will be sent to the qubit.
+Example: In this way, to implement single qubit flux operations on all qubits of Surface-7, we could trigger flux operations on all the following tuples in the same cycle: (2,0), (0,3), (3,1), (1,4), (4,6), (3,5), (5,2) if the operations were defined to have no effect on the control of the tuple. Therefore, even though the tuples (0,3), (3,1) and (3,5) being used for operations in the same cycle should be illegal, it will work.
+Problem:  I believe that because of the way in which OpenQL interprets 2-qubit operations, it would not allow scheduling of operations on tuples such that a certain qubit is the target of one operation and control of another (or the target of two operations). Therefore, even though CC-Light and QCC sort of support this, it is impossible to program it.
+Possible solution: From the way two-qubit operations are specified as ; it appears one can specify a "two-qubit operation” as only affecting 1 qubit (specified in qubits parameters), therefore allowing the scheduling of operations on all tuples: (2,0), (0,3), (3,1), (1,4), (4,6), (3,5), (5,2) in the same cycle.
+@imranashraf @AdriaanRol
+The following is to certify that single-qubit flux operations are natively supported in CC-Light and QCC by the use of single-qubit target registers, ie, without the need to specify "ghost" qubits on a 2-qubit tuple. This conclusion was verified by simulation of the QuMA core under this scenario.
+The following describes the testing done in order to reach this conclusion
+First, a sanity check was run, using a 2-qubit flux operation on tuple (8,10). The QISA program used in as follows:
+Furthermore, the CZ_07 operation is defined in the Qmap as:
+def_q_arg_tt['CZ_07']   = 0x87
+which corresponds to line 115 on the Control Store, configured as:
+ 115:      0          2         1           2            5
+It would then be expected that codeword "001" be triggered on bits 11-9 of Flux DIO (corresponding to Q10) and codeword "101" on bits 2-0 of Flux DIO (corresponding to Q8). This was indeed the case, as can be observed in the simulation result presented in the next image. Therefore, proving normal operation of Flux.
+
+To now show single-qubit flux operation, we will should similar behavior on qubit 8, but achieve it by using a single-qubit target register. To do this, the QISA program was modified to make use of a single qubit operation (this will be further explained in the next section), and now looks like this:
+Furthermore, operation FLUX_01 is configured in the Qmap as:
+def_q_arg_st['FLUX_01']   = 0x73
+therefore corresponding to control store line 115, which was now configured as:
+ 135:      0          2         1           2            5
+Since only qubit 8 is now targeted, we should expect this single-qubit flux operation to trigger codeword "101" now only on qubit 8. This can be observed in the following simulation, therefore proving native support for single-qubit flux operations.
+
+The following describes the way in which OpenQL should configure the Control Store, Qmap and QISA program to make use of the feature of native single-qubit flux control
+As observed in the aforementioned example, to configure single-qubit flux operations the following support should be provided by OpenQL:
+Hi @AdriaanRol,
+Extending Hans' comment, could we ask your help in defining how single-qubit flux operations should be defined and scheduled? I believe that you would be the most qualified person to define this, in order for OpenQL to meet the requirements of experimentalists.
+In particular, as Hans pointed out, I believe we need to answer:
+I would greatly appreciate it if you could point out anything else that you believe could be important for us to consider!
+@MiguelSMoreira @jvansomeren
+In particular, as Hans pointed out, I believe we need to answer:
+Single qubit flux operations should be allowed to be scheduled in parallel with any other operation that does not occupy the same qubit. This includes, microwave, readout and other flux operations.
+We would need to be able to specify the same parameters as any other gate (microwave or flux). Besides target qubit and codeword/instruction, this includes the duration and latency.
+In particular I’d like to know whether the CZ and the single flux gates F in the example below can be scheduled in parallel.
+This example assumes an s17 setup:
+{ CZ q5 q2    |    F q6   |   F q0 }
+@jvansomeren , it is correct that a smart scheduler would impose a park operation when nothing is specified. As such these qubits naively would be considered occupied :
+and that therefore it would not be allowed to schedule F q6 and/or F q0 in parallel to CZ q5 q2.
+However, this is not the desired behaviour. The desired behaviour is that we would be able to specify any operation (e.g., a CZ involving q6 and/or q0) or a single qubit flux operation to move it out of the way or do anything else with it.
+Now there are two relevant operating scenarios that should be supported.
+In scenario 1, the scheduler should replace the idling operation on these qubits with the corresponding single qubit parking operation. All other operations should still be scheduled as if the operation is free.
+In scenario 2, we do not want to include this constraint at all. As a consequence, we do not want to replace idling operations with anything.
+If supporting multiple configurations is problematic, we would prefer not including the constraint at all (scenario 2) and let us address this manually by including idling operations.
+What is new to me to my astonishment after some investigation is, that there is no support (neither in software nor hardware) to generate the parking operations corresponding to a 2 qubit flux operation.
+E.g. while executing a CZ q[5],q[2] in s17, q[6] and q[0] need to be parked using a 1 qubit flux operation, let us name it F. So actually what needs to be executed is: { CZ q[5],q[2] | F q[6] | F q[0] }.
+Where (in the system stack of e.g. s17) can/should this expansion be done?
+It is target dependent so layers above the compiler shouldn't be bothered with it. Furthermore, an F is not a user-level operation with semantics wrt to other operations on the operand qubit (it is an identity), and in a scheduler's dependency analysis it would not be related by the scheduler to a particular CZ that it is supposed to help executing (the qubit operands of F are unrelated from a dependence perspective to the qubit operands of the corresponding CZ). So, any CZ expansion to add Fs should be done after the last scheduler. E.g. imagine the following program to be scheduled ALAP:
+We would get the following bundles (cycle numbers in front):
+I.e. the Fs would drift away down (ALAP) from their corresponding CZ.
+After last scheduling, we currently have the following layers in top-down order: bundling, qisa generation/mask generation, assembly, quantum instruction decoding, microcode expansion from Q Control Store, operation combination, device event distribution, event queues, timing control, ADI with codeword triggered pulse generation, etc. My opinion is that microcode expansion from Q Control Store is the best module to do the expansion: it  it below the qisa interface so the overhead of additional instructions to be fetched and decoded is avoided. But in view of the requests to experiment with the insertion of Fs, and that perhaps the implementation might still be adapted after this, doing the expansion as microcode expansion from the Q Control Store now is not the best option. A better option would be to do it somewhere in software; since an assembler shouldn't do such expansions in my opinion, the only remaining option is to add it to the OpenQL compiler, in particular to the cclight/cc/qcc backend. The scheduler was already ruled out; bundling should just do what its name says, so we end up at qisa generation to do the expansion (or a new module just before it).
+Implementation requirements of adding CZ expansion to qisa generation
+To be elaborated. Note:
+How to support experimentation?
+With expansion being implemented in the backend, we can use a compiler option to tune the compiler's behavior in this respect: no_expansion (scenario 2), or automatic_expansion (scenario 1).
+With no_expansion, Fs must be added by the programmer; this requires F to be supported as a gate in OpenQL: defining it in the config json file,  defining its scheduling behavior; the latter was already detailed earlier in this thread by Adriaan, but questions remain. But, there still is a architectural design issue: as pointed out above, the scheduler would not keep a CZ and its Fs together in the same cycles. The only option I see to avoid this, is to use barriers around CZ and its Fs to force the scheduler to assign these to the same cycles. So writing:
+to get (cycle assignment in front):
+Some further notes:
+All other operations should still be scheduled as if the operation is free.
+To my understanding, e.g. an X q[0] cannot be in parallel to an F q[0].
+@jvansomeren , thanks for working this out.
+A small note (I may have some more in the future).
+All other operations should still be scheduled as if the operation is free.
+To my understanding, e.g. an X q[0] cannot be in parallel to an F q[0].
+Automatic expansion could be made intelligent to also accept Fs (like in the code just above with the barriers) in the code and to only add the Fs that are missing, i.e. be forgiving in this respect.
+My statement referred only to flux pulses. It is indeed not possible to do a microwave operation when a parking operation is required (when doing automated scheduling).
+The manual scheduling however is very much required as there are many applications where we would want to have this option.
+@jvansomeren ,
+I think this is correct.
+For manual inserted 1Q flux gates I do not want any other constraint to apply except no other gate on the same qubit.
+I would assume some changes are required for the scheduler for automatic insertion but I believe that the things you described above would suffice.
+Implementation tasks:
+@AdriaanRol @MiguelSMoreira while working on this issue I realized that the generation of CS and QMap file has been disabled. I vaguely remember that you started using assembler generated CS and QMap files.
+Is it correct?
+If yes, then we do not have to update CS and QMap file generation. The only thing you will then require form openql is the qisa file.
+addressed in PR #238

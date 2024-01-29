@@ -1,0 +1,55 @@
+Description of the issue
+The function cirq.read_json() fails to read a json containing a QasmUGate. Even if the json was created by cirq.to_json().
+How to reproduce the issue
+This will produce the following error:
+ValueError                                Traceback (most recent call last)
+ in 
+6 """
+7 circuit = cirq.contrib.qasm_import.circuit_from_qasm(qasm)
+----> 8 cirq.read_json(json_text=cirq.to_json(circuit))
+~/.pyenv/versions/3.8.5/lib/python3.8/site-packages/cirq/protocols/json_serialization.py in read_json(file_or_fn, json_text, resolvers)
+628
+629     if json_text is not None:
+--> 630         return json.loads(json_text, object_hook=obj_hook)
+631
+632     if isinstance(file_or_fn, (str, pathlib.Path)):
+~/.pyenv/versions/3.8.5/lib/python3.8/json/init.py in loads(s, cls, object_hook, parse_float, parse_int, parse_constant, object_pairs_hook, **kw)
+368     if parse_constant is not None:
+369         kw['parse_constant'] = parse_constant
+--> 370     return cls(**kw).decode(s)
+~/.pyenv/versions/3.8.5/lib/python3.8/json/decoder.py in decode(self, s, _w)
+335
+336         """
+--> 337         obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+338         end = _w(s, end).end()
+339         if end != len(s):
+~/.pyenv/versions/3.8.5/lib/python3.8/json/decoder.py in raw_decode(self, s, idx)
+351         """
+352         try:
+--> 353             obj, end = self.scan_once(s, idx)
+354         except StopIteration as err:
+355             raise JSONDecodeError("Expecting value", s, err.value) from None
+~/.pyenv/versions/3.8.5/lib/python3.8/site-packages/cirq/protocols/json_serialization.py in obj_hook(x)
+625
+626     def obj_hook(x):
+--> 627         return _cirq_object_hook(x, resolvers, context_map)
+628
+629     if json_text is not None:
+~/.pyenv/versions/3.8.5/lib/python3.8/site-packages/cirq/protocols/json_serialization.py in _cirq_object_hook(d, resolvers, context_map)
+352             break
+353     else:
+--> 354         raise ValueError(f"Could not resolve type '{d['cirq_type']}' during deserialization")
+355
+356     from_json_dict = getattr(cls, 'from_json_dict', None)
+ValueError: Could not resolve type 'QasmUGate' during deserialization
+Cirq version
+0.13.1
+The bug is caused because QasmUGate does not follow the JSON serialization rules defined by serialization.md. An object is serialized to JSON with the help of a _json_dict_ method and restored by a _from_json_dict_ method. QasmUGate does not provide either of them. The above circuit example can be serialized because QasmUGate inherits Gate, which has a _json_dict_ method. The generated JSON string is
+It contains only the type of gate (QasmUGate) but lacks angle parameters. The datatype QasmUGate is not included in the file json_resolver_cache.py, so that the unserializing process has no idea what class to translate JSON type QasmUGate to.
+I have added _json_dict_ and _from_json_dict_ methods to QasmUGate and the bug is resolved. If no one is working on this, I can create a PR. The PR should also add the serialization feature to other QASM-related classes, such as  QasmTwoQubitGate (are there more?).
+It seems there is no need to serialize QasmTwoQubitGate. I will first create a PR only for QasmUGate and wait for feedbacks.
+Thank you @yjt98765 !
+Can you please explain why is there no need to serialize QasmTwoQubitGate?
+QasmTwoQubitGate is based on linalg.KakDecomposition, but the latter one cannot be serialized (yet). spec.py lists the classes that are not serializable yet, including KakDecomposition. In theory, we should add serialization support to all of these classes, but maybe some of them are not commonly used and the project has other priorities.
+
+I guess it is safer to defer the support for the serialization until the QASM part is mature, to avoid wasted efforts. But if it is somehow needed, I am also willing to implement it!

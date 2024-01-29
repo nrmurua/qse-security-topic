@@ -1,0 +1,45 @@
+I'm trying to compute the expectation value of some (non-diagonal) observable using expectation_from_samples but the following error occurs:
+NotImplementedError: Observable is not a Z Pauli string.
+Am I doing something wrong or this function does not support other observables besides Z?
+The pseudocode I'm using is the following:
+qc = Circuit(1)
+qc.add(gates.H(0))
+qc.add(gates.M(0))
+result = qc(nshots=100)
+obs_symb = X(0)
+obs = hamiltonians.SymbolicHamiltonian(obs_symb)
+result.expectation_from_samples(obs)
+And the log:
+`---------------------------------------------------------------------------
+NotImplementedError                       Traceback (most recent call last)
+ in 
+7 obs_symb = X(0)
+8 obs = hamiltonians.SymbolicHamiltonian(obs_symb)
+----> 9 result.expectation_from_samples(obs)
+~\AppData\Local\Continuum\anaconda3\envs\tqenv2\lib\site-packages\qibo\states.py in expectation_from_samples(self, observable)
+244         freq = self.frequencies(binary=True)
+245         qubit_map = self.circuit.measurement_gate.qubits
+--> 246         return observable.expectation_from_samples(freq, qubit_map)
+~\AppData\Local\Continuum\anaconda3\envs\tqenv2\lib\site-packages\qibo\hamiltonians\hamiltonians.py in expectation_from_samples(self, freq, qubit_map)
+562             for factor in term.factors:
+563                 if isinstance(factor, Z) == False:
+--> 564                     raise_error(
+565                         NotImplementedError, "Observable is not a Z Pauli string."
+566                     )
+~\AppData\Local\Continuum\anaconda3\envs\tqenv2\lib\site-packages\qibo\config.py in raise_error(exception, message, args)
+43         raise exception(message, args)
+44     else:
+---> 45         raise exception(message)
+46
+47
+NotImplementedError: Observable is not a Z Pauli string.`
+I believe with the current implementation it does not support. @AlejandroSopena could you please confirm?
+In other words, how can I compute the expectation values of a given Pauli string? Keeping in mind that I want to use the same code on a real device eventually.
+It was only implemented on the Z basis, as it only required the measurement gates we already had access to. When your other issue (#720) gets implemented, we can probably directly extend that into multi-basis Hamiltonians by computing the expectation values from samples from the individual terms of the Hamiltonian (better if we consider all commuting terms at once) and reconstructing it after the fact. It will have a performance overhead, but it should be 1-to-1 with the experimental implementation.
+Therefore we should focus on implementing #720 asap.
+A quick fix in the meantime would be to add the change of basis in the circuit with the result output in the relevant qubits, and re-define the Hamiltonian purely on the Z basis.
+But then, how is the expectation value of the default Hamiltonians computed? e.g. for the XXZ in-build Hamiltonian it contains $\sigma_x,y,z$ terms (for instance, VQE tutorial https://qibo.readthedocs.io/en/stable/code-examples/advancedexamples.html#how-to-write-a-vqe)
+I believe the expectation value in this and other examples is calculated using the state vector or density matrix. This is possible for any Hamiltonian using hamiltonian.expectation(state). Of course this would not work with real hardware or for simulating noise or statistical errors due to finite number of shots.
+The expectation_from_samples is a relatively new feature (#675) to partially solve these issues. I agree that it should be generalized to work with arbitrary Hamiltonians. Until this is implemented the only potential solution I see is the quick fix that @igres26 wrote above, unless you can use the state vector (or density matrix), which is possible with .expectation.
+@scarrazza I believe this is not resolved. We implemented the methods required to change the basis of the initial and final states of circuits, however we did not update the expectation_from_samples to support non-diagonal Hamiltonians. In fact there is a duplicate issue about this: #852
+Good point, let's reopen it.

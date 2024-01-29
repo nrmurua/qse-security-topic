@@ -1,0 +1,10 @@
+Currently, we support 16-bit floating point state vectors in QEngineOCL only if the device is on an ARM system, since ARM offers a 16-bit C++ host code floating point primitive, with the right compilation flag. There is likely a great need to offer FP16 support on x86 systems.
+The only reason we need an ARM half type is for writing from OpenCL host code into device buffers. I think there is only one place where this float literal writing happens from host code, and it's a single FP amplitude written in SetPermutation(), or a couple of related places. If -DFPPOW=4 is CMake-built on an x86 system, we should simply do what's necessary to cast on the OpenCL kernel side, from FP32 argument buffers.
+There are 9 text occurences of clEnqueueWriteBuffer(), and many of them copy host floats to state vectors. At least, ARM should work with an OpenCL device that does half, but this will take some time to allow for x86.
+It's necessary to disable the CPU/GPU QEngineHybrid type to interoperate between 32-bit host code and 16-bit kernels, for floating point. QEngine page-segment-wise abstract methods and other methods like GetQuantumState() and SetQuantumState() (as a Schrödinger method representation) also have no obvious equivalent.
+Intel offers intrinsics for converting to and from IEEE 16-bit floating point types. Now that I realize how deeply the use of clEnqueueWriteBuffer() runs in QEngineOCL, the best approach is probably to only offer FP16 via these intrinsics on systems that have the intrinsics. This seems significantly simpler than maintaining a separation and converting between host FP32 and OpenCL kernel FP16, possibly restricting API methods. I think I can have this done early this weekend.
+clang offers another alternative, to simply enable the same FP16 type used by ARM. I'm going to try this first.
+Implemented by #666, #667, and #668. (We didn't use clang, but we attempted to in #665.)
+The CMake command I use is either
+or, at minimum,
+BCD ALU works, but I have no need for it. The other two options set all QInterface types to 32-qubit addressing mode, which might improve speed or enable hardware compatibility.

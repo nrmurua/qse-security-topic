@@ -1,0 +1,82 @@
+Hi,
+I've been looking to replace the cirq simulator in some of my programs with the fast qsimcirq backend. I've noticed some unexpected behaviour with the system wavefunction, and wanted to check whether this was something that I'm doing wrong, or if there might be a potential bug.
+I've found that for a single qubit circuit, the X and H gates behave as I expect, but the Rx and Ry gates do not seem to give the correct wavefunction:
+import cirq
+import qsimcirq
+import numpy as np
+This prints:
+Test0: ───H───
+Cirq wavefunction:
+[0.70710677+0.j
+0.70710677+0.j]
+Test0: ───H───
+Qsim wavefunction:
+[0.70710677
+0.
+0.70710677
+0. ]
+as I would expect.
+This prints:
+Test1: ───Rx(0.5π)───
+Cirq wavefunction:
+[0.70710677+0.j
+0.-0.70710677j]
+Test1: ───Rx(0.5π)───
+Qsim wavefunction:
+[ 0.5
+0.5
+0.5
+-0.5]
+While these appear inconsistent, I think this can be explained by removing the global phase from the qsim wavefunction, which yields: e^{i*pi/4} (1/sqrt(2) , -i/sqrt(2)).
+However, I obtain a similar inconsistency between the cirq and qsim wavefunctions for different rotation angles, and for the Ry gate too, which don't seem to be explainable with the global phase:
+This prints:
+Test1: ───Ry(0.333π)───
+Cirq wavefunction:
+[0.8660254+0.j
+0.5      +0.j]
+Test1: ───Ry(0.333π)───
+Qsim wavefunction:
+[0.98614323
+0.
+0.16589613
+0. ]
+I'm not sure how to reconcile these two wavefunctions, so would really appreciate any insights that you might have on this.
+Thank you in advance for your help with these questions.
+Best regards,
+Sam
+Your observation of different global phases in qsim is likely correct - I previously saw this when adding tests in #43. However, it's possible that the Cirq-to-qsim translation handles the Rx or Ry gate incorrectly. To verify that the Cirq and qsim results only differ by a global phase, try the following:
+If this fails in either case, please follow up on this issue. Thanks!
+Rx, Ry and Rz gates have a global phase factor of e^{i·π·t/2} in Cirq. There is no such a factor in qsim.
+Hi Orion and Sergei,
+Thanks for your quick responses on this issue. I've looked into the global phase possibility, as you suggested, and have the following results:
+The global phase test passes for the H gate and the Rx(pi/2) gate, but not for the Rx(pi/4) or Ry(pi/5) gates.
+I'm currently running this in a colab notebook, and also obtain slightly odd behaviour in what I'm able to access. For example, you'll see in my example that I have to reformat the qsimcirq wavefunction to be in the same format as the cirq wavefunction. I also have to access a private variable (myres._final_simulator_state), as my code returns an error (AttributeError: 'SimulationTrialResult' object has no attribute 'final_simulator_state') if I try to return myres.final_simulator_state. This isn't what I'd expect after looking through qsim_simulator.py, so perhaps there's an issue with the colab installation?
+Thanks,
+Sam
+Hello,
+the source code of Cirq says for ZPowGate, for example:
+From my understanding, the Rz gate is without global phase, and the ZPowGate has global phase.
+I'm currently running this in a colab notebook, and also obtain slightly odd behaviour in what I'm able to access. For example, you'll see in my example that I have to reformat the qsimcirq wavefunction to be in the same format as the cirq wavefunction. I also have to access a private variable (myres._final_simulator_state), as my code returns an error (AttributeError: 'SimulationTrialResult' object has no attribute 'final_simulator_state') if I try to return myres.final_simulator_state. This isn't what I'd expect after looking through qsim_simulator.py, so perhaps there's an issue with the colab installation?
+The fix for this was added in #43 - if you sync past that version, you should be able to call myres.state_vector() to get a the state vector. This object should have the same formatting as the Cirq built-in simulator.
+The global phase test passes for the H gate and the Rx(pi/2) gate, but not for the Rx(pi/4) or Ry(pi/5) gates.
+Could you confirm that your local copy is synced past #44? Prior to that PR, we only had a special case to handle Rx(pi/2) - other Rx/Ry/Rz gates would misbehave.
+This does sound like it's probably an installation issue then.
+I only created the colab notebook today; how can I check whether the version of qsimcirq I have installed in my colab notebook is after #44?
+Thanks again,
+Sam
+That would depend on the most recent PR prior to pushing the qsim PyPI package - I suspect that #43 was not included in that release.
+@iamvamsikrishnad, do you know what PR v0.0.2 aligns with? Also, we should consider pushing a release to pick up this and other minor fixes that went in since v0.0.2.
+Thank you, Orion. Prior to that PR, the Rx/Ry/Rz gates for arbitrary angles misbehaved exactly in the same way as in Sam's examples.
+Alexandru is correct that Rx/Ry/Rz have a global phase and XPowGate/YPowGate/ZPowGate don't have a global phase. One thing is that the Rx/Ry/Rz gates are special cases for pi and pi/2 in qsimcirq. These cases have a global phase, whereas Rx/Ry/Rz for other angles don't have a global phase.
+This might lead to confusion.
+Another area of confusion is that cirq doesn't have distinct x^t and Rx gates as such. It only has XPowGate, which has an optional argument for the global phase to mimic Rx. So even if you get it right for Rx, you'll then get the global phase wrong for x^t.
+(On the other hand, it's only a difference in global phase, which you should (almost) never care about anyways.)
+Alexandru is correct that Rx/Ry/Rz have a global phase and XPowGate/YPowGate/ZPowGate don't have a global phase.
+I wanted to make the opposite point. Rx does not have global phase, and XPowGate has a global phase.
+Semantics of global phase aside, if it's feasible to ensure that the relative phase of a Cirq operation and its translated-to-qsim counterpart are identical, I think it's worthwhile for us to do so. This may require adding new gate types (like a gate with the same relative phase as the default (X|Y|Z)PowGates) to avoid increasing depth when translating from Cirq.
+#43
+Yes you are correct. I don't think #43 is incldued in the version of 0.0.2. I created a seperate bug to track a new release.
+I have uploaded a new version to pypi. Can you please test now @sammcardle30
+All of my tests shown above now pass, and I can access SimulationTrialResult.final_state , so it all looks good to me!
+Thank you all for updating everything so quickly :)
+Thanks Vamsi for pushing out the new version!

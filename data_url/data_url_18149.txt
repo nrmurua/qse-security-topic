@@ -1,0 +1,69 @@
+Move the projectq and sympy simulator to their own repositories and their own pip packages.
+#413: previous issue with 0.5 planning
+https://github.com/QISKit/qiskit-addon-sympy
+(original description by yaelbh)
+Directory qiskit/backends/local currently contains (in PR #421) backends qasm_simulator_projectq.py and statevector_simulator_sympy.py
+It cannot contain qasm_simulator_sympy.py, because the Sympy simulator is state vector only.
+Task: write statevector_simulator_projectq.py
+In addition, there is a request to move ProjectQ and Sympy backends to qiskit-core-backend-plugins. @ajavadia, do you have a more concrete specification for that?
+Statevector for ProjectQ is done (PR #436).
+We intend to move ProjectQ and Sympy backends to:
+qiskit/backend/plugins/ProjectQ
+qiskit/backend/plugins/Sympy
+as examples for adding 3rd party plugins.
+Note: no 'core' directory between 'qiskit' and 'backends'. So we'll keep it this way, not adding 'core' for this (let us know if you prefer adding 'core').
+@yaelbh thanks for working on the simulators!
+for the 3rd party backends, we would like to explore the idea of having them entirely separate from the qiskit codebase. So they would exist as separate packages that one would pip install, and then have qiskit "see" them as new backends. This would be closer to the idea of them being "3rd party" backends, and provide a model for other 3rd party backends. We also wouldn't have to maintain those in the qiskit repository.
+Thanks @ajavadia. So we suggest the following:
+A new directory "plugins" at the root directory, as a sibling of "qiskit" and "test", with this structure:
+/plugins/ProjectQ/qiskit-projectq/qasm_simulator_projectq.py
+/plugins/ProjectQ/qiskit-projectq/statevector_simulator_projectq.py
+/plugins/ProjectQ/setup.py
+/plugins/Sympy/qiskit-sympy/statevector_simulator_sympy.py
+/plugins/Sympy/setup.py
+Each third party would have its own pip-install taking care of all dependencies.
+e.g.,  "pip install qiskit-projectq" will download qasm_simulator_projectq.py and statevector_simulator_projectq.py, and also pip install the dependencies qiskit and projectq.
+And similarly to Sympy and future 3rd parties (which do not have to be part of the qiskit repository - can be anywhere).
+Let us know if it makes sense, or any comments, and we'll implement.
+Hi @yaelbh what I would like to have is a new repo qiskit-core-backend-module-sympy and in it it should be arranged as you say and provide a readme and install and show the user how it can be done. I would like to do the same for projectq.
+Thanks.
+Here I list the following steps for Sympy. After Sympy is done I will perform similar work for ProjectQ.
+Regarding (5) above:
+git grep -l ".*simulator_sympy.*"
+outputs:
+examples/python/sympy_backends.py
+qiskit/backends/local/init.py
+qiskit/backends/local/localprovider.py
+qiskit/backends/local/statevector_simulator_sympy.py
+qiskit/backends/local/unitary_simulator_sympy.py
+test/python/test_identifiers.py
+test/python/test_statevector_simulator_sympy.py
+test/python/test_unitary_simulator_sympy.py
+I think independent repos should have independent testing. The SDK would probably do tests which are only as specific as backend class (e.g. qasm simulator, statevector simulator, QX device, etc).
+Yes they should be independent and the core should not require them only they require the core.
+Sure, the core would not need to know of the external repos. But the question was the other way - whether the repos can be aware of the core tests, and then with just a lean interface can use the core-test code to run on themselves. The other option is to duplicate much of the code in the tests, and then the repos become independent, not needing to clone the core tests. I prefer the first option - anyone cloning a repo needs also to clone the core. Main reason is maintenance - when a core test gets better, all repos benefit automatically. Actually Yael is already working on removing much duplication of code between the simulators in other areas (not tests) #436
+i agree and assumed that to be the case. Lets assume that the plugins know the core exists and the test in that are complete and the plugin only extends
+I'd like to open new repositories qiskit-core-backend-module-sympy and qiskit-core-backend-module-projectq under QISKit, I.e., I want these two repositories to be listed as QISKit repositories (like qiskit-sdk-py, qiskit-tutorial, etc.). But I'm not permitted to open new repositories in this location. @ajavadia , could you please open them for me?
+The tests can be moved with minor adjustments. However the example sympy_backends.py assumes that QuantumProgram has a backend named local_statevector_simulator_sympy, and this is no longer true. Therefore I'm removing sympy_backends.py from qiskit-sdk-py but am NOT copying it to qiskit-core-backend-module-sympy.
+I'll try to copy the example after all, replacing QuantumProgram with other means to execute the simulators.
+I'll try to copy the example after all, replacing QuantumProgram with other means to execute the simulators.
+Good catch - seems it was overlooked when transitioning to 0.5, as we currently are trying not to recommend QuantumProgram by default. As a matter of fact, that particular examples/python/sympy_backends.py might be a good candidate for either moving the file to the sympy repository, or for expanding it and turn it into a "how to use backends not in core" example.
+As a first step, can you revise the example it so it does not use QuantumProgram - perhaps something similar to:
+@diego What's the shortest and cleanest way to run a circuit, which is given in a qasm file?
+What's the shortest and cleanest way to run a circuit, which is given in a qasm file?
+Good timing! :) Since #512 (which will be included in today's release - previously a similar method  was included in QuantumProgram), you should be able to do:
+And then resort to the usual way of running a circuit (via execute(), via backend.run() if you want finer control and don't mind creating the job manually, etc).
+@ajavadia , could you please open a repository qiskit-core-backend-module-sympy, or refer me to someone in charge of this?
+Then I'll copy my pull request https://github.com/yaelbh/qiskit-core-backend-module-sympy/pull/1 to the new location.
+I uploaded a draft of the new package to TestPyPI.
+Here is how it can be installed (still work in progress):
+pip install --index-url https://test.pypi.org/simple qiskit_core_backend_module_sympy --extra-index-url https://pypi.org/simple
+@yaelbh i created a new repo under the QISKit organization. Please fork it:
+https://github.com/QISKit/qiskit-core-backend-module-sympy.git
+and add an initial PR with the files and also a README and LICENSE.
+Thanks.
+@yaelbh I took the liberty of tweaking a bit the issue description, to help with coordinating and managing. At least for the sympy simulator, now that the repo is in place, it might be a good idea to make use of the issues and discussions there and keep using this one as a "high level overview" issue 👍
+Thanks @diego-plan9 , the issue is indeed very clear now 😃.  Could you please also open qiskit-addon-projectq, and let me be its admin?
+Great, @yaelbh ! You can start using https://github.com/QISKit/qiskit-addon-projectq now :)
+@yaelbh what's the status of this issue? Have we finished moving the code to their respective repositories?
+@delapuente I'm closing this issue. Anything that's remained to be done is documented in other issues in the other repositories.

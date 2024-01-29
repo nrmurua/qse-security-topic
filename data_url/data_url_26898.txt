@@ -1,0 +1,73 @@
+Dear Developers,
+I've experienced that enabling CUDA support slows down CP2K compared with pure CPU version. I tried various ways to build the executable (mostly .popt) arise from this howto, but nothing changed.
+As I know, GPU is used to accelerate matrix multiplications by DBCSR, that is set to employ a list of precomputed kernels for NVIDIA K20X, K40, K80, and P100. So I've got parameters list for my cards using this tutorial. And again, CPU version is much faster in, say, the official H2O-64 benchmark and in my setups as well.
+I understand that is of a big request, but can GPU part of DBCSR be rewritten with the use of conventional CUDA tools or OpenACC as in LSDalton instead of precomputed kernels?
+Best wishes
+Sorry, would you mind to report your arch file, which test you are using (H2O-64 is rather small), how many ranks/nodes, your output of the test, and anything you think it will useful to understand your slowdown?
+I see two possible explanations:
+I understand that is of a big request, but can GPU part of DBCSR be rewritten with the use of conventional CUDA tools or OpenACC as in LSDalton instead of precomputed kernels?
+Could you elaborate a bit more on this statment, for instance what you want to achieve by replacing with the "conventional CUDA tools" (I assume CUBLAS) "or OpenACC"? If your problem is the autotuning GPU procedure, then we are working on a new DBCSR implementation which doesn't not require autotuning.
+Here are files I used: slightly modified H2O-64, two arch with and without CUDA, and their outputs.
+73.tar.gz
+If necessary, I could run additional tests.
+we are working on a new DBCSR implementation which doesn't not require autotuning.
+Good to see it, thank you! I really don't know why CUDA-enabled CP2K runs slower than the pure CPU version, and guessed that problem may be in autotuning.
+As I suspected, the test you are using is simply too small for gaining from the GPU.
+An easy way to understand the workload on the GPU is to look at this line in the output:
+average stack size                                     0.0       0.0     132.6
+The number of the third column should be around 10K (for the CPU should be around 1K, but the difference is negligible), in your case is pretty low and the overhead can kill the performance.
+Then, let's make a comparison of the timings for the most expensive functions:
+first column: CP2K function name
+second column: w/ cuda
+third column: w/o cuda
+The last line is the total CP2K time. As you said, the nocuda is faster. Where you see "-----" these are only functions for the GPU. These sum up to ~38 seconds. Overall, cuda is always slower.
+The part in DBCSR which is related to the real computation on the GPU is:
+multiply_cannon_multrec  1.482    10.456
+Well, as you can see here the GPU does a really good job...
+Note that the two main functions (calculate_rho_elec, integrate_v_rspace) are not GPU accelerated, so in any case you will limited by that.
+Now, some suggestions to get better performance:
+Well, this is the GPU world, tradeoff between computation and overhead...
+What sort of CPU is it?  (Well, "GLOBAL| CPU model name :  Genuine Intel(R) CPU @ 2.00GHz" is not too specific).
+Thank you! I need some additional time to carry out tests.
+What sort of CPU is it? (Well, "GLOBAL| CPU model name : Genuine Intel(R) CPU @ 2.00GHz" is not too specific).
+Actually, it is CPU of Haswell generation.
+Closing since this is not an issue (at least, there is no evidence yet to indicate that it is). Please reopen if you think otherwise and provide more info. Also, please use our Google Group for future support questions.
+Well, I've finished with benchmarking 256-H2O, here are results:
+73-1.tar.gz
+There is a small (3%) speedup in GPU-accelerated CP2K when using 1 thread, and a little better (9%) when using 2 threads.
+As I understand, a lot of time is being consumed by dense linear algebra operations which aren't being offloading on GPU. Due to the fact that GPU computational resources much cheaper than CPU, both for ordinary customers and supercomputer centers, is there a chance for CP2K to get GPU code for dense algebra in the close future?
+Thanks for answering my question!
+CP2K often relies on linear algebra for dense but relatively small matrices since the main vehicle for many of the computations is a (distributed) block-sparse matrix. Although, the blocks are dense matrices, this sort of linear algebra is not fully compute-bound. If you put non-square shapes aside and just look NxN matrix multiplications, then:
+AI(N) = 2 * N^3 / (32 * N^2) = 0.0625 * N       (Arithmetic Intensity in FLOPS per Byte)
+The arithmetic intensity (AI) for example with a 16x16 matrix only reaches 1 FLOP/Byte. Even your Haswell system yields 8 FLOPS/Byte assuming 256-bit wide vectors (AVX2) with 2 FMA ports (idealized or full utilization). That Haswell system is not compute-saturated but rather strangled by memory bandwidth, and any gain (in this case) likely comes from GPU's higher memory bandwidth (below the gain you can expect from peak FLOPS). On the other hand you have to copy the data over PCIe (and Amdahl's law somewhat kills performance). Further, the issue is emphasized with multi-node communication yet another level of "memory hierarchy" (but I guess you're only interested in single-node).
+CP2K is fine on either GPU and CPU and does its best in the above case. For instance, copy over PCIe is attempted to overlap with computation. However, the smaller the AI -- the smaller the opportunity even with double-buffered/copy-swap implementation. Btw, H2O-xxx is mostly relying on 23x23-kernels which are somewhat in the upper middle-field in terms of AI.
+Unfortunately, I don't have your sort of Haswell CPU but some results on Xeon E5-2699v3 (top-bin Haswell generation) comes out at roughly half your time for H2O-64 (also older version of CP2K). I think H2O-64 is kind of not representative anymore (depends on what you want to measure) for today's systems as you measure a lot of sequential/startup/overhead or communication time rather than any compute or sustained performance (at least if you look at total time to solution). Your H2O-256 (CPU) runs in ~1426s to solution, which is more than 4x behind current gen. CPUs (e.g., dual-socket Xeon SP 6148).
+Well, the results you get is something I would expect. Two things to consider:
+integrate_v_rspace
+calculate_rho_elec
+which are not GPU accelerated. AFAIK, some people are working on porting these functions to CUDA, but I don't what the status is.
+The DBCSR accelerated part is doing pretty well on the GPU (first column w/ GPU, second column w/o GPU):
+multiply_multrec                 108.284   400.717
+which is ~4x in performance. Unfortunately, the ~300 seconds in time-saving for the GPU go to the GPU overhead handling of the data (200s), with a net saving of only 100s. For this kind of test, it is the best I would expect (you have to go to linear scaling benchmarks to have better performance comparison).
+flops  2800 x   192 x  1698        1504368230400     100.0%      0.0%      0.0%
+flops  2800 x   192 x  1711        1515885772800     100.0%      0.0%      0.0%
+flops  2800 x   160 x   160        1977221120000     100.0%      0.0%      0.0%
+flops  2800 x   160 x  1698        2507280384000     100.0%      0.0%      0.0%
+flops  2800 x   160 x  1711        2526476288000     100.0%      0.0%      0.0%
+Usually, this procedure brings some performance improvement.
+The GPU-DBCSR does not any densification and you get smaller blocks:
+flops     9 x     9 x    32        1195442675712       0.0%      0.0%    100.0%
+flops    32 x    32 x    32        1417339207680       0.0%      0.0%    100.0%
+flops    22 x     9 x    32        1659908321280       0.0%      0.0%    100.0%
+flops     9 x    22 x    32        1664739090432       0.0%      0.0%    100.0%
+flops    22 x    22 x    32        2301577265152       0.0%      0.0%    100.0%
+flops    32 x    32 x     9        3556232921088       0.0%      0.0%    100.0%
+flops    32 x    32 x    22        4346506903552       0.0%      0.0%    100.0%
+flops     9 x    32 x    32        4361941942272       0.0%      0.0%    100.0%
+flops    22 x    32 x    32        5331262373888       0.0%      0.0%    100.0%
+flops     9 x    32 x     9        9760911962112       0.0%      0.0%    100.0%
+flops    22 x    32 x     9       12819465584640       0.0%      0.0%    100.0%
+flops     9 x    32 x    22       12819465584640       0.0%      0.0%    100.0%
+flops    22 x    32 x    22       16762311999488       0.0%      0.0%    100.0%
+A new version of DBCSR will bring densification for the GPU too, therefore we hope that it can speed-up the execution in the next CP2K release.
+Thank you for such detailed explanation! You are doing the really great work!

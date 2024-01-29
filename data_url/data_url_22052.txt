@@ -1,0 +1,68 @@
+daisy chain slave serial or spi master/slave bitstream loading from AMC/XCKU flash to RTM XC7A (depends on sinara-hw/sinara#249 and m-labs/misoc#53)
+Actively load bitstream from AMC second flash over the RTM FPGA configuration slave serial link using the firmware.
+It seems we can just switch the RTM FPGA to slave serial mode by changing the Mx resistors, and then the Xilinx-designed daisy chain loading should work. @gkasprow do you confirm?
+Ping @gkasprow
+@sbourdeauducq This mode would be very slow because only SPIx1 can be used. I tried this approach but didn't manage to configure any of FPGAs. That's why I resoldered resistors and RTM FPGA is loaded directly by AMC FPGA. Another reason could be due to long unterminated stub of config clock. I didn't inverstinage it further because you requested direct configuration in slave mode and I added this Xlinx config scheme as plan B.
+This mode would be very slow because only SPIx1 can be used
+Don't we still get 50Mbit/s in this mode? It would only take 3-4 seconds to load; this is not "very slow".
+RTM FPGA is loaded directly by AMC FPGA
+Well, only after someone has written and debugged software and gateware that does that...
+@sbourdeauducq
+I had issues with this config mode because either there were some signal integrity issues (I tried with lowest frequency) or the bitstream I generetad was wrong. The DONE signal did not go high because was blocked by Artix, so it is probably the second case. That's why I repopulated resistors to support direct configuration of Artix by Kintex using IOs and IP block.
+Moving email discussion to this Issue....
+@jbqubit said:
+Greg, did you check again if "the bitstream I generetad was wrong"? SB, what is cost and time to develop gateware to load the RTM FPGA from the AMC FPGA?
+SB> It's not a dependency, the RTM FPGA can always be loaded by JTAG.
+If JTAG is how Florent is currently configuring the RTM FPGA and he has no problems, this seems like a fine approach to get started. Assuming JTAG, what's your expected timeline for support of SAWG RF
+output from Sayma at the level of #795?
+@gkasprow replied:
+No, I didn't. The board Florent has is wired in such way that Artix is loaded by Kintex. Mine can be booted simultaneously. I will play with that. As far as I remember our discussion, this was plan B, while plan A was direct loading of Artix by Kinex using dedicated IP core. If for some reason simultaneous configuration does not work, we can consider adding second FLASH for Artix.
+Moving email discussion to this Issue....
+Let's keep this discussion in emails. Most of your message above is off-topic.
+What's the status of this?
+@jbqubit regarding status, see the multiple emails I sent you, e.g. "Re: RF output from Sayma via ARTIQ" on October 18th. The ball is in your court.
+But, when I come to think of this, having the RTM FPGA under AMC control and loaded by the AMC gateware/firmware would be more robust, more transparent, and less frustrating.
+For example, with the Xilinx system, if I understand correctly: if the RTM FPGA becomes unconfigured for some reason (e.g. reset from JTAG) it has no way of reading the flash on its own. The board would become inoperable until it is fully reset (power cycle or JTAG reset of the AMC FPGA). The AMC firmware also could not trigger reloads of the RTM FPGA, which are handy when the RTM FPGA fails for any reason, and to make sure that we start with a known state on the RTM side after a firmware reboot.
+#908 (comment)
+Note: my SAWG test (cb0016c) actually did include this core, so it may be possible to still make it work.
+Great. Trash my work for no good reason.
+That's not "trashing" it, as you can see in the commit it is simply commented out. People want to test the SAWG so master has to work, and disabling that core is fast and has currently no user impact.
+But yes, FPGA development is often frustrating. I know this very well.
+Out of curiosity, what's the status of this? Did it get funded?
+Not yet, but it should be soon.
+cool. thanks for the info.
+Funded by UMD.
+@gkasprow What are good test points to observe RTM FPGA bitstream loading signals as close as possible to the RTM FPGA?
+We need to probe: CCLK, DIN, DONE, INIT_B and PROGRAM_B.
+There is again some weird problem with this, and it frustratingly refuses to work.
+It's easiest to look at the resistors close to the RTM connector..
+I'll post an image in a moment.
+@sbourdeauducq look here
+
+Thanks!
+I think this won't work because FPGA_CFG_DIN (on RTM) is not connected to IO_L1N_T0_D01_DIN_14 (L17) but to IO_L1P_T0_D00_MOSI_14 (K16). That's close but not close enough.
+@gkasprow What's the easiest detailed way to rework that? I.e. cut the DAC2_TXEN0 wire, preferably short/enslave DAC2_TXEN0 to DAC2_TXEN1, disconnect/rotate R46 from its RTM FPGA side pad, route a wire from the RTM FPGA side of the cut DAC2_TXEN0 trace to the dangling RTM side pin of R46.
+@sbourdeauducq @hartytp could you apply that rework once greg has posted the howto?
+@jordens good catch.
+Yes, if @gkasprow posts a guide, I'll give that a go.
+I wouln't connect MOSI line with DIN because I'm not sure if it is high-Z during config.
+The easiest way is to remove R46 and connect one pin of the resistor with DAC2_TXEN0. The 200R resistor must be kept in place because DIN is in 1.8V bank and we drive it with 3.3V bank.
+Moreover, if we want to use slave-serial mode, M2:0 must be high, so one needs to desolder R112 and short it with R116
+DAC2_TXEN0 is located here:
+
+R46 is here:
+
+Disconnect its left pin, one close to the I2C connector, and connect the right pad via 200R  to the DAC pin.
+R112 is here
+
+
+
+Given the tightness of the layout that sounds good. Needs disabling of TXEN in the DACs, the gateware, and control by SPI.
+Working correctly after rework.
+👍 cool
+Glad to hear it.
+We should probably collect all the rework descriptions on a Wiki page/… for later reference.
+It's here
+https://github.com/sinara-hw/sinara/issues/216
+Summarising: rework for this is
+After the rework, this also works for me. Thanks!

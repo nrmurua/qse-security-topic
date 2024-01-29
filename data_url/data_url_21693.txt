@@ -1,0 +1,32 @@
+I am seeing occasional digital glitches on the suservo ADC readings, i.e. get_adc_mu() returning a value somewhere in the full range far from the actual input value. These glitches occur in ~0.1%–2% of all cases,
+Below is a representative histogram of 100000 ADC readings on a Kasli v1.1 (speed grade 3) with Sampler v2.2, binned according to the 8 MSBs. Sampler is the only EEM connected, and SUServo is instantiated with default arguments (latest master, 8bf9640).
+
+This is two's compliment and the input is terminated, so you'd expect to see bins 0 and 255 to be occupied.
+Zoom:
+
+The peaks near 45 and 176 peaks are actually ~1000 events high (~1%).
+This measurement was taken in a pretty quiet room (no trap RF/… nearby), and the issue occurs pretty consistently with several Kasli/Sampler boards of different hardware revisions; different EEM cable (lengths), etc. (The exact frequency and value of outliers varies.)
+Crucially, though, the issue doesn't occur when Sampler is driven from the bare interface, i.e. spi2.SPIMaster instead of the source-synchronous interface (with otherwise identical cabling, etc.).
+This seems to suggest that the source-synchronous interface is subtly broken, as this kind of memory corruption/… seems rather unlikely anywhere else.
+(There could also be something wrong with the CLKOUT SI/alignment, I suppose, but if it's that, it is consistent across boards.)
+Hmm, so the synchronisation strategy is to just shift the input into a shift register clocked by the ADC CLKOUT, and then reading the register out once CLKOUT is guaranteed to be quiescent (if t_rtt is set correctly, which it is – I did test with longer times to be sure). I haven't checked how this synthesizes, but I don't see any obvious ways this could go wrong.
+I guess the obvious reason would be S/H at the shift register, i.e. CLKOUT to SDOx alignment. I guess the thing to do would be to scan the alignment using some input delays.
+Hmm, seems like update is never reset in the adc_ser state machine, but even with something like
+the problem persists.
+@jordens: Any ideas? I didn't see anything egregious on the EEM lines SI-wise, but I'd need to probe closer to the FPGA (and with better CMRR) to be sure.
+
+Address collisions on the two memories may be the issue here. They are warned against but it is unclear exactly what the behavior is in practice if they occur. I didn't find a combination of memory port types that would have well defined behavior on collisions, synthesize, and work correctly at the same time.
+They way to test it is to check whether this also occurs if you fully stop the servo or synchronize your reads to the phases where those locations are not being accessed.
+If your cables are very long (as in Tom's tests) then this could also lead to missing the deadline due to large round trip delays.
+update is not the issue. eq()s in fsm.act() are combinatorial assignments and update defaults to 0.
+I didn't find a combination of memory port types that would have well defined behavior on collisions, synthesize, and work correctly at the same time.
+Semi-offtopic: this is why I think it might be viable (or even preferable) to let Yosys infer Xilinx BRAMs and leave the rest of the synthesis to Vivado. But that might introduce its own problems.
+The issue indeed goes away when stopping SUServo before reading the ADC value (haven't tried aligning with the servo cycle yet); thanks for the hint.
+If this [restrictions on accessing state memory] isn't yet warned about in the doc strings we should definitely add that.
+It isn't for get_adc[_mu]().
+Address collisions […] may be the issue here. […] it is unclear exactly what the behavior is in practice if they occur
+As far as I can remember, the behaviour for read/write address collisions is perfectly well defined for the Xilinx dual port BRAMs in {READ, WRITE}_FIRST mode. As for what the easiest way is to get migen to synthesise those correctly, no idea.
+update is not the issue. eq()s in fsm.act() are combinatorial assignments and update defaults to 0.
+Ah yes, thanks, should have checked the Verilog output first. FWIW, I find migen syntax a bit too non-obvious for my taste here (what with the implicit defaults and eq being overloaded to mean all classes of assignment), but I've probably just not written enough migen code yet.
+I don't think there is much wrong with eq() meaning assignment. Assignments have a complicated context in any language. The wrinkle is more with the fsm context being unclear. Fsm is somewhat of a language feature in migen but in general terms (and in the underlying verilog) it is strictly a higher order construct.
+Thanks!

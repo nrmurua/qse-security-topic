@@ -1,0 +1,29 @@
+Calling ListOp.num_qubits returns the number of qubits of the first element of the ListOp:
+Also this fails if op = ListOp([]).
+This should be changed to return either the maximum number of qubits or a list of numbers of qubits. I think latter makes most sense, though pylint and mypy might complain about the different return type.
+The current behavior is:
+It looks like the intention may have been that ListOp, SummedOp, ComposedOp have operators that operate on the same number of qubits (in fact the same qubits). And TensoredOp has the expected behavior. If that's the case, we can see that this semantic is not enforced; eg SummedOp([I, CX]) does not make sense. Is there some way the latter could be useful (that I am missing)
+If this is the intented semantics, then it should be documented and enforced when constructing these objects.
+EDIT: In light of #1088, it make sense that ComposedOp takes qubit indices along with the operators, so that composing operators with different numbers of qubits does make sense.
+On the other hand, returning  a list of the number of qubits for each operator would be simpler and consistent across subclasses. This would leave it up to the caller to interpret the results.
+I think ListOp conceptually poses no restriction on the number of qubits on its elements, as it is just a list of some operators and also the base for e.g. TensoredOp where the number of qubits can differ. Also it can be used to apply a set of operations to a list of operators, e.g.
+So I think returning a list of number of qubits would be the most consistent behaviour, as you said above 🙂
+Using ListOp like this
+violates the principle of orthogonality of API elements IMO. The main purpose of ListOp seems to be as a super-class for classes representing certain algebraic expressions. The usage above is a convenience for
+The latter is more transparent and more robust against API changes, and is really no more verbose. Using a class for two very different purposes makes the code more rigid and difficult to modify and change.  I can see that it's tempting to take this because it falls naturally out of the implementation for its main usage, but I don't think it's a good idea.
+After reading more code, I prefer num_qubits returning the correct scalar for each subclass and NotImplemented for ListOp.
+@jlapeyre there are a few other reasons for the ListOps that can't be achieved with list comprehension.
+The best analogy I can see in the classical world is being able to construct tensors in NumPy, rather than handling list of lists (of lists etc.) of matrices or vectors. Does that make sense?
+As far as the discussion above, I clearly wasn't sure what to do at the time of implementing... but thinking about it more, I'd argue that returning a list of num_qubits from a ListOp is actually a great way to validate operator shape, rather than calling op.class == ListOp (because isinstance will return true for SummedOp etc.) and then validating num_qubits on each op in oplist, as is mostly done today, which is gnarly. So I would say that it would be very nice for .num_qubits to return a list (of lists) or tuple (as Numpy does) of num_qubits to act as a .shape.
+While working through your example, I see that the gradient notebook seems to be broken currently. This
+gives me
+(This is curious. It appears that def _raise_if_passed_non_real_value... was last modified in August 2019, which is before your notebook was updated.)
+I am testing having num_qubits return a list of the number of qubits for ListOp. It will take a little work, as it appears that some code depends on the current behavior.
+For example, composing an op with a ListOp uses num_qubits to check just the first operator. As the code is (without changing num_qubits), this works.
+But, this
+raises an exception.
+I am guessing that the semantics of the expression would require that each of the operators in the ListOp have the same number of qubits as the operator on the LHS.
+With the proposed change, both expressions fail because an int is compared to a list.  It looks like the best solution is check that all ops have the same number of qubits when composing.
+EDIT: In addition, both of the following currently do not raise an exception
+That's strange, the notebook definitely worked when I committed it. @Cryoris, did QuantumCircuit change to no longer allow binding an expression to a parameter?
+And great, this is a good chance to clean up the erroring behavior you're seeing to simply validate the composition against each num_qubit value (including the possibility of hierarchical ListOps, etc.).

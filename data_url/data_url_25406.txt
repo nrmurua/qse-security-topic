@@ -1,0 +1,37 @@
+Background
+See discussion #1096 for  more background.
+An upcoming UI enhancement will need to efficiently perform the following queries:
+The electrons table currently contains a parent_lattice_id field which refers to the lattice containing that electron. However, if that lattice is actually a sublattice, there is no easy way to go all the way up the lattice hierarchy.
+Proposal
+Let's augment the Lattices table with a root_lattice_id or root_lattice_dispatch_id column which would store a reference to top-level lattice. The above queries then become quite simple:
+I think root_lattice_dispatch_id would be more natural than root_lattice_id as dispatch_id is a workflow property whereas id is a purely DB construct.
+We also propose to duplicate the root_lattice_id column in the Electrons table. This would allow the third query to be performed without JOINing the Lattices table. To ensure consistency, this should be a foreign key referring to Lattices.root_lattice_id.
+Implementation
+To implement this feature, the code for handling sublattices first needs to be reworked a bit because we will no longer be able to dispatch sublattices using the client SDK lattice submission flow. Each sublattice record must have a root_lattice_dispatch_id when it is first written to the db, and the HTTP API doesn't provide a way to attach a root_lattice_dispatch_id to the dispatch. It would moreover be inappropriate to support root_lattice_dispatch_id in the Client SDK as that is a purely server-side construct.
+In more detail, the dispatcher's current approach to handling sublattices is to send a _dispatch_sublattice job to the workflow_executor. This job performs an out-of-process ct.dispatch() on the sublattice workflow function, which in turn builds the sublattice transport graph and submits the sublattice to the dispatcher's /api/submit endpoint. This causes the dispatcher to writes the received sublattice and its transport graph to the DB, call run_workflow asynchronously, and return the sublattice dispatch id to the execution of the parent lattice. At this point it is too late to write the root_lattice_dispatch_id to the sublattice record.
+Instead of calling /api/submit, the workflow_executor should simply return the built-out sublattice. The dispatcher can then recover the sublattice and its transport graph via the TransportableObject.json attribute, write the root_lattice_dispatch_id to the DB before running the sublattice workflow.
+The DB implementation itself should be pretty straightforward after this preparatory work. The result object would grow aroot_lattice_dispatch_id field which would be set after lattice is received and before the result object is first persisted.
+@Prasy12 @wjcunningham7 @FyzHsn
+The sublattice code revision would also enable electron_id to be written together with the sublattice record in a single transaction instead of afterwards.
+@ArunPsiog FYI
+@Prasy12 @ArunPsiog I'd like to expand this a bit:
+We also propose to duplicate the root_lattice_id column in the Electrons table. To ensure consistency, this should be a foreign key referring to Lattices.root_lattice_id.
+Could you explain again the advantage of the duplication over computing root_lattice_id by
+Hi @cjao,
+If electrons contains Electrons.root_lattice_id,
+Hi @ArunPsiog, thanks for your quick response. Do I understand correctly that your point is to avoid the additional JOIN with the Lattices table on Lattice.id == Electrons.parent_lattice_id? I.e. something like
+Would this be for performance reasons?
+Yes, @cjao,
+If Lattices contains root_lattice_id ,
+Here, we are suppose to join lattices for both nodes and links.
+If we add root_lattice_id  in electrons,
+Hi @ArunPsiog, @Prasy12,
+I discussed this proposal with some people more experienced with DBs. We would prefer to add the root_lattice_id just to the Lattices table for now. If the backend were to expose root_lattice_id via an API, we would just JOIN Lattices and Electrons behind the scenes.
+In general, we want to avoid duplicating data in our schema, particularly when the extra copies in the DB do not correspond to an actual in-memory data structure; see this article, which cites redundancy as a typical antipattern in DB design. Any exception to this principle would need to clear a high bar. In particular, performance concerns should be backed by benchmarks, and even then we would first try to amortize an expensive JOIN operation using other tricks and only consider artificial redundancy as a last resort.
+@cjao Thanks for you explanation.
+We would be okay with adding root_lattice_id in the lattices table as well.
+The proposal from our side was based on the "consistency" aspect of the DB as well since there is already a parent_lattice_id property in the electrons table and adding the root_lattice_id here would also make sense.
+Since all sublattices are stored as electrons in the electron table we felt this would make the root_lattice_id  more of a property for the electrons table than the lattices table.
+We can start with the implementation that you have proposed and take it forward.
+V12 of the schema will implement this together with the missing fields identified in #975.
+@Prasy12 @ArunPsiog This is now complete.

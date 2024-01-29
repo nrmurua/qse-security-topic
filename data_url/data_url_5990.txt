@@ -1,0 +1,17 @@
+For expectation value with variance=True, the simulator should perform measurements instead of direct calculation of the expectation value. And calculate the variance of course.
+Currently a user who needs expectation value with shot noise has to create an equivalent set of circuits. This makes the simulator simulate the same circuit multiple times (a separate simulation for every term in the expectation value).
+The mechanism of appending gates to change basis and measurement gates, simulating, and repeating for each term - should be done through the controller. In this way it will be identical for all the simulators.
+Summary of a conversation:
+The controller should not instruct the simulator to copy the data structure before changing the basis for each term. Because for some simulators it may be more efficient to switch basis and switch back, instead of copying the structure.
+Above, under "Need to support four types of users", we describe four cases, which we will now call "modes".
+Steps of work:
+Expectation value with shot noise is not really a snapshot, because it performs operations. It is not an instruction either, because it splits the circuit to new circuits, and there is no meaning to adding other gates afterwards. This leads to the conclusion that asking for expectation value with shot noise is possible only at the end of execution, and should be done using a backend option terminate_with_expectation_value set with the observables.
+As for mode 4, the user can ask for the regular (accurate) expectation value snapshot, also when the noise model is not empty. Internally this means that an optimization similar to the sample_measure one will not be carried out.
+Current steps:
+Sorry, I meant sample_measure, not apply_measure.
+Looking at the code, I see that the mechanisms are quite complex. I'm considering the option that the controller will identify which mode we are at, but each simulator will then be on its own, even with the price of some duplication between the simulators.
+Looks like the first two steps (sample_measure with readout error, sample_measure for all simulators) are already in the code.
+The variance parameter is relevant to the regular snapshot (that calculates the expectation value with a formula). It can be non-zero in noisy simulations, and also in ideal simulations that contain multiple measurements writing to the same classical bit.
+Therefore the interface to the new feature (calculation of expectation value by measurements instead of formula) should be either a new snapshot or (as suggested above) not by the circuit but by other means, e.g. backend options. Right now I'll write the pull request with a new backend option, it's the simplest, and we can discuss later whether it is the correct interface.
+The new feature is somewhat unorthodox. If the user sets an expectation value with 3 Pauli terms, and 10 shots, and noisy simulation, then actually 30 shots are going to run. This poses several semantic questions, for example the meaning of measurement results inside these 30 shots, if the circuit contains measurement gates (before the final measurements coming from the expectation value). The conclusion is not to allow any type of inspection during simulation: if the feature is enabled, then measurement gates and snapshot instructions will not be allowed.
+This will be done outside of Aer, in the experiment class. I'd like to keep this issue open, so we remember to do it when the experiment class is ready.

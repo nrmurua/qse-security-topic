@@ -1,0 +1,66 @@
+Is your feature request related to a use case or problem? Please describe.
+This is related to expanding functionality in TFQ here ( tensorflow/quantum#357 )
+Describe the solution you'd like
+It would be nice to support projectors in cirq.PauliSum so that more complex (and still valid) expressions in cirq.PauliSum can be compressed to a reasonable length. Maybe something like:
+Doing this right now in Cirq does not scale well:
+What is the urgency from your perspective for this issue? Is it blocking important work?
+P1 - I need this no later than the next release (end of quarter)
+Discussed on Cirq Cynq:
+Alrighty if we want to separate out this functionality, how do people like @viathor and @mpharrigan feel about something like this:
+1st PR: Make a new module cirq/ops/projectors.py:
+2nd PR: In cirq/ops/linear_combinations.py we add:
+Regarding 1st PR: drop the "State", just "Projector", it's cooler?
+Regarding 2nd PR: Maybe we don't need that? Does LinearDict not fulfill your needs? If not, can we extend it so it does?
+Regarding 1st PR: drop the "State", just "Projector", it's cooler?
+Can do.
+Regarding 2nd PR: Maybe we don't need that? Does LinearDict not fulfill your needs? If not, can we extend it so it does?
+I'm not sure I follow. Don't I still need some new code to enable things like:
+?
+You should be able to use such expressions (not 100%, maybe some magic functions are missing, in which case we should just add them). Resulting LinearDict should be of reasonable size. The exponential growth of terms in your original comment was a consequence of the distributive law, but in
+you don't multiply a result of addition so no such growth should occur. Note however that some of the terms will not be Paulis - I assume this is fine.
+Note however that some of the terms will not be Paulis - I assume this is fine.
+Totally fine :)
+Couple concerns:
+It would be nice to have a more concrete type so in TFQ when input checking for various functions, I don't have to examine all the contents one by one any more than I have to.
+If we stick with just a lineardict, would I still benefit from the luxuries of having the pauli expressions around my Projector being simplified ? (This would be a must have)
+I could be interested, if that's all right. Let me read up more and get back to you on this?
+That would be awesome @tonybruguier, thank you!
+It seems this will be a challenge for me. I am happy to work through it, but I wouldn't want to take too much of your time during the reviews. I'd be OK if you decide someone else is better suited.
+That said, I have this very draft commit:
+tonybruguier@14bfbd6
+Certainly not ready for review. Am I on the right track?
+After the initial PR #3386 and chatting with both @MichaelBroughton and @viathor here is a rephrasing of requirements - comments, thoughts would be highly appreciated!  Then when we have an agreed design, we can modify #3386 accordingly and prepare for the next PRs with a design in mind.
+Today, one can calculate the expectation value of an observable for a given a state by defining the observable as a PauliSum. PauliSum would work perfectly for the TFQ use cases, however, there is a piece of inefficiency when it comes to projectors. Projectors are operators that could be expressed as a PauliSum in a sense as as for example Projector([[0,1]]) being the same (1-cirq.Z(q0))/2. However, for longer bitstrings, the number of terms get exponentially large, depsite the fact that it's just a single 1 on the diagonal of a 2**n x 2 **n matrix.
+This change should keep the convenience of PauliSum arithmetics with a better representation of frequently used projectors.
+For the first PR:
+After the first PR:
+Other ideas:
+If we change cirq.ProductState.projector(), I'll need some way to get the matrix form somehow
+Projector operators could very easily SupportChannels and maybe even in pure state simulation. https://algassert.com/quirk#circuit=%7B%22cols%22%3A%5B%5B%22H%22%5D%2C%5B%22%E2%80%A2%22%2C%22X%22%5D%2C%5B1%2C%22%7C0%E2%9F%A9%E2%9F%A80%7C%22%5D%5D%7D
+If we change cirq.ProductState.projector(), I'll need some way to get the matrix form somehow
+The .matrix() method should work, similar to the PauliSum
+Projector operators could very easily SupportChannels and maybe even in pure state simulation.
+Oh, I might have misunderstood something - I thought channels should be trace-preserving - i.e. for Kraus operators A_i, \sum_i A_i A_i^{\dagger} should be the identity. For a projector like P=|0><0|, you just get P^2 = P, which is not I. In my understanding that is a quantum operator but not a channel.
+Hi,
+I updated PR #3386 as a try to reflect what is being discussed. It's not a push toward one direction, I'm happy to revise it further (especially because I understand the design is not completely settled).
+Recording an idea from a discussion in cirq sync:
+The core of the original issue is that at present cirq only implements Pauli basis representation of operators (via PauliSum class) and this basis is unsuitable for certain applications since it leads to very large expressions (see first comment above). It seems a little awkward to fix this problem by providing an expansion in terms of projectors, because projectors do no form a basis (as can be readily seen by a simple counting argument). However, there is a natural basis that includes projectors: the basis of "butterfly" operators |i><k|. These incorporate computational basis projectors when i==k. In addition to being more elegant and complete this approach is likely to serve other uses, e.g. Kraus operators for some interesting channels (such as the amplitude dumping channel) take the form of these "butterfly" operators.
+Two additional tools would make working with these easier:
+@balopat @dabacon @tonybruguier
+Thanks! So do we have consensus on going to butterfly or is it something for later?
+The current approach might be faster to commit, but I'm ok with doing the butterfly approach too.
+Just let me know, so that I don't accidently wait for you when you are waiting for me.
+Thanks a lot for all the guidance!
+I was a little unclear whether we reached a consensus on this idea. Let's hear from a few more people.
+Regarding doing projectors first and then extending to butterfly operators: It seems to me that an implementation that targets butterfly operators directly (and obtains projectors as a special case when i==k, see above) is likely to be simpler and cleaner. I'm sorry I haven't thought of this earlier.
+I'm pro 🦋  and scratching the current direction.
+A mini conclusion I would like to draw for the future: we should design first and then implement in PRs for larger features.
+So to apply this conclusion here - Tony, do you mind drawing up a design doc for this? We have an RFC template that you can use tinyurl.com/cirq-rfc-template.
+Key questions:
+Here's a draft RFC:
+https://docs.google.com/document/d/10MVpeUBegxHwfPzSSgP2p-yh4D6kQsMUN1TpquF3jks/edit#
+Also available at:
+https://tinyurl.com/cirq-proj
+Thanks for the feedback, new version (and new URL) of the RFC at: https://tinyurl.com/ketbra
+@MichaelBroughton
+With #4331 and #4364 merged, is there anything left to do? If so, happy to help of course, but otherwise, maybe this issue can be closed?

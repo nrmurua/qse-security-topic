@@ -1,0 +1,48 @@
+#1454 introduced strict error checking e.g., here: 
+Under specific preconditions (not activating default provider before oqsprovider) this causes open-quantum-safe/oqs-provider#159.
+Completely disregarding errors (as in the original code version #1431) seems suboptimal, too as it would lead to a "surprising" performance degradation in liboqs (depending on which provider is listed first), right @beldmit ?
+Any suggestions how to resolve this quagmire very welcome. Without better proposals, I tend to change oqs_fetch_ossl_objects to collect error messages and just output a warning if any have been encountered -- but not exit.
+Probably it's worth raising this issue to OpenSSL upstream. Provider-interdependency topic is quite weird, and worth discussion.
+BTW, have you seen the announcement of the meeting between OpenSSL and provider authors? It's a relevant topic there, I think.
+Probably it's worth raising this issue to OpenSSL upstream. Provider-interdependency topic is quite weird, and worth discussion.
+Why? To me this is logical: liboqs (with OpenSSL3 enabled) depends on "default" provider (in initialization). If it's not there (for whichever reason), initialization of liboqs fails. oqsprovider needs to initialize liboqs. If that (would) fail, oqsprovider (would) fail.
+BTW, have you seen the announcement of the meeting between OpenSSL and provider authors? It's a relevant topic there, I think.
+No, I did not. Where did this get posted? I'd be interested indeed.
+If you would be interested in participating in this meeting, please
+email feedback@openssl.org with the subject "OpenSSL Providers Meeting".
+Please mention which time zone you are in and any preferences for times
+of day, as this will help us with scheduling. It would also be helpful
+if you could briefly summarise your involvement with OpenSSL providers.
+The annoucement was sent to openssl-users and openssl-project
+Probably it's worth raising this issue to OpenSSL upstream. Provider-interdependency topic is quite weird, and worth discussion.
+Why? To me this is logical: liboqs (with OpenSSL3 enabled) depends on "default" provider (in initialization). If it's not there (for whichever reason), initialization of liboqs fails. oqsprovider needs to initialize liboqs. If that (would) fail, oqsprovider (would) fail.
+The default provider is not the only provider the application may use - e.g. FIPS provider provides the same algorithm. So from this moment we are talking about more complex initialization/preference setup.
+The annoucement was sent to openssl-users and openssl-project
+Thanks -- now also subscribed to openssl-project (and the meeting).
+So from this moment we are talking about more complex initialization/preference setup.
+Completely agree. So let me reformulate: Given oqs_fetch_ossl_objects failure of oqsprovider is logical if no other provider for initializing those algorithms is available prior to oqsprovider being activated. This can happen and thus a graceful (and helpful) handling of that condition must be possible.
+The only better way would be if openssl were "automagically" handling the algorithm initialization (doing away with the need for liboqs implementing "oqs_fetch_ossl_objects"). Let me try to formulate that as an issue in the OpenSSL issues tracker...
+The fetching could be delayed until first use.  Not ideal in some ways, but prudent in others.
+I'm not sure how we can define a provider ordering -- as noted FIPS and default both contain what's needed.  However, 3rd party providers could also be used -- how to specify them?
+The obvious solution of having a dependency param somewhere, fails.  Depending on specific algorithms also isn't workable.
+It's late, I'm tired & I'll think more on this tomorrow.
+the initialization on first attempt has downsides as it's necessary to deal with multithreading etc
+One solution would be to split the provider initialization into two steps. After the first step the provider would respond to algorithm fetches but it would not be required to operate. Only after the second step those fetched implementations would be operable.
+Another option is to do the fetches of subordinate algorithms needed to implement an fetched algorithm during the actual algorithm fetch - in the provider_query_operation function.
+Another option is to do the fetches of subordinate algorithms needed to implement an fetched algorithm during the actual algorithm fetch - in the provider_query_operation function.
+IMO this is actually the right place where the subordinate fetches should be done. And they always should be done there, otherwise replacing the underlying implementation later (for example by unloading the default provider and loading the fips one) would not be possible.
+@paulidale @t8m Thanks for the responses/proposals. The actual fetches are done as late as possible in oqsprovider.
+However, this is not a provider (only) problem: Rather, it is that liboqs (not oqsprovider!) apparently need to "prefetch" algorithms to have OpenSSL3 APIs operate efficiently: The whole discussion started with #1426 (comment) and got implemented in #1431.
+In sum, liboqs added (thanks to @beldmit) a way to operate more efficiently in the face of less efficient OpenSSL3 APIs but because of this now faces another OpenSSL quagmire (order of initialization) that currently manifests itself only in a downstream user of liboqs (namely oqsprovider) but this may as well happen for any other user of liboqs, i.e., outside of a provider that have a "suboptimally" configured OpenSSL installation; thus a provider-based solution doesn't cut it (entirely).
+So for now, outputting a warning to a "plain" user of liboqs (about an insufficient configuration of OpenSSL) is the only solution I see right now. Other proposals still warmly welcomed.
+I think I now need to mirror @paulidale's comment
+It's late, I'm tired & I'll think more on this tomorrow.
+Doing the prefetches during the initialization of liboqs is too early. This way it is basically impossible to reasonably affect the fetch operation.
+IMO the API of liboqs is too simplistic to allow for any reasonable prefetching implementation. At best you could do fetches in the OQS_KEM_new() or ОQS_SIG_new() functions. However that would mean the fetched algos would be reused only within lifetime of these KEM or SIG objects. It would be better to add some kind of library context and prefetch the algorithms during the context initialization. Of course you would then have to pass the context into the ..._new() operations.
+Can they be fetched on first use and then saved after that?
+Can they be fetched on first use and then saved after that?
+Nevermind, I see this was discussed a few comments above.
+IMO #1463 is not a real fix. Fetch on first use would be a fix, however it would require locking or atomic pointer cmpxchg access.
+IMO #1463 is not a real fix. Fetch on first use would be a fix, however it would require locking or atomic pointer cmpxchg access.
+Completely agree. It's a workaround. Based on your feedback, searching for some portable locking solution, I just stumbled across CRYPTO_THREAD_run_once... So would #1469 be a "real" solution, @t8m?
+Yes, that's a real solution.

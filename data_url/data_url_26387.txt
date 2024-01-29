@@ -1,0 +1,54 @@
+Currently, DBCSR is built inside CP2K and their two build systems are very much intertwined. As a result, issues such as #338 can arise, and some fixes inside DBCSR's build system #345 (comment) require a new DBCSR release before they can be reflected in CP2K.
+What is more, DBCSR maintains two build systems (Makefile to be compiled by cp2k and cmake to compile DBCSR as a standalone). with all the errors this could cause.
+What about delegating the build of DBCSR to CP2K's toolchain (i.e. treat DBCSR like all other CP2K dependencies), letting the toolchain use DBCSR's cmake for building, but still keeping DBCSR inside CP2K's tree as a git submodule as is the case now?
+The main motivations for this suggestion are:
+If you think this is a useful step, I would be happy to open a PR with a prototype.
+From @dev-zero:
+CP2K and DBCSR are still in a co-development state (see timings between rc-releases of DBCSR and updates of the submodule), except for the accelerator part obviously. At the moment people will get an automatic rebuild of DBCSR whenever the submodule is updated, while the other way round they would simply get build failures in CP2K (best case scenario, worst case it builds and they get wrong results) to remind them to manually update the toolchain as well. Given that there are enough (mostly barely tested as it seems) changes to the toolchain at the moment by 3rd-party projects I really would like to avoid throwing DBCSR into this mix for now.
+CP2K and DBCSR are still in a co-development state
+In other words: DBCSR has not yet acquired another big user besides CP2K. Given that this was the main motivation for making DBCSR a library, it seems we have three options:
+CP2K and DBCSR are still in a co-development state
+In other words: DBCSR has not yet acquired another big user besides CP2K. Given that this was the main motivation for making DBCSR a library, it seems we have three options:
+Please, please, let's not open again this discussion, OK?
+DBCSR has other users, especially it is used for dense MM instead of scalapack. They use cmake and they are happy (see also some recent issues, like cp2k/dbcsr#246). We don't go back.
+The current situation is a CP2K problem, no DBCSR itself. DBCSR is standalone and we can drop Makefile just now. Then CP2K will not work. So, the question is: when/who makes CP2K working with the standalone DBCSR?
+My point is: let's leave as it for the next CP2K release (by the end of the year, right? DBCSR v2.0 is ready for that) and then you guys (CP2K) can think how to proceed with it.
+I am very strongly against this, for the same reasons as @alazzaro. Let's not go back.
+The current situation is a CP2K problem, no DBCSR itself. DBCSR is standalone and we can drop Makefile just now. Then CP2K will not work.
+Exactly. Which is why this discussion is happening on cp2k's repo, btw.
+Ok, then let's go ahead with option 2 and make DBCSR fully independent once the CP2K release is out.
+CP2K will build DBCSR via the toolchain and check compatibility by querying a to-be-implemented dbcsr_get_library_version().
+CP2K will build DBCSR via the toolchain
+I'm sorry, I have a very naive question: given that cp2k is available in Spack,
+CP2K will build DBCSR via the toolchain
+I'm sorry, I have a very naive question: given that cp2k is available in Spack,
+The challenge with the Spack CP2K package is that there does not seem a way to specify a custom source directory to build from (at least I haven't found it yet). Since I've added the develop version you can at least build latest & greatest though. While you can say --only-deps to get from Spack only what the toolchain would provide it is still somewhat complicated to get an arch-file out of it. Hence the cp2k-deps package in the https://github.com/cp2k/cp2k-toolchain.
+Plus, while the toolchain currently builds (sometimes not entirely consistent though) multiple sets of libraries for the different VERSIONs, Spack usually builds only one, hence the wrapper around Spack in https://github.com/cp2k/cp2k-toolchain to build multiple environments in one go.
+And finally: Spack by default re-uses less of the environment than the toolchain (but also requires less of course and builds more reliably/reproducible): only the compiler/linker is usually picked from the environment.
+Yes, I agree that Spack is the right way forward.
+The challenge with the Spack CP2K package is that there does not seem a way to specify a custom source directory to build from.
+I think, we just have to treat developers as a separate use-case. They will run spack --only-deps, then a to-be-implemented configure script to generate the arch-file, and finally the usual make.
+Yes, I agree that Spack is the right way forward.
+The challenge with the Spack CP2K package is that there does not seem a way to specify a custom source directory to build from.
+I think, we just have to treat developers as a separate use-case. They will run spack --only-deps, then a to-be-implemented configure script to generate the arch-file, and finally the usual make.
+The configure script is already done in the Spack package for CP2K. This can easily be leveraged, see the approach in https://github.com/cp2k/cp2k-toolchain (currently working on making that even simpler).
+Also see the README for a discussion on the chosen design.
+My general feeling is that the arch file generation should be decoupled from the package installation.
+A common use-case I'd expect is a developer who wants to use all dependencies from Spack except for one package, because he/she wants to upgrade that one.
+Would this work when the configure script is so tightly integrated with spack?
+@dev-zero Thanks a lot for all your work on Spack!
+CP2K will build DBCSR via the toolchain
+Given that we all seem to believe that Spack is the way forward, I'm not sure the effort of integrating DBCSR to the toolchain is worth the effort now. I'd rather help push Spack forward however I can, with the mid-term goal of separating DBCSR completely from CP2K and making DBCSR available as a Spack package as well.
+Does this sound reasonable?
+A common use-case I'd expect is a developer who wants to use all dependencies from Spack except for one package, because he/she wants to upgrade that one.
+Once Spack has the updated package, the user will usually get the update when re-running the installation unless specified otherwise (unless when running in a Spack environment where the behavior is to pin the version unless explicitly upgrading).
+Would this work when the configure script is so tightly integrated with spack?
+Yes, it should. Should one dependency really be pinned, one can always edit the package and rerun the installation.
+As a strategy I would like to start with the principle to to share as much code as possible with the official Spack (CP2K package) and see how this goes.
+Given that we all seem to believe that Spack is the way forward, I'm not sure the effort of integrating DBCSR to the toolchain is worth the effort now. I'd rather help push Spack forward however I can, with the mid-term goal of separating DBCSR completely from CP2K and making DBCSR available as a Spack package as well.
+Does this sound reasonable?
+Yes, thank you very much. I will look into the script again tomorrow and try to structure the tasks a bit more/extend the documentation to make it clearer what I'm trying to achieve there and how.
+Update the issue: DBCSR doesn't support the Makefile for the "general" public, the Makefile is hidden and made available only for CP2K building
+@mtaillefumier @RMeli, I think this should be the next thing to tackle towards #2379.
+The good news is that we already have a starting point script that's basically ready.
+The bad news is that the Toolchain will have to build multiple version of DBCSR:

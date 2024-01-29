@@ -1,0 +1,38 @@
+@meamy You may be aware of the qpp issue that has been fixed by @vsoftco.
+I think there may be something to do at the staq side.
+I attached two files in.qasm and out.qasm.
+2files.zip
+The latter is the result of running this command:
+./staq   -S   -O3   -o   out.qasm   in.qasm
+The two files do not produce the same final states. Could you please take a look at them?
+To process my QASM files, I did expand the qelib1.inc by adding a few controlled gates and added their references to the the staq source code locally:
+@DevelopDaily Just curious, how to you test the results? Run it via qpp? If yes, does it produce the same state with an older qpp version which didn't have softwareQinc/qpp#99 fixed?
+Yes, all my tests are done by qpp. The older version has the same problem regarding this test case.
+I can't seem to reproduce the qpp output for the out.qasm file using the command
+Using the standard qelib1.inc with those additional gates added, the output of qasm2 out2.qasm differs from that of qasm2 out.qasm by a phase of -i.
+Could you paste your qelib1.inc file here for testing? Thanks!
+My results:
+@DevelopDaily Thanks for sending that! I can reproduce the results of out.qasm now with the qelib1.inc pasted above, which appears to primarily differ from the official one's definition of cu3:
+That would explain the phase difference in the results I was getting.
+It seems like the issue is due to how particular gates are handled in qpp which may differ from the definition using either versions of qelib. To make sure it's not any optimizations I've turned them off and compiled the following:
+The files in.qasm and in2.qasm only differ in which qelib1.inc is used, and the only thing staq has done is inlined gates.
+I get the same outputs with -O3 turned on, so my main concern that it was introduced by the optimizations in staq seems to be unfounded.
+On the other hand, both results are different from the output of in.qasm when run in qpp, which is identical regardless which version of qelib1.inc is used.
+At any rate, I'm relatively convinced this isn't an error in either case, just that staq and qpp are handling certain gates differently. @vsoftco we'll have to unify the handling of gates in both at some point to avoid these issues. I'll take a closer look at the qasm handling in qpp when I have some more time and see if there's a solution amenable to all. Whatever we decide we should document it somewhere, because I think this issue has come up a few times now.
+@meamy A very good catch of the cu3 discrepancy! Thanks. Certainly, it is not my intention to come up with my own version. I got that from the qpp preprocessor.hpp
+The peculiar thing is that there are two versions of cu3 definition in the same file preprocessor.hpp, one in the variable std_include_qasm and the other in the std_include. The former matches yours, and the latter mine.
+Yes I think this is what I was referring to. At some point we had made some changes to qelib to deal with some of the issues that arise with the phase-shifted versions of gates in the official qelib, but we kept both versions for compatibility.
+At any rate sorry for the confusion! We'll work to unify the approach to standard gates. I'll leave this open until we can sort that out.
+@vsoftco Maybe it makes sense to have a single "softwareQ" version of the qelib that agrees with qelib1.inc on everything it defines, but also defines some different versions of the gates with different names? Like cu3alt or something?
+@meamy Certainly, as we seem to bump into almost-duplicate specs that create confusion. I'll take a look, thanks! One of the issues is that even Qiskit is not fully OpenQASM compliant: it defines CU3 as https://github.com/Qiskit/qiskit-terra/blob/21f78dc5ee236d51697e65db916ccd04f4dfc3bc/qiskit/circuit/library/standard_gates/u3.py#L176 (and we stuck with that in qpp), whereas OpenQASM definition is defined above: #34 (comment)
+So we should either comply with one or another. Qiskit seem to have a large user base, so I'm tempted to comply with Qiskit (and in fact I documented that in qpp when defining the gates)
+@vsoftco Just a friendly reminder. Whatever you do, please keep in mind the arguments and design decisions you made in the qpp issue 70. I think they are golden.
+...issue is that a phase becomes important in a controlled-operation.
+The gates in class Gates use the standard Nielsen & Chuang conventions though (the same as the one in the openQASM specs).
+In my opinion, it is the QISKIT implementation and the Open QASM spec itself that muddy the water.
+The page 5 of the spec says "For example, U(pi/2,0,pi) q[0]; applies a Hadamard gate to qubit q[0]." The Hadamard gate's matrix, according to the formula in the spec, is:
+Albeit a Hadamard, it does not look like what people are used to. For that reason, I speculate, the QISKIT people made a design decision, perhaps a wrong one, to shift the phase globally. That is the source of our grief now.
+Consequently, I cannot run any applications based on the phase estimation algorithm written in QASM, even though I can run them perfectly when they are written in qpp pure C++ QCircuit.
+I kind of like what @meamy suggested. A "softwareQ" version/implementation may be a solution? Then, for all other platforms (with various rotations, endianness, spec interpretations, spec extensions or whatever incompatibilities and quirks), qpp could have some "adapters", "configurations", "convenience" methods, utility tools, etc. to satisfy them. That would keep the qpp core architecturally robust and technically correct.
+@DevelopDaily Indeed, thanks. We will fix this soon. My only slight concern is with q++, as it's a header-only library and shouldn't depend on config files etc. We'll figure out a way of keeping the design elegant and address this annoying issue.
+@DevelopDaily Fixed with the new parser decoupling from both qpp and staq

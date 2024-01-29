@@ -1,0 +1,33 @@
+In this draft, we propose the introduction of the verbatim modifier for box. verbatim is a compiler flag to notify the compiler to not touch the decorated box. The purpose is to give users precise control of the boxed operations without them being transformed, optimized or re-synthesized by the compiler.
+An example is as follows:
+In the above example, the two x  gates in the verbatim box will not be merged (cancelled) by a compiler. However, just same as box without the modifier, gates around the verbatim box can commute through the box and cancel each other. Thus, the above two Z gates are allowed to be moved over the box and cancelled by the compiler.
+The following are preserved:
+In other words, any compiler passes other than  (1)  timing/duration resolution and (2) calibration linking should not be modifying the code in a verbatim box.
+As mentioned above, the only two compiler passes that look inside a verbatim box are (1)  timing/duration resolution and (2) calibration linking. As a result, having any of the following high-level constructs in a verbatim box will result in a runtime error since related compiler passes will not be able to look inside to properly compile these:
+Virtual qubits
+Composite gates without a defcal
+Subroutine/kernel calls
+Any other language constructs cannot be compiled down to determined pulse schedules by the timing/duration resolution compiler pass and the calibration linking pass.
+barrier  is allowed but will raise a compiler warning since it takes no effects.
+Language constructs that can be compiled down to determined pulse schedules by the timing/duration resolution compiler pass and the calibration linking pass.
+Assigning a duration to a verbatim box is allowed:
+The above codes would be useful for centering the two cx gates.
+As shown in some of the use cases below (e.g. the flag qubit scheme), it’s inconvenient to only allow gates with defcal to be inside a verbatim box.  We introduce level 1 verbatim box to give users more granular control of a verbatim box. We propose:
+As an alternative to level 2 verbatim box, we can also provide an inline modifier to allow composite gates. This inline approach will improve the readability of the program and is closely aligned to the C language. An example is as follows:
+With verbatim box, RB programs can be written in a clean way.
+
+All paired flag qubits in the lower register can be scheduled together and be cancelled, verbatim box will keep them intact.
+In general, we suggest QEC circuits be written in a verbatim inline box.
+With verbatim level 1 and leve 2 introduced, we have the option to define higher verbatim levels for more granular control. In this PR, we do not address the problem of defining higher verbatim levels since there are not enough real-world examples to support it. We do provide a possible definition to demonstrate the potential use cases of higher verbatim levels. As an example, we can define higher levels as follows:
+verbatim box shares some similarities with barrier functionally in that both of them limit certain compiler optimizations and the freedom of scheduling. However, the purpose of these two do not entirely overlap. First, the effect of verbatim box is regional, thus, it provides a clean way for users to precisely control a long gate sequence in which case using barrier can be tedious and lengthy, e.g. the RB example below. Second, temporally, barrier is global (on the qubits it applies to) in that it blocks all gates before and all gates after from commuting. In contrast, verbatim box allows commutation of gates around it (e.g. the first example above in this PR). Third, there are compilation optimizations performed on single gates, such as replacing pulse-level calibration definition with more optimized ones and noise-tailoring operations like randomized compilation, that barrier cannot prevent but verbatim box can.
+Other than the syntax we proposed, there are two other options:
+The reason we recommended the current syntax is that, if we want to introduce another kind of box, say, nonparallel box where no parallelization is allowed. With the verbatim box we can simply define nonparallel box or nonparallel verbatim box. While with verbatim_box, we have to define a new box nonparallel_box.
+Since verbatim is not an argument and the box is not a function, this syntax is not preferred.
+The may discussion around this topic it seems focus more on the syntax extension than in the semantic itself.
+I talked with @aspcompiler and it seems this is a good candidate for a pragma. For example, the following annotation could mean verbatim box:
+I'm aware I'm coming in very new and without any of the background, but when I had first read this proposal it felt like making it a #pragma would offer the most flexibility, both for users and for implementations.
+I had understood #pragma to be intended as hints or instructions for the compiler, which may be used slightly differently by different compilers (similar to how it is in C).  The "other syntax options" section gets into something similar; it suggests the idea of a parallel_box idea, and this is exactly something that's typically handled by #pragma directives in C (for OpenMP), so that different compilers or compilers without that particular feature can still parse the structure, and silently degrade to an equivalent program.
+I would worry a little bit if we start having a quite restricted syntax (integer levels) for defining which compiler optimisations are allowed in a region.  As compilers gain more options, it would be a bit like trying to mandate the -O0, -O1, -O2, ... levels in C compilers at the language level in a way that was consistent across every possible implementation.  To extend the analogy, allowing them to be controlled instead with -finline-functions, -funroll-loops and similar via the more free-form pragma would allow different compilers to advance and add new features, without breaking box.
+Yeah, agree with @1ucian0 @jakelishman That is also the conclusion from the last TSC meeting. I closed the related PR but forgot to close the issue here. Will open it another PR for verbatim pragma.
+@shiyunon should we close this issue?
+Closing this issue.

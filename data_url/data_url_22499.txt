@@ -1,0 +1,17 @@
+Handle rtlink.o.busy & rtlink.o.stb
+https://github.com/m-labs/artiq/blob/master/artiq/gateware/rtio/core.py#L216
+(c.f. discussion in 6c899e6)
+C.f. #320 as well.
+I would like to do the following:
+To me a collision on set_o() due to a too small timestamp delta w.r.t. SERDES granularity has the same semantic value as a RT2WB collision due to a too small timestamp delta w.r.t. SPI bus or DDS bus activity. Whether in one case it is due to the details of the SERDES and in the other because of bus transactions does not matter at this level. The meaning is "timing collision due to output PHY business". Same for set_oe(). These are all "collisions" at the RTIO PHYs. I would wire them all up in one logic path and one exception.
+Remove the Error from RTIOCollisionError. The negative connotation is clear, like for RTIOUnderflow and RTIOOverflow. Alternatively add the Error the the later two.
+@sbourdeauducq comments?
+I think the cause of the collision should be clearly stated in the exception message. Collision of the type "not monotonically increasing timestamps" is different from "trying to write to two addresses with the same timestamp".
+It also might be pretty neat if we put the kernel CPU PC into RTIO analyzer or something every time a transition is planned. Unwinding one level deep has no cost.
+RTIOSequenceError concerns itself with monotonicity. That's a different topic.
+The underlying bug in #320 may be broken duplicate removal logic. But is should raise RTIOCollision.
+The PHY logic runs rather independent of the CPU. I don't see how the PC counter (in addition or comparison to the slack) would help here. The three times when you submit the event that will cause an RTIOCollision, when it gets generated in the PHY, and when it gets read/emitted are in general all very different. The PC in at submission is relevant. Whether it is also relevant at generation and/or emission is questionable.
+The logic for underflow/collision is very different from the one for overflow/busy.
+The underflow/collision check is done in the system clock domain, and it is precise (the kernel-CPU immediately knows after submitting a command whether that particular command caused those errors).
+The overflow/busy check is/would be in the RTIO clock domain, and it cannot be precise. I'm not sure how to best report a "busy" error to the kernel-CPU in a useful way.
+You ware right. I like detecting RTIOCollision (on TTL serdes channels) and RTIOUnderflow early as well because it correlates error-causing and error-receiving portions of the code. RTIOOverflow on input is only noticed late and raised on reading the channel. I don't think we can easily do better here. RTIOBusy (let's call it that to stress that it happened deep down at the PHY and is not predictable earlier) would be reported late and raised on submission of the next event. This is a bit awkward. But unless we go for signals/IRQs, is there a way around it?

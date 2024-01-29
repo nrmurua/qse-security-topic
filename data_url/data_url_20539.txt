@@ -1,0 +1,85 @@
+When i run the command
+make -j
+I face the following error please help me to solve this issue
+make[1]: *** [Makefile:3188: crypto/ec/oqs_meth.o] Error 1 make[1]: Leaving directory '/home/moeed/openssl' make: *** [Makefile:178: build_libs] Error 2
+@Moeed148a You didn't give more details about your problem but I believe that it is the same as mine:
+crypto/ec/oqs_meth.c error: 'OQS_KEM_alg_kyber_1024_90s' undeclared (first use in this function); did you mean 'OQS_KEM_alg_kyber_1024'?
+257 |       return OQS_KEM_alg_kyber_1024_90s;
+and this repeat to all algorithms that I know there are not standardized:
+257 |       return OQS_KEM_alg_kyber_1024_90s;
+254 |       return OQS_KEM_alg_kyber_768_90s;
+251 |       return OQS_KEM_alg_kyber_512_90s;
+212 |       return OQS_SIG_alg_sphincs_shake256_128f_simple;
+208 |       return OQS_SIG_alg_sphincs_sha256_128s_simple;
+204 |       return OQS_SIG_alg_sphincs_sha256_128f_robust;
+200 |       return OQS_SIG_alg_sphincs_haraka_128f_simple;
+196 |       return OQS_SIG_alg_sphincs_haraka_128f_robust;
+185 |       return OQS_SIG_alg_dilithium_5_aes;
+182 |       return OQS_SIG_alg_dilithium_3_aes;
+179 |       return OQS_SIG_alg_dilithium_2_aes;
+You should edit this file crypto/ec/oqs_meth.c and remove these references.
+Another file that you have to edit is ssl/statem/../ssl_local.h and remove references to:
+OQS_KEM_alg_kyber_1024_90s;
+OQS_KEM_alg_kyber_768_90s;
+OQS_KEM_alg_kyber_512_90s;
+It is just a try to help and you should wait until some in the project answer you.
+This will be fixed once #445 lands.
+I have made the changes in the file and got the following status when i run make -j command. Is this is completely installed and also i want to generate the kyber512 keypair which command i will use?
+rm -f apps/openssl
+${LDCMD:-gcc} -pthread -m64 -Ioqs/include -Wa,--noexecstack -Wall -O3 -L. -Loqs/lib -Loqs/lib64  
+-o apps/openssl apps/asn1pars.o apps/ca.o apps/ciphers.o apps/cms.o apps/crl.o apps/crl2p7.o apps/dgst.o apps/dhparam.o apps/dsa.o apps/dsaparam.o apps/ec.o apps/ecparam.o apps/enc.o apps/engine.o apps/errstr.o apps/gendsa.o apps/genpkey.o apps/genrsa.o apps/nseq.o apps/ocsp.o apps/openssl.o apps/passwd.o apps/pkcs12.o apps/pkcs7.o apps/pkcs8.o apps/pkey.o apps/pkeyparam.o apps/pkeyutl.o apps/prime.o apps/rand.o apps/rehash.o apps/req.o apps/rsa.o apps/rsautl.o apps/s_client.o apps/s_server.o apps/s_time.o apps/sess_id.o apps/smime.o apps/speed.o apps/spkac.o apps/srp.o apps/storeutl.o apps/ts.o apps/verify.o apps/version.o apps/x509.o 
+apps/libapps.a -lssl -lcrypto -ldl -pthread -loqs -lm
+rm -f test/sslapitest
+${LDCMD:-gcc} -pthread -m64 -Ioqs/include -Wa,--noexecstack -Wall -O3 -L. -Loqs/lib -Loqs/lib64  
+-o test/sslapitest test/sslapitest.o test/ssltestlib.o 
+-lssl test/libtestutil.a -lcrypto -ldl -pthread -loqs -lm
+rm -f test/drbg_cavs_test
+${LDCMD:-gcc} -pthread -m64 -Ioqs/include -Wa,--noexecstack -Wall -O3 -L. -Loqs/lib -Loqs/lib64  
+-o test/drbg_cavs_test test/drbg_cavs_data.o test/drbg_cavs_test.o 
+test/libtestutil.a -lcrypto -ldl -pthread -loqs -lm
+make[1]: Leaving directory '/home/moeed/Desktop/OPENSSL'
+Is this is completely installed and also i want to generate the kyber512 keypair which command i will use?
+See https://github.com/open-quantum-safe/openssl#running.
+A more complete set of command sequences to exercise liboqs and openssl are contained in https://github.com/open-quantum-safe/oqs-provider/blob/main/scripts/runtests.sh.
+I have followed the following commands
+sudo apt install cmake gcc libtool libssl-dev make ninja-build git
+I have downloaded Openssl 1.1.1
+git clone --branch OQS-OpenSSL_1_1_1-stable https://github.com/open-quantum-safe/openssl.git OPENSSL
+I have downloaded the liboqs
+git clone --branch main https://github.com/open-quantum-safe/liboqs.git
+Then i make directory and move to build directory in liboqs
+mkdir build && cd build
+cmake -GNinja -DCMAKE_INSTALL_PREFIX=/home/moeed/Desktop/OPENSSL/oqs ..
+ninja
+ninja install
+Build the fork
+./Configure no-shared linux-x86_64 -lm
+make
+After this i run the following command
+apps/openssl req -x509 -new -newkey kyber512 -keyout kyber512_CA.key -out kyber512_CA.crt -nodes -subj "/CN=oqstest CA" -days 365 -config apps/openssl.cnf
+Then i got the following error
+Unknown algorithm kyber512
+
+My Operating system is ubuntu 20
+Openssl version is OpenSSL 1.1.1f  31 Mar 2020
+Kindly help me
+I'm getting different error when running make -j
+
+
+
+@yacoubhanna You are falling into the trap documented in the Note at https://github.com/open-quantum-safe/openssl/#step-1-build-and-install-liboqs (OpenSSL 3 vs 1). Allow me to suggest using OpenSSL3 (and oqsprovider) to avoid all these problems.
+My Operating system is ubuntu 20 Openssl version is OpenSSL 1.1.1f 31 Mar 2020
+Kindly help me
+You are apparently not using the oqs-openssl binary, so no PQ algorithms are available. In a first-term CS course I'd suggest checking PATH and LD_LIBRARY_PATH.
+I have checked the PATH. The file is liboqs.a (which is the static one) and I can't able to find the liboqs.so (shared library).
+What i do now.
+
+Even when the chech the openssl version it shows the following
+
+But after the installing the shared library when i run it show the following error
+
+
+While the liboqs.so.2 is available in the
+
+I'd seriously suggest you use a pre-build docker image with well-defined environment, e.g., "openquantumsafe/curl" (openssl111) or "openquantumsafe/oqs-ossl3" (openssl3).
+Closing due to inactivity. Feel free to re-open when new information is available (and/or openssl3 doesn't work).

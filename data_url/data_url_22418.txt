@@ -1,0 +1,23 @@
+I'm running the following experiment,
+Looking at the signal on the scope, it seems to work. However, it removes itself from the scheduler before the experiment is complete, usually when the DDS is at 130 MHz. If I then send in another experiment at a lower priority,
+It basically interrupts the frequency ramp before it's done and sets the frequency back to 100 MHz. This was done on windows.
+Yes, the first experiment puts all the commands into the RTIO FIFO and then returns. How should this be handled?
+What about a FAQ?
+Or auto-synching of the core device upon disconnection? core.close() could run something like while core.get_rtio_counter() < now_mu(): pass.
+Auto-sync sounds good.
+Please don't do that. That breaks seamless handover.
+Raghu could just sync() on some channel, preferrably in the experiment that breaks others and needs the exclusive access, DDS0_Start.
+There are some issues with seamless handover between different experiments (it works well only between kernels of the same experiment). When a new experiment starts it doesn't reset the RTIO timecounter (so time is not lost), but it does reset other parts of the RTIO core.
+If there was no such reset, Raghu would have gotten a SequenceError upon startup of the second experiment.
+But wouldn't while core.get_rtio_counter() < now_mu(): pass prevent seamless handover (without dead time) between different experiment from ever working, even if the other issues are fixed?
+Yes, this would have to be revisited (e.g. made optional) if/when cross-experiment seamless handover is implemented.
+It also eats up all the slack that you would have otherwise. I don't think this is the best answer to Raghu's problem. If you e.g. want to leave your cooling lasers on at the end of an experiment "for at least some time", this slack now becomes much longer and you reduce the rate of experiments.
+We could look into seamless handover across experiments. The reason it's not done right now is that a rogue experiment could otherwise set now far in the future and break the core device until it is rebooted or a "fix-up" experiment that calls e.g. break_realtime is executed.
+Maybe seamless handover can be automatically disabled (and the runtime falls back on the current resetting behavior) if the value of now at experiment startup is unreasonable (now - RTIO counter > some user-defined value).
+The reset also clears the RTIO FIFOs, which solves the question of a rogue experiment clogging FIFOs with events years in the future.
+Ack. IMHO risking rogue experiments is accepable and we should not clear the FIFOs by default. A cleanup experiments that evicts these events by clearing the FIFOs and resets now would be desirable for me anyway. But yes, this is a bit of a steep learning curve for those not used to keeping the FIFOs and the difference in RTIO time and CPU time in mind.
+Let's handle inter-experiment seamless handover in another ticket and leave this one for documenting proper coding and interlocking of experiments like the pair above.
+... whether RTIO state is reset, FIFOs, pending IO events, now, rtio_counter etc.
+and when the idle kernel is run (in 1.0: every time there is no active session with the control PC, and it is terminated by resetting the kernel CPU when the control PC connects).
+Moving to 2.0:
+Covered in 69ea3d3

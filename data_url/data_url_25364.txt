@@ -1,0 +1,21 @@
+It seems the corrupted config file issue has crept up again. This is most likely due to performing multiple writes from different threads.
+After installing covalent, when I do
+Then the following error is thrown:
+This happens even when say a test is run after starting covalent server. So it is rather sporadic, and might be difficult to reproduce.
+No error should be thrown.
+I'd say the solution for this would be to not perform any writes whenever the ConfigManager is initialized. Instead do it when necessary. Reading however can still be performed.
+The following sequence of commands might generate the error with more certainty:
+I also found this as well when creating the CI workflow for functional tests, the way to get around this temporarily was to do a sed command to start with debug mode:
+sed -i'' -e "s/log_level/log_level=\"debug\"#/g" ~/.config/covalent/covalent.conf
+covalent start --ignore-migrations
+instead of
+covalent start --ignore-migrations -d
+For long term solution requires some investigation,
+Could it be that we need a dedicated thread for file i/o operations?
+What threads are writing the config file besides the main dispatcher thread?
+So when this error throws up, we are actually getting a duplicate sections on the config file. The [user_interface] and the [workflow_data] see to duplicate.
+
+At least two processes write to the config:
+DaskCluster.run() also calls update_config(), so presumably that would be a third process if covalent is started without --no-cluster. However, I see the corruption even with --no-cluster.
+It looks like within each process only a single thread writes to the config file.
+Perhaps try a file lock?

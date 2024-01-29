@@ -1,0 +1,18 @@
+This interface allows access to intermediate states as the circuit is simulated moment-by-moment. See https://github.com/quantumlib/Cirq/blob/720ea341b0082dc0cbbfb0142c161f01d8edca3e/cirq/sim/simulator.py#L258.
+How difficult would this be?
+As I understand it, a core part of qsim behavior is fusing gates along the time-axis into independent chunks. Simulating step by step in a single execution would require modifying that core behavior, which is likely a significant amount of effort. The alternative is to run each timestep as a separate circuit in sequence, which I suspect would impact the overall performance of the simulator.
+@sergeisakov, could you offer your thoughts on this?
+In principle, this can be implemented. One doesn't need to modify qsim as it can run gates step by step without fusion. As @95-martin-orion pointed out, this will impact the overall performance of the simulator. The effort would be to implement the interface between Cirq and qsim.
+Has there been any development on this? I suspect it will enable big savings for things like XEB where we have one big circuit that we want to know the wavefunction at various steps
+on an XEB workload:
+Since we only need the results after each "cycle" (and indeed, only for certain cycle settings) it could be worthwhile to
+I guess there's been no development on this. The core qsim library supports boundaries and can return the wavefunction at various steps. One sample C++ application (qsim_amplitudes.cc) saves intermediate results. The qsimcirq interface doesn't support that.
+I think it would be possible to construct this with a combination of CircuitOperations and existing qsim-core methods. A rough outline for what this would look like:
+There are a few key flaws with this format, most notably that qsim would need to store all intermediate states since we have no way of doing "streaming output" from a qsim run. Separately, I don't think we support returning results from MeasurementGates when using the version of Run linked above - though I haven't tried it myself.
+Unfortunately, I don't have a lot of bandwidth to look at this right now. @mpharrigan, if you're interested in taking a stab at it I'd be happy to point you to the relevant parts of the code.
+Two updates on this:
+Update 1
+#499 adds QSimSimulator.simulate_moment_expectation_values, which outputs expectation values for selected observables after each moment or a user-specified set of moments. For experiments which only need EVs, this is significantly faster than simulating each truncated circuit.
+Update 2
+SimulatesIntermediateStates remains at odds with qsim due to the reasons outlined above (namely gate fusion and state copying), but the existing simulator methods now properly support input states. This means you can define a simulation like:
+which achieves the desired result and allows Python-side management of the resulting state copies.

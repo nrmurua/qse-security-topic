@@ -1,0 +1,14 @@
+Please make sure you don't make changes that affect a large part of the code, and if you do, make sure that you have taken care of all possible repercussions by running unit tests.
+For example, I just did a whole bunch of debugging to realize that the gate names in LLVM have been changed from llvm.X to llvm.X.i16. This is a pretty low-level change that affects many things. Many passes are broken as a result, which I will try to fix.
+BTW, what's the rationale behind that change?
+Hi Ali,
+Thanks for your outstanding work about ScaffCC!
+@epiqc I updated unit tests, because module was occupied by C++17 modules TS keywords since Clang release_40 so I renamed module to qmodule by https://github.com/ScaffCC/scaff-clang/commit/8dafe79d124b042de9887d2d5c483b6c4315424a and https://github.com/ScaffCC/scaff-llvm/commit/21acb7c3844f3996b2e34fe334f1e7ba6e1428d9
+Yes, it might effect, for example: if (callee->getName().str() == "llvm.X") but will not effect if (callee->getName().startswith("llvm.X")) so I need to find the root cause why changed from llvm.X to llvm.X.i16, DIFF between LLVM release_31 and svn trunk, it might because:
+LLVM open source projects are still keeping evolution for better optimization and performance, for example: the original ScaffCC based on LLVM release_31 will use up classical computer's resource during O1 optimizations for transforming Shors algorithms, it is LLVM PASS release_31 performance issue, not Scaffold's, fortunately LLVM svn trunk branch is better than release_31, but CPU still boiled during Dead Argument Elimination, also it is LLVM Deadargelim PASS issue, so it needs to migrate Scaffold PASS to NewLLVM for better optimization and performance, and contributed to LLVM :)
+Regards,
+Leslie Zhai - a LLVM developer https://reviews.llvm.org/p/xiangzhai/
+The cause of this change was the introduction of the ancilla bit "abit" as a separate data type than the qubit. Separating the data types was done for optimization and resource counting purposes, where it would facilitate easier ancilla resource usage during applications, as well as enable easier ancilla management which is being used now in the development of automated ancilla qubit reclaiming procedures.
+When the separate types were introduced, the primitive QASM gates defined as LLVM intrinsics needed to be able to accept both qubit types and ancilla types. The way this was accomplished was by changing the definition of these intrinsic gates to accept any integer type, which forces the compiler to create new instantiations of these gates with suffixes denoting the data type for a given instantiation. This change came about in summer 2016, so it has been around for awhile.
+@ajavadia Which passes are you referring to that are broken by this change?
+Ok, I see. That makes sense. A lot of passes were still using the old data types (ResourceCount2, GenSIMDSchedule, DynRollupLoops, GetCriticalPath, etc.). I will push fixes soon.

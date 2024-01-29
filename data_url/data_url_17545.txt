@@ -1,0 +1,25 @@
+In Terra-0.6 one could create a custom backend to compile against by simply doing:
+Now it requires the following:
+Creating custom, abstracted backends is very convenient for creating generic instances of circuits that can later be mapped to a given actual backend via initial_layout.  There should be a helper function that makes building these objects easier.
+The FakeBackend is already defined in qiskit.test.mock. Take a look at that file. It shows mocked versions of Tenerife, Rueschlikon, Tokyo.
+So creating another one shouldn't be hard if you just derive from FakeBackend.
+True, that is where I got it from, but I should not need to know about FakeBackend (that is in a odd location to begin with) as well as the need to use GateConfig or BackendConfiguation.  I should be able to do something like abstract_backend(n_qubits, coupling_map) and have it do it for me.
+maybe @diego-plan9 can comment on whether some of those fields can be turned into a default value if not provided. or if there's a way to turn off validation so the validator does not complain.
+So would write something like:
+Here you would only add the BackendConfiguration part compared to 0.6.
+I'm open to moving FakeBackend elsewhere and highlighting its use. But this is all part of standardizing the configuration format.
+I'd rather turn the attention to:
+Creating custom, abstracted backends is very convenient for creating generic instances of circuits that can later be mapped to a given actual backend via initial_layout.
+Can you elaborate on the need for them, and the use case and scenarios/flow where the need arises? It might hint towards a different problem (the compilation process as a whole being too "bound" to a backend instance in some steps where just requiring the relevant pieces of data would be enough and more flexible). If that is the case and the need is common enough, I'd rather try to tackle the root cause via some reorganizing instead of introducing the concept of a fake backend as part of terra.
+I basically solved this myself in #1837.  However, many times you want to create a custom topology and compile against it.  For example,  a linear chain 0 - 1 - 2 - 3 is an useful backend to have.  Compiling against this backend gives you generic circuits that you can then run on an actual device using the initial_layout to map.  I end up doing this all the time for quantum volume circuits, and for compiling against topologies that are currently not implemented in physical devices.
+I end up doing this all the time for quantum volume circuits, and for compiling against topologies that are currently not implemented in physical devices
+Can you share a minimal example of the relevant parts where you use a fake backend for that purpose?
+It is easy compile(qv_circuits, backend=FakeBackend).  Then to run on a given device you would do compile(qv_circuits, backend=RealBackend, initial_layout=[....])
+I think #1837 really solves all the issues.
+After some digging, it seems that the issue boils down to the need of specifying a coupling_map for the compilation process - and actually it can already be done in master by just calling:
+(since it calls transpile, which only uses the backend for fetching coupling_map and basis_gates if they are not already supplied). Minor usability issues aside, if this is enough to cover the use case, I believe this should be the encouraged solution for users needing that feature rather than having to introduce a "fake backend" construct.
+Depending on how needed this feature is, we could think of sweetening it a bit in terra - either via some  convenience functions that are a variation of :
+or by revising the current compile(), transpile() parameter handling a bit. However, if it caters to a rather specific use case, it could be worth assuming it belongs to "user space" for the time being, and assume users will be comfortable implementing their convenience functions on their own.
+I am not sure why there is so much hesitation to expose to users a functionality that we use ourselves, but I will close this issue, and #1837 and just add the routine to my "user space"
+@jaygambetta also wants to change the compile() signature to not take a backend, it will only take the compilation options (e.g. basis_gates, coupling_map, etc.).. so then I think there will be less use for making an abstract backend. The reason they exist in tests is because they mock job responses.
+No worries, I can add it to an addons package in the mean time

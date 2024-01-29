@@ -1,0 +1,59 @@
+import torch
+import tensorcircuit as tc
+tc.set_backend("tensorflow")
+def f(params):
+c = tc.Circuit(1)
+c.rx(0, theta=params[0])
+c.ry(0, theta=params[1])
+return c.expectation([tc.gates.z(), [0]])
+f_torch = tc.interfaces.torch_interface(f, jit=True)
+a = torch.ones([2], requires_grad=True)
+b = f_torch(a)
+c = b ** 2
+c.backward()
+print(a.grad)
+RuntimeError                              Traceback (most recent call last)
+ in 
+9 f_torch = tc.interfaces.torch_interface(f, jit=True)
+10 a = torch.ones([2], requires_grad=True)
+---> 11 b = f_torch(a)
+12 c = b ** 2
+13 c.backward()
+~/.conda/envs/RLQM_torch/lib/python3.6/site-packages/tensorcircuit/interfaces.py in forward(ctx, *x)
+126         def forward(ctx: Any, *x: Any) -> Any:  # type: ignore
+127             ctx.xdtype = [xi.dtype for xi in x]
+--> 128             x = general_args_to_numpy(x)
+129             x = numpy_args_to_backend(x)
+130             y = fun(*x)
+~/.conda/envs/RLQM_torch/lib/python3.6/site-packages/tensorcircuit/interfaces.py in general_args_to_numpy(args, same_pytree)
+30         alone = True
+31     for i in args:
+---> 32         res.append(tensor_to_numpy(i))
+33     if not same_pytree:
+34         return res  # all list
+~/.conda/envs/RLQM_torch/lib/python3.6/site-packages/tensorcircuit/interfaces.py in tensor_to_numpy(t)
+18 def tensor_to_numpy(t: Tensor) -> Array:
+...
+---> 20         return t.numpy()
+21     except AttributeError:
+22         return np.array(t)
+RuntimeError: Can't call numpy() on Variable that requires grad. Use var.detach().numpy() instead.
+Torch interface error. The forward function in torch model cannot work well in gradient tensor.
+Thanks for you issue report. First of all, the code you provided works well in my local test, and I want to divide this issue into several aspects.
+I am currently refactoring the code of interface part, you can update tensorcircuit via GitHub (or wait for next pip release) to see whether the code works fine. Though v0.2.1 should run the code, I am not sure the cause of the error.
+That being said, pytorch backend numpy method indeed fails when the input tensor requires grad and in gradient track mode. Therefore, I will fix this method. However, since the interface utilize autograd function pipeline, the numpy() method should works fine even with tensor requires grad, just as the case you show.
+In sum, I fix a bug on pytorch backend numpy() method thanks to your issue. However, I don't think this issue is relevant to your exact use case since the code should be fine.
+My suggestion for you to make the code work: 1 try to run with GitHub mater version of tensorcircuit or wait for next version pip release 2 and you may still fail since I actually don't identify the cause of the bug for now (I see not bug on my side), in that case, pls provide more information about you enviroment.
+May pip install cannot work well. The local source installation from Github may work well. I'll try it.
+If it still fails, pls provide me at least the version of torch, maybe different versions of torch take the autograd function pipeline differently
+toch version is 1.4.0 and it still fails.
+toch version is 1.4.0 and it still fails.
+It is too old, what about upgrading torch?
+toch version is 1.4.0 and it still fails.
+It is too old, what about upgrading torch?
+Yes torch is too old. I upgrade to 1.10 and it works well. Thanks. I suggest that when installing tensorcircuit, the version of the required packages can be verified. It may be helpful.
+Thanks for you careful test, glad that it finally works :)
+In terms of the suggestion on version requirements, actually tensorcircuit has a very flexible setup dependency system. Indeed, pytorch itself is not a necessary dependence for tensorcircuit, let alone its version.
+Such design are two-fold.
+On the one hand, the software is much easier to install and has very small probability that is conflict with existing python enviroments.
+On the other hand, the freedom for user is very lager. The users should upgrade their dependencies or install new packages from time to time, if needed.

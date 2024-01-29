@@ -1,0 +1,14 @@
+The transpilation pass with optimization level 3 and coupling map passed returns a circuit with a default name "q" for its quantum register, so if I try to add other gates (e.g. measurement) after, it fails with error: ``.
+Run this script:
+Output
+In the output you see that circuit's internal _qubit_indices.keys() has been changed as side effect of the optimization.
+In practice if we add a measurement we get the error:  CircuitError: 'qargs not in this circuit'
+Output:
+I expect the optimization not to change the name of the registers I use in my circuit as an unwanted side-effect.
+The culprit might be this pass qiskit.transpiler.passes.layout.apply_layout.ApplyLayout since it changes the internal register name: https://github.com/Qiskit/qiskit-terra/blob/6eb12965fd2ab3e9a6816353467c8e1c4ad2a477/qiskit/transpiler/passes/layout/apply_layout.py#L53
+Moreover, if this pass is followed by qiskit.transpiler.passes.layout.enlarge_with_ancilla.EnlargeWithAncilla it seems to restore the original register name.
+It is a quite strange behavior, I welcome any additional suggestion. Thanks in advance
+It is a slightly strange and non-ideal behaviour, for sure.  There are a few places that for legacy reasons create new registers or create new qubit instances unnecessarily, and we do need to go through and squash those cases.
+Just in case you didn't know, though: you almost invariably shouldn't be modifying a circuit after transpilation.  That should be the final step in any processing pipeline - the transpilation is meant to prepare a complete quantum program to run on an actual backend, and any modifications you make to it after that will invalidate the operation.  Think of it like trying to modify the executable of a program written in C after you compile it.
+@jakelishman thanks for commenting.
+Indeed, my use of the API can be considered a bit borderline. Anyway, have you already considered in the past to use an immutable version of the QuantumCircuit after the transpilation so to enforce this rule (aka don't use the circuit after transpilation) if that is the intended behavior?

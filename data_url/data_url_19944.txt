@@ -1,0 +1,36 @@
+Originally posted by gabrofig May 18, 2023
+I am a beginner and I am struggling to build liboqs in Windows. I was following the steps and first running:
+mkdir build && cd build
+cmake -GNinja ..
+However, when running ninja, I keep having errors like bellow:
+[382/387] Linking C executable tests\example_sig.exe
+FAILED: tests/example_sig.exe
+cmd.exe /C "cd . && D:\mingw64\bin\gcc.exe  -Wl,--stack,16777216 tests/CMakeFiles/example_sig.dir/example_sig.c.obj -o tests\example_sig.exe -Wl,--out-implib,tests\libexample_sig.dll.a -Wl,--major-image-version,0,--minor-image-version,0  lib/liboqs.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32 && cd ."
+d:/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/12.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: lib/liboqs.a(hash_shakex4.c.obj):hash_shakex4.c:(.text$PQCLEAN_SPHINCSSHAKE128FSIMPLE_AVX2_prf_addrx4+0x163): undefined reference to `KeccakP1600times4_PermuteAll_24rounds'
+Additionally, when trying the alternative using msbuild, and the suggested command in the documenation msbuild ALL_BUILD.vcxproj, I find the following message: MSBUILD : error MSB1009: file does not exist.
+Is there anything I am missing installing or something I am not doing correctly?
+I appreciate any feedback and apologies for the newbie question :)
+Perhaps we could just enable the clean variants on Windows
+Perhaps we could just enable the clean variants on Windows
+Hmmm... I don't know enough about the Windows build to know if we can enable the AVX2 variants on Windows. But yes, I guess a straightforward solution for now would be to only enable the clean variant.
+Do you have an idea on how to fix this? If so it would be nice if we could include it in 0.8.0.
+As well, I wonder why this isn't being caught by our Windows CI.
+I fixed it here, it isn't caught by our CI because we turn SPHINCS off in the appveyor_build.bat.
+Oh interesting. Is the right place for a chance solely in OpenSSL, or also in liboqs? In other words in liboqs CMakeLists we could turn off SPHINCS AVX2 on Windows, but then re-enable SPHINCS in general in appveyor_build.bat?
+Oh interesting. Is the right place for a chance solely in OpenSSL, or also in liboqs? In other words in liboqs CMakeLists we could turn off SPHINCS AVX2 on Windows, but then re-enable SPHINCS in general in appveyor_build.bat?
+Yes I think this approach makes sense.
+On second thought, the avx2 variant isn't listed as being unsupported on windows here for exmple, perhaps we should just disable in the tests for now and look more closely into it later?
+It doesn't build for us because we don't enable OQS_ENABLE_SHA3_xkcp_low_avx2 on Windows.
+It doesn't build for us because we don't enable OQS_ENABLE_SHA3_xkcp_low_avx2 on Windows.
+If we disable the Linux|Darwin guards in 
+Doesn't work but seems like it might with some changes.
+I fixed it here, it isn't caught by our CI because we turn SPHINCS off in the appveyor_build.bat.
+FWIW, here's the commit that turned it off: 8950275#diff-fe195d31cb96fb182e2da71ba63be6d2517961e4b4dd67da0646fb11f088de68 . The comment there indicates it apparently was running too slow.  Did this change now? Should we have (also Windows) weekly test runs of such "laggards"?
+If we disable the Linux|Darwin guards in
+Doesn't work but seems like it might with some changes.
+This is logical as it cannot work due to f99556d:
+We currently do not have a SHA3 AVX2 implementation that works on Windows
+--> We cannot support Sphincs+AVX2+Windows due to the Keccak common AVX2 code we have right now. We can (and do) support Sphincs+AVX2+Linux|Darwin as well as Sphincs+Windows (w/o AVX2). So the "only" question is how to properly disable building Sphincs+AVX2 on Windows.
+So the "only" question is how to properly disable building Sphincs+AVX2 on Windows.
+Answering my own question: Easiest probably is to patch the Sphincs META.yml to not state Windows support for AVX2 (as is done by PQClean). Running copy_from_upstream will do the rest.
+The alternative would be to pull the Keccak code (that apparently builds on Windows) from Sphincs@PQClean and replace the current "common" version thereof.

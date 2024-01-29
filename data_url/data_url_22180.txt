@@ -1,0 +1,16 @@
+I am currently having an issue with my experiment which detects a rising edges and outputs a pulse after a certain number of rising edges.
+I get the following error (the full stack trace is at the bottom of this issue):
+OSError: Incorrect reply from device: _D2HMsgType.LOAD_FAILED (expected _D2HMsgType.LOAD_COMPLETED)
+The experiment is as follows:
+The methods of self.board can be found here. In terms of the relevant methods, self.board.pulse() creates an oscillatory pulse on a given TTL channel, with the given period and number of oscillations to make. self.board.register_rising() listens for rising edges on a given PMT input, until the threshold is released, upon which next_pulse is executed after a delay of latency, calculated from the find_latency() method.
+Overall, the  expected behavior of this code is to output 20 rising edges on TTL 0 at 4 microseconds apart, listen for those pulses on PMT 0, and after seeing 5 rising edges, take the timestamp of rising edge 6,  delay by the found latency, call next_pulse, delay by another second, and pulse TTL 1 for 1 second. However, I get the following output and stack trace, failing at board.pulseDC(1, 1*s), which is equivalent to ttl1.pulse(1*s):
+Any advice or tips would be greatly appreciated!
+What's the output of artiq_corelog ?
+artiq_corelog outputs:
+Ah, right. So what you're trying to do is:
+You should add a @kernel annotation here: https://github.com/vontell/artiq-control/blob/master/samples/repository/rle/pipistrello.py#L169
+Ah of course; thank you!
+@whitequark Could we catch this type of invalid indirect calls of kernels through RPCs early so that Aaron would have known what the problem is?
+@jordens Not sure about "early" but we could definitely return a cause with the LOAD_FAILED message, which would address this as well.
+It seems to me that we could just mark the coredevice object on the host as "in-use" so that when an RPC comes in from a kernel, the worker handling the RPC can tell straight away that any kernels called (through this reentrant code path) while the coredevice is active are disallowed.
+It seems better to do this in the RPC protocol because this catches more errors, and simplifies bug reporting for any cause of load failure.

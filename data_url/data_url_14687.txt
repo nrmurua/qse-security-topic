@@ -1,0 +1,101 @@
+A tool to check if two circuits are equivalent.
+@gadial has already started to write this tool in #5123.
+There is nice literature for the topic (see papers by Robert Wille). The current issue is about setting up a basic, "trivial" tool. In this basic tool, the user will choose between two methods. One method will compare the unitary matrices induced by the circuits. The other method, as in #5123, will compare the circuits' outputs for each basis state.
+In addition to choice of method, the user will also choose whether to work with the quantum info module, or with Aer simulators.
+Later versions of the tool will include:
+Regarding the two suggested methods: the argument against comparing unitaries is that this method is far more expensive in memory. However, @chriseclectic has noted, that (when fits in memory) it can be faster due to optimizations like gate fusion only being applied once, and omp/simd type parallelization being more effective.
+The first step is probably going to be to write a BasisState class in quantum_info, as in #5123
+This seems to already exist in Statevector with from_label and from_int.
+Will split the basic setup into even three, smaller, pull requests:
+Copying here #5123 (comment) and #5123 (comment):
+========================
+@ajavadia says:
+I think what we want here is to define a user-friendly interface/function for checking two circuits are equivalent. So this function should be able to accept 2 circuits, and an "equivalence criteria", then choose the appropriate engine for conducting the equivalence checking.
+The equivalence criteria can be:
+exact unitary equivalence
+equivalence up to global phase
+equivalence up to qubit permutation
+equivalence up to diagonal (relative phase)
+equivalence of wavefunctions (exact or up to phase)
+equivalence of measurement samples
+The engines can be:
+unitary simulation
+statevector simulation
+density matrix simulation
+clifford simulation
+(^ these 4 exist via qiskit.quantum_info as well as Aer)
+exact netlist equivalence
+BDD-based method
+ZX calculus
+etc..
+So I think the interface function should let the user specify the equivalence criteria and the engine to use. For scalability I think we need to be able to choose Aer as one of the backends. If this function gets smarter it can automatically choose the engine (e.g. recognize that the circuits are clifford circuits).
+=======================
+@nonhermitian says:
+There are two types of qubit permutation: one sided permutation from swapping, and two sided from permuting labels.
+I'll probably write a short design doc (possibly just as a comment here in this issue). In the design I'll take into account that we want an infrastructure that will allow easy extensions, like different criteria and engines (engines can be either simulators, or external equivalence checkers: https://github.com/iic-jku/qcec). A priori perhaps every method should have its own class, inheriting from an abstract base EquivalenceChecker. Any method will have to comply with the defined input and output formats (for the output format, something similar to EquivalenceCheckerResult in #5700).
+Will also have to address, where will be the function that performs an automatic selection of method (e.g. unitary versus statevector) and simulator inside a method. This automatic selection will of course be optional: the user will be able to choose her preferred method and simulator.
+@yaelbh yes sounds good. I think we should be able to use the qiskit.quantum_info framework where possible (as that is native and has no external dependencies) and also Aer (because for equivalence checking through simulation that is optimized for scalability). And also be able to use the same interface to plug external checkers like the JKU one.
+There are two types of qubit permutation: one sided permutation from swapping, and two sided from permuting labels.
+My understanding:
+In the two-sided case, we should distinguish between the case where the difference in ordering is the same at the beginning and end (so the permutation comes only from different labeling), or otherwise (a different labeling, combined with swaps). So in fact we have here two different Boolean criteria, something like up_to_label_permutation and up_to_swap_permutation.
+Emphasizing that the current goal is to have a minimal checker working, with a design that supports easy extensions to different engines and criteria.
+Regarding automation: the Aer simulator already automatically chooses between statevector and stabilizer. We can add such a capability in quantum info, if it doesn't exist yet. Automatic choice between Aer and quantum info can be nice (and by the way also a unified interface), but should be external to the equivalence checker.
+See #5700 for a design proposal. I've made the following decisions, which are subject to change according to feedback:
+@ajavadia @chriseclectic @burgholzer Thanks for your comments in #5700. As I commented before (#5692 (comment)), the purpose of #5700 is to serve as a design proposal, which is still subject to many changes.
+I'll transform to a functional rather than a class structure. In the mean time, I'd like to address some of your comments, and get your feedback about the following points.
+I don't really like spelling out 'quantum_info' and 'aer' as strings. Can we do something where the EquivalenceChecker relies on aer if present, otherwise rely on whatever pure-python methods exist within qiskit?
+My intention is that the simulator parameter will eventually have three possible values: quantum_info, aer, and automatic, with automatic as a default value. Are we certain that, when Aer is available, it is always preferable over quantum_info?
+Either way, I want to allow the user to choose, by keeping the simulator parameter. Automatic choices behind the scenes are important, but at the same time we should also be careful about them. There was a time in Qiskit when we automatically invoked BasicAer whenever Aer was not properly installed, as a result many users opened issues about the simulation being so slow, when they did not know that something went wrong with their Aer installation. To mitigate this, we will output the used simulator in the result.
+Aer unitary sim can be its own subclass
+Operator can be its own subclass
+If each method was a separate subclass it would clean up this code significantly
+We will probably switch to a function structure, but still: the checker has an algorithm, which runs a simulator as a black box. Choosing one simulator or the other - the checker is still basically the same, therefore I don't see a reason to subclass here. This is in contrast to the choice to have a different class for each checker, where the rationale was that the checkers are very different from each other.
+How would two Clifford circuits be checked for equivalence?
+Aer by default runs with the automatic simulation method, that picks the stabilizer method for Clifford circuits. A parallel capability can be implemented also in quantum_info. This is not specific, and hence external, to the equivalence checker.
+Transpile shouldn't be needed for Operator method
+For Aer method we might also want to transpile with optimization_level=0 by default since this might be used to test transpiler passes. If you want to test transpiled circuits you can transpile them before passing to equiv checker.
+We really should develop a discussion here. We transpile a new circuit that we construct from the two circuits, by concatenating the inverse of one circuit to the other circuit. For the new circuit, there may be room for optimizations that reduce the circuit size (obtained by transpiling it), that will make the subsequent calculations more efficient. In particular, the construction of an Operator will be more efficient, since it is constructed gate-by-gate.
+if something has two options it should be Boolean.
+I want to leave room to add later a third option of a relative phase.
+But also I think there should be options rather than this phase, because there are many kinds of equivalencies.
+Every checker is free to have its criteria parameters. Specifically the unitary checker currently has one parameter, named phase.
+Also what if we want more than a boolean from our checker? for example if two circuits are equivalent up to phase, but have different global phases we might want to return that phase difference in the result.
+To build on Ali's I think you want a boolean kwarg for ignore_phase and possibly a boolean arg for return_phase if you want to know the phase difference between two phase-equivalent unitaries
+We can return the phase difference in the result. No need to have the special parameter return_phase - we will just output it, it's not expensive.
+Just a very small addition: for the simulator parameter there is also the option external, for backends that are not Qiskit.
+The point I was making with regard to the methods is each individual method should be an independent class/function that can be called directly, and you can have a single higher level interface function that has a method kwarg for choosing between them (and intelligently choosing automatically by default when no specific method is provided). This makes it much easier to organize and add additional methods.
+We shouldn't assume a method is always a simulator backend. For external non-qiskit checking I don't think we want to assume a backend at all, they should write a function/class wrapper for their method (however it is done) using the interface we provide.
+This function for methods should have a well defined signature, ie something like func(circ1: QuantumCircuit, circ2: QuantumCircuit, **options) -> Dict[str, any]. The return could be made a class container for dict instead of raw dict to use attributes rather than keys and have some predetermined attribute (ie value: bool for if its equivalent or not according to the checker), and then other methods are free to add optional or additional result data to this structure (ie for things like relative phase or permutation or some such)
+@ajavadia The suggested API will look like this:
+EquivalenceCheckerResult from #5700 remains, and all the functions return an object of this type.
+Checking by comparing an operator to the identity:
+Checking by running a simulation on all basis states:
+Checking, without full guarantee when the answer is "yes", by running simulations on random states:
+A wrapper function:
+(None value to verification_function invokes an automatic choice of a function).
+Does it make sense?
+From the user's point of view it will look like this:
+When you compare two circuits using simulation on all/random basis states, do you plan on actually comparing the resulting state vectors entry-wise? Or do you plan on calculating the fidelity between the states and apply a certain threshold (say >0.999 for equivalence)? Due to numerical errors during the simulation (which are unavoidable with floating points), two state vectors might not be exactly equivalent, but only up to some numerical tolerance.
+Another issue then is, that the fidelity "hides" any possible phase difference between the two state vectors. As such, methods relying on the calculation of the fidelity between two states, using basis states as input, are not suitable for discerning whether the two circuits are actually equivalent or only up to some phase. This can be resolved, by using other types of stimuli than basis states.
+I was thinking of concatenating one circuit with the inverse of the other. Then in the final state vector I need to check a single amplitude, the one that corresponds to the basis state, which should be close to 1 iff the circuits are equivalent. Does the hiding of the phase difference apply for this method?
+Something like this was implemented in #5123.
+This should work and not hide the phase. However, for certain types of simulators (those exploiting some structure to compactly represent a state, like decision diagrams) concatenating one circuit with the inverse of the other and simulating the resulting circuit might actually be (much) more expensive than simulating both circuits separately. I suppose for array-based approaches this is a no-issue.
+Another thing to think about is, that one has to really take care when concatenating the circuits in the presence of input and output permutations of the qubits. For example, if you are checking the equivalence of compilation results, where the algorithms logical qubits are mapped to the devices physical qubits and are swapped around during the circuit.
+My two cents.
+I really prefer the UnitaryEquivalenceChecker class model over functions. If the problem is the usage, a function can be added on top.
+Is there a use case for having options at run time instead of at construction time of the checker?
+@1ucian0 I'm indeed not sure how to split between checker options and run time options. @burgholzer Do you have insights from your experience?
+In our tool, we decided to pass all options as runtime options using a Configuration class. At the moment, what happens under-the-hood in our tool could be stated as
+But I would consider our software as academic software. As such, it might not follow all the best practises of software engineering. To some extent, I believe, it is a matter of personal preference. I cannot really think of an option that you could not, theoretically, set at construction time of the equivalence checker.
+@1ucian0 Could you please elaborate on the justification to thumb down in #5700 (review). This will help me decide how to proceed. Thanks!
+I very much prefer the class based interface. Functions can be a wrap on top of them. Ideally, no functions. My two cents.
+Sure... But can you justify this preference? Also, how to wrap a function on top of a class?
+Sure... But can you justify this preference?
+I see having such generic functions with catch-all **kwargs as a violation of the interface segregation principle. This is a good candidate for future headaches. For example, two checkers with the same parameter but different semantics for that parameter, when the method is automatic, creates an opaque situation.
+If each checker has its own API with its own parameters and they are implementing the abstract run, the interfaces are properly segregated.
+Also, how to wrap a function on top of a class?
+Similar to what is suggested by Chris. The difference is at the end:
+@1ucian0 I'd like to continue this discussion, if you can, because I find it relevant and helpful also to other parts of my work. I don't see how the usage of classes helps segregate the interfaces. In particular, if two checkers have the same parameter name for different meanings, the equivalence_checker functions of you and Chris will get this parameter from **options. Then it will pass forward, in your code to the SpecificChecker constructor and in Chris' code as a parameter to the method's specific function. What's the difference? If we have a specific function for each method, each function with its own interface, how is it different from a specific class for each method?
+@yaelbh has there been any progress on integrating the equivalence checker?
+@burgholzer Some time ago I updated the pull request, I began to fix sphinx errors, but had to move to more urgent tasks. Apart from the sphinx errors, I'm fine with the pull request in its current form. But I guess that the reviewers won't approve yet, and more discussion will be required, because I didn't address some of their comments, where I disagreed (most of my justifications are here: #5692 (comment)).
+@yaelbh thanks for the update! I am looking forward to the moment where all the interfaces are fixed. Then I can start adapting the Python bindings for our QCEC equivalence checking tool so that it can be used from Qiskit.

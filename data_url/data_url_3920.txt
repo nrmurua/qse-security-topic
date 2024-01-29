@@ -1,0 +1,66 @@
+This issue highlights the need for a circuit drawer/visualization tool.
+It is important that this resource is compatible with the workflows and tools used in the laboratory. Additionally, it is important that it allows visualization of circuits after different compilation passes, in line with the compiler modularity concept described in issue #266
+CC @imranashraf @jvansomeren
+During our last meeting, we identified the need to better specify what circuit visualization should be, and what it should look like. Circuit visualization can be done at different levels of abstraction. For simplicity, I will define two, circuit-level visualization and pulse-level visualization.
+Circuit-level visualization consists of visualizing quantum and classical operators in time, separately for each qubit, in the way introduced in Nielsen and Chuang with QASM. A simple example of which can be seen here:
+
+Pulse-level visualization also relates to issue #265 tracked in this repository and consists of visualizing the low-level waveforms sent to qubits to implement the aforementioned quantum operators. Since 3 different control lines exist per qubit (microwave control, readout control and flux control), I believe it would be important to plot each of these independently through time. A simple example of which can be seen here:
+
+It is also crucial that this functionality is implemented in such a way that it can integrate with our current workflow. All plotting in our experimental framework is done through calls to the PyQtGraph framework. Therefore, this would be the preferred method to implement this functionality... maybe @AdriaanRol, @elrama- can also add some feedback on this last point.
+I think it is also very useful to be able to visualise scheduled circuits, e.g. as a check or the scheduling. I made such an option for the CC backend: this generates a .VCD file and uses the public domain timing visualizer GTKWave for display.
+One thing that GTKWave and similar tools handle nicely, is navigating through long output and zooming in to areas of interest. I think a static plot will have difficulty in that department.
+I like the idea of waveform view, but would hesitate to give OpenQL detailed knowledge of waveforms just for that purpose. The CC backend definition defines waveform names associated with gates/instructions, and can also visualise those using GTKWave.
+Also note that it's no general truth that qubits have microwave, flux and readout lines, neither that there is a 1 to 1 mapping of qubits to signals. For the CC, an instruction generates a vector of signals of particular types, and instruments can output those signal types. These signal types are entirely user defined, the backend itself has no knowledge of flux/microwave/etc.
+So a X90 gate may output signal of type 'microwave' (output by an AWG) and 'switch' (implemented by a VSM)
+Hi @imranashraf,
+@MiguelSMoreira asked me to take a look at this.
+It is not true that all our plotting goes through PyQtGraph, only our real time visualization does. This tool is very useful for some applications but I would not suggest using this for circuit drawing.
+I would suggest either using matplotlib or plotly
+Matplotlib the de-facto standard for all data visualization in python. This is also used in all our data analysis code so users in the lab are very familiar with this. One of the main advantages is that it is a very mature and flexible package. The downside of matplotlib is that it is not very good at interactive visualizations. I expect that some limited form of interactivity will be very important when plotting larger circuits (more than 5 qubits, long timescales).
+plotly is one of the leading visualization platforms that is web based. It has very good interactivity build in and is also widely used. Plotly looks like it is paid but this is only if you want to use the online hosting (code is MIT licensed). There exists an offline only mode that can be used without creating an account.
+I think that given the requirements of circuit visualization, an interactive plotting library is preferred. I think Plotly is a good suggestion but I will also support any other widely used and mature open source python framework for visualization (there are quite a few).
+Lastly I think it is good to discuss a bit the form this should take.
+I think the ideal form of a circuit visualization library is as follows.
+I think that for practical reasons it may be better to only keep the visualization in a separate folder within the project, but I think that keeping the option to factor it out in mind may help in keeping the code more modular.
+Hope this helps.
+One last thought, I really like that @MiguelSMoreira   posted screenshots. I suggest that before we start make a mature and well toughts out codebase we make some simple (ugly) figures using whatever tool we can and post some screenshot. It is often very easy to spot little details that we might forget in requirements if we make small prototypes like that.
+I think it is also very useful to be able to visualize scheduled circuits, e.g. as a check or the scheduling.
+The idea proposed is exactly to plot scheduled circuits, that is, plot the output of OpenQL.
+I made such an option for the CC backend: this generates a .VCD file and uses the public domain timing visualizer GTKWave for display.
+One thing that GTKWave and similar tools handle nicely, is navigating through long output and zooming in to areas of interest. I think a static plot will have difficulty in that department.
+I believe the problem with GTKWave would be getting it integrated with our work flow. I believe it would just be more convenient (and seamless) to have these in windows similar to those that measurement_control (a piece of PycQED) already displays and have it be controlled through python. Additionally, the interactivity that you view as a challenge, can be easily built-in by using tools like Plotly, as proposed by Adriaan, with an arguably better interface for the user.
+I like the idea of waveform view, but would hesitate to give OpenQL detailed knowledge of waveforms just for that purpose. The CC backend definition defines waveform names associated with gates/instructions, and can also visualise those using GTKWave.
+Agreed. Giving OpenQL pulse-level knowledge should not be a decision taken lightly. I believe there are a few use-cases that may justify it (and which I tracked in issue #271). However, this is not the immediate objective of this thread. I simply included it as a potential future use-case, such that any decision we take now on how to implement circuit-level visualization would not keep us in the future from expanding this functionality to pulse-level.
+Also note that it's no general truth that qubits have microwave, flux and readout lines, neither that there is a 1 to 1 mapping of qubits to signals. For the CC, an instruction generates a vector of signals of particular types, and instruments can output those signal types. These signal types are entirely user defined, the backend itself has no knowledge of flux/microwave/etc.
+I agree that some discussion is needed here, to arrive at the right solution. That may pass by just making the visualizer flexible, such that all of this can be later defined by the user. Either way, like I previously mentioned, pulse-level displaying is not our immediate objective.
+@MiguelSMoreira , @AdriaanRol just to clarify, the requirement is to get an output like:
+
+@AdriaanRol what do you mean by interactive? what kind of interaction are you expecting?
+@wvlothuizen can you please share a simple example you currently generate (gtkview screenshot)? just to get an idea of what is there for CC.
+This is a screenshot of GTKWave's output for a file generated by the CC backend. It shows different views:
+
+@imranashraf
+Glad you asked, the requirement is not to get output like that.
+The circuit diagram you show looks pretty but lacks some important information.
+An important example is timing information. In the example you show it is not possible to see if for example the two CNOT gates are happening in parallel or on consecutive clock cycles. Furthermore, it is not clear how many cycles the measurement operation lasts.
+Making the same figure with an explicit time axis would be a very useful improvement. A way to visualize multi-qubit gates that happen in parallel is also required as plotting them on top of each other (as required for the timing) makes it hard to see between what qubits the operation is acting though this can easily be fixed because there is a discrete timing grid.
+With respect to interactivity, the example you show would not need interactivity and neither do many of the "toy" examples. The reason is that these are very simple. However, in practice experiments may have a lot more gates, have a long duration or involve many (10+) qubits.
+In that case it is very desirable to be able to zoom and pan around the axis and to be able to enable/disable lines corresponding to specific qubits.
+These features are natively supported in for most of the interactive plotting libraries.
+Another example for interactivity would be how to deal with multiple kernels. Depending on how we should use kernels (see other issue), most experiments contain multiple kernels, typically one would want to plot only one or maybe plot multiple on top of each other.
+Being able to enbable/disable these easily would be a nice interactivity option to have.
+For Prepz = 4 cycles, X = 1 cycle, H = 2 cycles, CNOT 3 cycles and Meas = 4 cycles., basically the following info:
+
+But then with interactivity, as you mentioned and should be pretty, which is pretty much similar to what gtkwave is showing above
+@imranashraf I believe we should not define timing through a clk signal like you show above. Instead, we should provide a timing grid of 20 ns cycles against which we plot. It may seem like a trivial difference but I really believe we should shy away from displaying clocking signals at this level.
+Regarding GTKWave, I agree that the functionality given is similar to what we are interested in, especially with the need for interactivity. However, for integration and operability reasons, I don't think we should use an additional program like GTKWave.
+Notes from the meeting. Take a look at quantumsim, it already has a python based implementation of this.
+In the testing of the visualizer, Wouter and Miguel found problems with overlapping and seemingly missing gates in the visualizer. These are caused by the visualizer not respecting the fact that OpenQL's internal cycle numbers are relative to the start of each kernel, rather than the start of each program. Thus, when multiple kernels are used to build the program, they will end up overlapping. I'll get to work fixing this now.
+Should be fixed in 0.8.1.dev8, as of commit 1a53e8e.
+Note that the cycle numbers in the visualizer for scheduled programs are now referenced such that cycle 0 is the first cycle of the program, while in the IR they are referenced such that cycle 1 is the first cycle of the kernel. So the cycle numbers shown by the visualizer differ from the IR cycles in two ways.
+Everything related to control-flow is completely ignored by the visualizer. I briefly considered unrolling simple loops, and doing so would be easy enough, but I decided against it for now because it would probably explode for long loops.
+Could you pull commit 1a53e8e with these changes into feature/cc/modularized branch of our OpenQL fork @wvlothuizen ?
+I don't want to do it myself in case you are working on this branch as well
+I just did, so go ahead testing.
+@jvanstraten this would be a good time to merge PR #410 to align our afforts
+First functional test successful.

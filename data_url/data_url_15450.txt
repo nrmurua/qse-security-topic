@@ -1,0 +1,43 @@
+@aeddins-ibm found that pauli.evolve() can be quite slow, and we can get substantial performance improvement from using private methods for special cases.
+Since pauli.evolve() is the main entry-point / user-interface, it should be fast. There are probably some simple things that can be done to dramatically speed it up. But it needs some profiling to see what's causing the slowdown.
+Here's a code that shows pauli.evolve() is 10,000x slower than calling _evolve_cx() on individual instructions. Some of this is expected since CX is a special case of clifford. But a) we should have faster ways of dealing with special cases of self-adjoint cliffords and b) is there some other overhead from validation/type-checking?
+@chriseclectic observed that we should do pauli.evolve(qc) and not pauli.evolve(cliff), which will be just as fast as calling the private method.
+I'm still wondering if evolution by clifford can be sped up when the clifford is made up of lots of CX or CZ which are easy to invert.
+Ali separately suggested the bottleneck might be in taking the adjoint of the clifford. Just wanted to point out the test above was with frame='s' so the adjoint was not taken.
+So then it could just be that the nested for-loops over individual Pauli objects need be replaced with vectorized operations using PauliList objects / numpy arrays. (...hopefully the indexing is not too painful to figure out 😅)
+Here is an updated code with some additions:
+outputs:
+In this case, the adjoint calculation is not much of a bottleneck since there is only one clifford (and 100 paulis), so the calculation is only done once, hence there is not much difference between the options h and s.
+The main problem is that _evolve_clifford has two nested for loops (and I'm not sure how these can be avoided).
+https://github.com/Qiskit/qiskit-terra/blob/a0b9a846f93a1e580c876b8fb37ae5d10436f594/qiskit/quantum_info/operators/symplectic/base_pauli.py#L281
+As @chriseclectic suggested, pauli.evolve(qc) is much faster, almost as using _evolve_cx since it updates the clifford tableaux directly after each gate using _append_circuit
+https://github.com/Qiskit/qiskit-terra/blob/a0b9a846f93a1e580c876b8fb37ae5d10436f594/qiskit/quantum_info/operators/symplectic/clifford_circuits.py#L22
+@aeddins-ibm - do you think that using pauli.evolve(qc) gives the desired speedup for your use-case?
+Nested for loops are known to be slow in python. To make matters worse, this implementation starts with pauli_list = [] and keeps growing it, which requires repeated memory allocations.
+It will be faster to allocate the full array size first. Also it will be faster to use vectorized numpy operations rather than for loops.
+Also the initializaiton of identity paulis as Pauli('I' * n) will be slow since it has to string parse to build the initial array.. the identity Pauli can be initialized directly.
+Thanks Shelly, running with evolve(circuit) is adequate for my use case. But I also agree we should speed up this code since most users will probably expect evolve to prefer a Clifford argument.
+No promises but I have some thoughts on how to vectorize this, at least partly. I'll make an attempt and report back.
+If I recall correctly, there was a PR by @jakelishman to vectorize some very related code. @jakelishman, was your PR merged?
+I think the PR you may be thinking of was to do with Clifford.compose?  That's #7483.  We didn't merge that at the time because of #7269 heavily modifying the Clifford class, but it seems like we ended up not doing anything with StabilizerTable any time soon.  We could merge #7483 for Terra 0.21, potentially.  That said, #7483 doesn't touch Pauli.evolve, so that PR won't change this one, but I imagine much of the vectorisation strategy could be ported.
+Just for the future:
+To make matters worse, this implementation starts with pauli_list = [] and keeps growing it, which requires repeated memory allocations.
+This is generally nowhere near as bad as you might expect.  There are more memory allocations involved than doing pauli_list = [None]*length and mutating, but it's not quadratic complexity because Python (and any modern growable array implementation) amortises it to linear time by overallocating each growth by a constant ratio.  Here's three ways of constructing the simplest possible list, with zero cost to build any of its elements:
+[None]*1_000_000 is essentially fastest iterator for construction and iteration - for comparison, that takes 3.22ms on my machine.  Using a list comprehension is the fastest way, and mutating indices is marginally faster, but they're all linear.  For 10,000,000 elements instead, the timings are 445ms, 386ms and 222ms respectively.  If you're spending more than 22ns to build each element (which is around the time taken to access a single class attribute), the list construction time is unlikely to matter too much.
+(Of course, Numpy arrays and vectorisation blow all this out the water.  It's just that I think people dismiss list.append more than they perhaps ought to!  list.insert, on the other hand, is terrible for performance because it does copy every time.)
+-- Deleted comment since the code I had pasted still has a bug. Didn't try enough test cases, apologies. --
+Sorry about the error above, I think this is correct. The bug was that I was confused how boolean types were handled inside matrix multiplication. Now it converts the arrays to integers first as a dumb fix, which has some cost (perhaps it can be avoided somehow). There is also some memory cost of the einsum call.
+Assuming it's correct, does this seem like an appropriate replacement for the for loops?  (It will still need to be modified to handle qargs)
+@jakelishman thanks - you are right that doesn't look too bad.
+@aeddins-ibm did you test the above for your example? how is performance?
+Have to apologize again as there is still an error with the phase (this is a learning exercise for me). I think it's because I did not yet account for the extra phase from commuting the X gates in the input Pauli object (self) past the Z gates from the stabilizer table (also needed to add self.phase at the end but that's easier -- edited above to include this).
+Regarding timing, as written above it was ballpark ~100 times faster than the old evolve, but still ~100 times slower than calling _evolve_cx in a loop. Being somewhere in the middle is perhaps not surprising given that (as others have pointed out) it will be more expensive to process the large N-qubit stabilizer matrix than to process the smaller matrices of the constituent 2-qubit-gates.
+I'm out of time to keep working on this for the time being. I did not find why the phase is not computed correctly. Though I did only just now discover that pauli.phase is not the same as pauli._phase, so that may be related.
+OK, understood the difference between phase and _phase at the last second, so here's updated code after all. It could probably be simplified (maybe avoid the astype(int) calls) and definitely needs updating to support qargs but hopefully that's not too bad.
+Here's the updated code (written as a stand-alone function below; as a class method replace the pauli argument with self and delete self=pauli):
+Here's the test showing it gives correct results for random inputs, with speed improvement of ~100x compared to for-loop-based evolve:
+Output:
+This version also handles qargs. I will try to make a PR with this in place of the for-loop-based _evolve_clifford method; pasting it here first in case I can't figure out how to do that.
+nice work @aeddins-ibm !
+Modified the code simpler. Basically the code I posted above eliminated for loops, but seemed to be scaling worse b/c of building an N x N matrix, so I reverted to the old nested-for code (which did not need that matrix), but replaced one of the two for loops with a PauliList operation (below for reference). This seems to roughly match or else outperform the nested-for code for all cases, including the important case of many qubits. And is maybe more readable.
+Just need to figure out tox / lint stuff I think then will try the PR again.

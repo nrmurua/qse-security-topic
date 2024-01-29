@@ -1,0 +1,77 @@
+I'm in the situation where a single energy/force evaluation is only slightly too memory-expensive to fit on a single node. Based on the examples in the benchmark folder, I gather that the MEMORY_CUT argument can be used to increase/reduce the memory requirement of the calculation while reducing/increasing the total compute time. I have tried to increase this up to 7 but it's still returning OOM errors. (I'm running the 64 H2O example on a 1TB mem node, with 128 AMD EPYC nodes, 64 processes with 2 threads each).
+Which other parameters can be used to influence this trade off, or which other options do I have in order to reduce the memory requirements?
+@abussy
+out of curiosity, are you sure there is not a limit on the accessible memory of each process? For instance, what ulimit -m reports? There can be other limitations on the memory usage, e.g. the workload manager or the container runtime, if you are using any of those.
+Could you run with less ranks and more threads?
+ulimit -m returned about 1TB, which is the total available memory so that's fine. Running with 8 threads and 16 ranks still yielded the same OOM issue. The cluster provides SingularityCE 3.11.
+I ran the exact same input with CP2K 2023.1 installed on the cluster itself using EasyBuild, but I observe exactly the same behavior -- so the container runtime should not be interfering with anything.
+Can you maybe use less processes per node and increase the number of threads per process accordingly?
+Could you also post your input file?
+Could you add TRACE to the input file and see the memory consumption increase?
+Can you maybe use less processes per node and increase the number of threads per process accordingly?
+Yes, that's what I did. Only 16 processes, with 8 threads per process -- but that gives the same error.
+Could you also post your input file?
+It's pretty much the same from the one in the low-scaling post-HF benchmarks.
+Could you add TRACE to the input file and see the memory consumption increase?
+These are the last 200 lines of the job output when TRACE was added:
+Note that this was again using 128 processes, 1 thread / process.
+Let me know if you need more; thanks for taking a look!
+Honestly speaking, I am not in expert in this method but @abussy is currently on holidays. My guess are the following parameters from here:
+EPS_FILTER (might not be too important)
+EPS_FILTER_FACTOR (also affects accuracy)
+EPS_STORAGE_SCALING
+MIN_BLOCK_SIZE (could increase the amount of meta data)
+In your run with TRACE, can you find the routines on levels 8 and 9 as these should give some hints in which step you run out of memory? Currently, I just see it is somewhere in the dbt code. In case of doubt, upload the output file.
+Sorry for the delay here.
+So I've played around with the parameters you mentioned but none really seemed to resolve the issue. In addition, I realized that in order to get converged estimates, I needed to increase the basis set size significantly which implies that I'll stick to energy-only evaluations for now. As such, I'll stick with not using the LOW_SCALING option. (Although even then, I needed to increase the GROUP_SIZE quite a bit in order to not run out of memory).
+Right, with that system size, the quartically-scaling algorithm is commonly faster and less memory consuming due to the sheer amount of tensors to keep in memory.
+Basis set size is a common issue with RPA (SOS-MP2, MP2) in general. Triple zeta is the smallest recommended basis set (maybe even augmented double-zeta, but definitely not a non-augmented double-zeta). But if the accuracy is not sufficient, use a quadruple zeta basis set.
+Somtimes, the GROUP_SIZE parameter has to be increased with the GPW method because it determines the number of processes sharing one set of grids.
+Exactly, relative energy differences between two structures for TZVP and QZVP still differed by ~ 8 kJ/mol, which is quite a lot. For QZVP, my GROUP_SIZE is already at 16 (which approximately quadruples the calculation time in comparison to TZVP with GROUP_SIZE 1).
+You might attempt to extrapolate your energies to the complete basis set limit manually with structures optimized with the largest basis set possible.
+But do you think DZVP -> TZVP -> QZVP is enough 'points' to do so? Or how exactly would you do this?
+TZVP->QZVP is enough. DZVP might be too badly converged. The extrapolation formula is E(X)=E(CBS)+A/X^3 with X being either D, T or Q.
+Hi @svandenhaute,
+by looking at your input file, I would say there is not much you can do for memory optimization. You could potentially reduce MIN_BLOCK_SIZE, which typically leads to increased sparsity in the tensors. For the same reasons, you could try loosening the EPS_DEFAULT keyword, this is however somewhat risky for accuracy.
+Note that increasing MEMORY_CUT does indeed reduce the memory footprint for the storage of RPA sparse tensors. However, this comes with a performance tradeoff, and with MEMORY_CUT > 5 or 6, I would strongly recommend using more than 1 node and reduce that value. Note that the 64-H2O benchmark with MEMORY_CUT 4 in QS_low_scaling_postHF was run on  8 LUMI-G nodes, which corresponds to 4 TB of memory.
+Finally, as @fstein93 mentioned earlier, you should probably use the quartic scaling RPA implementation for a system of this size. Also be aware that with both implementations, the calculation of forces leads to greater memory requirements (vs energy).
+Best,
+Augustin
+Thanks @abussy!
+I have in fact started using the quartically scaling RPA in combination with a QZVP basis set. For the structures on which I was benchmarking the input file, everything was OK. However, when evaluating higher-temperature snapshots that were extracted from MD, I'm getting the following assertion error about 80% of the time:
+Any idea why this would happen? In the other 20%, the evaluation proceeds just fine and the final energy is also perfectly reasonable. The full input and output files are attached.
+input.txt
+output.txt
+The error message indicates that the Cholesky decomposition failed. That may have different reasons: numerical noise or unreasonable geometries. Can you try a higher cutoff (CUTOFF in WF_CORRELATION section)? Can you maybe also add
+&RI
+CALC_COND_NUM
+&END
+to calculate the condition number of the 2c-matrix for diagnosis? I guess that the large basis sets you employ might increase the condition number too match. If that is the case, you can use the DO_SVD keyword in the RI section to switch to an eigenvalue decomposition.
+😮
+Using DO_SVD does allow him to get past the point where the CPASSERT would occur, but then he runs out of memory at a later stage; after two integration points. Does SVD consume that much more memory?
+output.txt
+I can't increase the cutoff much further (due to memory as well) -- it also did not affect the final energy at all.
+That's strange. The SVD needs the same amount of memory but is more costly. Apparently, the RI basis of your system is numerically linear dependent. The respective components were removed. Thus, the memory demands are even a bit lower afterwards.
+What error message are you observing now? Did you compile with COSMA? Can you add the keywords TRACE and TRACE_MASTER to your GLOBAL section (the last 100-200 lines of the output are sufficient)?
+What happens after you run export COSMA_ADAPT_STRATEGY=OFF? Did you set any of the environment variables of COSMA?
+Yes, I compiled with COSMA. I simply used Dockerfile.prod_psmp but disabled libtorch. I did not set any COSMA variables manually, and the variable that you mention was also not set in particular. I'll try setting it and rerunning.
+These are the last 200 lines of the output (without modifying any variables):
+You crash while calling. COSMA. From my experience, you then lack some memory. Can you rerun with after executing export COSMA_ADAPT_STRATEGY=OFF on the console? I suspect a lack of memory with COSMA. A second thing to try is to add
+&FM
+TYPE_OF_MATRIX_MULTIPLICATION SCALAPACK
+&END
+to your GLOBAL section. Scalapack implementations have commonly lower memory requirements than COSMA.
+Using COSMA_ADAPT_STRATEGY=OFF did not do the trick in itself, I had to add that section to GLOBAL (which I presume disables COSMA completely). He's now at integration point 5 out of 20 but I don't expect any issues at this point.
+The (reported) required memory did indeed the decrease slightly when using the SVD -- from ~1200MB to ~1050MB!
+Thanks for all the suggestions!
+It seems that you are using 20 integrations points. If you are using the MINIMAX grid (which you should), you can reduce that number. For most systems ~8 integration points are enough. This would not only accelerate your calculation by a large factor, but also save some memory (as large matrices are stored for each integration point).
+@abussy there was a 1 kJ/mol difference in relative stability between structures when changing the number of integration points from 16 to 20 -- is this what you would expect? My production runs will use 16, I haven't actually checked how much lower I can go, but it seems that I'll quickly start introducing > kJ/mol differences which is rather undesirable. I'll double check this and let you know.
+@fstein93 I can confirm that the calculations now finish without OOM! I'm even able to reduce the GROUP_SIZE from 16 back to 8. The total execution time is still slightly higher though, I suspect because Scalapack is slower than COSMA?
+I can't tell you exactly what number to expect, I am afraid. But in the end, you are correct and nothing beats a convergence test.
+Concerning the cost of Scalapack versus that of COSMA, you are correct. COSMA is usually faster, but this comes with the tradeoff of a higher memory usage.
+Concerning the cost of Scalapack versus that of COSMA, you are correct. COSMA is usually faster, but this comes with the tradeoff of a higher memory usage.
+Is this even true now for higher rank-counts or lower node-counts like higher performance with full-population on say a single system with high(er) core-count CPU(s)?
+@hfp As far as I can tell, yes. There are many environment variables affecting the performance (see the COSMA library). Especially the memory consumption is sometimes tricky. As soon as I started to test quartically-scaling RPA gradients, I had severe memory issues. At the end, it helped to set COSMA_ADAPT_STRATEGY=OFF. If COSMA does not redistribute a matrix into its own layout, COSMA is apparently not checking the available memory (or at least not carefully enough) raising an OOM-event. In case of large rank counts, the performance declines of course, just at a later point than with Scalapack.
+@fstein93 based on your intuition, by what factor does the total computation time and total required memory increase when going from quartically-scaling RPA energy to quartically-scaling RPA energy + forces?
+Depending on the actual settings, libraries, etc., it is a factor of 3-4 in total computation time and memory.
+Apparently, this issue was solved. Feel free to reopen it if necessary.

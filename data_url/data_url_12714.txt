@@ -1,0 +1,40 @@
+Task 4.2, "Implement the arbitrary bit pattern oracle (challenge version)" in the Oracles.ipynb tutorial has the following solution in ReferenceImplementation.qs:
+operation ArbitraryBitPattern_Oracle_Challenge_Reference (x : Qubit[], pattern : Bool[]) : Unit is Adj + Ctl { within { for i in IndexRange(x) { if (not pattern[i]) { X(x[i]); } } } apply { Controlled Z(Most(x), Tail(x)); } }
+This works, but it has O(2N) time complexity due to traversal of the input register twice in the conjugation pattern.
+I would like to contribute the following improved solution using controlled recursion, which has constant time complexity (at most 2 passes total, regardless of input register length):
+operation ArbitraryBitPattern_Oracle_Challenge_Reference (x : Qubit[], pattern : Bool[]) : Unit is Adj + Ctl { if (Length(x) == 1) { let q = Head(x); if (Head(pattern)) { Z(q); } else { within { X(q); } apply { Z(q); } } } else { let Oracle = ControlledOnBitString(Most(pattern), ArbitraryBitPattern_Oracle_Challenge); Oracle(Most(x), ([Tail(x)], [Tail(pattern)])); } }
+This functional solution is also more readable and easier to reason about than the current provided solution because we only act on 1 qubit in the two post-controlled eigenstates.
+This is my first contribution. Please let me know your thoughts / feedback and whether to proceed with a PR. Thank you!
+@tcNickolas @anpaz @ricardo-espinoza @Manvi-Agrawal
+Hi @CloudNative90 , thanks for coming up with an improvised solution with better time complexity and readability.
+Regarding time complexity, could you please help me understand how is your solution O(1) time complexity? This is a very similar example with O(N) time complexity. I am afraid we might be adding extra storage overhead since the proposed solution is not tail recursive. Related link
+Regarding readability, I find both solutions equally readable. I think readability is largely based on personal preference :-)
+@tcNickolas thoughts?
+PS: Sent from mobile...
+@CloudNative90, you might want to contribute to workbook solution for "Part 4, Graph coloring: Triangle Free Coloring".
+This requires an understanding of Oracles, Grover's algorithm and how to apply Grover's algorithm to graph coloring
+Related issue: #542
+Thank you for your feedback, @Manvi-Agrawal.
+In the proposed solution, ControlledOnBitString is called only once, regardless of Length(x), because we always call it with all elements of x and pattern except their last one. Therefore, the operation can only call itself once, whenever Length(x) > 1, after which we immediately reach the stopping condition because we passed the last element in x and pattern.
+Let's take the following test cases:
+In the proposed solution, ControlledOnBitString is called only once in either case, immediately followed by the stopping condition of Length(x) = Length(pattern) = 1 (2 steps total).
+In the existing solution, we loop through 10 or 100 elements, apply the Controlled Z, and loop through the elements again (20 and 200 steps total, respectively).
+What I meant by O(1) in the proposed solution is that completion happens in max 2 steps total, regardless of input length (vs existing solution where the number of steps is 2 * input length).
+Please confirm if my understanding is correct or if there is something I am missing.
+@CloudNative90, I think we are making an assumption that ControlledOnBitString is O(1) time complexity. I took some time to dig into the documentation. From the documentation,  it seems that its O(N) time complexity. Here is the relevant snippet.
+Given a Boolean array bits and a unitary operation oracle, the output of this function is an operation that performs the following steps:
+So, we end up traversing the input register twice, despite of our intention to reduce time; and time complexity is still O(N) :-(
+X-X-X-X-X-X-X-X-X-X-X-X-X-X-X-X-X-X-X-X-X-X-X-X-X-X-X-
+I think it might be a good idea to add this info here in this tutorial as a note of "Demo 1.1", to prevent the confusion for future learners. What do you think? @tcNickolas would love to know your thoughts too :-)
+@Manvi-Agrawal, Yes, it was a misunderstanding on my part. The documentation clearly states the O(N) behavior of ControlledOnBitString. Going forward, I will confirm my understanding by delving deeper into the documentation.
+Thank you for taking the time to answer, investigate, and point me in the right direction :)
+Apologies for being late to the discussion!
+I agree with @Manvi-Agrawal - ControlledOnBitString itself takes 2 X gates for each zero element of the bit string (here's the code), so using it instead of applying the X gates explicitly doesn't improve the complexity of the solution. And I'll admit the recursive solution took me a bit to parse - I interpreted it wrong on the first try, not being used to recursions that call themselves at most once :-)
+I like the idea of adding a note about ControlledOnBitString complexity to the notebooks - probably both to the Oracles demo and the MultiQubitGates tutorial when it is first introduced to make its complexity explicit.
+Let me know if you'd like to open a PR to do that; other than that, I think we can close this issue
+Thank you for your feedback, @tcNickolas.
+Since the documentation clearly describes the behavior of ControlledOnBitString, explicitly adding it in the notebooks may be slightly redundant. I admit I felt somewhat silly having opened this issue once @Manvi-Agrawal provided the link to the documentation.
+I think it's most efficient for learners to develop the habit of diving into the documentation and the source code as part of their learning. Noting this would be most helpful, while providing the links to both where appropriate (especially when introducing new operations or functions). What do you think?
+I feel a bit odd about adding a note saying something along the lines of "Read the documentation!" explicitly, it's not clear to me where is the best place for that, especially if the learner goes through the content out of order... But adding more links pointing to the specific documentation pages sounds good! That would be just the note in Demo 1.1 of Oracles tutorial saying "This code uses this library function", since MultiQubitGates tutorial already has a link to where it introduces the function. Do you want to send a PR to add that note?
+Agreed. I added the note in Demo 1.1 of the Oracles tutorial with this PR.
+Thank you, @tcNickolas and @Manvi-Agrawal!

@@ -1,0 +1,36 @@
+Some optimization routines are not actually progressing as expected. In the below script, the cost function should be minimized over the course of 100 iterations, but when it gets dispatched using dask it only returns a constant value.
+The same issue does not occur when it gets dispatched locally.
+
+The below image is generated when the same code is ran without using dask.
+
+No response
+Also, this bug (or related bug) seems to pre-exist in another tutorial. Please see https://covalent.readthedocs.io/en/latest/tutorials/machine_learning/mnist_classifier.html . Upon comparing code cells 11 and 14, you will see that cell 11 executes successfully (loss decreases) while cell 14 does not see loss decrease (flat-lines like the image above.)
+Thanks for pointing this out @ruihao-li . Also @ruihao-li, could you please provide some detail on your failing case in the autoencoder tutorial here please?
+I've also seen this with the Quantum Gravity tutorial (all executors).
+Yes, like in the MNIST tutorial, I was also training a neural net with PyTorch and I encountered this issue with both the local executor and the Dask executor (see PR #639). I was getting a more or less constant training loss with Covalent. But the training worked fine without using Covalent.
+I will do some more investigations and post any update if I have any.
+The loss is flat because the gradients computed in optimizer.step_and_cost() are empty. Pennylane is using autograd to compute the gradient function, and somehow that fails.
+A possibly related discussion: dask/distributed#2581 (comment)
+So @cjao does this work if you choose a derivative free optimizer? (Try Powell or something)
+The key to this case lies in the following line:
+cost_function,init_angles=initialize_parameters(p=p,qubits=qubits,prob=prob,seed=s)
+When the initialize_parameters electron is executed using Dask, the returned init_angles is merely a numpy.ndarray even  though initialize_parameters constructs the initial angles
+as a pennylane.numpy.tensor.tensor. Pennylane Tensors have a requires_grad attribute whereas ordinary numpy arrays don't, and Pennylane's gradient descent only computes the gradient for trainable parameters.
+This problem doesn't occur if the initialize_parameters electron uses the local executor, regardless of whether  optimize_electron is run locally or in a Dask worker.
+The crux of the issue seems to be that the serialization and deserialization procedures used by Dask to pass data between worker processes somehow converts pennylane.numpy.tensor.tensor into a numpy.ndarray. The following snippet
+returns <class 'numpy.ndarray'> for me.
+In fact
+yields <class 'numpy.ndarray'>.
+According to the API docs, Dask defaults to a custom (de-)serialization protocol but supports others, including "msgpack" and "pickle". Choosing "pickle" seems to help:
+yields the much more promising <class 'pennylane.numpy.tensor.tensor'>.
+We can set the protocol on a per-client basis.
+Setting  serializers=["pickle"] when constructing the Dask client seems to resolve this particular issue.
+A possibly related Dask issue: dask/distributed#3716
+I wonder which of the other training problems (not necessarily using Dask) can also be traced to serialization/deserialization errors.
+@santoshkumarradha
+Good catch @cjao , but from what a I remember when I was trying out with PyTorch optimization (a simple optimization) things did work. A temp workaround might be to set the pennylane packets to PyTorch and see @jackbaker1001.
+Meanwhile @cjao, can we switch the dask serialization to cloud-pickle ? I do know cloudpickle enables gradient propagation.
+The MNIST bug (which uses torch) has a different explanation. Let's discuss in a separate issue.
+Hey all, I have created another issue related to this when using PyTorch here.
+Until #648 is addressed, a temporary fix is to use executor=local for the initialize_parameters electron.
+Potentailly addreseed in #748

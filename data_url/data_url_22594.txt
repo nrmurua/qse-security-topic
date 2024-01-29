@@ -1,0 +1,28 @@
+It is more convenient to have experiments print directly to the console when run, instead of having the output go into the core device log.
+It is not clear how to handle the core device log in the long term. Maybe keep it as it is, send the messages to the master (either with the current TCP-based protocol used by artiq_ctlmgr or with UDP; UDP is easier on the device but will be affected by #39 on the master and is less tolerant of packet losses), or send the messages to whatever is connected to the device. In the meantime, print as a normal RPC is more user-friendly and generally is consistent with the way kernels are integrated with the host Python code.
+Peter - I know you spent a lot of time implementing formatting on the device. This work can be put to good use to print debug messages into the VCD output through RTIO.
+So the thing is, print can't be a regular RPC because RPCs cannot have a varying number of arguments.
+But it should be easy to add another type of packet just for debug output, and even keep all that print machinery...
+Would it be excessively complicated to support variable number of arguments in RPCs? My compiler did that...
+The print machinery should be kept and go into the VCD system IMO.
+Actually, yes. Your compiler also didn't do typechecking, and since unification-based type systems do not easily admit varargs functions, it means a lot of parts to be changed... essentially RPCs have to become something entirely different from functions.
+Supporting print RPC with only one argument would be OK in the meantime I think.
+The function rtio_log now prints to the VCD. It is usable as follows:
+@whitequark can you:
+Note: due to a bug in the analyzer core, for now make sure that all runs produce an even number of analyzer messages. As far as the log is concerned, an analyzer message contains 4 characters of payload, the terminal 0 counts as one, and the payload of one log entry is padded to a message boundary.
+Any update on this?
+@sbourdeauducq Ping on questions in #206 (comment)?
+@sbourdeauducq Should the name be log or rtio_log ?
+From ARTIQ Python? log sounds good.
+Done.
+There should be documentation for this functionality.
+This should insert vcd_channel_name: in the string so that the decoder script creates the channels. The API should be log("vcd_channel_name_as_string", any_printable_object).
+: may be replaced by a more special character such as \n so that users are less likely to accidentally put it in the channel name.
+I'll use U+001E RECORD SEPARATOR https://en.wikipedia.org/wiki/C0_and_C1_control_codes#Field_separators instead of a colon.
+I assume loads of UTF-8 bugs, if not complete lack of support, in most VCD viewers. But it's fine as long as this UTF-8 character is only ARTIQ internal.
+It's represented the same as the corresponding ASCII character, just a 0x1E byte. I am just used to referring to characters by their Unicode name.
+Where do I put the docs?
+I have no particular opinion on this, as long as it has some consistency with the rest of the manual.
+Let me rephrase: I have no idea where to put them in the manual. Seems equally inconsistent in any place I've considered.
+Ok, I added channel name and wrote some docs.
+print is still not a regular RPC. This is user-visible when it is called with multiple arguments:

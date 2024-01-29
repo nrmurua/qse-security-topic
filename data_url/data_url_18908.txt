@@ -1,0 +1,166 @@
+One of the benefits of the OpenQASM community in general is the number of projects that have some kind of from_qasm or to_qasm methods to get different projects to talk to each other.
+If OpenQASM3 is not backwards compatible with OpenQASM2 then these projects will need to be updated. There's another famous 2->3 upgrade that did not go well.
+I would propose adding a paragraph to the intro that lays out the intention for OpenQASM3 to be backwards compatible with OpenQASM2.
+Note that OpenQASM3 is definitely not intended to be forwards compatibility with OpenQASM2, as in you can't use an OpenQASM2 parser on OpenQASM3 since so many new things have been added. But a project that outputs OpenQASM2 should be able to bring that into OpenQASM3.
+In this issue I want to put together a list of potential backwards compatibility issues:
+One is if the type/variable declaration order in #117 is flipped. I actually went back and changed my vote on this, in favor of keeping variable declarations as angle[20] theta; rather than let theta: angle[20] which would be incompatible with the OpenQASM2 line qreg cin[1];.
+Two is if program entrypoint's are switched to a main rather than running at the top-level in this issue: #127
+A third potential issue is the OpenQASM2 if statement which looks like if (c==1) x q[1]; - it has parenthesis around the condition but no braces around the body. Not sure if this would parse in OpenQASM3.
+@zachschoenfeld33 is the expert here - are you aware of any other current or potential backwards incompatibilities?
+Note: The types qreg and creq are being deprecated, but it's called out in the spec that these will still be supported in OpenQASM3.
+I would be interested to hear @ndebeaudrap input on this subject.
+You might describe my position as being very pro-backwards compatibility. I accept, and even endorse, the idea that some very limited breaks from compatibility with OpenQASM2 may be necessary. But I would qualify this by saying that there had better be a very good reason for any such break. (The use of defcal declarations in place of opaque declarations is one instance which I consider well-judged, in part because opaque declarations are only suitable for quite specialized purposes.)
+It is good and important that OpenQASM3 provide more functionality. But this functionality will be of more use to programmers if it extends not just the syntax, but also elaborates upon (instead of overturning) the abstract model which underlies the syntax, and what for lack of a better word one might describe as the 'rhythm' behind the syntax, which allows the programmer to better remember (or intuit) how to access any given functionality.
+I agree with a statement of intention of backwards compatibility (perhaps with a minor caveat which allows the elimination of the opaque keyword). I also agree --- necessarily --- that the default entry point should be the top-level. (If desired, it is surely possible to introduce mechanisms to provide alternative entry-points: to provide an example without necessarily endorsing it, one can consider how this may be done in a conventional assembly program to be linked in with other code.) Above all, I would advocate that the syntax for types, gate declarations, and operations be backwards compatible with OpenQASM2.
+I drafted some notes about this a few weeks ago (not touching on entry points or return values, but on type syntax e.g. for gate and def declarations), laying out what I consider to be the pragmatic motivations for retaining backwards compatibility. I've been pre-occupied for the past few weeks, so I expect that it may be slightly outdated, as it makes reference to the open spec as it stood back then. I can attach it here in the interests of opennness if desired.
+@ndebeaudrap, If you are comfortable linking I think others would be keen to read.
+Attached here: "Remarks on type syntax in the proposed OpenQASM 3"
+Here is the OpenQASM2 spec, for reference: https://github.com/Qiskit/openqasm/tree/OpenQASM2.x.
+Thanks @ndebeaudrap. I also agree we should try to maintain backwards compatibility where possible. I read through the document and have some comments:
+We could also potentially write a converter from OpenQASM2 to OpenQASM3 which would include type inference.
+@steleman perhaps you have comments on how this might work from a compiler perspective? I imagine type inference, implicit casts and implicit type sizes would make syntax errors more challenging to recognize.
+@stevenheidel if (c==1) x q[1]; should parse. Single line statements do not require the brackets (see https://qiskit.github.io/openqasm/language/classical.html#looping-and-branching, final paragraph).
+My answer has two parts:
+C (and C++) allow one - and only one - statement to follow an if statement without braces. More than one statement after if must be enclosed in braces.
+The same rule applies to else if, else, while, for and do / while.
+Writing the true branch statement on the same line as the test condition is frowned upon because it makes the code difficult to read. But that's a matter of good coding style. The compiler doesn't care.
+@zachschoenfeld33: thanks for the feedback.
+It is fair to be more cautious about the type casting system once we get down to the low level representation of bitstring (which, indeed, we should probably think of as being an 'array' rather than a 'string'). It would be very reasonable, and perhaps less surprising to programmers, to provide an error message when attempting to cast bit-arrays of different lengths to one another.
+I had missed that for loops are allowable in gate definitions. It would not be unreasonable to disallow them, but I see no strong reason to forbid them. Another construct allowed in gate definitions which might motivate integer parameters to gate definitions is the pow[k] @ modifier. Given this situation, I would advocate admitting the possibility that gate parameters may be integer types.
+I would strongly advocate having a similar style for gate and def subroutines, to make it easier to program (and which is compatible with the type-free syntax of OpenQASM2). More generally, we should allow for a mode of programming which does not overcommit to precise classical types, because an important use-case is code which is not machine specialised. Having said that, it is important for OpenQASM3 also to support machine-specialised code, in which a float[16] is a float[16].
+I concede that the above three points particularly motivate having a somewhat stricter type system than I advocated in my notes. In particular,
+Other revisions to the system suggested in my note might be well-motivated. My general thrust is that  precision about type information is not always be required, and that there should surely be a useful and non-maddening approach to type conversions and type inference which could support that. And, in so doing, we may also preserve backwards-compatibility with OpenQASM2.
+I do not actually object to having return be one means of producing outputs, though I believe it would be acceptable (and possibly a good idea) to abandon that syntax. What I caution against is removing the measure a -> r syntax (breaking backwards compatibility with OpenQASM2). Less urgently, I suggest that if the syntax measure a -> r syntax is retained for single-qubit measurements, then this syntax should also be admitted as a possible invocation method for def subroutines which produce classical outputs. (I would also note that there is a large family of classical programming languages whose syntax for some commands is closer to measure a -> r than it is to r := measure a: specifically, assembly languages, which tend to lack an assignment operator but do start their instructions with a command name.)
+I agree that arrays in general are reasonable to include in OpenQASM3. Upon reflection, it should probably be a high priority, for the sake of applications to ansaezte. I agree with the syntax that you describe.
+Regarding writing a converter: that is of course possible. What software won't be able to solve is the prior expectation that programmers might have (on the basis of the name alone) that there would be a large amount of continuity between the languages, and the fact that you'd be asking a community of users to unlearn OpenQASM2. I think it is important that, with very limited exceptions, OpenQASM3 be more than OpenQASM2, rather than different:  that is: to allow more control flow, allow more type precision, rather than to require different type precision, to require different syntax for measurements, etc.
+I do not actually object to having return be one means of producing outputs, though I believe it would be acceptable (and possibly a good idea) to abandon that syntax. What I caution against is removing the measure a -> r syntax (breaking backwards compatibility with OpenQASM2). Less urgently, I suggest that if the syntax measure a -> r syntax is retained for single-qubit measurements, then this syntax should also be admitted as a possible invocation method for def subroutines which produce classical outputs. (I would also note that there is a large family of classical programming languages whose syntax for some commands is closer to measure a -> r than it is to r := measure a: specifically, assembly languages, which tend to lack an assignment operator but do start their instructions with a command name.)
+I believe part of the compatibility clash is arising from the C-like classical syntax and ASM quantum syntax. On one hand, OpenQASM3 uses ASM like circuit syntax because of QASM. C-like classical computation is a concession that programmers, in general, do not like writing assembly in this day and age. It certainly causes clashes in the language consistency and backward compatibility.
+What software won't be able to solve is the prior expectation that programmers might have (on the basis of the name alone) that there would be a large amount of continuity between the languages, and the fact that you'd be asking a community of users to unlearn OpenQASM2. I think it is important that, with very limited exceptions, OpenQASM3 be more than OpenQASM2, rather than different: that is: to allow more control flow, allow more type precision, rather than to require different type precision, to require different syntax for measurements, etc.
+I think this is a succinct way of describing a candidate philosophy to the language design that as you point out could be adhered to with some minor changes. I believe many are coming around to this.
+I do believe it is worth pointing out that the relative maturity of OpenQASM2 and quantum community in terms of adoption and tolerance of breaking changes for improvements is much different than the case of other famous language versioning debacles. The field of quantum computing is developing rapidly and erring towards stability over improvement could also be damning. It is a fine line that must be carefully considered.
+I believe part of the compatibility clash is arising from the C-like classical syntax and ASM quantum syntax. On one hand, OpenQASM3 uses ASM like circuit syntax because of QASM. C-like classical computation is a concession that programmers, in general, do not like writing assembly in this day and age. It certainly causes clashes in the language consistency and backward compatibility.
+Well, OpenQASM2 also was assembly-like, and also had C-like syntax (not just in the syntax of if statements, but also very broadly in the style of syntax for gate definitions). So regardless of what OpenQASM3 is like, so long as it is broadly like OpenQASM2, there will be elements of the two styles. Having said this, I thought the compromise made in OpenQASM2 between the two styles was excellent. (This is part of why I am pushing for 'like OpenQASM2, but moreso'.) If OpenQASM2 was a bit sparse on control flow, at least what it did have was very concise and resembled the idioms of a well-established language family.
+Backwards compatibility is not inconsistent with being somewhat C-like: it is only inconsistent with being totally C-like (precisely because OpenQASM2 is somewhat, but not totally, C-like). And in my opinion it is not absurd to mix high-level language ideas with lower-level ones, given that we're working simultaneously both with very mature technologies (classical computation and compilation) and very young technologies (quantum computation and compilation). The question is how to make the boundaries between the two language idioms comprehensible; and one of the biggest hints to the programmer is whether or not a given command or construct inherently involves qubits.
+I do believe it is worth pointing out that the relative maturity of OpenQASM2 and quantum community in terms of adoption and tolerance of breaking changes for improvements is much different than the case of other famous language versioning debacles. The field of quantum computing is developing rapidly and erring towards stability over improvement could also be damning. It is a fine line that must be carefully considered.
+I agree that we should be wary of banking too much on stability. It may be that there are strong arguments for simply leaving OpenQASM2 in the past. But I think that an island of predictability --- a project which shows that it is not necessary to completely overturn even one's own work of five years ago, to make progress --- would be attractive and beneficial in the current environment. OpenQASM3 is well placed to be that. (At the same time, if the time approaches to think of breaking with the past, this could be done with a parallel offering that doesn't re-use the name 'OpenQASM' with a version increment.)
+Just a note here that the capital-letter base gates U/CX are also deprecated and the base is now u/ctrl/gphase, from which all other unitaries are produced. But this can easily be remedied by including a library that contains U and CX defined in these new terms.
+I think this issue comprises a few different issues (which it might be best to open individually).
+Here are my thoughts:
+I think we need to do some cost-benefit analysis of all these proposals.
+Please keep in mind the following fact: Nothing Is Free.
+Why do we need Type Discovery? Here's an example of a hypothetical typeless OpenQASM3:
+What is phase? What is lambda? What is x? What about q? Are they the same type of thing? Are they different? If they are different, how are they different? Does assigning phase to x have any side-effects on either operand? Or on q?
+etc etc etc.
+Implicit casting  is really a misnomer. In fact, we're talking about dynamic type overloading. In which, any type can become any of a set of other types, on-the-fly. How does the compiler resolve this? By performing combinatorial explosion during Type Discovery. How complex is this? It's significantly more complex than C++. At least C++ is statically typed.
+An int is not a bitmask (i.e. a sequence of bits). An int is a static type with well-defined properties and size. A bitmask has no type. It's just a sequence of bits. It does not identify a type. A variable  of type int is represented as a bitmask in memory, and that only because this variable has an address, and a size. I.e. it's a lvalue. A C struct is also represented as a bitmask in memory. So is an array of floats. Etc, etc, etc.
+If we want to cast a variable of type int to its bitmask representation, we need to do so explicitly. If we remove this constraint, and we introduce this anything-is-a-bitmask loophole, we'll end up with floats becoming ints on-the-fly, with catastrophic results.
+The four bullet points above are just skimming the surface of the complexity problem being presented here.
+We need to reconcile the goal of maintaining strict backwards compatibility with OpenQASM2 with the goal of evolving OpenQASM3.
+Save for the use of commas, semicolon, parens and braces, I see nothing C-like in a gate declaration from OpenQASM2. Case in point, a C frontend won't even parse it correctly.
+Thank you.
+I'm basically quoting what was said in the OpenQASM2 spec, and I can see why it was said. One might say that OpenQASM2 is C-like in the same way that Spanish is derived from Latin (or perhaps English is informed by old German or old French). When it comes to actually parsing OpenQASM2 as C, you are obviously correct: even small details, such as the absence of explicit types in the parameters of gate definitions, mean that fragments of the OpenQASM2 grammar are inequivalent to the corresponding fragments of the C grammar. For my part, it is more important at this point to maintain consistency of OpenQASM3 with OpenQASM2, with at most very small and easily patched differences, than the precise way in which OpenQASM2 was developed.
+If declaring that OpenQASM2 is not meaningfully C-like anyway makes it easier to justify keeping OpenQASM3 from being too much like C, I'm fine with that.
+I agree. What I think is important is to keep the types of arguments, e.g. of gate definitions, from being overspecified (and therefore less generally useful, not to mention not backwards compatible).
+Your example is a good one (though I'm not sure that I've seen gates used as first-class values in OpenQASM3). For a gate definition such as
+it would make sense for the arguments of U to all be a type such as angle[*], which is to say to admit angle values of any precision, to be realised by the compiler by a finite-precision angle in a way that depends on the precision limits of the quantum device in question. Because the arguments to U might be not-explicitly-typed numerical constants, it would probably be best for those numerical constants to be a supertype of all of the finite precision real types, and for this type to be down-cast by the compiler to an angle type (again of the precision appropriate to the machine in question). Similar inferences can be made for various integer parameters used in contexts which presuppose integers.
+Sure: this is work that the compiler must do. I would suppose that it is worth doing, not only for backwards compatibility reasons but also to ease uptake by programmers who may already be straining to understand quantum computation (if growing the base of users who happen not to work in physics labs is one of the goals). To me, the only question is how to make it practically feasible, and also sensible to a human user.
+If there is to be backwards compatibility with OpenQASM2, then either we need to overload the == operator, or at least one of the directions of bitmask → int or int → bitmask must happen 'automatically', because if (x == 4) [...] is valid OpenQASM2 for x a creg variable.
+(An automatic conversion to or from bitmask need not be provided for any other type; while obviously everything in memory has a representation as a bitmask, we are free in principle to arbitrarily privilege integer types as ones with which bit arrays interact more easily. I suspect few programmers will complain much about that if we provide explicit mechanisms to do so.)
+I may be naive, as I am not a specialist in this area. But it seems to me that it would suffice to have a hierarchy --- something like a semilattice of types --- so that every set of concrete types has a join. This would allow an expression involving multiple types to have semantics, and then a description of what limitations we impose on 'automatic' up-casting or down-casting. For instance: addressing your point 4. above suggests that we might forbid automatic casting integers down to bit-masks, though we may permit automatic casting of bit-masks to integers. My notes contain such a proposal, though I have already been persuaded that the precise type system should differ from what I set out there.
+Again, naive though I may be, it seems to me that a number of design goals (backwards compatibility, ease of adoption and use, feasibility to compile) may be achieved simultaneously through making appropriate design choices along similar lines. If there are further difficulties with such a system, which would complicate the idea of allowing the compiler to fill in type conversions through the use of a semilattice, these difficulties would be very good to know about.
+[ ... ] we need to overload the == operator [ ... ]
+I think that's the correct way to go.
+But it seems to me that it would suffice to have a hierarchy --- something like a semilattice of types --- so that every set of concrete types has a join. This would allow an expression involving multiple types to have semantics [ ... ]
+It the language is typeless, then the expression won't have a type until the compiler has performed Type Discovery. Whether that is implemented as a lattice, or some other device, is really an implementation detail. I'm pretty sure I need more than a couple of hours to think about how to approach solving this problem.
+In final analysis, it's still a bad design decision: we've still exponentially increased the complexity of the compiler's Semantic Analysis pass for the sake of making the language appear simple and easy to parse. In football terms, we punted because we couldn't think of anything else to do.
+Either we accept a certain degree of complexity in the Language itself - strong typing - or we make the compiler 10 times more complex and difficult to write than it needs to be.
+Personally, I don't see a tradeoff here.
+If a Parser can't parse the language as it is right now, I will submit that is a Parser problem, not a Language problem.
+[ ... ] a number of design goals (backwards compatibility, ease of adoption and use, feasibility to compile) may be achieved simultaneously through making appropriate design choices along similar lines.
+Sounds really wonderful. Backwards compatible, forward-looking, typeless, easy to adopt, easy to use, all at once.
+There Is No Free Lunch.
+Here's an example of why automatic implicit conversion through bitmask is very problematic:
+Is this legal OpenQASM3?
+Because automatic implicit conversion through bitmask is effective, A implicitly converts to an Integer Constant Expression. That, in turn, makes A << 1 legal, although bitshift operations on floating-point values are devoid of any meaning.
+This is an example where C comes to the rescue. In C this is not legal, and the compiler will issue a diagnostic.
+Here's an example of why automatic implicit conversion through bitmask is very problematic:
+Is this legal OpenQASM3?
+That depends entirely on whether we decide that we will allow automatic down-casting of real numbers to bitmasks (or direct conversions from real values to bitmasks). To which one reasonable answer is, "no". That's an answer I would be happy to endorse.
+I don't think we are necessarily advocating that all types always be automatically converted to one another. (I may have been doing that implicitly some time ago, but I am not now.)
+But should we have automatic casting from angles to fixed-point numbers? If not, why not? Should we have automatic casting from angles to floating-point numbers? If not, why not? Should we have automatic casting from integers to various real-number types? If not, why not?
+Do we want to require the user to make very careful fragile / non-portable choices every single time they write a gate definition? That doesn't sound very good to me.
+[ ... ] we need to overload the == operator [ ... ]
+I think that's the correct way to go.
+That also may well be, independently of other considerations.
+In final analysis, it's still a bad design decision: we've still exponentially increased the complexity of the compiler's Semantic Analysis pass for the sake of making the language appear simple and easy to parse. In football terms, we punted because we couldn't think of anything else to do.
+I rather think that it's a play that may be difficult, but is trying to score many more points than we can on a punt. The whole objective is to do something ambitious, because it would be worthwhile.
+Sounds really wonderful. Backwards compatible, forward-looking, typeless, easy to adopt, easy to use, all at once.
+There Is No Free Lunch.
+If you aren't willing to try for all of these, how many of these do you think we should give up? It seems to me that giving up backwards compatibility will end up losing future-proofing of code and portability.
+What will attract people to OpenQASM3? Simply that it is offered up by IBM, and has a particular name? Or do you think the developments in hardware by IBM will suffice to make OpenQASM3 important [Edited to add:] or that OpenQASM should just target people working on hardware who want to express what can be done on the precise machine they're working on right now --- and that outreach and portability don't matter?
+I agree that we should not punt: we should aim for something that will succeed. The question is what will succeed, and why.
+But should we have automatic casting from angles to fixed-point numbers?
+Nope. It should be an explicit cast operation. An angle is not a fixed-point number. Standard semantics difference between is-a  vs. is-implemented-in-terms-of.
+[ ... ] how many of these do you think we should give up?
+But should we have automatic casting from angles to fixed-point numbers?
+Nope. It should be an explicit cast operation. An angle is not a fixed-point number. Standard semantics difference between is-a vs. is-implemented-in-terms-of.
+What should the type of the constant 1.570796 be? fixed[1:20], float[32], angle[21], or something else?
+[ ... ] how many of these do you think we should give up?
+I will have to take your word for it that what I am advocating is technically a typeless language. If this is the case, suffice to say that I think it is worthwhile to entertain a 'typeless' system which makes certain distinctions between different 'kinds' of values, and which doesn't necessarily allow automatic conversions between arbitrary pairs of 'kinds'.
+Exploring your preference for a moment, would "giving up being a typeless language" entail having explicit type conversions between every pair of types? Such as angle[16] and angle[32], for example?
+What should the type of the constant 1.570796 be?
+It depends entirely on its declaration, doesn't it?
+1.570796;
+can't appear on a line, all by itself, without a declaration. It makes no sense.
+If it has a declaration, it has a type.
+By the looks of it, it can be an IEEE-754 compliant float, or an IEEE-754 compliant double, or something else. Without an explicit declaration, I don't know what it is.
+Exploring your preference for a moment, would "giving up being a typeless language" entail having explicit type conversions between every pair of types? Such as angle[16] and angle[32], for example?
+Yes because there is potential loss of precision. And because the OpenQASM3 Spec does not specify the implicit conversion rules between fixed-point values.
+Exploring your preference for a moment, would "giving up being a typeless language" entail having explicit type conversions between every pair of types? Such as angle[16] and angle[32], for example?
+Yes because there is potential loss of precision. And because the OpenQASM3 Spec does not specify the implicit conversion rules between fixed-point values.
+If such a conversion rule were defined, with the understanding that the conversion might in some cases lead to loss of precision, would you foresee other difficulties?
+What should the type of the constant 1.570796 be?
+[...] By the looks of it, it can be an IEEE-754 compliant float, or an IEEE-754 compliant double, or something else. Without an explicit declaration, I don't know what it is.
+How many of the following could simultaneously be acceptable declarations (provided a syntax for declarations in which each one individually was an acceptable declaration)? All of them? At most one? At most two?
+If such a conversion rule were defined, with the understanding that the conversion might in some cases lead to loss of precision, would you foresee other difficulties?
+First, we would need to define the following:
+In addition to this list, there is the added complexity of dealing with different classical ISA's, each and every one of them having their own method of handling any and all of the above.
+Then we can write the implicit/explicit conversion rules.
+These two might be problematic, depending on the fixed-point decimals implementation.
+It strikes me that the above issues would be relevant regardless of whether or not OpenQASM3 were designed to be backwards compatible, or 'typeless', or if it were instead designed to be C-like. It would seem to be important work.
+Hypothetically speaking --- and without meaning to claim that it would be simple --- suppose that standards were set out which achieved suitable definitions for each of these points, and furthermore suppose that an implementation and implicit conversion rules were defined so that fixed[1,10] b = 1.570796; and angle[8] a = 1.570796; were both valid declarations. What further obstacles would there then be to a type system in which fixed[1,10] b = 1.570796; angle[8] a = b; was a legal statement which represents a conversion of the referent of b to a representation in the angle[8] type, which is correct up to the established conventions about loss of precision?
+If all these rules for handling fixed-point and floating point were clearly defined, and we had tested them in practice, and they were proven to work correctly, then yes, then we can have a meaningful discussion about implicit and explicit conversion rules.
+But without these rules in place it seems impossible to come up with something coherent IMO.
+And the moment we start talking about implicit conversions between fixed-point decimal types, then we have to also start talking about implicit conversions between fixed-point integer types and fixed-point decimal types. So, let's add that to the list.
+It's a gigantic amount of work that involves not just theoretical standardeering but a giant amount of practical experimentation as well.
+Sorry, @ndebeaudrap for the delay in responding to your document. Here are some of my thoughts/responses from reading it (in order of the arguments in the doc):
+I agree that this last statement should not require an explicit cast. Or if it does, then it should
+at least be angle[10](a + b) as I don't know what angle is supposed to mean without a width.
+bit[n] and creg[n] are the same?? Actually, my interpretation of current spec is that neither is
+allowed. I'd be happy to extend bit to allow wider bit types with bit[n]. However, I
+think we need explicit syntax to refer to arrays, e.g. array[bit, n], otherwise I don't know how
+to distinguish the types of int[n] a and int a[n]. (actually, what is an int without the
+brackets? it is an int[1], a machine-dependent int[size_t]-like thing?, or a generic int that
+can be bound to any width?)
+I like elements of the proposed type hierarchy, which would allow automatic implicit conversions in
+many cases. The proposed rules for converting reals to concrete types seem reasonable. I think we
+should consider an alternative for signed to unsigned conversion that operates closer to C++'s
+reinterpret_cast<uint16_t>(...), i.e. we don't truncate negative numbers to zero. This may seem
+dangerous, but I think it is necessary to get automatic conversions between int[n] and uint[n] of same width n (a common scenario in typical hardware).
+Agreed on dropping types from gates and the spec already reflects this.
+I disagree w.r.t. types and def. I think all the arguments to a def should be typed. I even
+wonder about pulling qubits insides the round brackets to allow for arbitrary order of numeric
+inputs and qubits, as I don't see why subroutines should mirror the syntax of gates. The output type
+seems particularly useful so that user code isn't left with just a bucket of bytes, but can present
+the output more usefully as an integer, angle, or whatever is appropriate. From a syntactic
+consistency perspective, it is also important to connect def and kernel.
+We have had live discussions about syntax like you propose for named return values and decided
+against it.
+We do need to come back to whether or not we need both procedural assignment syntax as well as
+OpenQASM2's right arrow syntax. I think the right-arrow syntax is fine for invoking subroutines and
+kernels, but it appears much more awkward with arithmetic expressions, i.e. a + 2*b -> c. It
+works but my brain has trouble parsing it.
+I think we should consider an alternative for signed to unsigned conversion that operates closer to C++'s reinterpret_cast<uint16_t>(...), i.e. we don't truncate negative numbers to zero. This may seem dangerous, but I think it is necessary to get automatic conversions between int[n] and uint[n] of same width n (a common scenario in typical hardware).
+Changing reinterpret_cast<>(...) to static_cast<>(...) yields this:
+@stevenheidel @ndebeaudrap @taalexander @steleman @blakejohnson this issue can now be closed, right? If particular points need to be addressed we should open up new issues to cover those
+Yes will close

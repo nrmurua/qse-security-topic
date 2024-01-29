@@ -1,0 +1,24 @@
+This is in response to Pull #264 but more general so opening a new issue.
+The template in #264 by @willzeng made me realize the fundamental difference between unitary folding and parameter noise scaling. (This may have already been obvious to people but it wasn't clear in my head until now.) Namely, parameter noise scaling is stochastic because it maps rotation angles theta to
+where epsilon is a random variable. Thus, the output of the scaling function will be a stochastic circuit and expectation values need to be averaged over multiple independent executions.
+However, fold_gates_at_random is also stochastic and one could argue just as well that it should be averaged over. We thus have two categories of noise scaling functions:
+Because of this (and the fact that these are jointly exhaustive categories -- either a noise scaling function is deterministic or non-determinsitc), I think it makes sense to define the Factory.run method to handle both cases, or to define separate run methods for each case.
+We could incorporate averaging into Factory.run so that all noise scaling functions are compatible. Following Will's template (renaming shots to num_to_average), we would have something like:
+In this way parameter scaling is directly supported with a very minimal change to the interface. Namely, we would need to pass num_to_average to Factory.run, and because execute_with_zne is a wrapper for Factory.run we could input num_to_average there as well.
+Alternatively, the Factory object itself could have an attribute called num_to_average input during its constructor.
+Since num_to_average is really more of an attribute of noise scaling functions, maybe it makes more sense to make noise scaling functions objects which could have the attribute num_to_average.
+Keep the current run method as is, but add run_and_average with the signature of the run method in proposal 1. This is essentially the same as Will's parameter_run method but is more general because it is for any non-deterministic noise scaling function. Additionally I would propose this be added natively to the class instead of monkey patching as in #264.
+I tend to favor proposal 1 but am interested to hear what you all think in general @willzeng @andreamari @nathanshammah @yhindy @karalekas
+@rmlarose, what you suggested makes sense to me.
+Between the different proposals I like both 1 and 2.
+Thanks @rmlarose. This is great.
+My preference is for Proposal 1 with the added change of setting num_to_average=1 so that it is an optional value. That way I think all of the current methods would work just fine. Does that seem right?
+This ends up being a very small change to the interface that then adds support for things like parameter scaling / randomized compiling, etc.
+My preference is for Proposal 1 with the added change of setting num_to_average=1 so that it is an optional value. That way I think all of the current methods would work just fine. Does that seem right?
+Yeah I think a default argument makes sense here.
+It sounds like Proposal 1 is the leading candidate. If we all agree I'm happy to implement this.
+@rmlarose let's confirm with @yhindy at group meeting today to make sure we haven't missed anything for the parameter noise use case. Assuming that's ok, you'll be good to proceed
+The only thing I'm concerned about with proposal 1 is that it will slow down the old use case if we are running this loop num_to_average times:
+Will the users of folding be able to say "I only want to do this once with 1024 shots in the executor"? It seems like if we allow users to pass in their own executor with shots already specified then this might be okay. I think we will lose some flexibility in allowing users to have different numbers of shots per lambda level, but I think the current state would be a good milestone and we could add that advanced functionality later.
+In terms of being able to do parameter scaling, we are likely to see performance hits since we have to call the executor num_to_average times, but this was inevitable. The only way I see getting around this would be to kind of cheat, i.e. instead of doing 1024 runs with 1024 different params we could run 32 different params for 32 shots each or something like that (could be a cool research question to investigate the tradeoff).
+In general though I think proposal 1 is the cleanest proposal we've seen thus far. Not having additional classes is great for usability. The num_to_average parameter might be confusing, but I like the framework of deterministic vs. non-deterministic noise scaling. If we include this in the docs with examples, it will definitely be easy to use.

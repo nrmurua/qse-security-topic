@@ -1,0 +1,30 @@
+When working in the XY mode, all the atoms start off in the "down" state by default. Due to the lack of a Microwave.Local channel, they currently cannot be prepared into another initial configuration through Pulser.
+However, experimentally it is possible to prepare the system in specifc initial configurations by overlaying an SLM pattern that brings certain atoms out-of-resonance with the microwave, effectively allowing the driving of the transition on only the atoms that are still in resonance.
+This SLM pattern cannot be modified in the middle of a run, so the chosen atoms are fixed for the entirety of the sequence. This is why it is most useful as a way of preparing the initial state of the system.
+The interface I have in mind is as follows:
+Important remarks:
+Hi, I've got a question on the issue.
+Unless I'm misinterpreting the code, it seems to me that the SLM activation and deactivation should be linked to a Pulse (or a _TimeSlot perhaps?) rather than a Channel. Otherwise you can't deactivate it.
+What do you think?
+edit: Or do you mean that Sequence.set_slm_mask should work similarly to Sequence.add?
+Hi, I've got a question on the issue.
+Unless I'm misinterpreting the code, it seems to me that the SLM activation and deactivation should be linked to a Pulse (or a _TimeSlot perhaps?) rather than a Channel. Otherwise you can't deactivate it.
+What do you think?
+edit: Or do you mean that Sequence.set_slm_mask should work similarly to Sequence.add?
+@darcangelomauro indeed, that's what the I was trying to convey with align_with_channel argument: that you would "align" the moment when you turn on the SLM with the time the chosen channel is free (i.e. it's last instruction ends). Does it make sense?
+Ok I see, thanks.
+Could that bring to a situation where the slm turns on and off in the middle of a different pulse than the one it's aligned with?
+And should I be mindful in general of a user potentially mixing together microwave and rydberg/raman channels in the same sequence?
+Update on the state of the issue. What I'll describe has been pushed on the slm_mask branch, branched from noisy-xy.
+Sequence has now two new attributes, Sequence._slm_mask_targets and Sequence._slm_mask_times.
+Sequence._slm_mask_targets is a set of qubits that specifies which qubits will be masked.
+Sequence._slm_mask_times is a list of the type [[t_1_i, t_1_f], [t_2_i, t_2_f], ... ] where t_1_i and t_1_f represent the time when the mask was turned on and off respectively.
+Sequence has now two new methods, Sequence.config_slm_mask(qubits: Set[QubitId]) and Sequence.set_slm_mask(align_with_channel: str).
+Sequence.config_slm_mask(qubits: Set[QubitId]) tells the sequence which qubits are to be masked, and can be called only one time.
+Sequence.set_slm_mask(align_with_channel: str) aligns the mask to the last pulse in a channel, meaning that an element of the form [t_i, t_f] is appended to Sequence._slm_mask_times, where t_i and t_f are the initial and final time of the last pulse in the channel.
+The mask, when it's on, effectively removes the masked qubits from the register. This means that amp, det and phase samples of every channel are put to zero if targeting the masked qubits, as well as the Van der Walls (if pulses are Ising) or the XY interaction terms (if the pulses are XY).
+Two interaction terms are calculated in Simulation now: one with all the qubits (call it V), and one without the masked qubits (call it V_masked). The interaction terms are now time-dependent (of type qutip.QobjEvo) with a coefficient that is either 0 or 1.  When the mask is on, V has coefficient 0 and V_mask has coefficient 1, and vice versa when the mask is off.
+When visualizing the sequence, the mask appears as a darker shade in the background. At the bottom left of the shaded region, the masked qubits are specified in a grey box with bars.
+Before initiating the pull request, I will have a discussion with the hardware department to make sure that the implementation matches the hardware.
+After consulting with hardware, I think it is best for now to limit the use of the SLM mask to initial state preparation.
+The effect of the mask it's not as simple as switching on and off atoms in the register. When the mask is applied to superposition states, a relative dynamical phase is accumulated which might be hard to control.

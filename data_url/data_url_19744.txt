@@ -1,0 +1,12 @@
+Labels and qubit ordering are sometime confusing when we setup discriminator with multiple qubits.
+Because qiskit uses little endien to return measured bit string, we should create expected_states to fit in with this format. The ordering of expected_state should be the same as the order of schedules in a job. Also qubit_mask should be in ascending order. If we violate the rules, discriminator might output nonsensical results.
+I think these ordering issues should be handled behind the interface, and be connected with proper clreg-memory mapping Qiskit/#2704.
+In addition, labels in int, float format are very convenient. i.e. when calculating expected eigenvalues, labels like 1, -1 are required rather than '0', '1' (I'm not sure if this is possible because of the compatibility with result object).
+I found a problem of current discriminator interface after discussion with @itoko .
+Because discriminator reads IQ values in memory slots and convert them into quantum states, this doesn't need to know physical qubits used in the experiment, but it is enough to know the indices of memory slots where valid IQ values are stored. Thus, qubit_mask should be replaced by memory_slots.
+Using qubit_mask implicitly assumes consistency in ordering of QuantumRegisters and ClassicalRegisters, but we can store measurement data of, for example, qubit[3,1] in memory_slots[0,1]. These mapping should be decided by user, and should be passed to pulse scheduler or helper function to create pulse schedules for discrimination. @lcapelluto ?
+The same problem occurs for any of the measurement items, e.g., the mitigation, the assumption is that the the index of the qubit in the list is the slot/register for the qubit measurement.
+This PR (#297) extracts the expected states from the calibration strings. As long as these are correct, then the discriminator expected states should now be correct. However, we still need to check that the filter is handling this properly.
+Just to be sure: in the discriminator the IQ data is extracted by doing
+and is then repackaged into xdata by doing
+Thus, I would expect that, for example, if we are discriminating qubit 0 and 1 out of three qubits (namely 0, 1, and 2), self._qubit_mask should be [0, 1] but the calibration strings will be cal_000, cal_001, cal_010, cal_011. @nkanazawa1989 and @dcmckayibm  is this the expected behavior?

@@ -1,0 +1,128 @@
+Here an example of tf + multi-gpu setup:
+https://arxiv.org/abs/2002.12921
+Some possible approaches are presented in:
+I would like to have a go on this over the next few days. I am planning to start with an "experimental" implementation based on communication protocol of qHiPSTER, mostly to get familiar with how mutliprocessing works on Tensorflow. If everything goes well, we can then try other more memory efficient protocols.
+Looking at VegasFlow code it seems that we can use tf.device to execute code in the appropriate device. There are two questions related to that. Assume that we have partitioned a n-qubit state to two (n-1)-qubit states state0 and state1 saved on two GPUs.
+Does this run in parallel in both devices?
+the proper way to do this or shall we first transfer manually state1 to gpu:0 somehow?
+The qHiPSTER approach seems a reasonable starting point. At some point I was also thinking about porting basic linear algebra operations to multi-GPU, i.e. implementing the einsum or matmul for larger matrices.
+Concerning your points:
+Other techniques are possible, however they are experimental and designed for high level ML training, see https://www.tensorflow.org/guide/distributed_training.
+I have played a little bit with the device manipulation with large objects.
+I have also been playing around a bit with this and although I like the idea of avoiding to do the state manipulation manually, I cannot find a way to implement this in practice. Even if we attempt to do a multi-GPU einsum implementation as a third einsum backend, this should split the state internally and call tf.einsum on the pieces, something like:
+or the same parallelized with joblib as above. This approach seems to work even when state does not fit in the a memory of a single GPU. Eg. for 27 qubits doing tf.einsum(..., state, gate) runs out of memory but tf.einsum(..., state[0], gate) works.
+The next question is whether the above function should return state or [state0, state1]. If we want to keep our current code it should return the full state, which means that we need an additional stitching step: state = tf.concat([state0[tf.newaxis], state1[tf.newaxis]], axis=0). There are several issues with this:
+The test I did so far is generating a random state and applying H to all qubits. For 27 qubits this takes ~5sec without the tf.concat step and 20sec with tf.concat. Note however that this test is biased because it does not require changing the "global" qubit a lot. I plan to implement a fair comparison to check whether the difference remains that high.
+Indeed that is the main point we have to decide. Concerning your test, how long the same calculation takes on CPU-only? I believe this extra 20s are quite acceptable when comparing to CPU.
+Now in terms of strategy, I think that we can start from the assumption the CPU system has enough memory to hold the full state. In fact, if the computation goal is to deliver a big state array, then there isn't much we can do, except writing to disk if the CPU RAM is too small or printing to screen by streaming from the GPU.
+Here are the results of some benchmarks for 27 qubits and applying a single H to every qubit. I use 27 because it is the lowest number that a single GPU runs out of memory (single-GPU einsum works for 26 in this case). In the double-GPU set up we can split 27 to two halves and check if the corresponding manipulations cause any memory errors.
+In all cases I use two runs because Tensorflow tends to be slower on the first one.
+What names mean:
+I will invite you to a different repo that contains the code for all these. Another quick note is that the swap step requires some communication between different GPUs. The following simple code
+works without any memory issues despite mixing states from different devices.
+Note that the same table for 26 qubits is:
+Thanks @stavros11, I will have a look later today. The numbers you are quoting are from dom? If yes, then everything looks good, because its cpu is ultra-high end.
+Yes, everything is from dom. I verified that the correct devices are used each time using tf.debugging.set_log_device_placement(True) and with very few exceptions the log looked as expected. Although I don't have exact numbers, the CPU is noticeably faster compared to AWS CPU.
+I repeated the benchmarks without additional processes running on the GPUs and indeed the results are improved. The table for 27 qubits is:
+Also, since a single GPU can now fit a 27-qubit state, in principle we can run 28 qubits with the dual-GPU setup. I tried to do so and while double_device_many_swaps and double_device_full work (with 23sec and 32sec respectively), double_device_partial fails. I do not really understand this since the code between "many_swaps" and "partial" is almost identical. The only difference is that "many swaps" calls the swap method more times.
+Regarding whether swapping uses CPU memory, I am not 100% sure but I think it does, although the memory management is a bit weird. I wrote a small script that generates two pieces of states and performs swaps between them (no other operations). Executing this for 28 qubits reserves about 1.6GB of CPU memory (according to htop) from start but there are no further changes in memory use as the script runs (for example as it is performing the swaps).
+Ok, thanks, so I immagine the CPU memory is used as a sort of streaming device to accelerate the transfer between GPU. The numbers you are quoting are using tf.function (for the function called by joblib)?
+No, there is no compilation in any of these benchmarks because it is not properly implemented in my code. I plan to check this and also track memory usage more carefully when running the benchmark scripts. These tend to use much more CPU memory than the swap script, however there are also steps that cast the full state on CPU, so I don't know what part is used for this and what for the actual swaps.
+I was checking the possibility to use the tf.distribution, after some tests I believe the such approach still too experimental and not suited to our problem. However, there is 1 possibility which may work, could you please try to remove joblib and use something like this:
+in principle, if the resulting graph has no intersections between devices then this should work in parallel.
+I tried to use this approach however it does not seem to compile properly. I get an "AutoGraph could not transform..." warning and execution times are similar to eager mode. If I do not use @tf.function, I cannot say for sure if the processes run in parallel because times are a bit worse than with joblib (eg. double_device_many_swaps takes ~12sec instead of 10). In nvidia-smi both GPUs show utilization at the same time though.
+Before you wrote, I implemented compiling using tf.function on gpu_job and then calling gpu_job with joblib. This approach also gives the same warnings. The graph probably has intersections between devices when we swap the global qubit.
+Regarding memory, the state swap between devices is not very stable. When I use a script where I cast the full state on CPU then it automatically reserves 16GB of CPU memory and swap works even if I do not explicitly use the CPU there. However if I skip the full state step and just start with the two pieces state0, state1 then it reserves only ~1.5GB of CPU memory and swap fails. The strange thing is that the script fails in an einsum step, not when the swap is performed.
+Thanks for the feedback. Tomorrow I will try to have a definitive answer about the necessity of joblib. Now, concerning the warning, on dom tf2.1 was compiled with extra flags, these warnings will disappeared as soon as we move to tf2.2.
+I created a virtualenv to install Qibo and when I ran setup.py this upgraded tensorflow to 2.2.0-rc3, so I could check using this version. Indeed the compilation warning disappears in this version and times for 27 qubits are:
+This used the distributed_einsum you proposed above, without joblib. Note that eager times are a bit worse than the joblib implementation on tf2.1 I reported above.
+tf.2.2 seems to also be more stable in terms of the memory issues. Now all scripts fail for 28 qubits in eager mode (in contrast to tf2.1 where some of the scripts could run).
+Ok, that's pretty good. Yeah, I am pretty sure the tf2.1 from the arch repo has some compilation flag which generates the warning, and indeed 2.2 is much better in terms of memory management.
+Note that eager times are a bit worse than the joblib implementation on tf2.1 I reported above.
+This makes sense because joblib was sending in parallel the eager execution, while now, if you remove the tf.function the eager code is executed sequentially.
+If I understand correctly, the partial approach is the winner for the time being, correct?
+From my side, I have checked explicitly that the @tf.function should be enough to parallelize the computation (if there are absolutely no graph intersections).
+I have tested the following simple code:
+I set a different number of qubits in order to get a similar workload for both devices.
+The results (after the dry run) are:
+The last row is clear, the eager mode for both devices is the average time, while the compilation parallelizes the graph evaluation.
+I also did a comparison between joblib and the above simple approach and there is no much difference, especially the compiled case is equivalent. The numbers are different than above because the GPU was running other processes at the same time.
+If I understand correctly, the partial approach is the winner for the time being, correct?
+Yes, the partial script has always the shortest time, however I don't expect this to be true in actual applications which will need more swaps. A more realistic expectation would be something between partial and many swaps. My biggest concern though has to do with memory. Most of these approaches (excluding a compiled case) failed for 28 qubits which we cannot run on single GPU. In this sense we did not gain anything in terms of number of qubits from the multi-GPU setup.
+Thanks for the further tests, so at least we can confirm the technology to deal with multigpu.
+In this sense we did not gain anything in terms of number of qubits from the multi-GPU setup.
+Not sure I follow your point, if we split a state over different gpus we could increase the number of qubits, what is the connection with the 28 failure?
+Not sure I follow your point, if we split a state over different gpus we could increase the number of qubits, what is the connection with the 28 failure?
+Exactly, so for the 28 qubit example we can split the state to two GPUs. However, although a single GPU fits a 27-qubit state, when we do
+where state0 is half of a 28-qubit state, this might fail depending on the rest of the script (and I don't fully understand when/why it fails).
+In summary, I believe there several directions (by relevance):
+Thank you for listing the important points. For the next few days I think it is good if we focus on number 1 and move on to 2 only when we have an acceptable implementation based on CPU RAM. I think 3 may or may not come up as we are working on 1. Note however that streaming batches to GPUs may make a partial like approach impossible if the same GPU is to be used twice in the same calculation, but there is no other way to unlock the number of qubits.
+My plan is to try implementing a toy version of 1 based on the benchmark scripts I already have. In its most basic state, this should be equivalent to full that I already have, but generalized to arbitrary number of devices (not necessarily distinct). With a bit more thinking it might be possible to avoid recasting the state pieces on the CPU after every gate which should improve performance to the many_swaps/partial levels. Once I have this working I will try to do QFT benchmarks up to 31-32 qubits (reusing one/two GPUs) and compare with CPU only.
+Let me know if you have any other suggestions.
+I fully agree with your plan. Point 1 is the priority and the target goal for the time being.
+Short progress update:
+I extended the full script which was keeping the state on CPU and was using GPUs for calculation to allow reusing the GPU, in order to unlock the number of qubits (code in many_devices branch of my other repo).
+I redid the Hadamards benchmark with GPU memory limited to 2GB (to have shorter runs and not interfere with running processes). For 2GB, a single GPU can run up to 24 qubits, so two GPUs are required for 25, four for 26, etc.. Indeed the multi-GPU setup seems better than using CPU-only:
+where four GPUs = reusing the two GPUs twice each. The numbers are complex128 and compiled without joblib for GPUs, measuring the second run.
+My main issue before moving to a more practical benchmark (eg. QFT) is that the approach fails for more qubits, eg. if I try to do 27 qubits / 8 GPUs (reuse each GPU four times), it runs out of memory. So, even though in principle this approach should work with any nqubits, this is not the case in practice...
+Amazing results, I imagine the performance will be even more striking when the GPUs are idle.
+Maybe this memory issue is correlated somehow with #62 , looks like the factor 5 is also there, right?
+Following #62 here, I have to add that the CPU measurements are with tf.einsum, so perhaps using Cirq which is among the best in terms of CPU performance may be a more fair comparison.
+Regarding the factor 5, I cannot say for sure if it appears here because it was measured on CPU runs. What I can do is play with the memory limiter and see when it fails. For 25 qubits ( = 512MB complex128 state vector) on single GPU it works with the limiter set to 2561MB but fails at 2560MB. From this it looks that the factor 5 appears on GPU as well.
+Together with the memory limiter you could also use tf.config.experimental.set_memory_growth(gpu, False)
+Here are some timings I did on the free GPUs without memory limiter:
+@stavros11 thanks for these numbers.
+As next step, I propose the following:
+Thanks for proposing these steps.
+I tried point 2 on TITANV but so far I think there are many memory issues for my prototype to be useful. The numbers are slightly worse compared to the two GPU runs from the previous table, however it is generally not a fair comparison as in most cases I had to increase the number of "logical" GPUs to avoid memory errors and this makes the computation more expensive. I managed to get the following:
+Empty cells means that I could not make it work with up to 128 logical GPUs. I did some tweaks in my code to avoid tf.gather_nd, however this ended up being slower and taking more memory. I would prefer to have a more stable (in terms of memory) prototype before going to AWS, to avoid unecessary costs. Unfortunatelly I could not find many helpful resources online on multi-GPU Tensorflow, particularly how to distribute a single tensor on multiple devices, so I cannot say for sure if my code can be improved or if we are blocked by a Tensorflow limitation regarding memory.
+Now some good news regarding the CPU. I did benchmarks using both the taskset and complex64. I used the simple Hadamard benchmark but I assume that results generalize to all cases:
+So for single precision Qibo is slightly faster than Cirq and the difference can be increased further by using more threads (which comes out-of-the-box with Tensorflow). This is using the MatmulEinsum backend on tf2.2.0rc3 and I would not be surprised if results are very different with a different version. The main limitation is that we are using at ~2.5x more RAM compared to Cirq.
+Regarding the multi-GPU vs CPU (the multi-GPU numbers are all complex128), from the above numbers it seems that we may be able to get advantage. Eg. for 28 qubits the best CPU is around 60sec while a decent multi-GPU can take this to 30sec. The issue is that my current code will not scale well for more qubits unless we improve on the memory issues...
+Great, thanks for the tests. Concerning cirq, if you increase the number of threads maybe numpy improves the performance, right?
+For the multi gpu which script/branch/args are you running?
+Great, thanks for the tests. Concerning cirq, if you increase the number of threads maybe numpy improves the performance, right?
+I would expect yes, however I am not sure if they support this or if one has to implement it using an external library. After a quick search I could not find anything about multiprocessing on Cirq's docs and from my experience with numpy it usually runs on single thread, but there might be a simple way to enable multiprocessing that I am not aware of.
+For the multi gpu which script/branch/args are you running?
+I use the many_devices branch of my repo. I run
+python main.py --script full --nqubits 28  or
+python main.py --script fullbestcase --nqubits 28
+for the worst and best case respectively. This automatically uses CPU as the "memory" device and GPU0, GPU1 as the accelerators. In order to use TITANV only I add the flag --devices /GPU:0,/GPU:0. If this runs out memory I add --reuse $N which duplicates each GPU N times. N should be a power of 2.
+For example
+python main.py --script full --nqubits 28 --devices /GPU:0,/GPU:0 --reuse 16
+will run the worst case script on TITANV by duplicating it 32 times (pretending we have 32 GPUs).
+Ok, but when you say "single thread" for cirq, did you mean taskset -c 0 or no limitation at all?
+Concerning the GPU, one possibility is to have look at the output of the profiler (https://www.tensorflow.org/guide/profiler) and then, eventually, check if tf.data can help.
+Ok, but when you say "single thread" for cirq, did you mean taskset -c 0 or no limitation at all?
+No limitation, just running python "script". From htop it seems that Cirq uses only one thread even without any limitation. I assume that taskset won't change anything in that case, right?
+Concerning the GPU, one possibility is to have look at the output of the profiler (https://www.tensorflow.org/guide/profiler) and then, eventually, check if tf.data can help.
+Thanks, I will check the profiler. I had tf.data in mind as they advertise it as the efficient way to pass data from CPU to GPU and was planning to check it at some point. For now I have been playing with the following structure:
+and it seems to be more stable in terms of memory, at least with a small test script I have been trying. I will spend some time to write the Hadamards benchmarks using this idea to see if it works there as well.
+I assume that taskset won't change anything in that case, right?
+indeed, in fact, in some systems the numpy backends like blas/openblas/mkl may use custom openmp configurations. Anyway, I am happy that these numbers are without taskset!
+I will spend some time to write the Hadamards benchmarks using this idea to see if it works there as well.
+perfect, the Variable idea is good. Another point, I believe you can perform the state initialization directly on GPU, avoiding the first copy.
+I checked the Hadamards benchmark with tf.Variable and it seems to scale well in terms of memory. Performance is also quite similar with the previous numbers. Using the TITAN V only:
+The good thing now is that the number of GPUs scales as expected with the number of qubits, so I think we can do more qubits with this scheme. Currently I am running out of CPU memory at 31, but I think the CPU memory usage could be slightly optimized in my code. I will try to look at this and also write an optimized (in terms of gate order) QFT benchmark to see how multi-GPU works in a more practical case. You can resume your processes on dom because this will probably take some time.
+Thanks, looks pretty good. What happens with the compiled version? In principle the pure eager (no joblib) is not evaluated in parallel, right?
+Here are some timings for QFT using the tf.Variable for multi-GPU:
+This actually looks very good, to the point that I am afraid that something is wrong! The large (>28 qubit) results are not tested for validity, but the code is tested for smaller nqubits. Also, the order of gates in the QFT circuit is optimized (by hand) to minimize communication to just four times during the whole circuit. This may explain why multi-GPU works so well for this example, however such optimization may not be possible for other circuits.
+Another note is that all multi-GPU results are using tf2.1.0, which for some strange reason is much better than tf2.2.0 in this implementation (I am not sure if this is something they are still fixing in 2.2).
+Thanks, looks pretty good. What happens with the compiled version? In principle the pure eager (no joblib) is not evaluated in parallel, right?
+Yes, pure eager is not evaluated in parallel. When we use one GPU (eg. only the TITAN V) it is not possible to load multiple state pieces together and the runs have to be sequential anyway. In this case, compiling takes more memory and requires duplicating the GPU more times which actually leads to worse performance. When using two GPUs, compiling can make it run in parallel but there are still some memory issues. I would expect this (and joblib) to help more in cases where the machine has many GPUs of the same type.
+Very nice results! A couple of questions:
+CPU works, I just did not run it yet because it is going to take >3000sec and I preferred to do the GPU benchmarks first instead.
+GPU works if it is duplicated enough times to avoid memory errors. It is just not very clear how many times it is required to duplicate, particularly when compiling. Eg. with TITAN V alone, eager works when duplicating x8 (which is the expected scaling), while I tried up to x128 when compiling and it fails. I assume that the graph becomes very complicated because it tries to reuse the same device many times. The same happens for TITAN+RTX, eager works with x8 logical GPUs but compiling crashes no matter how much this is increased.
+For 31 qubits the multi-GPU set up crashes because of CPU memory, presumably because when I try to swap the global qubits I use several copies of the state and together with Tensorflow stuff the requirements are higher compared to using the CPU alone (which can go up to 32 I think?).
+Although the code generally treats devices as equivalent, there is a hacky way to try this by passing as devices ["/GPU:0", "/GPU:0", "/GPU:1", "/GPU:0"] instead of ["/GPU:0", "/GPU:1", "/GPU:0", "/GPU:1"]. This improves the above times a little: for 28 qubits the TITANV+RTX eager drops to 59 (from 69) and the compiled to 50.6 (from 66), but these times are still slightly worse than using TITAN alone in the same example. I have not implemented joblib yet but it may be possible to see some improvements from this because it will avoid the compilation problems.
+joblib does not seem to parallelize even when using two seperate GPUs (TITAN + RTX, with any ratio). I tried the following:
+where self._execute performs the required einsums in the given device.
+This script gives exactly the same times as eager. Looking at the utilization in nvidia-smi the GPUs seem to be used sequentially, not in parallel.
+Thanks for the clarification. What happens with joblib if you drop the assign operation?
+The joblib should parallelize, if it doesn't then maybe there is some part of the graph blocked at the CPU.
+It seems that parallelization was blocked by gates because both GPUs were trying to access the same gate matrices from the first GPU. A simple script to reproduce this is the following:
+Multi-processing will fail and the second GPU will never reach max utilization because it will be reading a from the first one. The fix is:
+Since gates are small matrices, it is okay to have copies on all devices. With this fix I could run 28 and 29 qubits with both GPUs in parallel:
+The eager TITAN from the previous table was 50sec and 105sec respectively, so there is a small improvement from the parallelization. Unfortunately for 30 qubits it crashes but hopefully will fix this!
+Impressive results! At this point I believe even the compiled mode should work well.
+For 29 qubits the ~20% improvement is quite  similar to what I get for Vegasflow when using both GPUs.

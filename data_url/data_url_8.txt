@@ -1,0 +1,18 @@
+Currently, state just wraps a tuple containing the shape of the state data and a vector to the state data. This is sub-optimal because it forces the creation of copies, especially for state vector data managed by the GPU.
+We need to rethink the internal data representation for cudaq::state to remove this tuple and replace with a new data type specific to simulation backends (i.e. some interface that backend simulators must implement) that allows cudaq::state to track the state data in a backend-native manner, i.e. holding the GPU device pointer.
+At the very least, and to keep the current backwards compatibility, I might propose something like the following
+Concrete CircuitSimulators are then responsible for subclassing SimulationState and returning as a pointer.
+virtual complex amplitude(std::size_t idx) = 0 limits the index to a 64-bit integer. We might want to cover the case with more than 64 qubits (e.g., tensornet can handle single amplitude computation for a large number of qubits).
+virtual complex amplitude(std::size_t idx) = 0 limits the index to a 64-bit integer. We might want to cover the case with more than 64 qubits (e.g., tensornet can handle single amplitude computation for a large number of qubits).
+Good point. How would you cover those cases? Maybe have another overload that takes the computational basis state as a string? What would be best for those types of backends?
+Good point. How would you cover those cases? Maybe have another overload that takes the computational basis state as a string? What would be best for those types of backends?
+We may consider an 'overcomplete' representation (std::string, std::vector<int>, etc.) or Boolean-based (std::vector<bool>). With the latter, we don't need to validate that input should only be 0 or 1 for qubit cases. However, it is limited to the qubit case (e.g., with std::string or std::vector<int>, we can encode other values beyond 0/1).
+An additional state accessor API for consideration:
+virtual std::vector<complex> amplitude(const std::vector<std::pair<std::size_t, bool>>& bitMask) = 0;
+Rationale: block-access to a contiguous section of the state-vector, e.g., mgpu.
+In cases where we cannot reconstruct the full state vector, we can use this type of masking API to get sub state vector.
+e.g., 35 qubits, per-GPU sub-statevector = 30 qubits.
+bitMask = {{30, 0}, {31, 0}, {32, 0}, {33, 0}, {34, 0}} => GPU 0 sub-state (2^30 elements returned).
+bitMask = {{30, 1}, {31, 0}, {32, 0}, {33, 0}, {34, 0}} => GPU 1 sub-state (2^30 elements returned).
+...
+Doing this masking with an explicit list of indices is not efficient.

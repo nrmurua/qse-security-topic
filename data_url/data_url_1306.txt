@@ -1,0 +1,20 @@
+Description of the issue
+pylint complains about missing state argument in SimulationState constructor call
+
+pylint report:
+The fix is not apparent, because SimulationState constructor requires the state argument
+
+however state is not accepted by subclasses, for example, in StateVectorSimulationState:
+
+Cirq version
++1 this was an unfortunate oversight on my part. I think "state" is better than "initial_state" (it sounds nicer when serializing) but could be convinced otherwise.
+We're at the final call for 1.0 changes - if we want this to make it in it's going to be a no-deprecation / break-with-a-hammer style change.
+I can think of adding an abstract class method SimulationState.fromQubits (or some similar name) which will be only implemented in subclasses to produce cls(qubits=qubits) where it will hopefully pass pylint scrutiny.
+The SimulationState.with_qubits will then use
+instead of
+Rather than adding a new method like fromQubits on all subclasses; I'd suggest changing with_qubits to be abstract and implementing that everywhere instead.
+We could also just delete that function. It came from a new contributor PR where I gave this as an example of something that his changes would enable, though I didn't actually intend for him to implement it. Once he did, I figured may as well keep it. But it's not used for anything AFAIK.
+(Though either way it would still be nice to make the arg name consistent, regardless)
+Yeah my vote is to remove the method. Even if we changed all the constructor arg names to "state" that still wouldn't work because here we'd do type(self)(qubits=qubits, state=0) which still wouldn't type check because zero is not of type TState. Ultimately "state" in the base class and "initial_state" in the subclasses represent different things (the former is exclusively a TState, and the latter is a TState or anything that the subclass knows how to convert into one), so there's no particular need to name them the same.
+(Granted I still do wish that they were not called "initial_state" because that makes it necessary for the repr to call the field "initial_state" for eval(repr(x)) to work, which is weird when it's no longer the initial state. But that's a separate, smaller issue).
+Removing the method sounds good - #5748.

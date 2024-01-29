@@ -1,0 +1,24 @@
+Right now composite gates are arbitrary in what they decompose as.  There is no documentation that guides this.  We should at least document this, though better may be to refactor this to work better when introducing the notion of a gate set.
+bump bump
+This causes a ton of confusion.
+Just to repeat what I've said elsewhere: the decompose contract causes lots of confusion because it is not clear a) what one should decompose into, b) whether one should implement both unitary and decompose.
+It also hides from users a very important fact of hardware, which is the native gate set for a device. A factor of x in this type of decomposition is multiplicative across the number of gates in the circuit and so can quickly make circuits infeasible.
+Some notes:
+Gate sets can sometimes be very discrete or floating point precision discrete.  We should be able to handle both (not for QEC reasons but more because there may be calibrated two qubit gates that you'd like to rely on).
+Defining a default cirq gate set that decompose aims for seems fine to me.  I would argue for X,Y,Z Pow and CZ Pow.
+I think we should focus more on "get to the single-qubit and two-qubit gates". Behind the scenes we can terminate on powers of X,Y,Z,CZ but the only thing we should guarantee to callers is single-qubit and two-qubit gates. If a caller wants a specific kind of single-qubit or two-qubit gate, they should implement that logic themselves. It's just too hard to please everyone.
+In other words, decompose is very much a fallback strategy for simplifying gates into a form that can hopefully be understood. We don't guarantee that this strategy is efficient or sticks to discrete gates or tries to minimize CZs or anything like that, we just do a best-effort make-it-simpler.
+I think that you are minimizing the importance of gate sets for hardware.
+Think about how often you've been listening to experimentalists / hardware folks and you seen them focus in on what gates are needed for a specific operation.  Often they do this and it seems a little bit exasperating: don't they know the canonical decomposition of two qubit gates?
+Think about how many times we've seen theorists write circuits that blow up by factors of 3 or 4 when compiled down to hardware because they haven't paid attention to gate sets being used.  Don't they know they should be aware of what the hardware actual does say the experimentalists?
+I think our job in Cirq is to bridge these two cultures so that both are happy.
+I think the solution is to add the notion of a gate set to cirq.  There will be a default gate set.  Decompose should take in a gate set which is by default just the default gate set.  To work with gates in different gate sets one can either
+We could add the concept of _decompose_with_gate_set_, which would fall back to _decompose_ if not specified. Then cirq.decompose could take an optional gate set argument and use that when deciding which methods to call.
+I guess my intuition is that if someone is calling decompose, they've already sort of given up on fine control over how the circuit looks. The reason it's bad to decompose in XmonSimulator is because it explicitly violates that principle (by calling decompose when the user has indicated they do care about the layout, since they called a hardware-specific simulator).
+Some thoughts on this old issue.
+We have Moments and we have Operation that act within a moment.  When an Operation can be decomposed into multiple gates, this implicitly breaks the idea of a Moment being a slice with Operations that do not act on different qubits.  For some consumers of Moments this is great: for a simulator it is great to be able to expand out the gate and one can iterate as if the gate was just in that Moment.  However for other consumers, this is potentially very dangerous.  The Moment now becomes much bigger in depth and especially as other Operations in the moment may not expand so much, just doing decompose without any sort of post processing is bad.
+@tanujkhattar for comments re: transformers.
+I believe we standardized on _decompose_ always falling back to a "standard" gate set.  @tanujkhattar is this documented somewhere?  If so we can close this.
+I think we need more documentation for the behavior, right now it's only in code:
+
+

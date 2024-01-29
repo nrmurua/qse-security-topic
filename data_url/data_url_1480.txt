@@ -1,0 +1,32 @@
+Is your feature request related to a use case or problem? Please describe.
+We have PlusGate class implementation duplicated several times in tests, and there's now a copy of that class used in the internal implementation of ResetChannel.
+Describe the solution you'd like
+Should we just make a public implementation? (This could be a good first issue, no particular QC knowledge needed)
+[optional] Describe alternatives/workarounds you've considered
+Not make it public.
+What is the urgency from your perspective for this issue? Is it blocking important work?
+P3 - I'm not really blocked by it, it is an idea I'd like to discuss / suggestion based on principle
+In light of #3190 (if I'm understanding correctly), would another option be to rewrite XPowGate as a PlusGate, with optional dimension and increment arguments?
+Assuming my understanding of the issue is correct, this approach would match what we do with IdentityGate, where cirq.I is a single-qubit gate by default, but you can initialize cirq.IdentityGate(dimension=5) if you need to.
+The PlusGate as implemented is probably insufficient. We'd probably want to figure out the EigenGate representation of it before adding it to our public gates. So one consideration is how it works under non-integer exponents. Integer exponents would just multiply the increment (meaning we don't actually need an increment, and can just use the exponent). However non-integer exponents, I'm not sure how that would work. There's an _eigen_components function that, if implemented, might allow things to "just work". I assume PlusGate has well-defined Eigen components, but not sure.
+@Strilanc @viathor I'm having trouble understanding what _eigen_components does and how/whether it would work for PlusGate. Any google results I see just talk about the unitaries. Do you have any references?
+I think I figured the math out, but it's coming out to there being no eigen components that satisfy a PlusGate. Eigenvalues (for a 3-value PlusGate) are the third roots of i, so half-turns are [0, 2/3, 4/3]. But the symmetry about the real line implies that the 2nd eigenspace has to equal the 3rd, so the complex values can cancel out. But if they're equal then, well, there's nothing to differentiate them. But they have to be different. So is a PlusGate not able to be an Eigen gate?
+cc @cduck
+Note I haven't done linear algebra in 28 years (and even that was a summer crash course), so.
+I figured out the math, reversing the logic in EigenGate._unitary_ to get the required eigencomponents, which end up looking like
+Plugging that into a new EigenGate Plus gives unitary(Plus)
+However unitary(Plus**0.5) gives:
+Looks like something that could plausibly be a unitary, but it isn't. Multiplying by adjoint gives:
+So, I guess a PlusGate isn't an EigenGate (at least in dimension 3)?
+I tried again, trying some linear algebra directly instead of reversing the existing EigenGate._unitary_. (https://en.wikipedia.org/wiki/Square_root_of_a_matrix#Matrices_with_distinct_eigenvalues)
+Using that I ended up with what the unitary for Plus**0,5 should be.
+Indeed when I plug that into a MatrixGate, and simulate it, it provides the following fun moment steps:
+However I can't figure out what the _eigen_components need to be in order to make EigenGate._unitary_ output that value when exponent=0.5. (In fact, it seems that there are no such components, as when I worked the algorithm out backwards in my previous comment, that ended up being the unique solution that satisfied the exponent=0 and exponent=1 unitaries for what Plus should be.
+So, it seems that Plus is an EigenGate. So is the implementation of EigenGate._unitary_ wrong since it seems not to be able to represent this case? (But it works for so many other cases, so I have a hard time believing that it would be).
+Okay, looks like these components are projection matrices onto the eigenvectors. So, pretty sure I see the pattern for making the eigenvectors for a PlusGate (roots of unity and their powers). Still need to look up the formula for projecting onto a complex vector, but thinking this is getting close.
+That seems to have worked for dimension 3. If I change X to:
+then it provides the nice step function, and X**0,5 moment steps are
+So the answer to why QM requires complex numbers is: so that we can count to 3 by halves. :)
+Anyway that seems to be a fairly straightforward pattern. I'll see what I can get for higher dimensions (I'm guessing it may be slightly different for non-primes) and then create a PR. (Not sure what I did wrong in my previous calculation that suggested such a decomposition wasn't possible, but oh well).
+From Cirq sync:
+We are interested in this, but this sounds like a post 1.0 release item.

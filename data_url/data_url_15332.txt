@@ -1,0 +1,55 @@
+This issue is to track the target set of passes to enable control flow handling for transpiler optimization_level=1.
+We also need to update the preset pass managers (esp level 1) to suitably modify the defaults / reject scheduling_method != None if a given circuit has control flow:
+Time permitting:
+Should we add SabreLayout and SabreSwap to this list because of: #8552 ?
+We can put it in the list.  I don't think there's any chance of us supporting Sabre for 0.22 when there's control flow.  Part of this is working out what (if any) chances to the preset pass-manager logic we need for the initial support, when there's control-flow in the circuit.  The general idea being that we can have tweaked preset pass-manager logic if there's control flow or not, while we're building up to full support everywhere, but we want the literal call transpile(qc, optimization_level=1) to work for 0.22.
+For the timeline of 0.22 it might be better to prioritize a set of non-redundant passes. Since BasicSwap and StochasticSwap have already been started it may be faster to get some other items on the list complete before coming back to implement alternative (even if soon to be default) routing passes.
+@ewinston Can you call out in the list above which passes are easily implementable as recursion over the blocks of each ControlFlowOp, and those which need some custom handling?
+@kdk Just saw this comment. Here's which passes might require special handling of blocks,
+*** SetLayout
+no
+*** UnitarySynthesis
+no
+*** Unroll3qOrMore
+no
+*** TrivialLayout
+no
+*** Layout2qDistance
+weight 2q distance for loop?
+*** VF2Layout
+possibly
+*** DenseLayout
+yes
+*** FullAncillaAllocation
+perhaps since controlflow ops may appear full width
+*** EnlargeWithAncilla
+no
+*** ApplyLayout
+no recursion
+*** CheckMap
+yes
+*** BarrierBeforeFinalMeasurements
+yes, simple
+*** StochasticSwap
+yes
+*** UnrollCustomDefinitions
+no
+*** BasisTranslator
+no
+*** RemoveResetInZeroState
+yes (reset occurs at beginning of block)
+*** Depth
+no change in pass but in DAGCircuit where this is calculated
+*** FixedPoint
+no
+*** Size
+no change in pass but in DAGCircuit where this is calculated
+*** Optimize1qGatesDecomposition
+not required
+*** CXCancellation
+not required
+*** ContainsInstruction
+no
+I'll handle all the trivial passes in a PR that I'll post tomorrow.
+Just a note: BarrierBeforeFinalMeasure doesn't need to recurse in, because any measurements in a control-flow block can't be final measurements by the original definition. ResetInZeroState can't trivially recurse, because the start of a block cannot be assumed to be zero.
+I found some more transpiler passes while trying to update the preset pass managers, so I've added them to the list.

@@ -1,0 +1,52 @@
+Description of the issue: When using the function quantum.probabilities, I found that for some input parameters, the photon statistics probability vector is not even close to being normalized to unity. The issue is not due to an insufficient cutoff. Find a screenshot below for the output of probabilities for a single-mode displaced squeezed state vs a coherent state
+
+Here, while the output of probabilities for a coherent state is as expected, the output for the squeezed state with the same displacement is off. In particular, this behavior seems to be very much dependent on the parameters of squeezing/displacement amplitude.
+Expected behavior: probabilities should always output a vector that is properly normalized to unity
+Actual behavior: for most parameters, the output is normalized, but for some special parameters it is not
+Reproduces how often: No idea, I found this because I was studying the output distribution of displaced squeezed states vs coherent states depending on the squeezing/displacement ratio. Additionally, as I found out in the book of Gerry/Knight, the relative phase is important.
+System information: I installed TheWalrus 0.14 via pip.
+Here, I will simply paste the code that I used to get the above plot. The parameters entering are basically the squeezing degree r and the complex displacement amplitude alpha  which consists of an absolute value alpha_abs  and a phase theta. I have played around with these parameters and for most of these, the output of probabilities  seems just fine.
+I could also directly send a jupyter notebook to you if you want me to. It would be superb if you could let me know if you can reproduce this behavior.
+Thanks @Marsll! We will take a look into this
+Hi @Marsll  --- Thanks for finding this. It is indeed a very mysterious bug. If you scan the phase of your coherent displacement and plot the normalization you get this
+
+angles =  np.arange(0,np.pi,0.01)
+norm = [np.sum(probabilities(np.sqrt(2) * np.array([(alpha_abs * np.exp(1j * theta)).real, (alpha_abs * np.exp(1j * theta)).imag]) , cov, cutoff, hbar=1.0)) for theta in angles]
+plt.plot(angles, norm)
+plt.xlabel("displacement phase")
+plt.ylabel("normalization")
+On the other hand if the amplitude of your displacement is reduced to be |\alpha| = \sqrt{40} then things more or less work
+
+I am tempted to say that it could be a numerical instability as you suggest, but then somehow it seems to orderly when you plot as a function of the angle.
+One possible way to get around this issue is to use long double instead of double in the low level C++ functions that actually do the calculation.
+Hi Nicolás, thanks so much for looking into this. It looks mysterious indeed.
+Do I have any control over these C++ low level functions that you mention directly via the TheWalrus library, at the moment?
+Hi Marcel --- You do. The chain of functions calls goes as follows
+This last function lives in libwalrus.pyx where we Cython to be able to call renorm_hermite_multidimensional_cpp from hermite_multidimensional.hpp.
+One worrisome aspect of your calculation is that ultimately all of this depends on a recursion relation starting from the vacuum amplitude of the Gaussian state.  For the Gaussian state you are considering this quantity is (-1.1483424815398375e-15+3.522084812154078e-15j), i.e., dangerously close to machine epsilon.
+Another thing I tried to test was if there was a communication problem between quantum.probabilities and the C++ code. I calculated  <n|D(\alpha) S(r) |0> by first finding the Fock matrix representation of D(\alpha) S(r) which you can do as follows (using the same variables of your example code):
+from thewalrus.quantum import fock_tensor
+T = fock_tensor(S, np.array([alpha]), cutoff=100)
+I can now plot this versus the result of probabilities as follows
+plt.plot(np.abs(T[:,0])**2,"*")
+plt.plot(probs_displaced_squeezed)
+and I get
+
+They agree perfectly and are both wrong (at least by a scale).
+Finally, although the normalization is definitely wrong the probabilities are correct up to a scale. If you renormalize them
+renorm_p = probs_displaced_squeezed / np.sum(probs_displaced_squeezed)
+and used them to calculate the mean photon number and the variance
+mean = (renorm_p) @ np.arange(cutoff)
+var = var = (renorm_p) @ (np.arange(cutoff))**2 -  mean**2
+to get
+print(mean,var)
+50.271540042961355 36.29493009537737
+you can easily verify that these are correct by running
+photon_number_mean(mu, cov, 0, hbar=1)
+and
+photon_number_covar(mu, cov, 0,0, hbar=1)
+which makes this even more mysterious....
+Hi @nquesada any new updates/insights on this issue?
+Yup, the problem is related to this line: 
+For @Marsll pref = (-1.1483424815398375e-15+3.522084812154078e-15j) while np.real_if_close(pref) = (-1.1483424815398375e-15+0j) . If the np.real_if_close is removed then the normalization comes out to be 0.9999999946493981 ~ 1 .
+Solved in #215

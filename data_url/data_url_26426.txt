@@ -1,0 +1,47 @@
+Dear developers,
+In TDDFPT with "RESTART T", the cp2k.psmp (v2023.2) offers an error, “Caught signal 11 (Segmentation fault: address not mapped to object at address 0x20)”. The backtrace shows
+`==== backtrace (tid:3502100) ====
+0  /lib/x86_64-linux-gnu/libucs.so.0(ucs_handle_error+0x2e4) [0x1477fb780fc4]
+1  /lib/x86_64-linux-gnu/libucs.so.0(+0x24fec) [0x1477fb784fec]
+2  /lib/x86_64-linux-gnu/libucs.so.0(+0x251aa) [0x1477fb7851aa]
+3  /home/flyingd/soft/cp2k-2023.1/exe/local/cp2k.psmp(cp_blacs_env_mp_get_blacs_info_+0x68) [0x3a1ac68]
+4  /home/flyingd/soft/cp2k-2023.1/exe/local/cp2k.psmp(qs_tddfpt2_restart_mp_tddfpt_read_restart_+0x23f) [0x29ed70f]
+5  /home/flyingd/soft/cp2k-2023.1/exe/local/cp2k.psmp(qs_tddfpt2_methods_mp_tddfpt_energies_+0x6fa) [0x244af0a]
+6  /home/flyingd/soft/cp2k-2023.1/exe/local/cp2k.psmp(qs_tddfpt2_methods_mp_tddfpt_+0x1c40) [0x2445c40]
+7  /home/flyingd/soft/cp2k-2023.1/exe/local/cp2k.psmp(qs_energy_utils_mp_qs_energies_properties_+0x765) [0x2020715]
+8  /home/flyingd/soft/cp2k-2023.1/exe/local/cp2k.psmp(qs_energy_mp_qs_energies_+0xb15) [0x12f46e5]
+9  /home/flyingd/soft/cp2k-2023.1/exe/local/cp2k.psmp(force_env_methods_mp_force_env_calc_energy_force_+0x43d) [0x15add4d]
+10  /home/flyingd/soft/cp2k-2023.1/exe/local/cp2k.psmp(cp2k_runs_mp_cp2k_run_+0x1644) [0xbf8e34]
+11  /home/flyingd/soft/cp2k-2023.1/exe/local/cp2k.psmp(cp2k_runs_mp_run_input_+0x3a9) [0xbf77c9]
+12  /home/flyingd/soft/cp2k-2023.1/exe/local/cp2k.psmp(MAIN__+0x1de9) [0xbf5a69]
+13  /home/flyingd/soft/cp2k-2023.1/exe/local/cp2k.psmp(main+0x1d) [0xbf3c6d]
+14  /lib/x86_64-linux-gnu/libc.so.6(+0x29d90) [0x1477fb429d90]
+15  /lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80) [0x1477fb429e40]
+16  /home/flyingd/soft/cp2k-2023.1/exe/local/cp2k.psmp(_start+0x25) [0xbf3b85]
+`
+When remove "RESTART T", all is fine.
+Could you provide more information: your input file, how did you compile CP2K, do the regtests work in case of psmp
+Hi Frederick. I have the same problem as well and for a couple of days now I was trying to find out where it is coming from. I have a cp2k build from Juerg's improved state following with hash 7e92e2ab9bf27c2a5bb388384f6c7748634383a1 (16 Jun) and I can restart the tdwfn. I have a more recent build from 21 Aug with hash b3253c96b229678286027d027c02a2075a29b618 and this crashes without an error right after SCF finishes and TDDFPT should start.
+Unfortunately there is no regtest that checks for restarting the tdwfn. In my tests I used QS/regtest-tddfpt/H2O_tddfpt_NTO_slist.inpand then switched on the restart and ran again.
+I was trying to compile cp2k after the SOC commit on 18 Jul since this is the first time qs_tddfpt2_restart.F was modified after my "working" cp2k but I get error from dbcsr:
+/data/bsertcan/git/cp2k/exts/dbcsr/src/mm/dbcsr_mm_3d.F:645:0:
+Error: ‘__vtab_dbcsr_mpiwrap_Mp_comm_type’ not specified in enclosing ‘parallel’
+/data/bsertcan/git/cp2k/exts/dbcsr/src/mm/dbcsr_mm_3d.F:531:0:
+!$OMP         f_row_f,l_row_l,f_col_f,l_col_l,requests_win_create)
+Error: enclosing ‘parallel’
+I tried different dbscr versions but nothing worked and this is pretty much where I gave up.
+I will conduct further investigations.
+This issue caught my attention:
+/data/bsertcan/git/cp2k/exts/dbcsr/src/mm/dbcsr_mm_3d.F:645:0:
+The 3D algorithm is something not default, so I'm not sure why you are there.
+Hmm I don't know... I installed the toolchain without ELPA, COSMA and SIRIUS and followed the rest of the instructions. I always do this and never had a problem before.
+In my previous comment where the error appeared, I was trying to compile July 18. Now I checked-out to the commit from 16 June and installed the toolchain from scratch and compiled without error.
+I have found the culprit and I am currently preparing a bugfix.
+@alazzaro It is off topic but I got the same error when compiling with the latest commit.
+make[4]: *** [/data/bsertcan/git/cp2k/exts/build_dbcsr//Makefile:256: dbcsr_mm_3d.o] Error 1
+make[4]: *** Waiting for unfinished jobs....
+make[3]: *** [/data/bsertcan/git/cp2k/exts/build_dbcsr/Makefile:177: libdbcsr] Error 2
+make[2]: *** [/data/bsertcan/git/cp2k/exts/Makefile.inc:38: dbcsr] Error 2
+make[1]: *** [/data/bsertcan/git/cp2k/Makefile:128: psmp] Error 2
+make: *** [Makefile:123: all] Error 2
+The current master fixes the restart functionality.

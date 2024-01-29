@@ -1,0 +1,60 @@
+This bascially makes the hierarchical organization of modules more consistent (more stuffs are handled automatically)
+I encounter the problem in the AcquisitionModule class, where I need the AcquisitionManager object "run" to be a submodule, and that would force me to overwrite all the load_setup_attribute to make sure the state of the "run" object is properly loaded together with the state of the scope.
+---> This should be generalized in the SubModuleAttribute logic: whenever trying to load the state of an attribute of this type, sub.set_setup_attribute(...) should be called.
+Obviously, in the back of my mind, I also have the Sequence, and eventually Inputs of the lockbox in sight here. A tentative API could be (examplified on the Scope for clarity):
+Definition of the SubModule descriptor:
+What happens when:
+loading the state of parent module (scope):
+set_setup_attribute simply needs to replace scope.some_attr = some_val by scope.run.set_setup_attribute(some_val) when it realizes run is a SubModuleAttribute
+changing the value of scope.run.state:
+Trying to save_state/load_state of a submodule that has _section_name=None... To not overcomplicate, this could raise a NotImplementedError("Saving the state of module 'run' independently of the state of 'scope' is not implemented")
+In general i favour this.
+The variable '_section_name' should be completely replaced by a default stringimho because I see it as an overcomplication. Candidates for this are
+About your original proposal, I understand that ModuleAttribute (no reason for the 'Sub' imho) should have the same API as any attribute, i.e. be settable and gettable.
+The getter should just return the module.
+The setter should receive a MemoryBranch or a dict and forward to the module like module.set_setup_attributes(**memory_branch._dict). Sooner or later we will allow to drop the _dict as well.
+We could even implement in the Module Meta class something that converts all submodules (i.e. class attributes that inherit from BaseModule) into such ModuleAttributes.
+What do you think about this?
+I commited a first version on the new branch "refactor_register_submoduleattribute."
+The commit certainly fails on many unittests, but still I created a few ones for this specific feature.
+Sorry I hadn t seen your reply. I had to go so I just commited as it was, but it more or less goes in the direction you proposed, in particular for the feature of setting with a dict... indeed, it s more convenient not to change the set_setup_attribute code.
+I will make a more detailed answer tomorrow
+Sorry in advance for the long answer, I address your 3 points below...
+OK, so the problem with using module.name is that actually module.name is automatically derived from module_cls._section_name:
+I agree that the current solution is a bit weird: basically, we should tend to a solution where the current_state hierarchy is highly readable, and the stored states are outside of this hierarchy. I propose the following:
+Let's change cls._section_name to cls._base_name, and still use this to create the unique instance names.
+Get rid of the class-level section in the module hierarchy (scopes). That way, the "current state" tree becomes (again) perfectly readable:
+Move the state section for each module_class at the end of the file
+So basically, the user is responsible for not trying to load a sequence for a FabryPerot Lockbox inside an Interferometer lockbox, but that's probably ok to just display an error message.
+If you agree with this, I can implement it tomorrow, it should be pretty quick since everything is encapsulated in a few properties (c_states...)
+I agree with all your points: setter/getter already implemented as you described. I will change the name to ModuleAttribute
+The only thing is that we would loose the possibility to set the parameters "doc" and "default" of the ModuleProperty constructor. Also, a lot of things would be done behind the scene and IMHO the code is more readable if these things are done explicitly.
+Are you working on this right now? I tried your branch, but at the moment my pyrpl does not start properly. Are you fixing this right now? Otherwise I might cherry-pick the ModuleAttribute into another branch and work only on that part.
+Also, check out the new MemoryBranch._get_or_create("subbranch1.subbranch2.subbranch3") function (formerly called "_create_branch") which makes many parts of your code a one-liner.
+I have just commited my current version on refatctor_register_submoduleattributes (sorry I wasn't behind my computer).
+I go to the cinema now and will be back in approx 2 hours 30. Keep me in touch with the progresses, I'd like to continue working on it later tonight. Maybe it make sense that we all merge onto one branch since we are working on closely related stuffs ?
+Regarding the submodule names, their name is indeed attributed by the metaclass according to parent_module.attr_name.
+This is not the case for root modules: their name is currently attributed by the constructor in pyrpl based on their _section_name I believe...
+I comitted some changes to module.py where I believe that I somewhat cleaned the code (forcing the config file structure that you proposed as the only alternative). so far it seems to still work (i dont try unittests yet since things are not really done). I think we can both work on this branch, but there is no extreme hurry. i will start looking into the submodule stuff to clean the inputs, outputs and sequence attributes in lockbox.py.
+I have a few remarks:
+---> Actually that's something I used to do because I had in mind that you need it to do:
+a = foo.bar = 5
+In fact, that could be the case in other languages, but you are right that it is not the case in python, so I will stop in the future...
+---> I think it fails with other instruments because _init_module is sometimes used improperly to set default values (instead of relying on default=... in the constructor) --> Probably once this is cleaned-up it should be no problem (indeed it would be great to get rid of this _autosave_active=False trick, ideally, _autosave_active should only be used for slaved modules)..
+---> great
+---> OK, maybe it will result in a simpler structure...
+---> Have you commited the new code, I didn't see the code changes in ModuleMetaClass?
+-----> code is coming now
+----> I guess you can do anything in the instance initialization by operating on self.class, but the problem is that you end up doing it as many times as you create class instances, which is weird to say the least...
+------>  what we actually do in metaclass:
+point 1) justifies however a metaclass. But we could get rid of the init function altogether to break that arbitrary distinction between new and init
+---> I would vote for staying explicit again, but since we don't have yet a use-case where we don't need to save the submodule state, I am not making a religion of it.
+---->I think it is only logical: - if the submodule has _setup_attributes, those are in fact automatically part of the state of the parent module.
+I think something along the lines of the first answer below could be useful to implement a kind of "list-of-submodules"
+http://stackoverflow.com/questions/13447017/python-a-list-of-descriptors
+OK, here is the result of my playing around with dummy classes to realize the ModuleListProperty. Feel free to pick what you want to mix with your own solution:
+this is done and nice. There are new classes
+ModuleProperty
+ModuleListProperty
+ModuleDictProperty
+that do what you would guess from the name: add a property (an attribute) that contains a module, a list of modules or a dict of modules. initialisation is done essentially automatically

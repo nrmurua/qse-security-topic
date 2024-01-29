@@ -1,0 +1,14 @@
+It seems like FixedSizeArrays.jl is basically deprecated and we should use https://github.com/JuliaArrays/StaticArrays.jl from now on. I'll take a crack at converting the immutable-arrays branch to use that.
+So, initial bad news on the performance of the immutable version. Using this benchmarking script:
+I get the following performance:
+I'm rather surprised, so I will spend a little time profiling to see what is going on.
+Ok, I found some major performance traps and fixed them. On 98eb752 (immutable arrays) I now see:
+I expect I can find more low hanging fruit.
+Note that everything I changed so far is related to Pauli operations, as opposed to Cliffords.
+Oh, another benefit is that the immutable-arrays branch uses over 10x less memory than master to run these tests.
+Oh yeah... there was more low hanging fruit. New numbers on d3af44f
+So, the immutable-arrays branch is good enough now that I merged it into master. However, there is still room to improve, as it looks like our Clifford * Clifford multiplication is still 40x slower than multiplying 4x4 complex matrices.
+Given the representation we use (dictionaries of generators), this may be hard to beat for small matrices, as matrix multiplication is heavily optimized.  If we look at more and more qubits we might be able to see speed gain over the complex matrix representation (since that will slow down exponentially).
+Found another factor of 2 in e7cae0e. I think there is more room for optimization even with our current representation. I think with a little more work we can get within 10x of plain matrix multiplication.
+Recording new numbers:
+At this point, especially for C1 multiplication, we are mostly limited by our representation. We actually spend 50% of the benchmark time in initializing empty Dict{Pauli{1},Pauli{1}}'s, and if you look a level deeper, it is creating the array which backs the Dict. So, unless there is some magic way to avoid that overhead, this is nearly as far as we can take it.

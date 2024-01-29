@@ -1,0 +1,32 @@
+The core device (current master) crashes every once in a while with a Utf8Error.
+This is a bit hard to reproduce, but our core devices currently crash fairly reliably after a while (maybe once every day or two) with a Utf8Error. The backtrace is as follows:
+->
+This is in the core log forwarding handler. At this point, I'm not sure what the actual issue is: whether, say, memory corruption leads to invalid UTF-8 or reading beyond the initialised buffer, or e.g. a long backlog just gets truncated at a multi-byte boundary.
+Clearly, crashing in the log forwarding code isn't very helpful, though, as it obscures the actual problem. I'd argue that we probably shouldn't be validating UTF-8 here at all for performance, but at the very least we should be inserting replacement characters (U+FFFD) for invalid UTF-8 rather than panicking (and thus eliminating any trace as to what could be going on).
+It might be this line, but please decode the backtrace. The idea is that valid UTF-8 goes in, any partially overwritten characters are left out, valid UTF-8 goes out, so that unwrap should never trigger.
+but please decode the backtrace.
+Ah, the second chunk of lines in the above is already the decoded backtrace.
+Right, OK. I'm not sure what causes this. It'd be necessary to apply a local patch and take a look at the data, unless you see any obvious bugs in the log_buffer code.
+This turns out to be easy to reproduce, or at least an adjacent bug is: Just print a non-ASCII character from the kernel, e.g.
+(This lead to:)
+The generated IR seems obviously wrong:
+σ should be U+03C3, and is 0xCE 0xA30xCF 0x83 in UTF-8.
+σ should be U+03C3, and is 0xCE 0xA3 in UTF-8.
+Python disagrees:
+Ah, interesting; then just the length is wrong.
+Edit: Fixed the above; I had accidentally used upper-case sigma (U+03A3). If I read the IR correctly, it's still a byte short, though.
+It still seems wrong that prints from the kernel CPU (invalid UTF-8 or not) can crash the comms CPU. Perhaps the Request::PullLog handler should just forward the bytes, and let the client code deal with the fallout? Inserting replacement characters at this stage is a little annoying to implement (string length changes, so we'd need to transcode directly into the socket buffer).
+Perhaps the Request::PullLog handler should just forward the bytes, and let the client code deal with the fallout?
+Inserting invalid UTF-8 into a Rust &str is UB, so you'd have to significantly restructure the entire firmware somehow.
+Inserting invalid UTF-8 into a Rust &str is UB, so you'd have to significantly restructure the entire firmware somehow.
+Hmm, wouldn't all that is required be to not needlessly convert user data that is just ferried between host and kernel from &[u8] to str (and variants)? In other words, treat it as untrusted?
+Something along these lines (incomplete):
+Will finish this up tomorrow…
+(NB: This issue now conflates three separate issues: Handling of kernel-generated strings on the comm CPU, the print() RPC literal argument issue, and whatever else (truncation/corruption?) the origin of the log forwarding crash might be.)
+Is there a way to reproduce the origin log forwarding crash?
+Fixed the typo in the above message; I simply meant the origin of the log forwarding crashes we have been seeing.
+To reproduce it, you'd need some way of generating an ARTIQ Python string that's not valid UTF-8, and then just log it. You could get it by running my above test case without your #1990, or perhaps generating an invalid string in a class attribute or RPC return value (though those might have some checks in place).
+As for the actual root cause of the crashes we've been sporadically seeing (i.e. the reason for the data to be invalid UTF-8 to begin with, not why it causes crashes), I'm not sure. There are, unfortunately, several soundness bugs in the ARTIQ Python memory lifetime analysis, so it could e.g. be memory corruption bugs caused by any of these. For instance, IIRC of them was related to corruption of exception messages when catching/re-raising exceptions before the rewrite that made them statically fixed. Ideally, there should never be any invalid strings in ARTIQ Python, of course, but in practice, I'd argue that the runtime crashing without any (even partial) indication of the source of the invalid data is much worse than just passing it through to the host (which is faster as well!), and dealing with it there (e.g. by inserting replacement characters).
+passing it through to the host (which is faster as well!), and dealing with it there
+I don't think changing that behavior would be meaningful and possible, since logging relies on the third-party's log_buffer, which operates strings only.
+Though, I agree there are some memory-related bugs here, that worth investigating.

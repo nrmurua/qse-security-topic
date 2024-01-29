@@ -1,0 +1,30 @@
+gives
+but delay is not a basis gate
+Yes this is the correct behavior. delay is a built-in instruction (in qiskit, as well as qasm3). Similar to measure and reset --- it is not a gate to be translatable to other gates and be a "basis".
+I think if a user inserts a delay and sends it to a backend that doesn't understand delay, it should just be a runtime error for now, until the transpiler has a better notion of "instruction set" beyond "basis gates". Similar to if I send a reset instruction to a backend that cannot perform reset (transpiler does not catch that either).
+There was an attempt at a "supported_instructions" field in backend.configuration(), but I don't think that's fully flushed out (it's not used anywhere).
+Ok. I think then delay should not be in the basis set as it is now because what your saying is an implementation detail that a normal user is unaware of.
+I agree with @nonhermitian
+This happens with all the instructions:
+Qiskit needs a custom_instructions parameter (see, for example, qasm_simulatorAer.get_backend('qasm_simulator').configuration().custom_instructions), analogous to basis_gates.
+I'm reopening this because this is actually a TODO in the code:
+https://github.com/Qiskit/qiskit-terra/blob/cea50ed6f3bf6632a2f80c5e59756ebf5461df21/qiskit/transpiler/passes/basis/ms_basis_decomposer.py#L77-L79
+This two-year-old TODO, I think, was introduced by @ajavadia here)
+It also brings up the question as to what the supported_instructions means in the IBM Quantum system config files:
+delay is in the basis_gates and the supported_instructions.
+Also there seems to be a mix between supported_instructions, custom_instructions and "built-in" instructions.
+Qiskit needs a custom_instructions parameter (see, for example, qasm_simulatorAer.get_backend('qasm_simulator').configuration().custom_instructions), analogous to basis_gates
+No please, this is very ugly. I'm trying to get away from these strings and define a proper instruction set (#5774). Also "custom_instruction" doesn't make any sense for delay, delay is a fundamental thing like measure and reset.
+This happens with all the instructions:
+No, it only happens with those you listed because those are all not gates. They cannot be translated to each other. "basis_gates", as the name suggests, means some gates which you can do mathematical change of basis over.
+this is actually a TODO in the code:
+That is again saying that backends should report the instruction set they have. But "measure"/"reset"/"delay"/"barrier", none of these should be considered "gates" (there's a reason they are under qiskit/circuit and not qiskit/circuit/library/standard_gates). I actually think that TODO should be removed now that we have "supported_instructions".
+delay is in the basis_gates and the supported_instructions.
+Where is delay in basis_gates? It shouldn't be. It should be in supported_instructions for now (which is how it is done here Qiskit/qiskit-ibmq-provider#976), until we define the instruction set properly.
+So to summarize, this is not a bug. The example code in the issue should not raise.
+Where is delay in basis_gates?
+See any IBM Quantum system, e.g.
+['id', 'rz', 'sx', 'x', 'cx', 'reset']
+delay isn't in there. reset shouldn't have been added either, this is why "supported_instructions" was created.
+I agree this distinction is non-obvious to the end user. But I think this needs documentation not change in transpiler behavior. And then cleaning the whole thing up in #5885
+Ok yeah by fault, it is reset I was thinking about, which is not a gate at all .

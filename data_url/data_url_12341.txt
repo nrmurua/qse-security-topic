@@ -1,0 +1,37 @@
+I have measure the quantum states using tfq.layers.State(). The output of tfq.layers.State() is of the form tf.RaggedTensor. Now I have measured two different states, using the same method. (say state1 and state2)
+After using cirq.fidelity(state1, state2), I am getting the following error:
+Why is it so? And how can I measure the fidelity of the states using tfq.layers.State()?
+Cirq doesn't play well with tensors, just convert it to a numpy array. E.g. this worked:
+Also worth noting that TFQ has it's own mechanism for fidelity computations, so you don't have to compute the full state: https://www.tensorflow.org/quantum/api_docs/python/tfq/math/fidelity
+But the documentation says that it measure the fidelity between the "circuits". I don't quite get what does it mean to measure the fidelity between circuits instead of quantum states. (As it is pretty obvious from the definition of fidelity)
+It does measure the fidelity between states, but the input type is circuits and it uses that terminology to reflect that (since you could have many different parameters and stuff and it works with that). Since you don't input states to the function, you just work with circuits (that way you don't have to generate and store the states), it can be faster and easier (and works more smoothly with TFQ, since fidelity is a differentiable op).
+Is there any manner that I can measure the quantum relative entropy between two states? Or can I measure trace distance between two quantum states.
+Also, I believe, the fidelity between pure and mixed states has some different notions as mixed states are ensembles of probabilities and states. Hence the code that you shared above is regardless of the fact the input quantum state is mixed or pure state?
+PS: Quantum relative entropy, $S$ between two states $a$ and $b$ can be written as:
+$$S = Tr(a(log(a) - log(b)))$$
+Yea cirq.fidelity says it takes statevectors or density matrices, so either should work. Regarding relative entropy, your best bet would probably be to take the output of the state layer and just compute it manually.
+What about trace distance? Can that be evaluated?
+Sure you could compute that as well. Just get the state and you can compute pretty much anything from it (of course none of this will be differentiable).
+But according to the formula of relative entropy I need to evaluate logarithm of a density matrix. How is that possible?
+Well you have a density matrix (either naturally or just convert the pure state to one, there is also maybe a simpler formula for pure states like there is for fidelity but I don't know it), and just do 'tf.linalg.logm'.
+Also for trace distance I thought you only needed the square root of a matrix?
+So how can I evaluate trace of a density matrix? cirq.partial_trace is something I don't think would work.
+You want to evaluate the trace of a matrix, just use tf.linalg.trace
+I think tf.linalg.logm aren't being applied on tf.RaggedTensor. Even after using .to_tensor() it says the tensor is not a square matrix. How to work around this?
+Is it because tfq.layers.State returns a non-square density matrix?
+Are you putting in a pure state? If so that's not a matrix and you need to convert it to a density matrix (of course the trace of a pure state density matrix is just 1)
+I am actually using the output of tfq.layers.State which I believe is density matrix of the output quantum state.
+What's the shape of the tensor you are putting into the logm that's causing an error?
+The input into the logm is the output of tfq.layers.State which is a tf.RaggedTensor of shape TensorShape[1, None], which after applying .to_tensor() method converts it into a tensor of shape [1,16].
+And you have 4 qubits I'm guessing?
+Yes exactly.
+This is a statevector. If you want to work with density matrices you will need to convert it.
+How can that be achieved?
+dm = sv.conj().T @ sv (that's numpy Notation idk off the top of my head if it would work in TF but just do the equivalent operations)
+Cool! Thanks.
+I am getting the density matrix using the above operation that you mentioned, but I am getting the dtype of the fidelity to be complex rather than a real value. Can you suggest me what am I doing wrong here:
+I have doubt regarding the notion of statevectors. The statevector is basically the vector format of a quantum state which is probabilistic. And the statevector output of tfq.layers.State is vector with complex number entries. Isn't that something different?
+you can use the simpler formula for statevector fidelity (and avoid unnecessary matrix computations) see: https://www.quantiki.org/wiki/fidelity
+are you actually getting a complex value or is the dtype just complex? If it is the latter that is because none of those operations will change the data type so since the statevector is complex your output data type will be too
+yes statevectors are complex, they represent the probability amplitudes: https://en.m.wikipedia.org/wiki/Probability_amplitude
+It might be beneficial to gain a stronger understanding of the foundations of QC, I recommend Mike and Ike: http://mmrc.amss.cas.cn/tlb/201702/W020170224608149940643.pdf

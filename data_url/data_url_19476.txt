@@ -1,0 +1,35 @@
+Following our discussions about small circuit performance, here we summarize the steps which may be required to improve the timings. After a first profiling round we believe we can improve the performance by
+If the previous points improve the performance then we may consider updating circuit parameters instead of creating new circuits.
+I did some benchmarks with precomputing the qubits tensor and indeed it improves small circuit performance slightly but the difference is very small when considering total time (creation + execution). Simulation time alone is ~2.5x faster so it may be worth updating circuit parameters to avoid creating new circuits. This would also be useful to avoid re-running compilation algorithms related to gate fusion or the distributed circuit.
+
+
+
+I think qubits is the only place where tensor conversion is used because nqubits and targets are passed as int attributes in the custom operators and if I understand correctly these are not converted (but I may be wrong). The code of the "optimized" case is pushed in the smallopt branch.
+Thanks, do you have numbers for single thread? What happens if you run the profiling on smallopt, does the convert_to_tensor disappears?
+Thanks, do you have numbers for single thread? What happens if you run the profiling on smallopt, does the convert_to_tensor disappears?
+I just remembered about single thread and was going to run now. I will update the plots when I have the data.
+The convert_to_tensor doesn't disappear from the profiling but now it is clear that as we expected it is related to the qubits tensor because the time is spent in the qubits_tensor property that I created in gates:
+
+Note that the convert_to_tensor doesn't disappear because in the benchmarks script re-creates and executes the circuit 100 times. All I did is move the convert_to_tensor to creation time instead of execution but this makes no difference for this specific benchmark/profiling. The advantage would be seen only if I run the same circuit 100 times without recreating it.
+I profiled a different benchmark script that executes the circuit for many repetitions but without recreating and convert_to_tensor disappears as expected.
+Also, here are some updated plots including single thread performance:
+
+
+
+
+It seems that single thread is faster (even than GPU) for up to 15 qubits but the "speed-up" from moving the convert_to_tensor to gate creation is similar to the multi-threading case (new time = ~0.8 x master branch time).
+Ok, that's pretty good. I am running the qft benchmarks code using smallopt and I see the following simulation time on my CPU:
+so I believe that if you rerun qibo[smallopt,CPU] between 5-15 qubits we will see that it is 5-10x faster on small circuits, which makes it faster than other libraries, and very close to qulacs.
+If that is true, then we should review the thread assignment mechanism in the custom operators, including the GPU. We could increase the workload per thread.
+so I believe that if you rerun qibo[smallopt,CPU] between 5-15 qubits we will see that it is 5-10x faster on small circuits, which makes it faster than other libraries, and very close to qulacs.
+That is true considering simulation time alone, however if we add creation time then smallopt is only slightly faster than master so qulacs will still be 10-100x faster on small circuits. Currently I compare total time = 1x creation time + 1x simulation time between different libraries.
+If one is interested in multiple executions of a circuit, then a different figure of merit would be more relevant, for example something like 1x creation time + 100x simulation time. In this figure of merit our difference with qulacs will be smaller if we use smallopt.
+Yes, but in the plots for the paper we are quoting the simulation time (which excludes creation), right?
+Yes, but in the plots for the paper we are quoting the simulation time (which excludes creation), right?
+Sorry, the axis label is probably a bit confusing. Currently I plot the total time (creation + simulation) because I think this is the most relevant one. However we can easily change this with the data we already have because creation time and simulation time are logged seperately. I guess it is a matter of what we want to present.
+Ok, I see, so let's keep as it is.
+Concerning the smallopt, I did other tests and I believe we can't really improve performance internally from tensorflow, there is a natural overhead when tensorflow is allocated in a multi-threading environment. I have forced nrep=1 if the workload is less than 10000 elements, and I still get a factor 2x slower than the same result using taskset -c 0.
+In this condition, I would suggest to merge the smallopt, create a mechanism to update the circuit parameters in-place (avoiding reallocation). We could update the plots with the single-thread version, but this may not be fair with other codes which are not manipulating threads based on performance (even if this is a legit approach).
+Alright, I will fix a few things in the code and open a PR for smallopt.
+We could use single thread for up to a specific number of qubits in the benchmarks. Alternatively we could do something similar to the histogram we have for Qibo configurations but for small number of qubits, that shows that single thread is preferable to multi-threading or GPU. We may also consider disabling multithreading for small circuits.
+This issue has been fixed in #169 and #178.

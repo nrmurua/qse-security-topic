@@ -1,0 +1,14 @@
+Transpiler needs to provide some means to enforce physical qubit subset to use.
+An option would be the upgrade of CouplingMap. The current CouplingMap cannot handle partial coupling graph perfectly. If it could, we could enforce physical qubits to use by just setting the partial graph to coupling_map option.
+Some experiments such as Randmized Benchmarking (RB) require to restrict physical qubits to use. Some users may want to run multiple circuits on different partitions of physical qubits in parallel. However, the current transpiler does not provide any means to enforce physical qubit subset to use (in layout and routing). That makes too difficult to implement RB with 3 or more qubits for example and, in fact, a naive implementation does not work correctly as shown below.
+The following code transpiles a 3Q RB circuit on 4-qubit ring coupling. That produces a mapped circuit using all 4 physical qubits.
+And we have no means to restrict it to use 3 physical qubits, e.g. [1, 2, 3].
+For example, the current transpile does not work with coupling_map=CouplingMap([(1, 2), (2, 3)]).
+The way to do this is via a 2-step transpilation:
+@ajavadia Oh, I didn't think of it. That's a good workaround. Thank you for your comment.
+I though the workaround resolves this issue perfectly at first but I had a second thought. I see it works correctly, however, it has a minor performance issue.
+If we use a noise-adaptive layout in the first call, it would not work as intended. The pass should use the cost of qubit 1, 2, 3 but it would use the cost of qubit 0, 1, 2.
+That said, I understand the direction promoting Target while reducing the usage of CouplingMap. So upgrading CouplingMap might not be a good idea to resolve this issue.
+How about thinking again an old idea adding force_layout option and deprecating initial_layout option in transpile?
+I think there are not a few users who want to restrict physical qubits to use. I suppose most of the initial_layout users want to use it to restrict qubits to use rather than just a hint for layout/routing passes to perform well. So I think the API migration from initial_layout to force_layout is worth consideration.
+Internally, for now, we may call transpile twice and, in the first call, do token swapping to get the final layout back to the forced layout and raise an error if we fail mapping. What do you think?

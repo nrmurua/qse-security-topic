@@ -1,0 +1,18 @@
+Transpiler fails to compile x to stabilizer basis unless nominally unrelated gates (rz and sx) are in basis.
+
+
+This behavior seemed surprising enough to report as a bug. No idea how to handle the general case of transpilation succeeding/failing based on basis gates that are needed in intermediate transpilation steps but not in the final transpiled circuit. But it would be nice if the default basis translation in transpile could just handle the cases of synthesizing U gates directly into Pauli gates when possible.
+No response
+similarly feels like transpiling rz(pi) to z should be possible without defining custom basis translation rules?
+
+The reason the seemingly unrelated gates are needed here is that the transpiler is designed to work over complete bases.  The extra gates here are ones that make it up to a complete basis.
+The synthesis here is a two-stage process: basis translation, followed by unitary optimisation.  Your examples fail at the first step, and it can't tell that the second step will be able to optimise the gate into something that collapses down to the basis.  For example, the equivalence library structure we have is only meant to contain rules that will work for any parameter values of the input gates.  I suspect there would be similar problems with the exact-synthesis routines if we tried to force the use of those over an incomplete basis as well.
+This is a pretty unusual use case (if the simulator is a stabiliser simulation, why not use those gates directly?), and I'm slightly concerned about performance regressions in more usual transpiler use cases if we tried to catch things like this.
+There is also another option you can try, to do the basis translation using the unitary synthesis which is typically slower. For example if you do:
+It should work as the default 1q synthesis routine will be able to synthesize an equivalent circuit in the target basis gates. This won't work for all the basis_gates values you were trying but for some of them where the synthesis routines know how to work in for 1q circuits it should work fine
+Edit: Actually, looking at running the output I think there is a bug with the synthesis translation method, it's not converting the u to an x gate
+Thanks jakelishman and mtreinish for explaining the issue with basis completeness, and also pointing out the synthesis method!
+This is a pretty unusual use case (if the simulator is a stabiliser simulation, why not use those gates directly?)
+Sorry I don't have implementation ideas, but just to share here are my thoughts on use case:
+As experiments start to routinely use too many qubits for statevector simulations, it seems like stabilizer sims could be an increasingly important tool for testing experiment code on special-cases that are Clifford (e.g. binding all the rotation angles to multiples of pi/2 and seeing how well hardware agrees with a stabilizer sim). Ideally the same code used to build circuits for the experiment would also be used to build the circuits fed to the stabilizer simulator, so that the simulation can help test that code. But this is harder/impossible if the stabilizer simulator requires that we construct our circuits using a different basis from the start (especially a basis that cannot be parameterized), since that requires writing + maintaining one code path for the main experiment, and a different code path for stabilizer simulations. (This is what I'm doing now -- doable but a little painful.)
+I agree it's not technically essential, but it does make the user's life easier the more that circuit construction can be backend-agnostic.

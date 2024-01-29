@@ -1,0 +1,30 @@
+Scheduling an experiment that uses an Urukul AD9910 channel causes a ConnectionResetRerror in the preceding experiment.
+The experiment runs twice, each time doing nothing for 5 seconds.
+The first scheduled experiment fails with a ConnectionResetError. Only the second one runs completely. Error messages for the first experiment:
+Operating System: Windows 7
+ARTIQ version: v5.6991.ebd5d890.beta
+Version of the gateware and runtime loaded in the core device: 5.0.dev+599.g0b1fb255;mpq
+If using Conda, output of conda list (please submit as a file attachment, as this tends to be long)
+conda_list.txt
+Hardware involved: Kasli v1.1, Urukul v1.3 (AD9910)
+Is there anything on the core log (easiest to verify on the UART interface using the front-panel USB connection)?
+easiest to verify on the UART interface using the front-panel USB connection
+You don't even need that, just run artiq_coremgmt -D device_ip log
+True – in this case, the comm CPU seems to be (mostly) happy, so the network interface should work.
+Also this experiment does not actually access the Urukul channel, and it could be random behavior from this bug: #1125
+Here is the core log with log_level DEBUG: core_log_connection_issue.txt. I believe that the first experiment was transmitted at [    46.172805s], and the second one at [    47.285039s]. This seems to result in the first connection failing with a timeout error a second later:
+I then repeated the process with the line self.setattr_device("urukul0_ch0") in the experiment commented out. The two experiments are transmitted at [    59.674745s] and at [    64.881655s] and no error occurs.
+I also tried calling setattr_device for various devices and could only reproduce the error with urukul[x]_ch[y]. For instance, instantiating urukul0_cpld, led0, and ttl0 work fine.
+I then repeated the process with the line self.setattr_device("urukul0_ch0") in the experiment commented out. The two experiments are transmitted at [ 59.674745s] and at [ 64.881655s] and no error occurs.
+Does it do that every time or is this just one data point?
+This behaviour is completely reproducible. I always get a ConnectionResetError on the currently running experiment when scheduling another experiment that calls setattr_device("urukul[x]_ch[y]") in build(). I haven't seen any timeouts otherwise.
+Ah, you have Urukul sync, right?
+That could be the EEPROM read that is causing the issue.
+I belive so. We have bought the AD9910 version and the DDS outputs are synchronized to the RTIO timestamps.
+A hardware access during build would explain why scheduling an experiment can disturb the currently running one.
+Can you disable synchronization (as a workaround and to confirm that this is indeed the problem) until we fix this? Remove sync_delay_seed and io_update_delay from device_db.py.
+Indeed the issue does not appear with synchronization disabled.
+As a workaround (i.e. if you need synchronisation to work right now), you could also directly specify the two values in the device db.
+That sounds like a good workaround. How can I read out the EEPROM values and in which format do they have to be specified in the device_db?
+See the Urukul constructor for how to access the EEPROM, but you could also just read them from the member variables after the fact. Alternatively, you can just re-run the tune_* functions to find the parameters, like in the following (hacky) script:
+Just pass the result directly as integers in the device db (resp. a list of integers for the delays).

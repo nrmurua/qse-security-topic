@@ -1,0 +1,50 @@
+Description of the issue
+The cirq.DepolarizingChannel class is buggy for n_qubits larger than 1.
+How to reproduce the issue
+Gives:
+Full log:
+~/anaconda3/lib/python3.7/site-packages/cirq/ops/raw_types.py in call(self, *args, **kwargs)
+268
+269     def call(self, *args, **kwargs):
+--> 270         return self.on(*args, **kwargs)
+271
+272     def with_probability(self, probability: 'cirq.TParamVal') -> 'cirq.Gate':
+~/anaconda3/lib/python3.7/site-packages/cirq/ops/raw_types.py in on(self, *qubits)
+210         from cirq.ops import gate_operation
+211
+--> 212         return gate_operation.GateOperation(self, list(qubits))
+213
+214     def wrap_in_linear_combination(
+~/anaconda3/lib/python3.7/site-packages/cirq/ops/gate_operation.py in init(self, gate, qubits)
+58             qubits: The qubits to operate on.
+59         """
+---> 60         gate.validate_args(qubits)
+61         self._gate = gate
+62         self._qubits = tuple(qubits)
+~/anaconda3/lib/python3.7/site-packages/cirq/ops/raw_types.py in validate_args(self, qubits)
+199             ValueError: The gate can't be applied to the qubits.
+200         """
+--> 201         _validate_qid_shape(self, qubits)
+202
+203     def on(self, *qubits: Qid) -> 'Operation':
+~/anaconda3/lib/python3.7/site-packages/cirq/ops/raw_types.py in _validate_qid_shape(val, qubits)
+728         raise ValueError(
+729             'Wrong number of qubits for <{!r}>. '
+--> 730             'Expected {} qubits but got <{!r}>.'.format(val, len(qid_shape), qubits)
+731         )
+732     if any(qid.dimension != dimension for qid, dimension in zip(qubits, qid_shape)):
+ValueError: Wrong number of qubits for <cirq.depolarize(p=0.1,n_qubits=2)>. Expected 1 qubits but got <[cirq.LineQubit(0), cirq.LineQubit(1)]>.
+Cirq version
+'0.10.0.dev'
+Temporary workaround
+For any users interested in multi-qubit depolarizing noise, this is a possible workaround to avoid the problem:
+Given that DepolarizingChannel inherits from SingleQubitGate, it really shouldn't have an n_qubits field - users should instead invoke on_each to apply the channel to multiple qubits:
+We should remove this parameter. As far as I can see, nothing in Cirq actually consumes it (aside from the string-representation methods for the class), but it's still part of the public API.
+Thanks, I see!
+Note however that the tensor product of n local depolarizing channels (obtainable via on_each) is not equal to a global n-qubit depolarizing channel.
+As far as I understand, there isn't a direct way to get the latter apart from using AsymmetricDepolarizingChannel.
+The AsymmetricDepolarizingChannel is also single qubit though. I think we need a new concept for this, or generalize the DepolarizingChannel correctly.
+Discussed on Cirq Cynque: @tonybruguier please have a look at this, thank you!
+Ack
+Sorry about this mistake. I sent #3715 as an attempt to fix.
+Thanks for resolving this issue!

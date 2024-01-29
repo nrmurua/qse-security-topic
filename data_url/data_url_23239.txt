@@ -1,0 +1,86 @@
+example: Spectrum analyzer - acbandwidth cannot be tuned with +- buttons because increment is of the order 1e-3, and by the time an important increment has accumulated, the program rounds to the next allowed value, which is always the previous one...
+-> how to deal with this?
+Any other opinions?
+The cleaner would be to only have valid values displayed in the gui, but
+this requires to add some interface to the lower level... Like
+next_valid_value()/previous_valid_value().
+Then, the log/lin increment would be more or less determined by the FPGA
+implementation, but probably in most cases this would be the most sensible
+behavior (gains would be log while offsets would be lin?)
+Le 29 sept. 2016 07:37, "lneuhaus" notifications@github.com a écrit :
+example: Spectrum analyzer - acbandwidth cannot be tuned with +- buttons
+because increment is of the order 1e-3, and by the time an important
+increment has accumulated, the program rounds to the next allowed value,
+which is always the previous one...
+-> how to deal with this?
+Any other opinions?
+—
+You are receiving this because you are subscribed to this thread.
+Reply to this email directly, view it on GitHub
+#80, or mute the thread
+https://github.com/notifications/unsubscribe-auth/ACqnODcN6v4_90CmDLuOjNCQebbKOR92ks5qu5T_gaJpZM4KJ1lo
+.
+In order to not create some overload, we could equip each numeric register class with a property "minumum_step", that is inferred from the binary representation in the FPGA (probably < 1 h of work). Should that do the job? Or will we run into other issues, e.g. that the minimum FPGA step is often too small, anyways?
+Thinking about it, I dont like this option too much since indeed, some registers behave log-like (cutoff frequencies) while others linearly (gains and offsets, even though you might want to treat them loglike). So next_value would be more interesting. That creates the problem that next_value requires a read operation from the FPGA unless we save a python copy of the last value. This already looks like a "gas factory" to me.
+I suggest we stick to my first simple approach and let the gui manually define a typical step size if desired?
+Ok, I thought some of the registers were 14 bits integers and some were of
+the form alpha_2_*n. But in fact the latter are represented in the gui with
+a combobox.
+So if I am not mistaken, log and lin buttons are all linked to integer
+registers...
+I guess what you are proposing should work perfectly fine for linear
+increment. For log increment, you basically need to enforce linear
+increment as soon as (increment_factor-1)*value becomes smaller than
+register_increment
+I guess apart from distorting slightly the user expérience it should work
+fine
+Le 29 sept. 2016 13:33, "lneuhaus" notifications@github.com a écrit :
+In order to not create some overload, we could equip each numeric register
+class with a property "minumum_step", that is inferred from the binary
+representation in the FPGA (probably < 1 h of work). Should that do the
+job? Or will we run into other issues, e.g. that the minimum FPGA step is
+often too small, anyways?
+—
+You are receiving this because you commented.
+Reply to this email directly, view it on GitHub
+#80 (comment), or mute
+the thread
+https://github.com/notifications/unsubscribe-auth/ACqnOC3H4sGEF1Jcd8GWEJ-NvXLy2EMBks5qu-hSgaJpZM4KJ1lo
+.
+Ok, I thought some of the registers were 14 bits integers and some were of the form alpha_2_*n.
+Thats true except for frequencies and phases.
+So if I am not mistaken, log and lin buttons are all linked to integer registers...
+yes
+For log increment, you basically need to enforce linear increment as soon as (increment_factor-1)*value becomes smaller than register_increment
+Yes
+So to summarize we simply define an increment in the gui. If the gui is a log-like, we do what you suggest. But most importantly, we dont update the value until the mouse button is released.
+Ok, I see what you mean... Basically we try to update the FPGA value at
+every step, but we prevent the timer based update from the FPGA to the
+button to happen whenever the button is currently pressed.
+That cannot hurt, however, it should not be necessary as long as we make
+sure only valid values are being sent from the gui.
+Le 3 oct. 2016 11:33, "lneuhaus" notifications@github.com a écrit :
+Ok, I thought some of the registers were 14 bits integers and some were of
+the form alpha_2_*n.
+Thats true except for frequencies and phases.
+So if I am not mistaken, log and lin buttons are all linked to integer
+registers...
+yes
+For log increment, you basically need to enforce linear increment as soon
+as (increment_factor-1)*value becomes smaller than register_increment
+Yes
+So to summarize we simply define an increment in the gui. If the gui is a
+log-like, we do what you suggest. But most importantly, we dont update the
+value until the mouse button is released.
+—
+You are receiving this because you commented.
+Reply to this email directly, view it on GitHub
+#80 (comment), or mute
+the thread
+https://github.com/notifications/unsubscribe-auth/ACqnOLdypyBARxTaqyfdauCafAda3UO3ks5qwRJBgaJpZM4KJ1lo
+.
+OK I assigned this task to myself.
+I will also have functions create_widgets directly at the register level, it will make the gui code less smelly and I don't think it will introduce so much coupling between the hardware layer and the gui layer, since the functions can just be not called if the gui is not needed.
+I created a new branch refactor_register.
+I guess the next logical step in refactoring is to also create functions create_widgets in the redpitaya_modules...
+It's solved in the refactored version of the code. I even adjust the timer to have a true logarithmic variation versus time even when the value becomes comparable with the increment !

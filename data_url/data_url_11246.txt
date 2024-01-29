@@ -1,0 +1,42 @@
+Hi all,
+I've been trying to use the UCCSD ansatz generating functions, and have run into a couple of problems that I was hoping you could help me with. I've tried generating general UCCSD and singlet UCCSD operators using the functions supplied, for H2 and LiH. When I use the function uccsd_singlet_get_packed_amplitudes() I get the following error (for LiH, similar for H2):
+Traceback (most recent call last):
+File "/Users/sam/Documents/OpenFermion/UCCtest.py", line 48, in 
+packed_amps = uccsd_singlet_get_packed_amplitudes(ccsd_single_amps, ccsd_double_amps, num_qubits, num_electrons)
+File "/Users/sam/.local/lib/python3.6/site-packages/openfermion/utils/_unitary_cc.py", line 184, in uccsd_singlet_get_packed_amplitudes
+singles.append(single_amplitudes[virtual_up, occupied_up])
+IndexError: index 4 is out of bounds for axis 0 with size 4
+If I instead try a general UCCSD calculation using the function uccsd_generator(), I get an operator that looks correct for LiH. However, if I try this function with H2, it returns 0, instead of the correct UCCSD operator.
+I've attached my code below; please could you let me know if there's something that I'm doing wrong in both of these instances?
+Thanks for your help,
+Sam
+Sam, I don't have a solution, but the issue has to do with the shape of the arrays calculated_molecule.ccsd_single_amps and calculated_molecule.ccsd_double_amps. The molecule in your example, LiH at bond length 1.45, happens to be one of the pre-loaded datasets that ships with OpenFermion, so we can see what happens if we use that data:
+This gives
+which are the shapes expected by uccsd_singlet_get_packed_amplitudes. If we run your code, however, which calculates the molecular data using OpenFermion-PySCF, as follows:
+we get
+I don't yet have an explanation for this discrepancy, but perhaps @jarrodmcc , @babbush , or @sunqm can explain. I'll add that I tried using OpenFermion-Psi4 and the results were consistent with OpenFermion-PySCF (different from the pre-loaded data set).
+@jarrodmcc any idea what's going on here?
+Is the problem related to the spin-orbital vs spatial-orbital representation? The uccsd amplitudes returned by pyscf are based on spatial orbitals. The t1 amplitude has two components, one for spin-up, the other for spin-down.
+I ran into the same problem as @sammcardle30 (have you made any progress?), when I try to create a UCCSD ansatz for any pySCF generated MolecularData object constructed via OpenFermion-PySCF.
+After digging a bit deeper, I figured out the following:
+As @kevinsung correctly pointed out, the openfermion.utils._unitary_cc.py function uccsd_singlet_get_packed_amplitudes assumes as input for the single_amplitudes a NxN numpy array and for the double_amplitudes a NxNxNxN numpy array where N is the number of spin-orbitals.
+However, the MolecularData file constructed with pyscf has single_amplitudes of the shape AxB and the double_amplitudes have AxAxBxB, where A+B is the total number of spatial orbitals, and 2B is the total number of electrons. This is, as @sunqm partially pointed out, because
+In my notation above, B is the number of occupied spatial orbitals (each filled with an alpha and beta electron), and A is the number of virtual spatial orbitals. 2*(A+B) is the total number of spinorbitals. The single_amplitudes will have AxB possible excitation coefficients (A virtual spaces to choose from, coming form B occupied spatial orbitals), and similarly for the double_amplitudes with AxAxBxB possibilities.
+In essence, I think this is also what the uccsd_singlet_get_packed_amplitudes achieves right? it takes as an input the complete spinorbital matrix elements NxN and NxNxNxN and packs it into a compact list which "are relevant to singlet UCCSD, in an order suitable for use with the function uccsd_singlet_generator".
+So, there must be a way to convert the pySCF CCSD amplitudes to the packed_amplitudes format to use in openfermion's uccsd_singlet_generator. Unfortunately, my inexperience with chemistry prohibits me from easily writing such a helpter-function, but I am more than willing to help out!
+I think having a helper-function like this, would actually make it possible to generate the uccsd singlet generator for an arbitrary molecule the user made himself, and therefore it is of significant interest. As it stands now, a user can not generate a UCCSD ansatz for their own generated molecule directly. @babbush thoughts? And maybe this should this be linked to OpenFermion-PySCF, or should the converter/importer/helper-function be part of openfermion.utils?
+I believe that @sunqm may have just fixed this with PR #42 on OpenFermion-PySCF. Does this solve your problem?
+Thanks a lot @sunqm ! there seems to be just a small typo I commented on at PR # 42
+With that fixed, the above problem as stated is also fixed as there are no code errors anymore, the uccsd_singlet_get_packed_amplitudes can now accept ccsd amplitudes generated from run_pyscf as they are in the right .shape.
+I have opened a  new Issue on Openfermion-PySCF which is somewhat related to this Issue and it's a problem these same users might run into.
+How do you think PR 44 on OpenFermion-PySCF addressed the issue?
+@babbush perfect, I think both Issues can be closed:)
+Great! Thanks!
+Hi everyone, I was wondering is anyone able to get correct result dimension now? The ccsd_single_amps and ccsd_double_amps still gives me AB and AABB dimension rather than NN and NNNN dimension such that they are not able to be feed into uccsd_generator. (I still haven't found any solution to this problem after reading threads, or probably I missed something?)
+Hi @Kee-Wang ! which MolecularData input object are you using? In the old formatting, the MolecularData was in AB and AABB dimension. In this thread there are links PR 42 and PR 44 referring to a fix in OpenFermion-PySCF (not OpenFermion itself) to generate NN and NNNN formatted CCSD amps.
+I suggest you try re-making your MolecularData with the latest version of OpenFermion-PySCF and that should work as an input to uccsd_generator.
+Hi guys, I got a question that what is the return of uccsd_generator. Is that a circuit under uccsd ansatz? If so, how can I create a cost_function to apply optimizer and get the ground state energy of an arbitary molecule? It seems the present tutorial online is outdated and not get Cirq included.
+Hi Chris, the function generates a FermionOperator which would correspond to the cluster operator with the input singles and doubles operators. This still needs to be converted into a quantum circuit via exponentiation / Trotterization (see the routines in openfermion.circuits.trotter), and then the cost function for the Hamiltonian needs to be implemented separately.
+Cheers,
+Tom.
+Thanks for reply, Tom @obriente. Is it work if I apply Jordan_Wigner as qubit transformer than trotter? And then convert the hamiltonian to sparse_hamiltonian using get_sparse_operator( ), which enables to return energy as output. Actually I posted my code in issue #732 , could you take a look at it.

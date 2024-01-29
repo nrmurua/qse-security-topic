@@ -1,0 +1,13 @@
+Reallocations of the state matrix happen at each
+line in operations.h and each default copy thereof. I suspect this is because the reference is upcasted when passed as const Eigen::MatrixBase<Derived1>& state in the function argument and then needs to be converted back to a dyn_mat. For example, calling
+from my code, a total of nine copies of the state are created within operations.h:
+along with temporary copies for the purposes of internal::_check_cvector and internal::_check_dims_match_cvect (at lines 532, 535, 349, 352). (Line numbers referring to  f0765d7.) Obviously only number 5 is necessary.
+This is no problem for small state vectors or density matrices but when the data reaches 1 GB it becomes a real issue.
+Thanks much for the comment. I will investigate. Are you compiling with optimizations on?
+The behaviour is the same with and without. For one gate applied on 24 qubits (which still computes below 1s) the total memory usage just before the return from applyCTRL (verified by a cout) briefly goes up to 1387840 kB, for 25 qubits to 2698560 kB, which is in both cases perfectly consistent with the 5 simultaneous non-temporary copies mentioned above plus some overhead. This is with all the recommended compile flags. Thank you, keep up the good work!
+Can you please tell me what you're using for memory allocation diagnostics? And I assume you used gcc/clang? I want to reproduce exactly the issue before coming up with a fix. Thanks again!
+Just the most primitive methods :-) I traced the program (compiled with -g) using gdb line by line and watched the memory allocated in top. Later I added checkpoints in every copy constructor and every operator= in Eigen/src/Core/Matrix.h to confirm my suspicion, and removed -g to confirm the behaviour is not a side effect of debugging.
+My setup is:
+Thanks! I will take a look soon.
+I found that adding .derived() at the end of each definition of rState and rA in operations.h reduces this to one needless copy (at the first conversion from VectorXcd to MatrixXcd), then the previous result gets reused in all the further nested function calls. Also in internal/util.h conversion to dyn_mat is almost never necessary, as MatrixBase supports rows(), cols(), etc. It seems that all examples compile properly with these changes. I'll try to figure out how to eliminate that last copy as well and will consider making a pull request if that's OK.
+I'll greatly appreciate if you do this!

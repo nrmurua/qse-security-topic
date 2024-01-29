@@ -1,0 +1,27 @@
+A QuantumCircuit is producing an invalid OpenQASM 2.0 output when calling .qasm() method. There is a definition of a subroutine calling itself.
+Invalid OpenQASM output:
+gate gate_Q q0,q1,q2 { gate_Q q0,q1,q2; } <- this is the error line
+It shouldn't produce a gate subroutine calling itself.
+No response
+Hey @francabrera, I've spent some time in this issue, and I think that I found the problem.
+So, going deep into the .qasm() function, I found that it iterates for each operation in the circuit:
+and as well, it iterates for all internal circuits for each operation:
+after that, the function insert the relative qasm in a dictonary.
+Note: It defines the last gate and goes backward until the first gate.
+when the function reaches the second Q instruction
+it defines the gate in the correct way:
+However, the controller dictionary, gates_to_define, doesn't update, once the internal function _qasm2_define_custom_operation (which defines these gates) acts like a recursive function. Therefore, when the first Q operation is written, there's no way to it understands that there's another defined gate with the same name, so when this is inserted into the dictionary, the correct one is overwritten by:
+My way to fix it, is changing internally _qasm2_define_custom_operation function to give for every gate an id.
+To do that, I've changed this:
+to this:
+After these changes, the result was:
+there might be a better way to fix it, but, for now, that was my solution.
+If you want to see my tests, you can check it here:  MyTests
+Update, I've tested a different way to fix.
+If you check if the gate's name is in the dictionary before adding into it, you can fix the problem too
+However, I think that this way is a little bit ugly, since we're repeating and there's no coherence in the code. Maybe creating another function to apply the gate's name with a descriptive name, we can fix that.
+On the other hand, this way can  maintain the most part of the tests passing.
+A problem here is that GroverOperator is breaking the Qiskit data model, really.  The name field is supposed to be a unique identifier, and decompositions cannot be circular.  If there are two non-parametrised instructions with the same name, we're within our data model to assume that they represent exactly the same operation (and in fact, our model of mapping to hardware requires that we assume this), and consequently the algorithm definition is circular.
+The OQ2 exporter could maybe detect that case and emit an error complaining about the data model, since it shouldn't output invalid OQ2 (circular gate definitions are invalid), but to me, the real problem is GroverOperator is stateful but isn't representing that in any way that general consumers can reason about.
+edit: well, more specifically, it's a problem that it defines its internal gate with the exact same name that it gives itself.
+Fixed by #10286.

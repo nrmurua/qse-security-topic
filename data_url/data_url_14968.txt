@@ -1,0 +1,23 @@
+When a custom gate with a set definition contains a parametrised global phase, any circuit that contains that custom gate will fail to bind the global phase during parameter assignment.
+All parameter usage in custom definitions should be bound.
+This is due to ad-hoc recursion/iteration in QuantumCircuit._rebind_definition.  It treats Instruction._definition like a list[tuple[Instruction, qubits, clbits]], which (a long time ago) was a possibility.  Since Instruction._definition is now required to be a QuantumCircuit, the simplest fix is to make the definition-rebinding an explicit recursion via QuantumCircuit.assign_parameters.
+Hi @jakelishman, I don't think its a bug. In your code you are assigning parameters to the "base" Quantum Circuit instead of the "custom" Quantum Circuit. It is the "custom" Circuit that's expecting your global phase Parameter("x").
+Operator(custom.assign_parameters({x: math.pi}))
+Another thing is you need to remove  the "to_gate()" method on your "custom" Circuit declaration so that you will be able to use "assign_parameter()" or "bind_parameter()" method.
+Correct me if I am wrong or if it seem like I didn't get your issue right.
+The code that I managed to run is below:
+import math
+from qiskit.circuit import Parameter, QuantumCircuit
+from qiskit.quantum_info import Operator
+x = Parameter("x")
+custom = QuantumCircuit(1, global_phase=x)
+base = QuantumCircuit(1)
+base.append(custom, [0], [])
+Operator(custom.assign_parameters({x: math.pi}))
+The  version of qiskit-terra installed on my machine is
+{'qiskit-terra': '0.18.3', 'qiskit-aer': '0.9.1', 'qiskit-ignis': '0.6.0', 'qiskit-ibmq-provider': '0.17.0', 'qiskit-aqua': '0.9.5', 'qiskit': '0.31.0', 'qiskit-nature': None, 'qiskit-finance': None, 'qiskit-optimization': None, 'qiskit-machine-learning': None}
+Hi there!  Thanks for trying to help me - your code will actually run and it's how you'd make sure the global phase in an outer circuit is bound, you're correct.  The trouble is that the code example I wrote should run as well; it's a normal part of Qiskit that you can define your own gates by calling to_gate() on a circuit you've made, and then put that into a larger circuit.  We often want to do that when building circuits to expose the structure of the program we're making.
+If some inner gates are parametrised, calling assign_parameters() on the outer circuit should recurse into the inner gates to parametrise (copies of) them too, so the whole circuit gets bound.  It currently works if the parameters are in the gate calls of the definition of the inner gate, but it misses the global_phase (if any) of the custom gate's definition, which means there's still a parameter remaining, even after it should have been bound.
+My example might look a bit useless for real code, and that's because what I've written here isn't code I was actively trying to use - it's a minimal reproducer for the bug.  Real world code would most likely have other gate calls in the custom gate as well, and the base circuit would probably have lots of uses of custom inside it.
+(While this certainly doesn't mean I can't be wrong, you also might not have known: I'm one of the maintainers/designers of Qiskit.)
+Thanx @jakelishman well understood.

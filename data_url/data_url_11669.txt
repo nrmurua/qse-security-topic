@@ -1,0 +1,47 @@
+To create n new variables in a quadratic program we have to write
+It seems counter-intuitive to not have a method where we can generate n variables at once, e.g. quadratic_program.add_binary_vars(n) or quadratic_program.binary_vars(n).
+Are there any oppositions to adding this?
+It would be nice to include a variable name format, e.g., quadratic_program.add_binary_vars(n, 'x_{}')
+I'd be happy to take this!
+Nice, let us know if you want to discuss something or need some help!
+A good starting point would be here, to see how a single variable is added: https://github.com/Qiskit/qiskit-aqua/blob/e1dfe0ef13b589bff7496518bf23195a8cd93377/qiskit/optimization/problems/quadratic_program.py#L194
+There are some options for batch declaration in docplex for reference, binary_var_{dict, list, matrix}.
+http://ibmdecisionoptimization.github.io/docplex-doc/mp/docplex.mp.model.html#docplex.mp.model.Model.binary_var_dict
+Example:
+mdl.binary_var_list(3, “z”) returns a list of size 3 containing three binary decision variables with names z_0, z_1, z_2.
+@obarbier Unfortunately, I can't commit to a regular correspondence. It may be faster for you to continue independently.
+Not sure if this is enough work for multiple people to work on, you'd probably run into merge conflicts since you are working on the same code. @obarbier you could maybe tackle another optimization stack issue, e.g. #980 or #982 (this one will be a bit more involved). Or maybe from Terra: Qiskit/qiskit#4349, Qiskit/qiskit#4348 or any that are labeled as good first issue 🙂
+@t-imamichi @Cryoris I'm realizing that this becomes easier when the name parameter in _add_variable in quadratic_program defaults to 'x' instead of None. That would mean updating binary_var, continuous_var, and integer_var and their usages to use a default string type instead of an option, so the number of change locations could become somewhat large. Are you ok with that?
+To be crystal clear, I'm assuming that continuous_var and integer_var should also be updated to allow batch generation.
+@Cryoris @t-imamichi ^
+Why would it be easier if it would default to x instead of None?
+The reason for not adding a default name is that you cannot add two variables of the same name. Thus, calling binary_var() twice would try to add the name x two times, which doesn't work (because we cannot add numbers to the name by default).
+It just makes for a more compact implementation, IMO. This is what I have:
+where _create_var_update_maps is just a private helper method that does as it is named.
+Nice idea with the formatter 👍
+But maybe there's a few corner cases that are a bit problematic, e.g.
+I think a signature where we can do
+For this we could check if name contains a formatter and if yes enumerate it, e.g. like this. If it does not we can just append the numbers at the end.
+By checking the number of formatters in there we can also raise a useful error if the string has too many.
+What do you think?
+I prefer a format with only one placeholder 'prefix_{}_suffix'.
+If user does not include {} in name, name.format(arg) returns name itself.
+Thanks for your patience. Working on this part-time. How do we like this instead?
+@Cryoris ^
+Thanks for the update! In general this looks good, could you open a pull request so we can see the entire code and comment on it?
+Sorry for the hiatus. I've resumed work on this. Will have a PR in the next day or so.
+Allowing arbitrary names (so long as there is <= 1 occurrence of '{}' in the name) means allowing names like '_{x == y + 1}'. This is an actual name that is passed to 'binary_var' from the method 'from_docplex' in the 'quadratic_program' tests. It confuses the formatter because '{x == y + 1}' is treated as a substitution, when of course it is not. The simplest solution would be to disallow names containing substrings that match '{x}', for any 'x', but it would cause this test to fail. The more elaborate solution would be to transform the preexisting occurrences of '{' and '}' that are not '{}' into '{{' and '}}', causing the 'format' function to ignore them. We could reverse the transformation after the format call and before the result is returned. Then the test would pass. I'm not sure what types of names we need to be able to accomodate. As the length of the names we need to accomodate becomes longer, the second option becomes much less efficient than the first. Please let me know.
+@Cryoris ^
+@Cryoris ^
+@t-imamichi Any thoughts ^
+@Cryoris @t-imamichi Guys any feedback to above?
+I guess I am wondering why if we create n variable names say name = 'y', count=10 for example we could not simply have them named y0, y1 ... y9 etc. No parsing is needed the names "formatted" out are predicable etc. It seems consistent with the auto-generated name. If the user wants to add a bunch of names in a more complex format they can do their own loop like in the very first comment above. This keeps the automatic generation of n of these simple, and the user can do their own thing.
+One other simple idea might be to allow the name to be a str or List[str] such that you could say quadratic_program.add_binary_vars(['x', 'y', 'z']) for three custom named vars - count defaults to 1. You could treat count with this by repeating the list e.g. for count 2 you would have vars x0, y0, z0, x1, y1, z1.
+So for example
+And given continuous and integer vars are similar I am sure above could be changed to be usuable by any of the methods say by passing in the function to add the var.. eg
+Maybe you want Variable or List{Variable] to be returned from above since binary_var etc return Variable.
+Also instead of Union[str, List[str]] one could let it be Optional[Union[str, List[str]] = None so by default it uses whatever the default name is for creating the vars - i.e x0, x1 etc., so you could simply create a number of them like this too.
+@woodsp-ibm For what it's worth to the IBMQ superheroes...
+The motivation for the formatter was to provide functionality similar to binary_var_dict in docplex (http://ibmdecisionoptimization.github.io/docplex-doc/mp/docplex.mp.model.html#docplex.mp.model.Model.binary_var_dict), which is parameterized over a formatter. We could follow in the steps of docplex and just separate the formatter and the name and enforce that the index substituted into the formatter is appended to name, giving y_0, y_1, ..., y_n as you desire, but also allowing a bit more flexibility to do things like _add_variables(name = add, formatter=_{}_var, count = 3) = add_1_var, add_2_var, add_3_var as @Cryoris desires. It also sidesteps the issue we're having with {} being present in name, since the substituted formatter is always appended to name. I'm thinking this is the best way to go.
+I like the idea of generalizing one str to a List[str].
+Regarding the return type of the _add_variables function, I think a Dict[str, Variable] is more appropriate than a List[Variable] because, in contexts where _add_variables is called, there will most likely be information allowing the programmer to select the variables based on the expected identifiers. Otherwise, you have to iterate over the List[Variable] to select a specific variable.

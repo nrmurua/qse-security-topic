@@ -1,0 +1,28 @@
+python -m unittest -v artiq.test.test_scheduler.SchedulerCase.test_pending_priority fails.
+Disabling the assertion and printing out the order in which events come in shows that they are only in a slightly different order; I'm not sure if behaviour has changed recently for this to be expected. The order I see is:
+These two items are reversed compared to the output expected by the test case:
+Test passes.
+Test fails.
+Probably Python 3.10 related, like your other issue. We didn't test anything with 3.10.
+Just checked - same failure in environments with 3.8 and 3.9
+conda-list-39.txt
+conda-list-38.txt
+Strange - it's passing on the server e.g. https://nixbld.m-labs.hk/build/120442/log
+This code has not changed recently.
+Could this just be a timing/event ordering issue? I haven't had a look at this particular test, but some of them do rely on implicitly defining order via sleeps.
+Could this just be a timing/event ordering issue?
+Certainly seems to be, but I don't know how that order could be defined more rigidly. The "issue" seems to be that experiment 2 is taking longer to prepare on my machine than the test server, so experiment 0 is reaching the run stage before 2 is done preparing; but the prepare stage is empty so I don't see how it can be made faster.
+Strange
+Agreed. I repro'd this on a second W10 machine with python=3.9, package list generated was identical except for zipp. I don't think this is high priority but I do think it's bad juju for a test to pass on some machines and not others...
+Certainly seems to be, but I don't know how that order could be defined more rigidly.
+I haven't looked into what this particular test would require, but for testing Scheduler.idle (which we haven't gotten around to properly redesigning and upstreaming yet), I had introduced some asyncio events to ensure the requisite ordering:
+Oh, I see. In this case it is probably simpler to have the test check relevant properties of the schedule instead of comparing it exactly to an expected schedule. Synchronizing the experiments to enforce a fully deterministic schedule would need complicated IPC.
+some of them do rely on implicitly defining order via sleeps.
+Which ones? Only moninj tests do that (to ensure a scan and event report by the firmware) IIRC.
+Oh, just checked the Git history, and apparently I did write the offending test myself two years ago – how embarassing (in fairness, I was probably just copying test_steps() without thinking about what ordering guarantees the scheduler actually makes).
+The above is an example on using get_dataset to do simple synchronisation, but yes, just testing for the expected properties might be cleaner and shorter.
+Which ones [rely on sleep]?
+It might be that the 0.2 second intervals in which pause/check_pause are called by the test experiments don't actually matter, only some scheduler internals – it's been a while.
+Those are just to prevent 100% CPU utilization while it waits for check_pause() to return True.
+Agree on checking properties; given the current overlap between this test and both test_steps() and test_pause(), it seems like the relevant check is that rid 2 goes through all stages before rid 1 does anything?
+I had this test fail, when my laptop cpu was forced to lowest frequency and other processes were running. With proper frequency restored this test passed.

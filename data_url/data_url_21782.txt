@@ -1,0 +1,21 @@
+On certain experiments I see a significant rate of ConnectionResetErrors (up to one every 10 minutes for some use-cases).
+Here is a packet dump and a trace core log of an typical error - the error occurs at core log timestamp [449493.322821s] == packet dump timestamp 23:01:29.962904 (packet 98). The core device is 10.255.6.210 and the master is running on 10.255.6.191. The core device connection on 1381 is idle for 3s so a keep-alive is sent. The core device responds to the keepalive, but also records a timeout and kills the connection. It looks like this is because 2.9s before the error (449490.397252) the master ARP entry (.191) is evicted from the ARP cache.
+I have several more packet dumps (but without core trace logs). All the errors occur after a keepalive when the Kasli sends a RST/ACK.
+I am using a Kasli with gateware and firmware build off c9d8bd1
+This may be related to #1125
+It looks like the ARP cache is statically allocated at 8 entries long - is there any reason not to allocate this on the heap?
+No, we can easily enlarge the ARP cache by a large factor.
+Even with the ARP cache being limited, shouldn't the mapping just be re-learnt?
+(These are the network issues I mentioned on IRC a while ago, by the way; I also saw a keep-alive/RST in all the traces I captured.)
+Looking at the log, that does seem to happen. However, in addition to the keepalive ACK, a RST/ACK is sent, presumably due to "timeout exceeded":
+This is the master host.
+The master host indeed sent a keepalive – so far, so good.
+This, however, is not.
+This would make sense again if there indeed was a timeout.
+Ah, right, there is this:
+The timeout on the Kasli side is only 1000 ms (keepalive: 500 ms), which is shorter than the Linux defaults. Thus, by the time the master host sends the keepalive (and hence the ARP entry is added again), the timeout has already elapsed.
+A workaround could be to simply increase the timeouts beyond what the OS defaults for the hosts interacting with the core device use. This is obviously not a proper solution, though.
+It seems like either the keepalive timeout needs to be adjusted to larger than the 3 s ARP discovery dead time, or the latter replaced by an actual rate limit (i.e. only delaying the ARP request if another was indeed sent in the last 3 s, rather than always waiting).
+I've locally changed our Kasli masters to use a BTreeMap-backed neighbor cache (with default GC threshold of 1024), which should work around the issue by avoiding ARP table entries being evicted in the first place. If I don't succeed in provoking a crash, I'll post a PR. (It would still be good to have a more principled fix.)
+What would such a "principled" fix involve?
+Figure out how the timeouts are supposed to be handled, and either fix smoltcp if it's a bug, or increase the timeout setting on the core device.

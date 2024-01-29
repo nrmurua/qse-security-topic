@@ -1,0 +1,17 @@
+The Serial Event Dispatcher (SED) is a mechanism that enables RTIO PHYs to use a shared pool of FIFOs for queuing RTIO events -- SED was proposed here. The SED FIFOs supports some number of distinct RTIO timestamps (depth) and multiple simultaneous events at each timestamp (width). We observe that when events are scheduled that saturate the SED depth limit there is surprising and undesirable behavior.
+In a test program (detailed below) a single RTIO channel is populated in a loop. After SED depth is saturated (event 64) the core device blocks for a 835 us. The second time the SED depth is saturated (event 128) the core device blocks for 63,901 us. The blocking continues with anomalous high durations at subsequent multiples of the SED depth.
+SED is not well documented so my expectations can't be said to deviate from technical specifications. Generally, I can say say what I do and don't expect.
+Simplified the code and increased the delays to something more reasonable (otherwise it understandably underflows).
+Event submission times look OK:
+Perhaps what you are seeing is due to something other than SED e.g. memory corruption? You are using some relatively unusual functions (return of list to host, method parameter to kernel,...) and this could tickle some compiler bugs.
+My example was indeed unnecessarily complex. I can reproduce the odd delays at n*64 without using the unusual functions. The delay on the line marked # D0 strongly influences the unusual behavior.
+There is nothing obviously wrong here. An event needs to be dequeued to make space in the buffer, and this can only happen when its timestamp has been reached. The D0 delay is putting events further into the future and then the CPU needs to wait for the dequeuing and event execution to happen.
+Yes, that makes sense for ~1 ms delay at rep 64. However, I don't understand the > 60 ms delays at 128 and 193.
+The delay is inside the loop, so you are shifting the timestamps by 1ms at each iteration (pulse) - so a ~64ms delay is expected.
+And the 1ms delay is simply the first D0 plus the slack added by core.reset() minus the CPU execution time until the buffer is full. The value also looks correct.
+Let me try this again with an clearer example.
+The default Kasli DIO FIFO depth is 128. Each pulse requires two FIFO slots (on and off). Here's where what I observe first breaks my expectation.
+I don't see how reps 66-68 can be scheduled with DRTIO.... the FIFO is full.
+self.urukul_channel = self.get_device('urukul0_ch0')
+#self.zotino = self.get_device('zotino0')
+This definitely not making it clearer. Can you also remove all other superfluous code and superfluous output? I do not understand what the problem is.

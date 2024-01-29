@@ -1,0 +1,28 @@
+Qiskit version: master
+Python version: 3.8.8
+OS: Mac OS 12.2
+SabreSwap gets stuck in some specific cases and does not make forward progress.
+here's an example that runs indefinitely for me. Note that even though I run SabreLayout, internally it is calling SabreSwap and that's where it gets stuck.
+map the circuit and terminate
+I think the SabreSwap algorithm has a way to score different swap options and to make forward progress, so not sure what's going on.
+@ajavadia I can take a look at this.
+@ajavadia Just an initial report. I turned debug logging on for the SabreSwap runs and have determined that there are 6 calls to SabreSwap.run. The first 4 and the sixth runs work, but the 5th one gets in a state where it can't make progress. The extended_set is the same 4 qubits and the best_swap is the same 2 qubits.
+Next step is to work back to see where this begins and to see why qubits_decay doesn't get the run out of the loop. Will report any progress.
+@ajavadia Here's a rundown of what I've found so far.
+I have uploaded a log file
+sabre_bad_run1.txt
+that goes from loop 2300 to loop 2600 for that non-terminating loop if anyone else wants to look at that. Search for
+'count: 2451' to locate the start of the issue.
+I'm not sure why the process gets stuck, but if you can point me in a direction, I'm willing to pursue this further.
+Thanks for looking into it @enavarro51.  The extended_set here is the set of node pairs in the DAG that we must make neighbors through insertion of swaps. Since best_swap gets picked at every step but extended_set does not change, it looks like it is just swapping qubits around without ever actually making progress on resolving the extended_set (i.e. it goes in circles, sometimes those nodes get closer and sometimes get further). Maybe we can draw this on paper to see which swaps get inserted and why they never converge.
+This might not be the only case of an infinite loop in the algorithm, but I'm confident that I understand how it happens here, and I've produced a minimal circuit for which SabreSwap immediately enters an infinite loop from which it can provably never escape no matter how the pass is seeded:
+The relevant coupling map is a line in the same order the qubits are displayed in the drawing.  The first five gates are the front layer, and the second two are the extended set.  The algorithm will get stuck making random swaps from the set [(0, 1), (1, 2), (2, 3), (9, 10), (10, 11), (11, 12)] (i.e. the outermost qubits), even though the only way it could possibly progress (and would do immediately) would be to swap (5, 6) or (6, 7).
+It gets stuck because it's in a stable local minimum of the (non-basic) heuristics.  The only way it can advance is by making a swap that temporarily increases the score from the "lookahead" components.  I've written a routine that produces a circuit with arbitrarily many layouts in the stable local minimum region (increase additional_local_minimum_gates), and requires arbitrarily many swaps to be made "uphill" against the heuristic (increase uphill_swaps) before progress can be made:
+If you want to run the infinite loop, the extra bit to demonstrate it is:
+I have several potential modifications to the heuristics that would always allow it to progress eventually, but with the extra parameters in looping_circuit above, I can make all of them either take factorial (I think) amounts of memory to detect or require exponential time in the number of qubits in the circuit.
+Oh, I'm actually slightly wrong in the docstring of looping_circuit above - it's not a priori stable against the weighting of the extended set heuristic additions, but with a suitably large additional_local_minimum_gates you can make it stable against a weighting that becomes arbitrarily close to zero.
+The requirement to have four outer gates right now is because of our particular choice of EXTENDED_SET_WEIGHT = 0.5.  If we instead set that to 1, we'd only need three outer gates to make it work, so we could reduce the minimal reproducer by two qubits. In general, you can eventually escape the loop if you satisfy 1 / (n_outer_gates + 1) >= EXTENDED_SET_WEIGHT / 2 in this configuration.
+I know there is a fix already, but I am curious if this is fixed by perturbing the coupling map weights like Stochastic swap does?  The circuit above has degenerecies due to the symmetry that might be making it hard to decide where to go next.
+If you re-perturb the coupling map at every iteration of the swap algorithm, I think you could overcome the infinite loop like this (if the perturbations are sufficiently large), but if it's done only once at the beginning of the run, I think you'd probably still get stuck in the same manner.
+The reason it gets stuck is that the "lookahead" heuristics that SabreSwap uses to improve its output can (in super rare circumstances) end up causing an isolated local minimum in the heuristic where all the layouts at the same value make no progress, and the ones which do make progress need you to increase the heuristic.  My first thought was to introduce a stochasticity to the heuristic itself, widening the perturbation the longer we go without making progress until we're just picking swaps randomly, which would also work, but be super inefficient.
+With the looping_circuit I have above, you can make it arbitrarily hard for the Sabre algorithm - there's only one path to progress, which you can make arbitrarily long (uphill_swaps), and you can increase the "potential barrier" in the heuristic that you need to overcome to escape the local minimum up to a limit.

@@ -1,0 +1,61 @@
+I recently attempted to build the kasli_soc firmware via the https://git.m-labs.hk/M-Labs/artiq-zynq scripts using a local installation of ARTIQ (release 7.0) and came to the same issue fixed in 8ca75a3. I therefore would like know to whether the changes to flake.nix will be back ported to ARTIQ 7.0 so I can assess the feasibility of continuing to use it moving forward.
+Thanks.
+Unmodified artiq-7 builds fine on the CI server and should not have the issue. Can you let us know what exactly you did to cause the problem to appear?
+My steps for recreating this issue are
+At which point I see
+I then got around this by modifying artiq-zynq/src/.cargo/config to
+(I couldnt get the fix in 8ca75a3 to do anything after applying it to the flake.nix of artiq-zynq)
+This worked, however then at a later stage in the build you then see
+And this is currently where i'm at. I'd appreciate any advice on how to proceed.
+git clone --branch 7.0 git@github.com:m-labs/artiq.git
+I don't know where you got this command from, it is wrong and likely a source of the problem.
+Please also check your local python environment for conflicting packages. Use the nix environment isolation features as required.
+git clone --branch release-7 https://git.m-labs.hk/M-Labs/artiq-zynq.git
+This is my mistake, you can do without this entirely and still see the problem.
+Please also check your local python environment for conflicting packages. Use the nix environment isolation features as required.
+Does entering into the nix environment by running nix develop not achieve this for me?
+Try with --ignore-environment or using nix build.
+I tried --ignore-environment and the problem seems to persist. I cannot use nix build as my end-goal is to develop and deploy a custom Phy on kasli-soc (however the problem described persists even on unmodified artiq).
+Checking the hydra build logs for artiq-zynq im performing all the same build steps, however I noticed the CI tests haven't seem to be ran in ~2 weeks (2023-12-03), so perhaps you could try running them again?
+running which cargo inside the nix develop devshell I see
+should this not be nightly-2018 if the cargo-xbuild postpatch is working as intended?
+@fsagbuya please look into this
+Some more info: Trying to recreate the build on hydra using:
+I see:
+I have followed the steps you gave to reproduce the issue in the latest unmodified artiq-zynq:
+And I haven't encounter the error mentioned.
+Have you run the steps before or after the fix has been commited? Can you check the latest commit from your cloned repo by git log --oneline. Please also note that the cargo-xbuild package in artiq-zynq is tracking it from zynq-rs (as denoted here) and not from ARTIQ-7, so no need to manually apply the patch from there. It was already committed.
+You can also share some additional info that you think might be helpful on debugging the issue, otherwise I suggest to rerun the commands again without modifying anything.
+Thank you for trying, its unfortunate that you could not reproduce the problem. I have check the git log and I'm definitely on the most recent commit to release-7. However, when looking at your output, the list of what is compiled is significantly different to mine, which is:
+For example mine starts with Compiling core v0.0.0, whereas yours is Compiling libc v0.1.0, along with your paths pointing to local directories, while mine point to the nix store, suggesting we are doing something different.
+However looking at the CI log here it seems closer to mine than yours. Do you have any idea what would be causing these differences?
+In particular, the failing command is
+@sbourdeauducq @fsagbuya Please excuse my persistence, but will you be able to provide any further support on this matter?
+For example mine starts with Compiling core v0.0.0, whereas yours is Compiling libc v0.1.0, along with your paths pointing to local directories, while mine point to the nix store, suggesting we are doing something different.
+However looking at the CI log here it seems closer to mine than yours. Do you have any idea what would be causing these differences?
+I have built it before and just rebuild it, so it only shows the tail part or the build log. But the full log in mine is similar with yours and the CI.
+In particular, the failing command is
+From this failing command it shows that you are building from the unpatched version by the flag --edition=2021 which is causing the problem.
+I'm suspecting this might be a nix issue. Can you switch to another directory and clone again artiq-zynq release-7 and run your build commands? Or if you have a VM, might as well run a test there.
+What's the output of "which rustc" and "which cargo"? Did you use rustup?
+Additionally, you can also check if the you are using the patched cargo-xbuild by nix show-derivation.
+If you don't see postPatch, the cargo-xbuild  is still in the original unpatched version.
+What's the output of "which rustc" and "which cargo"? Did you use rustup?
+Given the postPatch only applies to the alloc rust lib (looking at https://github.com/rust-osdev/cargo-xbuild/blob/master/src/sysroot.rs) then I dont believe the above being version 2021 to be wrong? I may be wrong however and it may be the presence of these 2021 rust instanlls overriding the postPatch when cargo-xbuild is invoked.
+If you don't see postPatch, the cargo-xbuild is still in the original unpatched version.
+Upon running the commands as stated I do see the postPatch field,
+which suggests the patch is being recognised but not applied.
+I tried cloning into a fresh directory and performing the build, to which I saw the same results.
+Maybe you have some problematic rust user settings? Try a new user account with an empty HOME.
+Or "nix build"...
+That has worked! Thank you. Clearly my environment was the problem. I shall attempt to diagnose what cause the issue and then make a follow up for future reference.
+It is slightly surprising that the problem persists despite specifying -i with nix develop.
+That doesn't block access to your home folder. But nix build does.
+The problem was having a .cargo folder in my home directory which evidently overwrote some of the settings set by nix. It seems a common use case that someone would have rust installed (with a .cargo folder in ~) and also want to do development on Artiq via a nix develop environment. Is there a good way to ensure these don't clash as I have just experienced?
+Take it up with the Rust developers. They are the one constantly breaking compatibility which means that you need to have very specific versions installed, and the ones who came up with this silly .cargo folder.
+Otherwise nix build with the full sandbox is not affected, as I pointed out several times.
+Also try the CARGO_HOME environment variable.
+Otherwise nix build with the full sandbox is not affected, as I pointed out several times.
+I appreciate nix build is fully sandboxed. If the recommended advice is to use this, what is the reason to use nix develop? Can I do development of artiq within a nix build environment?
+Mostly, nix develop allows incremental builds as well as partial builds (eg firmware only) and gives you more manual control.
+I see, it's an unfortunate trade off to have to make. Thank you for the insight.

@@ -1,0 +1,36 @@
+I feel the qobj has become larger than what it was intended to be. I want it to be a simple serialization of a list of circuits (an object that is dump that is sent to the api and decoded after).  I don't care if it is JSON, binary or email :-)
+Basically, it should not exists until we run
+and then I don't mind what it is but it does not include results or a results object. It is run on a backend
+using
+and then it no longer is used and its flow has ended. The Result object (which is a different folder or module) is made by
+So my questions are why do we have the _results in the qobj folder. It should not and if we want to have an internal object that handles what is returned by the backend then it lives in the Result folder and used by the result object. I don't want to think of qobj as the new object that handles the API. It is only the input.
+I see that we have functions for converting to the old version. Why do we have these? I see the need in the future when we qobj v1 to qobj v2 we should have a conversion, but why can't we, for now, have these as part of the run method in the backend.  ie hidden from qiskit terra in the ibm_provider
+other things with qobj
+convert between versions. Say we make the version 2 and the backend is version 1 where does this happen. I feel this should happen in the dags_2_qobj as qobj is lossy and the backend just uses the schema to check the version it supports. If we need to have some utility functions like qobj1_to_qobj2 etc for versions that we can update then we can have them in tools.
+run smart validation see backend.validate(qobj) #1057
+I think the main point here is to try as much as possible to not make Qobj a full-scale class with methods, etc. At this level it should be as close to the serialized json as possible. When we have to, we make methods that consume qobj and spit out other things (circuits, validated bool, another qobj version). This makes sense to me.
+Also I agree that with result, we can similarly have methods to convert between old/new formats, all within the result folder. The Qobj folder should only be about the payload.
+Lots of things and implications in this issue!
+Qobj (...) Basically, it should not exists until we run dags_2_qobj and then I don't mind what it is but it does not include results or a results object. It is run on a backend using job = backend.run(qobj)
+and then it no longer is used and its flow has ended.
+That seems pretty close to what we already have - I'm assuming it was some sort of recap?
+So my questions are why do we have the _results in the qobj folder. It should not and if we want to have an internal object that handles what is returned by the backend then it lives in the Result folder and used by the result object. I don't want to think of qobj as the new object that handles the API. It is only the input.
+It might be a matter of naming or structuring. For context, the QobjFoo classes can probably be though as "container objects that represent a validated json in a way that is easier to use them in Python" , and that are meant to be used as the "first layer" to and from the API. Following this, the qiskit.qobj package can also probably be thought as "those classes and the extra tooling for validation, conversion, and related functionality". I'm saying probably here as the scope has become a bit blurred since it was introduced originally.
+So from that point of view, iif for sending a Qobj to a device you generally go:
+you can see qiskit.Result as the "container object that represent a validated json from the API" , as there are strong parallelisms (both are something that needs to conform to an schema, needs to have specific fields accessed by other pieces of the code, and the API is involved):
+If the placement of qiskit/qobj/result.py is confusing, I think it's fine to move it around - however, I think we still need that separation for being able to cope with different versions of things, and that we will probably have to do a similar dance (get from api, create a container object, use the object or viceversa) for other concepts according to the specs (backend config, properties, etc?).
+In the particular case of Results, having the two objects allows us to split the problem of multiple versions into two: "get something from the API and convert it into something easy to manipulate" and "keep the public results method stable regardless of what we get". We also keep the spirit of the QobjFoo classes being a dumb container - merging both classes and adding methods to a "container" would probably get us back to maintainability problems if the API results change or if we need to support multiple versions (it was really cumbersome to comb through the old Result class and find out the format and implications). But I might be digressing and a revamp of results might be part of another issue 😬
+Going back to Qobj:
+This actually seems to be #871?
+Actually I think this is one of key problems (also with the results) - there is a lot of cruft that we might be able to remove once we don't have to take into account with the pre-spec formats. As a matter of fact, I would recommend trying to place some effort into making sure that we get every device and sim updated, as hopefully will result in a certain reduction of complexity and facilitate discussion.
+OK, Many points.
+My view is
+should be
+and
+should be
+This is the main point philosophy Qobj is the object to run not the handler. If we change the input then we change this but if we change the output that goes into results. I want to decouple input and output.
+Schema. I agree its there but its more the coding. I would rather not have methods.
+I agree its solved
+I think we should think of this as external tools for conversion of qobj.
+After re-reading and the offline discussion, I'm closing the issue in favour or smaller ones:
+Please note the discussion was touching many topics, and some might have been missed - wouldn't mind a double-check to make sure nothing went unnoticed!

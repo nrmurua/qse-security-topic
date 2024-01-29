@@ -1,0 +1,38 @@
+Running VQE with Aer Pauli expectation, the circuit that's sent to the simulator measures all the qubits. While the measurement results are not used, they may affect performance.
+Specifically, they are not so expensive for the statevector simulator: one more loop over the basis states - the cost is equal to the cost of one gate - regardless of the number of shots. However, the MPS simulator is sensitive to the number of shots.
+Here are run times in seconds of one simulation of a 20-qubits circuit (output of the two simulators is the same):
+Remove the unused measurement gates.
+It could be nice id someone could resolve this issue, since it slows down simulation.
+I'm not familiar with the vqe code. It would be help if someone could point to a place in the code to look for the problem.
+The problem is that the AerPauliExpectation uses the QASM backend, which is (falsely) associated with measurements. With Aer's snapshot mode we are using a QASM backend but do a statevector simulation and do not need the measurements at the end of the circuit. However, right now, if the backend is a QASM backend, the circuit sampler adds measurements to the circuits that are simulated, here:
+https://github.com/Qiskit/qiskit-aqua/blob/bbb083f9918c1e1492e3b3417fca34dd1215e8b6/qiskit/aqua/operators/converters/circuit_sampler.py#L251
+This can be turned off by passing a statevector argument to the constructor of the circuit sampler here:
+https://github.com/Qiskit/qiskit-aqua/blob/a133bc691dda0d58710f4468abc2113b2ef4f1f5/qiskit/aqua/algorithms/minimum_eigen_solvers/vqe.py#L208
+and here:
+https://github.com/Qiskit/qiskit-aqua/blob/a133bc691dda0d58710f4468abc2113b2ef4f1f5/qiskit/aqua/algorithms/minimum_eigen_solvers/vqe.py#L437
+And you have to turn this safeguard here off (because QASM backends do not imply shot-based readout!):
+https://github.com/Qiskit/qiskit-aqua/blob/bbb083f9918c1e1492e3b3417fca34dd1215e8b6/qiskit/aqua/operators/converters/circuit_sampler.py#L95
+After the optimization, a final circuit is run to get the optimal parameters. It looks like spurious measurement gates are again inserted. For an instance of QasmSimulator, is_statevector is false. This line
+https://github.com/Qiskit/qiskit-aqua/blob/a133bc691dda0d58710f4468abc2113b2ef4f1f5/qiskit/aqua/algorithms/minimum_eigen_solvers/vqe.py#L531
+then results in measurements being appended.
+It looks like these measurements are spurious and should be avoided as well.
+Yes -- any place that checks if measurement gates should be supported via quantum_instance.is_statevector will wrongly append them if the AerPauliExpectation is used.
+Should I pass statevector = True unconditionally here ?
+https://github.com/Qiskit/qiskit-aqua/blob/a133bc691dda0d58710f4468abc2113b2ef4f1f5/qiskit/aqua/algorithms/minimum_eigen_solvers/vqe.py#L208
+Or condition setting that flag on isinstance(vqe.expectation, AerPauliExpectation)?
+@jlapeyre If you are considering making the CircuitSampler instance dependent on both quantum_instance and expectation there may be a few places where code needs changing to ensure a suitable CircuitSampler is set since quantum_instance and expectation are both independently settable. With the latter being autoselected when expectation provided was None based on the operator and quantum_instance.
+I see that the issue has been tagged "enhancement". In my opinion this is a bug. A circuit should not contain gates without a reason.
+The benchmark shows that this may not improve the performance significantly.
+The measurement gates take time, but may not be a bottleneck.
+For all measurement,
+6.27 s ± 74.8 ms per loop (mean ± std. dev. of 7 runs, 10 loops each)
+For one measurement,
+6.07 s ± 18.8 ms per loop (mean ± std. dev. of 7 runs, 10 loops each)
+I think we should make better transpilers to optimize such a circuit. For example, one removes unnecessary gates (not only measurement gate, but also pre-rotation unitary gates, and ansatz circuits)
+How will the transpiler know if the measurement results are going to be used?
+You are right. Before improving the transpiler, this issue is necessary.
+OK, I can fix this (if no one has started)
+Thanks a lot!  There were some people who started looking at this, you can see in the comments here above, but I think they stopped at some point. Same goes also for @molar-volume. In addition PR qiskit-community/qiskit-aqua#1344, which has been merged three days ago, shares many terms with us; I don't know whether this is a coincidence, or maybe that PR handles this issue as well.
+It seems the ball got dropped on this one. @ikkoham if you are able to look at this it would be great.
+@ikkoham In the changes you did around expectation was this issue already addressed?
+Sorry. Not adressed. Please move to Terra.

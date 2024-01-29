@@ -1,0 +1,19 @@
+I just had a run of pytest hang indefinitely within mem_manager_test.py. I ctrl+C'd the test away and the tests continued fine otherwise:
+cirq/google/sim/mem_manager_test.py ....^C...
+When I reran the tests, the hang did not occur.
+Looks like we might have some sort of concurrency-based flake?
+I saw this the other day too.  But I can't reproduce.  From you ^C it looks like this is coming from test_fills_gaps.  That does have a case where there is potentially an infinite loop in the while of _get_next_free.  #255 changes that
+I tried a variety of things: garage collecting at times to see if maybe agress gc was causing a problem, seeing how the system behaved with OOM, but none tripped this up.
+If you do see this again, I would suggest identifying which test is failing, and potentially trying to do some print debugging to see if you can see where it is hangling (only other likely spot is the lock)
+I just saw this happen again :(
+Aaaaand...it's gone.  Added a code to fail at end of test I think it was hanging on.  Test failed.  Tests then continue to work normally without hanging.
+I think this reproduces more consistently if you run the docs tests first. I ran pytest --count=1000 cirq/google/sim/mem_manager_test.py with no hangs, but then pytest cirq/docs/ cirq/google/sim/ failed first try and second try.
+This seems to consistently reproduce the issue:
+Yes, the exec is needed. Yes, the assignment of the lambda is needed. I think our docs sandboxing might need some work, but also... WHAT???
+Another strange thing is that it sometimes hangs for a bit then resolves itself
+I think the presence of the lambda might be causing python to capture a closure of the local variables, and this is keeping memory alive until a garbage collection cycle that's never going to come while waiting on a lock.
+I guessed that this would mean calling the executed code as a method would reproduce the issue. But it doesn't. Then I figured maybe it needs to run at module level. That also doesn't reproduce the issue. So maybe my guess is wrong. But the module-level guess did cause a very interesting failure due to an ignored exception:
+Repro code:
+That failure may have been a separate issue. I can't reproduce it anymore.
+However, that particular failure could be due to assuming that, when objects become unreferenced and are garbage collected, they will be collected in an order that makes any sense whatsoever. There's no guarantee that sub-properties will be cleared after the parent object, especially if a cycle is present.
+Though I admit it's really surprising to see a module-level value being cleared...

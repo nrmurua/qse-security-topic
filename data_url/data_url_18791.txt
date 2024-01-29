@@ -1,0 +1,45 @@
+During the TSC meeting on Oct 15 it was decided that we are going to collect some draft use cases for #pragmas as a first step to work on syntax and functionality. Please, add you use case as a comment (do not worry too much about the syntax).
+As a starting point, I would request that we remove the starting '#' from the '#pragma' token.
+The starting '#' lexeme on compiler directives comes from C. In C and C-derived languages, it means that whatever follows is a preprocessor directive. This lexeme also appears on '#include', '#define', '#if', '#ifdef', '#elif', '#else', "#endif', '#error' and '#warning' (off the top of my head, I probably missed a few).
+In different contexts, this lexeme can also be used as a concatenation operator or conversion to a character string operator.
+There is no equivalent for this lexeme in OpenQASM3, where '#' has no defined semantics whatsoever. Furthermore, OpenQASM3's 'include' directive does not start with an '#', and there is no mention of a preprocessor in the OpenQASM3 Spec.
+I had had a similar thought about removing the #: I agree with everything Stefan just said.  As a potential reason for having it, though: pragmas do have slightly different behaviour to the rest of OpenQASM 3 (bar single-line comments) with regard to whitespace, and the # might be worthwhile as a sigil for that.  By that I meant that #pragma directives in the spec end at a line feed, whereas everywhere else in OpenQASM 3, whitespace is entirely ignored.
+add your use case as a comment
+pragma (with or without the #) could be used to convey device-specific info to a backend controller:
+pragma crank_up_the_helium_flow_before_trying_this_circuit
+pragma could be used to excuse program source out of certain constraints, e.g., to identify specific charsets in variable names:
+pragma variable_names 中文
+OpenQASM 3 provides an enhanced description of compilation phases[1] ... pragma could be used to indicate to the compiler various options for those phases, e.g., optimization characteristics.
+[1] OpenQASM 3, Cross &al. Fig. 1
+Let's start off with the definition of what a pragma actually is:
+https://en.wikipedia.org/wiki/Directive_(programming)
+TL;DR: pragma is a directive or instruction to the compiler. I.e. a pragma tells the compiler to do (or not do) something specific.
+pragma pi simply does not fit within pragma semantics. In computer science, pi is a floating-point numeric constant. It is a floating-point value. It is not an instruction to the compiler.
+We can define pi as a constant in a header file that can be included, if that's what we want.
+The same is true for warnings, errors, compile-line macros, etc.
+If we want to add preprocessor-style semantics to OQ3, similar to C && friends, then we need an OQ3 preprocessor.
+@steleman I readily concede the point. Most of these suggestions I'm agnostic to, but I think they solve various problems (some of which may not exist) that customers may be interested in. I just tend to be loud and opinionated, so I want see what the smarter people here think.
+What about the simulations? Does it make sense to keep those as pragmas that can be passed to simulators and ignored when the circuit is executed? The examples could be stronger, and arguably the most interesting simulations would be system level where modelling subsystems' interactions to evaluate the execution of the circuit are more interesting than the circuit itself could be better modeled in other languages like SystemC or PySim.
+@jwoehr I like the suggestion of dropping the #.
+What about the simulations?
+I thought these were actually the only ones that had meaningful pragma semantics.
+But without the scope resolution operator :: because the scope resolution operator really has no semantics here.  It just looks like cosmetics.
+This tracks pretty closely with the pragma syntax as it is implemented in other languages, where the general syntax form is:
+Obviously, not all pragmas have a sub-command, and not all pragmas have operands. The square brackets above mean "optionally" in this context, they aren't meant to be parsing lexemes.
+Again, not married to ::, it was simply a convention I adopted while brainstorming examples. I do like the idea of command [sub-command]* [operand]* keeping things clean. I think that noise could also reasonably incorporated under that heading for simulation, though defining noise models would require some ability to define and reference values. Maybe that is expressible via something like co-sim where these expressions are messages or commands for the simulator running as subprocess? Not sure, especially since that would likely be post-compilation.
+I had another thought about the #ifdef/#ifndef/#else/#endif. Since we are using include instead of import, we may need that to prevent redefinition of functions, gates, etc. in header files.
+Well a big use case is related to issue #230 which could be resolved by simply declaring the proper gates for each machine ala:
+This would enable you to create cross-platform code and libraries making it much easier to port a given algorithm across different architectures and paradigms while also allowing you finer grained control on any given architecture.
+Another example would be code optimization, to generate a random number on IBM's QExperience you might use:
+In our optical paradigm you're able to initialize a qubit in any state of superposition which means we could eliminate the reset and hadamard operations, but it's not something all paradigms can do, it's dubious whether that should be explicitly supported by OpenQASM, and having the compiler do that sort of optimization implicitly could introduce bugs on other platforms, but conditional support via directives allowing something like:
+allows you to take advantage of that quirk in our paradigm without relying on that capability being present in a given hardware paradigm.
+We are also using OpenQASM as a hardware descriptor language, so there are some pre-processor attributes/directives that could be very useful for simulation and synthesis. A few off the top of my head that might be useful are:
+In any event, if pragmas are going to be supported there also needs to be a way for compiler and OEMs to develop their own pragmas that can be safely ignored by other compilers, the if/elif/endif is probably the easiest to implement
+And in this we should expect IBM's compiler to run some code and completely ignore the other block whereas our compiler will run other code and completely ignore the some code block.
+This would allow for the implementation of custom pragmas by the compiler vendor without too much worry about support being built-in to the OpenQASM language:
+If this code was run on an IBM quantum processor it should only compile to bit[0:2] register; ignoring the chip_pin directive whereas our synthesizer would ignore the first block, find the spookymfg block, see the chip_pin directive and know to make three physical pins that are wired to each bit on the register.
+A major benefit of this outside of synthesis/simulation is it allows for the creation of cross-platform libraries and software, the stdgates file for instance could be modified and optimized for each hardware vendor and then replaced with a file linking all of them such as:
+Another example would be ifdef and ifndef which are useful for ensuring that critical functionality to your program is available:
+As far as implementation is concerned, I would have to vote to closely mirror the C style of pragmas which you can read a little about here
+"The ‘#pragma’ directive is the method specified by the C standard for providing additional information to the compiler, beyond what is conveyed in the language itself. The forms of this directive (commonly known as pragmas) specified by C standard are prefixed with STDC. A C compiler is free to attach any meaning it likes to other pragmas. "
+You'll then have a core set of pragmas that all compilers need to support while allowing for user-defined pragmas and enable the flexibility for compilers to create their own pragma definitions (like in the table above). Just my $0.02 on the matter

@@ -1,0 +1,14 @@
+Currently the TTL output state cannot be read in an experiment through kernel commands.
+A function in TTLOut and/or TTLInOut class to read the output state.
+As far as I know, currently the only way to read out the output state of a TTL is from the MonInj. If an experiment needs to use the TTL output state now, it needs to do a RPC to get the state from a MonInj client. This is slow and dependent on whether the MonInj client is working correctly. Knowing the TTL states could be important though. For example, in the beginning of an experiment, we might want to read all DDS switch output states, so we can set them back at the end of the experiment. Would it be possible to read the output state of a TTL using RTIO?
+https://m-labs.hk/artiq/manual/core_drivers_reference.html#artiq.coredevice.ttl.TTLInOut.sample_input
+https://m-labs.hk/artiq/manual/core_drivers_reference.html#artiq.coredevice.ttl.TTLInOut.sample_get
+@sbourdeauducq thanks for the reply. Do those functions work when the TTL is set to output? The docstring 
+If they work for reading out the output state too, would it be good to copy these functions to the TTLOut class so an output TTL can also use these functions?
+Why would you want to read the output state from RTIO? You can just use regular variables (and datasets or core device cache) to store state.
+And yes those functions might work in output mode as well (if there is no collision between the sample_input request and another event), though they are not tested and not designed for this strange use case.
+would it be good to copy these functions to the TTLOut class so an output TTL can also use these functions?
+Output-only TTLs do not have the required functionality in the gateware. You need to switch to TTLInOut and put it in output mode, though it is questionable whether all the additional machinery is justified only for this strange functionality. I suggest you modify your local copy of ARTIQ or override the relevant modules if you really want to do that.
+Thanks for the help! We are using datasets to save the output states across experiments currently, but it seems that the core device cache might be the nearly perfect place to save this data for us.
+The information that sample_input might work with TTLInOut and with modified TTLOut is helpful too.
+If you don't want the overhead of accessing the core device cache during output events, or the complexity/edge cases/overhead of using TTLInOut, another option is to modify the firmware to expose moninj to the kernel. You'd need to add a syscall in ksupport which uses the mailbox to ask the comms CPU to read a moninj probe.

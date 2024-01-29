@@ -1,0 +1,16 @@
+For several applications, one needs to take the gradient of a circuit with respect to a chosen subset of its parameters (for instance if the variational part is in the middle). Most DL libraries (pennylane, pytorch, tensorflow, etc.) allow you to specify a parameters argument in the optimizer. Is it possible to implement this feature in Yao?
+this is actually supported by Diff block here: https://github.com/QuantumBFS/YaoExtensions.jl/blob/master/src/Diff.jl#L26
+but we currently do not have this for adjoint(expect) yet. I'm thinking to have this block type included in YaoBlocks since we've already included backward pass in it. It is actually kinda essential to the IR semantic itself.
+But I think maybe a longer type name Differentiable would make more sense than Diff and it follows our convention of YaoBlocks names (usually we use the full name). and a high level interface differentiable should be added to add this tag to its content. The reason why Differentiable is better is because Diff and diff would be confusing with Base.diff. and an adj. would look more like a tag.
+any thoughts? @GiggleLiu
+Do not use Diff for AD.
+using NoParams wrapper would help ruling out parameters in a subblock. Yao's AD is simply classical BP. So normally, one does not need to worry about the performance issue from more parameters, since gradients are computed in a single backward pass. For quantum faithful simulation, time scales as the number of parameters grow.
+Diff now only works for faithful quantum simulation. @Roger-luo Current AD get gradients of all parameters, we should consider using tracked numbers as parameters in the future.
+I don't think we actually need tracked numbers, the tracked numbers in Tracker was written for 2 features:
+to build the tape which trace the program by operator overloading. In our case, we've had the program representation which is the QBIR. The only thing we need is to mark which one is the parameter (by differentiable) then we can handle classic & faithful AD by calling different function (or feeding different function parameters)
+mark which one is the parameter, this doesn't require tracked number since we don't need the tape, thus a simple Differentiable block should do the job
+I think Diff and NoParams is kinda duplicated, we only need one and we don't actually need to entangle algorithm detail with circuit definition. for circuit definition we only need to define which one is the parameter.
+Agreed, NoParams should be able to replace Diff. We still need to polish YaoExtensions.jl to fit the new framework.
+Diff should be deprecated at some stage. NoParams is more intuitive for using.
+Here the tracked parameter is just a wrapper, we don't really need tracker due to the invertibility of the program.
+I think this is done now?

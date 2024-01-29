@@ -1,0 +1,26 @@
+Right now, as far as I can tell, if a circuit has multiple measurements on the same qubit, that error is not caught until the circuit hits the backend (generating a 7004 IQX error).
+In the absence of the ability to handle such circuits on the backend checking that a transpiled circuit does not have multiple measurements on the same qubit would be wise.
+This issue is particularly salient given the behavior of the StochasticSwap pass, which, according to its own documentation, could trigger this kind of problem.
+Notes:
+Having some kind of AnalysisPass that checks for multiple measurements on the same qubit, and raises some warning if there are, would be useful for preventing users from submitting jobs that won't run on the backend.
+My naive solution in debugging some code has been to emit the circuit to QASM and then use re to parse it for instances where the same qubit is measured. I don't quite know what properties of the underlying DAG the pass would need to check for, though.
+In normal usage all current preset passmanagers run BarrierBeforeFinalMeasurement before StochasticSwap to ensure this does not occur. However if the swapper is used in isolation, yes, this could occur.
+The circuit is not wrong though, just not runnable on current hardware. On next gen hardware it may actually be desirable to measure early, rather than later. So this falls within the realm of qobj validation, and I think @taalexander @itoko are working on formalizing the constraints of the backend to be verified against. This is an example of a constraint.
+Is #3251 another example?
+@1ucian0 In spirit, yes.
+@ajavadia Insofar as this problem is being addressed through the qobj validation project, I wonder if a soft solution in the form of more documentation would be useful.
+I'm collaborating on a project where we wrote our own pass manager that's loosely based on the level 3 pass manager in Terra, except we didn't include the BarrierBeforeFinalMeasurements pass. I'm surmising the issues we're running into are caused by that.
+Perhaps we could include a comment in any default pass manager using StochasticSwap that says something to the effect of "We use BarrierBeforeFinalMeasurements to prevent StochasticSwap from accidentally introducing multiple measurements on the same qubit".
+In addition, the "notes" for StochasticSwap should include a warning, or at least, a suggestion, to include BarrierBeforeFinalMeasurements as a pass before StochasticSwap itself.
+Of the two proposed ideas, I think the first is the more important one to do, as explaining to developers why the defaults are the way they are is a good practice to help them build intuition.
+Do these ideas seem reasonable?
+@ajavadia Great!
+@1ucian0 Is this a task I can open a PR on? I'm not terribly familiar with the default pass managers, so I wouldn't do a very good job explaining the reasoning...
+I think we need to come up with a semantic qobj validator. Let's think over it...
+This is exactly the case that an RFC would be excellent for since it has sweeping consequences. I believe the validation should happen at the quantum circuit and pulse schedule level operating on the configuration+(circuits/schedule). I will be opening a PR for RFC later today to the qiskit meta-repository. I do not mind at all first formalizing the Qiskit layer of constraints and then figuring out how we will serialize them for transport.
+So the jobs also get validated on the API side of things.  This cannot be avoided due to the fact that people can submit jobs independent of qiskit.  So one must be careful here as the overhead from checking things twice will get expensive as the size of the submitted jobs grow.
+Now that jobs are beginning to return proper errors, it may be best just to let the API checker do its thing and error the job from there.
+Similar with #3251
+I disagree that this is the right place to implement validation. It may be a useful second-check, but the majority of the framework should at least be based in qiskit (turned off by default) and run on the API. For example, consider some of these cases:
+I'm going to close this issue as stale now - multiple measurements on the same qubit no longer seems to be a problem on IBM backends.  If there's more to discuss about any of the old discussions here about what a backend might report to Terra about its allowed structures of operations, please feel free to open those in new issues.
+The idea of having multiple measurements on the same qubit is not an invalid QuantumCircuit of itself, so these restrictions would be being placed only by a backend that could not support them.

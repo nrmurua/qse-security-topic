@@ -1,0 +1,44 @@
+Running two supposedly equivalent variants of the same circuit leads to surprisingly discordant results. The divergence is very clear, it is reproducible on my machine, but not yet on another laptop (with Ubuntu 20.04, python 3.8, same conda packages).
+Unfortunately this issue seems very much tied with some specific characteristic of my machine, since it doesn't happen with my other laptop. But it is yet unclear to me what is the specific problem.
+Anyway, on my machine I run the following setup and it always produce the failure:
+Program A:
+Program B: (equivalent because I add a circuit and its inverse).
+Output:
+Output:
+Execute the program B:
+The second program B, should create the same output of the first one: # OUTPUT: {'00000': 1024}
+I tried two other setups other than the failing one on the remote machine.
+SETUP A: (FAIL) as describe above + entire environment yaml below.
+STEUP B: (NO FAIL) local system (aka laptop) with Ubuntu 20.04, python 3.8 and the same conda packages (except for few that were not available anymore, not sure why, marked below), Conda 4.11.0.
+SETUP C: (NO FAIL) Dockerfile with Ubutnu 18.04.6 LTS, Miniconda3 with conda version 4.11.0, same conda packages, (except for few that were not available anymore, not sure why, marked below).
+Hint: the error must be in the transpiler or qasm exporter, because when using the produced qasm file (visible above) it leads to failure (ALSO IN SETUP B and C)
+I attach here the list of dump created via conda env export > environment.yml:
+(Note that six pip packages were not installed in the second laptop, because they led to pip exceptions, they are marked with # LEADING TO PIP EXCEPTION in the list).
+I am really looking forward to your feedback since I have no clue on why this happen and more importantly how to reproduce it on another machine, which is crucial for all of us to understand this bug.
+The problem seems related to the transformation to qasm format (qc.qasm()), because the two machine use different decomposers TwoQubitBasisDecomposer, which in turn come from two different TwoQubitWeylDecomposition.
+The TwoQubitBasisDecomposer is initialized here in my qiskit version:
+https://github.com/Qiskit/qiskit-terra/blob/a8a0d1be26b5df097e7a21016fa21550a3c4efce/qiskit/quantum_info/synthesis/two_qubit_decompose.py#L1405
+But it is similar in the latest version:
+https://github.com/Qiskit/qiskit-terra/blob/fe8ab43f1218d6997458fb3bf4011045f40932b0/qiskit/quantum_info/synthesis/two_qubit_decompose.py#L1449
+https://github.com/Qiskit/qiskit-terra/blob/fe8ab43f1218d6997458fb3bf4011045f40932b0/qiskit/quantum_info/synthesis/two_qubit_decompose.py#L1422
+The difference can be exposed with this even minimal example.
+Output SETUP A:
+Output SETUP B:
+This method contains a bit of randomness, which might be the source of the divergence, and can be also a good moment to review it (given the comment):
+https://github.com/Qiskit/qiskit-terra/blob/fe8ab43f1218d6997458fb3bf4011045f40932b0/qiskit/quantum_info/synthesis/two_qubit_decompose.py#L174-L175
+Looking forward to know which result is the given code on your machine with the qiskit version used by me.
+Thanks in advance
+To further check that the two circuits are far from each other, I got their unitary:
+Setup A:
+Output:
+Setup B:
+Output B:
+And by checking the difference, they are far as per numpy standard threshold:
+Looking for help, I tag some of those who introduced the FIXME according to git blame, feel free to involve the specific code owners if you are not responsible, Thanks in advance to everybody.
+@levbishop @georgios-ts @mtreinish
+Thanks @MattePalte for reporting and diving into the details. I'll try to figure out what's going on here.
+There's a couple things going on here. First, the reason your mat_a and mat_b count as different to np.allclose is just the rounding for display in the parameters 3.1389 etc. Those matrices are within 1.E-5 of each other and would be even closer if not for that rounding. A separate problem is that the decompositions look different because there is a kind o f "gimbal lock" for decomposing a CNOT gate - the specializations to TwoQubitControlledEquiv etc. were supposed to make decompositions unique, and I covered a lot of the special cases, but this shows I did miss one or two. In particular for this case it can decompose an XX-equivalent gate into:
+which is unique unless lam1l==0 or (as in this case)  lam2l==0, at which point only the sum the1l+phi1r or the2l+phi2r will matter. I should make a PR to spot this case and pick a canonical representation.
+Can you check does the qiskit test-suite pass on your machines? The main motivation for making all these canonical choices was to simplify writing tests...
+I think none of this can by itself explain your original issue from the first message here - these are different but still valid decompositions of CNOT. There is something else that may be triggered by the differences, or all of this stuff with the decomposition non-uniqueness might turn out to be a red herring (still worth fixing though, so thanks for taking the time to investigate).
+I pulled out the non-uniqueness of the decomposition into a different issue. I can't reproduce the original problem here on my machines. I agree that your generated QASM in the failing case generates the problem even for running on my machine, but I can't see what went wrong in generating that QASM.

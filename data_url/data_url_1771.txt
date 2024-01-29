@@ -1,0 +1,46 @@
+Is your feature request related to a use case or problem? Please describe.
+As we scale our subcircuits solution to more levels, and as we add features like feed forward and flow control, we will need a structured way to manage the measurements coming from subcircuits.
+Describe the solution you'd like
+Would it be possible instead to allow CircuitOperation itself to have a key?
+Similarly, perhaps a repetitions circuit could key measurements so that they could be accessed by keys m[0] etc.
+[optional] Describe alternatives/workarounds you've considered
+[optional] Additional context (e.g. screenshots)
+What is the urgency from your perspective for this issue? Is it blocking important work?
+P2 - we should do it in the next couple of quarters (if accepted)
+This sounds like a duplicate of #3663. Please find the related RFC at https://tinyurl.com/measurement-repeated-circuitop.
+@smitsanghavi I don't have access to the RFC. Would love to what is in it. This seems like an important next step for cirq.
+@smitsanghavi Got it. I think my suggestion above is more focused on hierarchies of subcircuits than repetitions, though I do mention repetitions at the end. Ultimately where I think we should go is if we have a
+it would be great if the four measurements were each referenceable by a.b[n].c.a for n=0..3. (Or from within the first subcircuit it's just b[n].c.a, and from within the second subcircuit it's just c.a etc.). Such that it's like a nested record return value in ordinary programming languages. There's no remapping and it reduces the burden on the users. Do you think that's doable?
+@smitsanghavi I wonder if we could implement the above in terms of your design. @95-martin-orion noted that this is already possible in the non-repeat case #3495 (comment). I think the way you have the mapping being defined as a function, it could work in the repeat case too. It would map lambda(key, index: f'{key}[{index}].{base_key})' if repetitions > 1 else lambda(key: f'{key}.{base_key})'. I couldn't tell if support for something like that would be fully fleshed out in your design, but do you think that would that work?
+The main thing is if we have a standard representation of things coming from subcircuits and repetitions, that gives us a nice way to be able to add things like slices and aggregators later when working with flow controls. e.g. with the above you could do something like conditionally apply a gate if all measurements are 1's: cirq.H(q1).c_if(cirq.classical.all('a.b[:].c.a'))
+@daxfohl Have you joined the cirq-dev googlegroup? I'm able to view the RFC on both my work and personal accounts, so I believe it's visible to anyone in cirq-dev.
+To my understanding, the key function defined in the linked comment is already compatible with Smit's repeated measurement behavior, although the final key will not have the format you specify. In the RFC, manual key renaming and loop-indexing of keys are applied separately, so no function is necessary.
+(As an aside: I intentionally avoided using functions for measurement key mapping in creating CircuitOperation, as serialization is one of the key use cases of the class.)
+Yes, I read the document, though the middle part that discusses Callable[[str], str] escaped me a bit. So it looks like the format of the above would end up as {n}-a.b.c.a, or for a more complicated circuit where b, d, and f have repeats, as `{b_index}-{d_index}-{f_index}-a.b.c.d.e.f.g'? From the examples, that's what it seems, but I'm not 100%.
+Where I'm going with this is it would be nice if the indexes were adjacent to the subcircuit key they indexed, like a.b[i].c.d[j].e.f[k].g. That way if you had a subsequent mixed classical-quantum subcircuit, that worked with a shape of c.d[j].e.f[k].g measurements in all its c_if's (say it had a c_if_all('c.d[:].e.f[:].g')), you could create it with CircuitOperation(...).on(cirq.ClassicalGateTree('a.b[0]')) or something like that eventually. It would work just like passing structured data to a function in an ordinary language.
+I agree that the Callable part of the RFC is a little confusing and not compatible with serialization. In the ongoing implementation, I am actually not doing that. The _decompose_ method will create a Dict for each measurement operation. For any nested CircuitOperation it will output a copy of the child CircuitOperation with prefixed repetition_ids.
+That said, the design covers both repetitions and nested CircuitOperation hierarchy. I guess I haven't emphasized the latter part in the introduction section as much.
+@daxfohl I'm using different separator than your suggestion (totally onboard with changing that if needed) but I think the actual output would be very similar to what you want above.
+instead of a.b[i].c.d[j].e.f[k].g it will be a-{b[i]}-c-{d[j]}-e-{f[k]}-g where b[i] is the ith repetition_id for the CircuitOperation you have labelled b.
+I think the key difference is that instead of assigning a single label to the subcircuit and aliasing all its repetitions to f{CircuitOperation.label}[{index}], we will provide the ability to give a unique name to each individual repetition of the CircuitOperation.
+But I don't want to dismiss the above difference. Assigning a label the CircuitOperation instead of the individual repetitions would work and may be cleaner to read.
+@95-martin-orion on whether having custom labels for each repetition is a feature users would appreciate.
+Also, adding the discuss label in case anyone else wants to chime in.
+I think the custom repetition id's are fine. And it's fine if we use a - instead of a dot to separate. We could still slice them the same way in what I'm imagining our classical gate logic will shape into: the above example would look like c_if_all('c-*-e-*-g').
+The one thing I'd want to clarify is that given your above example, the following
+it looks like you're saying we'd get keys a-one-m and a-two-m, and the b key gets ignored? I think the b should stay there, so it can be easily distinguished in
+which would allow us to slice by a-b1-*-m or a-b2-*-m distinctly.
+I don't see the benefit of having a key for CircuitOperation when each repetition of the CircuitOperation has an id (even when repetitions = 1). The above example can be represented in the current design as:
+I think if we want to add the concept of a key for CircuitOperation as a whole, it needs to replace repetition_ids in the above RFC. Else, we get stuck with redundant ways to identify an unfolded instance of the CircuitOperation. For e.g. when CircuitOperation.repetition == 1.
+I think your proposal of having a key for every CircuitOperation and always auto-indexing the repetitions reads cleaner and I'd be okay with replacing repetition_ids with that*. But having two slightly different concepts of keys in CircuitOperation seems messier than either of the options.
+*given custom repetition ids are not an important requirement.
+So, where I'm picturing flow control going is creating almost a DSL for logic gates. So I'm imagining things through the perspective of what kind of DSL would be easiest to work with. The approach that I'm proposing here is, where subcircuits are equivalent to functions and keys are equivalent to the name you assign to their return values. So in the example above it would be equivalent to a DSL like
+So at the end of the day, circuit contains an object of shape a.{b1,b2}[0..1].m. Here would be the equivalent when it's decomposed into subcircuits:
+This gives you a nice data structure that you can pass into other circuits that depend on it. It's like a regular programming language. So, equivalently in cirq you'd do like
+So it gets closer to a DSL with structured return values that we'd be able to do things with in the future like aggregation, slicing, everything else you can do in a regular programming language.
+With raw remapping, I see that more as a design where every measurement in the circuit is part of a flat list of a global variables. There's nothing you can't do with it but it will get messy to work with as the number of cbits grows. Classical bits aren't a scarce resource, and for flow control, the number of cbits and cgates will grow substantially because we'll need to do boolean operations on them, maybe eventually mathematical, and it will be hard to manage from a flat global namespace.
+Maybe I'm thinking about it too hard. I'd also like to include @Strilanc since it looks like he's dabbled in the Q# repo a bit, which is a full-blown DSL.
+@daxfohl, it's clear you have a mental model for what control flow ought to look like. It's less clear that this model expressly requires the keyed CircuitOperation behavior that you're suggesting, although I can see how consistent formatting would be useful. In order to keep things moving forward, here's what I recommend:
+Lastly: I'll set up a meeting for the three of us and @balopat to discuss partitioning of future classical data work. I think it's possible for us to work from both ends on this, but we need to be on the same page or we'll keep stepping on each other's toes.
+Starting the RFC here: tinyurl.com/z8hmmx9o
+Tuples will handle this.

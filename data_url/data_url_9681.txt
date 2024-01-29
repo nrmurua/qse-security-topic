@@ -1,0 +1,12 @@
+Application
+If I have a square matrix that is very large and being stored as an np.memmap array and I try to construct a BQM with it I often run out of memory even if the actual final BQM isn't too large for my system.
+Proposed Solution
+If I simply iterate through my memory mapped matrix I don't run out of memory for matricies which are large enough that I normally would (tested up to 25,000x25,0000 on 15GB of RAM):
+This sort of points towards a solution, but I'm not sure given how the BQM constructor is written that there is an easy way of doing this - at the moment it is cythonized and I think for that to continue to work there is likely an implicit loading of the whole memory mapped matrix into RAM which is an issue for this approach.
+Alternatives Considered
+There is the possibility of having models that are memory serialized themselves, so that you don't have to ever iterate through the matrix if you pass the underlying file, but that seems even more complex.
+Interesting. What you're currently doing is pretty reasonable I think. Though you might have a bit more luck with using np.nditer to control things like buffer size etc.
+You're correct though that we could get some performance benefit from handling this natively. When we add quadratic models from dense numpy arrays in memory, in some cases we can take advantage of the order of indices to more efficiently construct the model. See:
+
+However, actually getting memmap arrays down into the C++ would be quite a pain. Right now, you're correct that we are using some implicit conversions in NumPy and Cython that are pulling it into memory.
+@juansebastianl Thanks for posting this, I was facing the same issue and struggling to think of a workaround. Your code seems to have a bug though where the constructed BQM does not match the original QUBO, and actually chunking the matrix is not really any faster than just iterating through the entire thing (at least in my tests). Here's a slightly simpler alternative:

@@ -1,0 +1,33 @@
+Currently, several pulses are implicitly zeroing the ends of the pulses to removed initial and final discontinuities for pulses that are settable with the flag zero_ends which is True. Naively reading the pulse name this would be unexpected behavior. This flag should be removed and the functionality should be split into two different pulses,eg.,  ZeroedGaussian and Gaussian. Similarily parametric pulse implementations should be made for these pulses.
+I think it's a good approach for generalization, especially for positive functions, but it doesn't solve the discontinuity issue when g(t)=0 which in this case is at t = width.
+My apologies for not grasping this problem earlier, you are correct. I don't have much of an excuse other than not doing my due diligence 😦 . We should not touch the derivative component as the zeroing is a constant normalization term and taking the derivative of this term will result in no contribution to the derivative component. See equations (5) and (10) in the original DRAG paper.
+It may be possible to transform the derivative component to account for its finite duration and initial discontinuity but I believe this would be a non-trivial transformation.
+@eembees are you interested in this issue?
+Yes, I'll start working over the weekend.
+It may be possible to transform the derivative component to account for its finite duration and initial discontinuity but I believe this would be a non-trivial transformation.
+The only way I see us being able to zero the edges of the derivative would be to multiply it by the gaussian_square pulse (also zeroed). I think that would be the best (if not only) way to keep it continuous without touching the inflection point in the center.
+My worry is that this transformation would ruin (or at least unpredictably modify) the assumptions that the DRAG pulse was derived under. I think to do it right we would have to undertake an analytical/numerical on the impacts.
+I should add that I am still uncertain about splitting the pulses into Gaussian and ZeroedGaussian. I worry that people will default to Gaussian or DRAG when ZeroedDRAG and ZeroedGaussian would almost always be better.
+Any thoughts @lcapelluto, @eggerdj, @ajavadia, @dcmckayibm?
+It currently is an option for the pulses. We do not want to support optional parameters in ParametricPulse.
+I was just working on the docs for discrete.py and came across this issue (@lcapelluto pointed me to the literal github issue). Let me know if this discussion has been taken further outside of these comments @eembees and @taalexander (and perhaps my comments are obsolete).
+I think that whatever the functionality is, it should be consistent. Currently, e.g.:
+So, I would suggest:
+To this end:
+It may be a bit awkward but if "zeroing" functionality is to be provided, for full user control there needs to be multiple levels of "zeroing" options:
+@DanPuzzuoli
+the drag function is inconsistent, in that if you call it with zero_ends == True, it returns samples from the function g(x) + 1j * beta * h(x), where g(x) is the zeroed gaussian, but h(x) is the derivative of the non-zeroed gaussia
+The derivative of the zeroed gaussian is the same as the nonzeroed gaussian since it is a constant offset. The amplitude is also being rescaled for the gaussian derivative component properly see https://github.com/Qiskit/qiskit-terra/blob/0e2102057ad0d56eea50de132d69030c603df20a/qiskit/pulse/pulse_lib/continuous.py#L135 and https://github.com/Qiskit/qiskit-terra/blob/0e2102057ad0d56eea50de132d69030c603df20a/qiskit/pulse/pulse_lib/continuous.py#L343.
+I understand why 1. and 3. are needed, but I don't understand the use case of 2.
+@taalexander
+Yes sorry my bad, I thought I had been very careful before posting the comment, but you are totally correct.
+What I meant by the 1, 2, 3 cases has 2 as what is currently being done when zero_ends == True: it is enforced that the output gaussian starts and ends at 0, but the derivative can have non-zero starting/ending points.
+Case 3 corresponds to what we just discussed in person; it would correspond to a pulse shape that starts and ends at 0 that also has derivative starting/ending at 0. (To recap/record our discussion: it isn't possible to do this using the set of functions parameterized in Equation 5 of the drag paper. So, if one wants to enforce that the function and its first derivative start/end at 0, it is necessary to consider a broader class of functions [e.g. a linear combo of gaussians with different widths].)
+Another option would be to add the parameter B which would be the offset of a gaussian, this could be 0 by default and then set by the drag pulse function to appropriately zero the pulse if desired.
+Another option would be to add the parameter B which would be the offset of a gaussian, this could be 0 by default and then set by the drag pulse function to appropriately zero the pulse if desired.
+And then add a flag on whether that should propagate onto the derivative?  Or do you still think we should add a separate set of classes for DRAG pulses? I'm a bit confused on exactly what direction this should go ATM.
+It might look something like
+and have a builder function in pulse_lib
+I'm not really certain currently. Perhaps we should close this and reopen at a later date when it is no longer a hypothetical problem?
+I was looking through "good first issues" to work on and found this one. But it seems this new feature request is already addressed by #4640 as mentioned in #4317
+Yes, I believe so @HuangJunye. Thank you for catching.

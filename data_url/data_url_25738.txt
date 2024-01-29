@@ -1,0 +1,15 @@
+In get_result function of covalent/_results_manager/results_manager.py we're using _get_result_from_file which unnecessarily does the unpickling of the result object in a while True: loop just to read a single status attribute, as such:
+This makes getting the result with wait=True really slow and consequently impacts the performance of dispatch_sync (and covalent overall).
+We can probably solve this by just adding a get_status endpoint to the dispatcher (in file covalent_dispatcher/_service/app.py) which can get queried periodically, and when the status is Result.COMPLETED only then it tries to unpickle, load, and return the result object. In order to do that we may want to maintain a shared dictionary which stores the status of every workflow received, since it will have to be thread safe, I recommend using a multiprocessing.Queue to store that dictionary.
+There can be a better solution for which I'm all ears.
+I would like to work on this issue, we can explore multi-processing for this or celery. I have experience working with both of them
+Hi @anushkrishnav! We're glad that you'd like to contribute to us.
+For this issue we'd want to avoid using another thread/process other than the resources already being used by Flask. I was thinking more along the lines of having an API endpoint which ct.get_result queries to and it checks whether the result is ready to be returned. What do you think?
+get_result is currently used internally by Covalent when it calls ct.dispatch_sync() to run sublattices. In this scenario there is no reason to poll any file at all. For instance, the server can just wait on the future returned from the dispatches threadpool and read the result from memory.
+For get_result as used by the client, a simple fix is to periodically (maybe every second) poll result_info.yaml which is much lighter than result.pkl while still containing the same status information.
+See also #580.
+I will check it out today , i will be starting on the task tonight
+@anushkrishnav any progress on this issue? Feel free to open a draft PR if you would like us to look at your code.
+@kessler-frost do you still want to do this or would you like me to take it? I'm working on similar stuff today
+@scottwn You can take this if you like, I'm working on something unrelated to this right now.
+This is resolved.

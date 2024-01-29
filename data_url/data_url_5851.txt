@@ -1,0 +1,87 @@
+BUG TEMPLATE 
+The output of quantum ciruict with 'matrix_product_state' and 'statevector' are different.
+{'111000101001': 1024} for 'matrix_product_state' simulator;
+{'100100011001': 1023, '100100110001': 1} for 'statevector' simulator.
+import numpy as np
+import qiskit
+from qiskit import QuantumCircuit, transpile
+from qiskit.providers.aer import AerSimulator
+import networkx as nx
+import matplotlib.pyplot as plt
+n = 12
+G = nx.Graph()
+G.add_nodes_from(range(0,n))
+G.add_edges_from([(0,1), (0,2), (1,2), (1,4), (2,4), (2,3), (3,5), (4,6), (5,6), (4,7), (6,7),
+(7,8), (8,9), (7,9), (6,8), (6,9), (8,10), (9,11), (10,11)])
+colors = ['b' for node in G.nodes()]
+pos = nx.spring_layout(G)
+default_axes = plt.axes(frameon=True)
+nx.draw_networkx(G, node_color=colors, node_size=600, alpha=.8, ax=default_axes, pos=pos)
+def produce_QAOA_state(gammas,betas,p):
+circuit = QuantumCircuit(n+3, n)
+for pk in range(p):
+for node in G.nodes():
+circuit.rz(-gammas[pk], node)
+for k, k_nbrs in G.adjacency():
+k_nbrs = list(k_nbrs.keys())
+k_nbrs = [int(x) for x in k_nbrs]
+circuit.x(k_nbrs)
+if len(k_nbrs)==1:
+circuit.crx(2betas[pk],k_nbrs[0],k)
+elif len(k_nbrs)==2:
+circuit.ccx(k_nbrs[0],k_nbrs[1],n)
+circuit.crx(2betas[pk],n,k)
+circuit.ccx(k_nbrs[0],k_nbrs[1],n)
+elif len(k_nbrs)==3:
+circuit.ccx(k_nbrs[0],k_nbrs[1],n)
+circuit.ccx(k_nbrs[2],n,n+1)
+circuit.crx(2betas[pk],n+1,k)
+circuit.ccx(k_nbrs[2],n,n+1)
+circuit.ccx(k_nbrs[0],k_nbrs[1],n)
+elif len(k_nbrs)==4:
+circuit.ccx(k_nbrs[0],k_nbrs[1],n)
+circuit.ccx(k_nbrs[2],n,n+1)
+circuit.ccx(k_nbrs[3],n+1,n+2)
+circuit.crx(2betas[pk],n+1,k)
+circuit.ccx(k_nbrs[3],n+1,n+2)
+circuit.ccx(k_nbrs[2],n,n+1)
+circuit.ccx(k_nbrs[0],k_nbrs[1],n)
+circuit.x(k_nbrs)
+circuit.measure(range(n),range(n))
+return circuit
+p = 1
+gammas = np.array([3.96])
+betas = np.array([4.70])
+circuit = produce_QAOA_state(gammas, betas, p)
+simulator = AerSimulator(method='matrix_product_state')
+tcirc1 = transpile(circuit, simulator)
+result1 = simulator.run(tcirc1).result()
+counts1 = result1.get_counts(0)
+simulator = AerSimulator(method='statevector')
+tcirc2 = transpile(circuit, simulator)
+result2 = simulator.run(tcirc2).result()
+counts2 = result2.get_counts(0)
+They should output similar measurement results.
+I have no idea.
+Matrix Product State Simulation Method_test.zip
+Matrix Product State Simulation Method_test.zip
+FEATURE REQUEST TEMPLATE 
+ENHANCEMENT REQUEST TEMPLATE 
+Hi @liyaochong , thanks for finding this bug!
+The problem is with an optimization that is taking place - it is called Fusion. It should not be used together with MPS.
+As a quick workaround, you can change the line:
+simulator = AerSimulator(method='matrix_product_state') to
+simulator = AerSimulator(method='matrix_product_state', fusion_enable=False ).
+It should be disabled by default in the code. I will check why it is enabled in this case and will fix it.
+Hi @liyaochong , thanks for finding this bug!
+The problem is with an optimization that is taking place - it is called Fusion. It should not be used together with MPS.
+As a quick workaround, you can change the line:
+simulator = AerSimulator(method='matrix_product_state') to
+simulator = AerSimulator(method='matrix_product_state', fusion_enable=False ).
+It should be disabled by default in the code. I will check why it is enabled in this case and will fix it.
+Thank you for your reply! It's OK now!
+By the way, Dose MPS simulator supports running on a GPU?
+Sorry, it is not supported on GPU yet.
+Sorry, it is not supported on GPU yet.
+Thank you very much!
+It's OK now!

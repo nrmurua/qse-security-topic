@@ -1,0 +1,19 @@
+As requested in #30, I did some GPU benchmarks of the newly implemented measurements and there are some interesting findings.
+First, I used a supremacy-like circuit with alternating layers of random one-qubit and fixed two-qubit gates. Although the exact gate sets are different than the ones from the experiment (for code simplification), I expect no change in performance as we are still doing matrix multiplications with the same sizes (just different numbers).
+The first observation is that without measurements, just simple state vector simulation, our difference with Cirq on GPU is better than the QFT:
+
+When we add measurements we get the following plot
+
+which shows two problems:
+(A) tf.random.categorical which we currently use for sampling measurements fails on GPU for more than 18 qubits as it tries to allocate a large tensor of shape (1, nshots, 2 ** nqubits). This does not happen on CPU where you can sample distributions up to 2^30 without problem. Particularly the code
+works on CPU but fails on GPU.
+(B) Compiling becomes slower than Eager when measurements are used. This is not true without measurements as shown in the plot above.
+I tried several things and I think there are easy solutions to both problems. For (A) we can move the sampling part on CPU using with tf.device("/:CPU0"): and for (B) we can move the measurement gate action outside of the function that gets compiled. With these two fixes the GPU performance with measurements becomes similar to the state vector case:
+
+@scarrazza if these two solutions are acceptable I can open a short PR that implements them (I already have the code). Otherwise, if for some reason we want to keep sampling on GPU, we may have to look for an alternative to tf.random.categorical that is better implemented on GPUs and then check again if the compile problem remains.
+Thanks @stavros11, the solution you propose seems quite acceptable aka. using the GPU for the model/circuit evaluation while CPU for the measurement sampling. You mention memory issues on GPU, did you check how much memory the CPU is allocating, and for example what happens if you reduce the 10000?
+You mention memory issues on GPU, did you check how much memory the CPU is allocating, and for example what happens if you reduce the 10000?
+If I run tf.random.categorical on GPU for a probability with dimension 2^18 (equivalent to 18 qubits), for 7500 shots I get samples instanteously, while for more shots it fails with ResourceExhaustedError. If I switch to CPU with tf.device it works without problem.
+If I run the same thing on my notebook, for dimension 2^25 I can get 10000 shots in less than one second and RAM usage stays bellow 1GB. Again on my notebook, if I increase the dimension to 2^28 (maximum we can get with one GPU), I get some memory warnings and RAM goes to around 8GB but I still get result in relatively short time (<5 sec).
+The benchmark script runs without problem up to 23 qubits on my notebook with memory staying bellow 2GB. I can go to more qubits, it is just very slow.
+From the above results it seems that the implementation of tf.random.categorical on GPU is problematic in terms of memory. However I think we are not losing anything if we switch this to CPU as it is generally fast.

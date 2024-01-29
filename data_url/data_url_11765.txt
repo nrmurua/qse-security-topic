@@ -1,0 +1,60 @@
+I have noticed this specially for matrices that are non-Hermitian and are expanded to the Hermitian form [[0, M], [M.conj().T, 0]. When trying to solve the system corresponding to the expanded matrix, the algorithm does not produced the correct results (see example below). This may happen too for other matrices.
+from qiskit.aqua import run_algorithm
+from qiskit.aqua.input import LinearSystemInput
+from qiskit.aqua.algorithms.classical import ExactLSsolver
+import numpy as np
+params = {
+'problem': {
+'name': 'linear_system'
+},
+'algorithm': {
+'name': 'HHL'
+},
+'eigs': {
+'expansion_mode': 'suzuki',
+'expansion_order': 2,
+'name': 'EigsQPE',
+'num_ancillae': 6,
+'num_time_slices': 70,
+'negative_evals': True
+},
+'reciprocal': {
+'name': 'Lookup',
+'negative_evals': True
+},
+'backend': {
+'provider': 'qiskit.BasicAer',
+'name': 'statevector_simulator'
+}
+}
+matrix = [[0.0, 0.0, 1.0, 2.0], [0.0, 0.0, 3.0, 0.5], [1.0, 3.0, 0.0, 0.0], [2.0, 0.5, 0.0, 0.0]]
+vector = [1.,1.,1.,1.]
+params['input'] = {
+'name': 'LinearSystemInput',
+'matrix': matrix,
+'vector': vector
+}
+result = run_algorithm(params)
+result_ref = ExactLSsolver(matrix, vector).run()
+print(result['solution']) # solution produced by HHL
+print(result_ref['solution']) # real solution
+Which gives:
+[ 0.04699195-1.61524943e-06j -0.50764772-6.73817804e-06j
+-0.37757465-3.07013204e-06j -0.11781876+1.10893970e-06j]
+[0.45454545454545453, 0.18181818181818182, 0.2727272727272727, 0.3636363636363637]
+We are already aware of this issue and currently investigating it. We do not have a solution yet, but we highly suspect the peculiar spectrum of the expanded matrix to cause problems with current HHL implementation. The expanded matrices will always have a spectrum of +-\lambda_n, which usually does not happen in the general hermitian case, due to a trace of 0 and thus the sum of all eigenvalues needs to be 0.
+In your above example the spectrum of matrix is:
+[-3.41385672, -1.61108109, 1.61108109, 3.41385672]
+with eigenvalues according to +-\lambda_1 and +-\lambda_2.
+You can "help" the HHL algorithm by setting the corners of the expanded matrix to 0.1, such that
+matrix = [[0.1, 0.0, 1.0, 2.0], [0.0, 0.0, 3.0, 0.5], [1.0, 3.0, 0.0, 0.0], [2.0, 0.5, 0.0, 0.1]]
+which has a spectrum of
+[-3.39237995, -1.53256872, 3.43724342, 1.68770525]
+Of course the solution will be changed slightly, but the fidelity of the HHL result is now much better.
+When I use vector = [1.0, 1.0, 0.0, 0.0]
+then I get the following results
+result_ref['solution'] = [-0.0198939, 0.0066313, 0.27254642, 0.36472149]
+result['solution'] = [-0.03529308+0.01916787j, -0.06791823+0.03004606j, 0.33082563-0.00303213j, 0.24728822-0.00942536j]
+fidelity = 0.9207169380787709
+Currently, we carry out further testing of the lookup method for calculating the reciprocal and look for bugs in the HHL implementation.
+HHL is being reworked under this PR Qiskit/qiskit#5698 where core algorithms have been moved to Terra repo and are being maintained there. The code here will be deprecated and as such is frozen - hence I am closing this issue.

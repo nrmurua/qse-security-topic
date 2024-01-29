@@ -1,0 +1,28 @@
+Hello,
+I was attempting to install the pre-release version of qsim in a fresh anaconda environment by running
+git clone https://github.com/quantumlib/qsim.git cd qsim make pip install .
+This gave me the following error:
+After that, running python3 -c "import qsimcirq" gives the error
+Could I get some assistance on what is going wrong? I am attempting to build the pre-release version of qsimcirq so that I can use GPU acceleration for circuit simulations.
+I'll assume based on the logs that you're doing this on a Linux machine. With that being the case, there are a couple of possible issues you could check for:
+It's also possible that you need a newer C++ compiler version; for example, GCC versions older than 5.0 do not support C++14, and C++14 only became the default after the GCC 6.1 release.
+An aside: I received a previous comment via email, but it's not showing up here. If it's relevant, could you copy that comment here, along with any subsequent replies? Thanks!
+Yes, sorry, I accidentally deleted the comment haha. I ran the command nvcc --version and the output was
+However, I could not find the CUDA installation in the directory /usr/local (I am working on a remote server), so I am not sure exactly where it is installed. Further, I could not find the cuda directory in the $PATH variable. Perhaps that is the issue.
+I found my CUDA installation directory /usr/lib/nvidia-cuda-toolkit/bin and added it to the $PATH variable. However, now I am getting a different error.
+make seems to be succeeding, and it is returning
+But, pip install . is still failing, now with the error
+This file requires compiler and library support for the ISO C++ 2011 standard is a pretty solid indicator that the CXX compiler nvcc is using doesn't support C++11 behavior. It's unclear to me what the default C++ version is for GNU 5.5.0, but upgrading to the latest version should resolve the issue.
+...That said, our CMake pipeline should apply the -std=c++14 flag to avoid this problem. I'll look into how we can inject that flag into the process.
+I tried inserting the statements
+into Makefile, but I am getting the same error when running pip install . as before. I also tried setting CFLAGS directly in terminal, to no luck as well.
+From what I see above, the flag -std=c++14 is being applied even when I don't explicitly specify it.
+To clarify: the Makefiles and the CMake pipeline are two distinct paths for building qsim. Running pip install . triggers the CMake pipeline, so any changes you make to Makefiles will be ignored by that process.
+The necessary flag would need to be set in our CUDA CMakeLists file, and would need to explicitly set the CUDA flags to enable C++14, as CUDA will ignore the CXX flags.
+So, in that case, would the only solution for me be updating GNU?
+So, in that case, would the only solution for me be updating GNU?
+That's likely going to be the fastest workaround, unless you're familiar with CMake and are interested in contributing. I intend to address this issue otherwise, but likely won't be able to for another couple of weeks due to conflicting priorities.
+I tried injecting the CMake flags, and I also tried running with an upgraded version of GNU. There is now a new error which seems even more opaque.
+The issue still seems to be stemming from cmake... Any ideas?
+Apologies for the long silence on this. The documentation I can find on CMAKE_CUDA_ARCHITECTURES suggests that it was introduced in CMake v3.18, and prior to that version it was not required.
+It's possible that our build process assumes an older version of CMake, and we need to update. You can try adding this block from the above link to the top of the CUDA CMakeLists.txt to resolve the issue:

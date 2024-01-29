@@ -1,0 +1,63 @@
+This is spec bug.
+Hashable is defined as follows:
+An object is hashable if it has a hash value which never changes during its lifetime (it needs a hash() method), and can be compared to other objects (it needs an eq() method). Hashable objects which compare equal must have the same hash value.
+Ref: https://docs.python.org/3.8/glossary.html#term-hashable
+Current PrimitiveOp has __hash__, but objects of PrimitiveOp can have different hash values even if they are same.
+(i.e. a == b does not imply hash(a) == hash(b))
+This __hash__ is used for equivalency check of SummedOp.
+This outputs
+Remove __hash__ from PrimitiveOp and implement __eq__ in SummedOp without using set().
+Hash is useful for other reasons too. I know there was discussion over equality - e.g. is a matrix form of the same operator equal or not. Logically this takes it further than the example above where the coeff type is different. Arguably for the coeff it seems more logical that they are equal (assuming identical primitive) if the value of the coeff is the same. As such the hash could be improved - as it stands it uses repr() where the string form of the PrimitiveOp depends on the string form of the coeff. If coeff were not a ParameterExpression then casting the coeff to say complex would mean the above are the same - which is essentially what equals does say in PauliOp where it compares primitives and compares coeffs to one another where the latter is by value where type (int, float, complex) is irrelevant to the equality. Clearly then there is a mismatch between what is happening in equals and hash around coeff - it seems to make sense to fix it in the hash so that the hash and equals behave as they should.
+I have discussed with @t-imamichi. (If there are any corrections/supplements, please point them out.)
+To implement __hash__, the object must be hashable. However, current PrimitiveOp is unhashable.
+So we have two choices.
+I want to discuss how often SummedOp.__eq__ is called. I am not sure, but equality check may be less frequently used.
+Which cost is more important? (Copy vs equality check)
+PrimitiveOp is supposed to be immutable. Code makes new instance when things change - or at least should. The only code I was aware of the broke this rule is this in CircuitOp https://github.com/Qiskit/qiskit-aqua/blob/e581d8027b99c19de8e6022365a0917e0e7e42c7/qiskit/aqua/operators/primitive_ops/circuit_op.py#L209-L210 where I think it removes extra identity gates. I guess CircuitStateFn has the same thing - and worst of all print() calls that use the str method to get a string, end up calling reduce method. This should definitely be fixed as far as print() is concerned that should never ever cause the object to change! I feel sure @jlapeyre changed one of the classes in Aqua that did the same not so long ago - yes its here #1283 and was on CircuitOp.
+oflow principle was to be immutable. This was done from the start. The hash method was was added later - partly to facilitate that SummedOp equality. I would argue that since these are all immutable that having hash allows flexibility with sets, dictionaries etc. We had been asked in the past by users to add this on the now legacy operators before we even had opflow. We had always refused since those objects were definitely not immutable and were intended to be updated, often in-place.
+I would say the SummedOp equality performance should be treated somewhat separately.
+It would be nice to keep hash and equals. As I said we discussed equality to some degree and figured that across types operators we would not try to do operator equality since it could be problematic. But within an operator type, like it treats the coeff equality independent of type that should be reflected in the hash so the eq/hash relationship is correct.
+Then whether there is a better, more performant way to do SummedOp I guess is a choice. But at least fixing the hash/eq thing will allow it to be more correct/as expected.
+Is PrimitiveOp really supposed to be hashable?
+This implies an original PrimitiveOp is unhashable.
+Other example:
+So should we choose changing PrimitiveOp to hashable?
+We need to take care this case.
+This is what makes the class immutable.
+The data inside the properties can change.
+Sorry, my word is bad. Please replace immutable to hashable. (I replaced my above comment)
+It's immutable but not hashable.
+The intent is that the opflow, via the public API, the objects are immutable. It never copied primitives and states this in the docs so if you modify that via some held external reference, or just poke around with Python on the objects fields, then clearly one can change these. You can see via the comment I referenced above on reduce()  the immutable aspect (I am not sure why reduce needed to be done in place in those primitives - I think it was more if you were doing some constructs, say on interactive prompt, then printing looked "better" - my take would be that reduce should return a copy if there is any reduction/change like is done in other parts of opflow).
+The main issue I see is that the the hash in PrimtiveOp is done via string repr where the type of the coeff will result in different formatting of the same value https://github.com/Qiskit/qiskit-aqua/blob/d88d0adea6bc7a32fa4a508f8ef0926d4fcce618/qiskit/aqua/operators/primitive_ops/primitive_op.py#L205-L209
+Now the equals in PauliOp for instance just does == between the coeffs which will only check for value so 1 == 1.0 =1.0+0j etc where each of those values has the different string representation https://github.com/Qiskit/qiskit-aqua/blob/d88d0adea6bc7a32fa4a508f8ef0926d4fcce618/qiskit/aqua/operators/primitive_ops/pauli_op.py#L79-L82
+Clearly there is a mismatch here between hash and eq when it should conform to the requirement that a == b requires hash(a) == hash(b). Comparing coeff by value in equals seems like what one would expect - clearly you expected that in the steps you show to reproduce the problem. If hash were changed in PrimitiveOp so the type of the coeff, when it has the same value, does not affect the hash then that would remedy the example shown. It would of course be advisable to check other objects to ensure the hash/eq relationship is obeyed properly too. Maybe it needs some overridden hash functions as well to do this..
+Yes, I agree. We need to change PauliOp.hash NotImplementedError and implement hash for each child of PrimitiveOp, i.e., MatrixOp, CircuitOp, and PauliOp.
+CircuitOp has an issue due to repr too. Two CircuitOp with an identical circuit have different hash values as follows.
+output
+Some primitives of PrimitiveOp are not hashable, e.g., QuantumCircuit and numpy.ndarray. I'm wondering how we make hashable PrimitiveOp using such non-hashable primitives.
+Some ideas perhaps: I think we should be able to get representative aspects from say the QuantumCircuit like width, depth, gate counts and build out a hash from that, including coeff of course for the CircuitOp overall containing that. As long as a reasonable set of properties are chosen there should not be too much collision of hash values. Same goes for the numpy array, a hash from say shape, length, and from content (say from sums of rows) may suffice. The arrays should not in general be too large but we may want to find something efficient perhaps that still suffices for what we need.
+Both QuantumCircuit and numpy array have == support so as long as we create consistent hashes overall when the are part of the 'immutable' PrimitiveOp sub-class it should work out I think.
+I don't think implementing hash for all primitives is an easy task. I know hash is useful, but, it would be good to leave removing hash of PrimitiveOp as an option. As for QuantumCircuit, we may need the global phase too.
+We have to take care of the following objects.
+As for QuantumCircuit, we may need the global phase too.
+QuantumCircuit has an equals method. It checks the DAGs from what I saw. As to the hash method it does not need to include every aspect - if fact if every PrimitiveOp, like say CircuitOp returned the exact same hash it would still satisfy the hash(a) == hash(b) and a ==b requirement. It just would be terrible for doing lookups via the hash. Hashes do not have to be unique if the items are different, some collisions can be expected. But we should choose items from the objects that are descriptive/key to the object try to reduce the collisions.
+Care needs to be taken with coeff, if its a ParameterExpression of course. Maybe use its id() to check equality and for the hash. If they are the exact same object then it seems they would be equal. Otherwise I think we should not treat them as equal since this is the one aspect of opflow that is really expected to be mutable if you will!
+As to CircuitOp and MatrixOp internally the primitive is a QuantumCircuit or Operator respectively. While the constructor allows the flexible set of types internally it is converted and held as a single representation.
+I see. QuantumCircuit.__eq__ compares only DAGs. So, we should ignore global phase for hash.
+It's not impossible to make a non-hashable object hashable, but it's hard.
+We also need to think about maintainability. The equivalence condition of QuantumCircuit (or other objects) may change in the future. At this time, we have to change the definition of __hash__.
+This means __hash__ has highly dependent to primitives and the classes are tight coupling.
+Hash is useful in general, but we have to find the use case of hash in OpFlow. I don't think we want to use them for keys of dict. One application is equivalency check of SummedOp, I said in my first comment. But this can be changed.
+Is hash useful enough to pay the cost?
+I found another issue related to hashable. It is mainly used in SummedOp.equals. https://github.com/Qiskit/qiskit-aqua/blob/36ffb11a08669f04ff6f7d44741c76eec8afeb2c/qiskit/aqua/operators/list_ops/summed_op.py#L244
+The main issue caused because SummedOp.oplist is List[OperatorBase] and OperatorBase does not have __hash__ in general. Currently, only PauliOp has hash though the implementation is not correct as we discussed already. SummedOp can accept other operators such as StateFn, that is not hashable, it causes error as follows.
+https://github.com/Qiskit/qiskit-aqua/blob/36ffb11a08669f04ff6f7d44741c76eec8afeb2c/qiskit/aqua/operators/list_ops/summed_op.py#L36-L39
+output
+We need to take care of entire OperatorBase because SummedOp.oplist is List[OperatorBase]. I think it's more difficult than taking care of only PrimitiveOp (it's not easy, I think). I have no idea to fix all operators to be hashable.
+I recommend to abandon PrimitiveOp.__hash__ because the current implementation is wrong and reimplement SummedOp.equals in a naive O(n^2) way.
+I made PoC of removal of PrimitiveOp.__hash__. It fixes SummedOp.equals with the naive comparison and adds a unit test.
+#1411
+I agree that when the hash is dependent on some non-hashable underlying complex primitive where the equals we create depends on using its equal method too then it can be problematic and as you indicate any solution that may be found (e.g. hash based on gate counts for QuantumCircuit that I think would be good enough) may need to change if the underlying primitive changes.
+As I indicated above we had been asked in the past for this #579 but given the legacy operators were mutable by design we had to decline.
+For now it does seem like removing the hash is prudent given that we have no pressing need for this. Also the has that had been asked for was on legacy operators which are more like the SummedOp rather than the individual primitive ops which is just where hash is provided presently.
+OK. I add reno and some test cases. Please take a look at the PR.

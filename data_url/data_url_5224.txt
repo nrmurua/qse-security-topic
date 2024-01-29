@@ -1,0 +1,12 @@
+Hi folks,
+We're trying to get Forest working on a local machine, and we've run into a problem. Starting up either application in server mode would always return this:
+Both Linux and Windows installs result in the same behavior. I think I know what's going on, but I'm not familiar with Lisp so my diagnosis could be totally wrong here. Take it with a grain of salt.
+After doing a little digging, I found the problem is caused by the latest-sdk-version call in qvm-app-version.lisp. The function uses drakma:http-request, which requires an explicit proxy setting. Since the proxy isn't set, the request times out. The timeout-error condition isn't caught by latest-sdk-version, only ns-host-not-found-error is, so this crashes the program.
+We didn't find anything regarding proxy support in the Forest documentation, so we're assuming this is an open issue. At some point, we'd like for proxy support to be added so both tools can check for updates as intended. The lack of proxy support isn't really a blocker for us, though - the problem is how latest-sdk-version handles error conditions. It's breaking the entire program if the update check times out. In our opinion, it should probably just print a warning message if it can't contact the Rigetti server and let QVM and Quilc execute normally.
+We're working around this by redirecting traffic aimed at downloads.rigetti.com to our local machine, which is running a webserver that just returns the JSON string that the actual server does, but this is obviously not ideal.
+Thanks @jclapis for the report. I'll get this fixed in the upcoming release.
+Out of interest @jclapis do you see the same behaviour if you do echo H 0 | qvm?
+Yeah, as far as I can tell the timeout happens for everything except qvm --help. I just tried this and can confirm it also runs into the same problem:
+Once I run my pretend update server, it works:
+For reference, here's the code for the pretend update server I wrote: https://github.com/jclapis/qsfe/blob/master/Forest/RigettiUpdateProxy/Program.cs
+It just listens on 127.0.0.1:80 for GET requests to /qcs-sdk/version/, and returns the version JSON. QVM and Quilc work fine once that's running.

@@ -1,0 +1,95 @@
+The prize goes to @MerlinSmiles for being the first to actually try a data taking loop with a real instrument... and discovering that they can't be pickled to send to the measurement process. In hindsight this makes sense, otherwise you'd be able to make competing connections where only one is allowed.
+I was hoping to avoid making a separate process for every instrument, as every new process makes the system more brittle and makes it harder to recover from errors, but at this point that's the only solution I see. I don't think this will be that hard, actually. Here's what I'm thinking:
+Sound reasonable? Anyone see a better option?
+@alexcjohnson in your mail this night you mentioned that this pickling is not necessarily a problem for all types of drivers.
+Maybe I dont understand your idea exactly...
+Do you intend to make a driver process for every single instrument?
+Will this reduce performance if there are many of them running around?
+Or do you intend to make one PyVisa process through which all visa commands are processed? (they cannot be sent in parallel anyways, right?) Or one per visa-interface/adapter?
+@alexcjohnson, I think @MerlinSmiles is indeed the first one to use the Loop for actual experiments, I am still using our good old MeasurementControl class.
+I am also not sure I understand your solution. Why do we need a separate process for each instrument?
+Does this have any impact for the user? Things that I can think of going wrong is keeping track of where code (in the instrument drivers) is executed and where exceptions are raised. Consider the validator exception we discussed in #49 , I can think of far more unclear exceptions being raised, if there is no traceback available because it happens in a separate process this can indeed become very brittle and hard to debug.
+@alexcjohnson , how hard would it be to connect to the server process (that you mentioned in your email) from multiple notebooks?
+I find that in my current workflow I frequently start a new notebook to keep everything clean and organized but have to set up all my instruments every time. Downside is ofcourse that if multiple notebooks talk to the same instrument server it is asking for problems...
+Yes, we could do it with a single process that handles all hardware calls, or with one process per interface. Is it really true that ALL pyvisa calls block each other? Certainly all GPIB calls block each other, but otherwise I wouldn't think they should - different ethernet connections should all live on independent sockets, and each serial connection is a whole separate cable... unless visa itself has this restriction baked in?
+From what I gather, spawning 20-30 processes that are all just sleeping most of the time shouldn't cause any problems, unless you're running this on a machine with really limited memory. But I can do a little bit of testing and see where this limit is on some of the machines I have around here. Anyway at the very least I should write it to allow multiple instruments on one server, so we can change this on the fly depending on the needs of each user.
+@AdriaanRol
+how hard would it be to connect to the server process (that you mentioned in your email) from multiple notebooks?
+I'm leery of doing it this way - because of problems as you mention if several notebooks are asking for conflicting things, but also I think it's much more robust and easy for users if the entire experiment is owned by the main notebook process. If you have independent server(s) controlling things, you have to remember (and know how) to start and stop them, you have something else to debug in a different way if there's a problem. With standard multiprocessing we already have a fairly clean and easy way to propagate exceptions back to the main process if they resulted directly from a main process call, otherwise they go into the subprocess widget.
+There are of course exceptions, cases that may warrant a separate server. Like fridge control, where for safety purposes you may want an independent always-on process watching the hardware and proxying the experiment to prevent damage. But for the most part I'd like to avoid this.
+@alexcjohnson , Just a small update, I just talked to @damazter and he has run a Loop on a physical instrument (not in the central repo), this was a TCPIP instrument, I think you already mentioned that this should work but thought I'd let you know that this has also been tested.
+talked to @damazter and he has run a Loop on a physical instrument (not in the central repo), this was a TCPIP instrument
+Ah cool - good, it looked to me like that would work. I'm planning to transition to TCPIP drivers from visa where possible... @damazter any chance you want to merge that work in?
+@alexcjohnson , If you just want to test something quickly, we are running the mw-sources over TCPIP, they support both the visa and TCPIP interface and PyVisa is written to support both.
+I don't expect the limitation with TCPIP is on the pyvisa level but rather lower in the VISA hierarchy. Would be interested to see if those work.
+@alexcjohnson @AdriaanRol
+So I tried both the USB and the TCPIP connection of that specific keithley I want to use.
+In summary, I can use GPIB, USB, TCPIP to talk to the instrument.
+I can use none of them in the loop. But I have set up the instrument as a visainstrument, I guess i need to make it an IPinstrument. I'll look into that now.
+Sorry for closing, I hit the wrong button.
+I guess i need to make it an IPinstrument. I'll look into that now.
+FWIW We are trying to move toward ethernet connections as much as possible... should be the best performance in general but it also inherently removes ground loops (as long as you don't use shielded or foiled cables). Not that this reduces the urgency of solving this problem...
+Yes, that is in general a good idea. But as there will be many instruments with only GPIB, so yes youre right this is still important :)
+And probably anything with its own DLL, particularly PCI cards
+@alexcjohnson
+When I make that Keithley an IPInstrument I can again talk to it and get and set values.
+When I try to use the loop I get the following output in the notebook:
+I guess I wait with this until you have looked into this issue a bit :)
+@alexcjohnson
+Ah cool - good, it looked to me like that would work. I'm planning to transition to TCPIP drivers from visa where possible... @damazter any chance you want to merge that work in?
+Well, the driver I wrote doesn't really deserve the name of driver, It was written so I could practice using loops and it is not general at all. This will however be fairly similar to the driver needed for our fridges, if I get to writing that one, I will obviously merge it, but this driver is just for playing around
+I inherited form Instrument as an IPinstrument is not usable with some IP devices as it tries to keep the connection open, while some devices close the connection after every request (this is a separate issue though)
+for those wanting to take a look at the code,
+This works using loops
+One can also circumvent pickling problems by making the object class available to the subprocess via an import.
+e.g.:
+locals()[the_module] = __import__(the_module)
+I am in favor of making one process per interface, since these are usually handled serially anyway (by hardware constraints). So a GPIB process, a TCIP process, etc.
+Alright, I've gone down a rabbit hole of superclass attributes, subclass attributes, sub-subclass attributes, and instance attributes, and objects that are picklable just fine in normal python sessions but not in notebooks. The root of it all is the hoops I've had to jump through to allow either sync or async subclass methods (write and ask) to override both sync and async superclass methods all the way up the inheritance chain.
+At this point I'm basically convinced we should rip out async - it will vastly simplify things, and given the way we're going and the inherent limitations of async event loops I don't think we'll lose much. The one place async could be useful to an experimental Loop is in simultaneous get of multiple parameters (but only really if they're on instruments on distinct interfaces, so we're not limited to sequential operations at the hardware level.) This is mostly a fairly minor performance effect anyway, but if we do want to solve it, based on the instrument server architecture I think we can do it in a much simpler way within the Loop code itself rather than all the way down the Instrument code.
+I'm unfortunately going to be rather slow implementing it for the next week due to my son's school Easter vacation, but does anyone object to or have comments on this approach?
+(btw you can see where I've been working on this if you like, it's in the inst-process branch. Along with the instrument server stuff I wrote a lot more tests, so the core suite is up to > 80% coverage now - the big remaining gaps being in DataSet and file storage)
+@alexcjohnson that sounds like a intense job there :)
+At this point I'm basically convinced we should rip out async - it will vastly simplify things...
+I dont exactly understand your discussion of the async feature, is it the instrument communication, or something in the whole qcodes thing?
+But I really want to make the point that we need async-get from instruments. Some instruments (i.e. Agilent DMMs) are really stupid and generate the data upon asking, add some 100ms integration time, and query 5 devices you spend half a second on getting data. Instead of 100ms. That was really slowing us down in the past and was the reason to implement all that async stuff into the matlab thing some of currently use here.
+But maybe my understanding of what you call async is not the same as what you refer to :)
+@MerlinSmiles yes, that's exactly what async operation is made for... firing off a whole bunch of requests and then collecting the responses as they come trickling in. The thing to be careful about then is that the rest of your acquisition Loop gets the timing you want, which can be tricky if the whole thing sits in one big async event loop.
+With separate instrument processes though, there's a pretty easy way for us to construct this asynchronicity ourselves for JUST the parallel get calls, leaving the rest of the loop synchronous: the server call is already just putting a "get" message in a queue and waiting for a response, so instead we put messages in all the queues at once, then wait for all the response messages. This will only have the desired effect though if either a) each instrument that's meant to be read in parallel is in its own process or b) the instrument servers themselves are running async event loops. (a) would certainly be the easiest, and clearest I'd say - it wouldn't involve any explicit async code on our part. But I don't know whether visa will always allow us to do that, or if it will complain if for example two separate processes try to access different GPIB instruments.
+@alexcjohnson thanks for clarifying, now I understand :)
+I might be able to try multiprocessing with pyvisa and gpib instruments this week, but that wont happen before wednesday.
+@alexcjohnson @MerlinSmiles I think I solved this problem, check out this repo (just made it public):
+https://github.com/guenp/squidpy, and in particular https://github.com/guenp/squidpy/blob/master/squidpy/instrument.py
+I apologize for the lack of documentation, but to summarize: I create a process for each instrument, see InstrumentDaemon. This process is basically a loop that listens to a pipe. In the main ipython notebook I then create a RemoteInstrument which forwards all commands/properties requested to this object to the pipe. I'm probably failing to explain this properly but I'll let the code speak for itself here.
+This works with async (see InstrumentList.get_datapoint_async()) and doesn't give any pickling problems. It's doesn't contain any fancy i/o blocking or safety features yet but it works. 😉
+I used this code to take data at Cornell and is a rewrite of my old repo athena. My plan was to incorporate this stuff into PyMeasure (repo by Cornell grad students) so people could use it there but haven't had time to do so yet.. Have a paper and thesis to write.. 😱 meh.
+PS. see also this discussion plus an example pymeasure/pymeasure#19
+@guenp Cool,  did this work on Windows? I had problems getting those pipes
+to work at some point, but will look into your work
+😊
+On Mar 21, 2016 11:28 AM, "Guen P" notifications@github.com wrote:
+@alexcjohnson https://github.com/alexcjohnson @MerlinSmiles
+https://github.com/MerlinSmiles I think I solved this problem, check
+out this repo (just made it public):
+https://github.com/guenp/squidpy, and in particular
+https://github.com/guenp/squidpy/blob/master/squidpy/instrument.py
+I apologize for the lack of documentation, but to summarize: I create a
+process for each instrument, see InstrumentDaemon. This process is
+basically a loop that listens to a pipe. In the main ipython notebook I
+then create a RemoteInstrument which forwards all commands/properties
+requested to this object to the pipe. I'm probably failing to explain this
+properly but I'll let the code speak for itself here.
+This works with async (see InstrumentList.get_datapoint_async()) and
+doesn't give any pickling problems. It's doesn't contain any fancy i/o
+blocking or safety features yet but it works. [image: 😉]
+I used this code to take data at Cornell and is a rewrite of my old repo
+athena. My plan was to incorporate this stuff into PyMeasure (repo by
+Cornell grad students) so people could use it there but haven't had time to
+do so yet.. Have a paper and thesis to write.. [image: 😱] meh.
+—
+You are receiving this because you were mentioned.
+Reply to this email directly or view it on GitHub
+qdev-dk-archive#53 (comment)
+Yep it does, so far only been using Windows PCs 💻 PyMeasure was developed on Linux so made it Windows-compatible as well
+@alexcjohnson @MerlinSmiles it just popped into my head that the reason I did it this way is because pipes are picklable :) I had the same problems when I wrote the code on Mac and then switched to Windows, and the experiment sub-process didn't want to pickle the instruments. Now I just pass a list of pipe's and create a RemoteInstrument for each pipe which acts just like the 'real' instrument would when addressed directly from the process in which it was created (in this case, the instrument lives inside an InstrumentDaemon process). One could also envision e.g. making 1 InstrumentServer per hardware interface instead, should give similar results.
+Not that all problems surrounding this transition are resolved, but we've moved on to more specific things that are documented in various other issues, so I'm closing this one.

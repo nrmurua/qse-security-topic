@@ -1,0 +1,47 @@
+The versions of the PDQ2 driver in Artiq and in the ions gitweb are different. In the gitweb history, commit 3d93519b33f81b2be79934019f0cf15447374bfd shows a merge with the artiq version, though they are no longer the same. The issue is with the program_frame definition, which seems buggy in the artiq version. Here's the difference:
+@jordens what is your take on this?
+This is one of the things that I had changed in my code in the lab. The pdq2 driver and wavesynth need a bit of work to integrate and finish. I am uncertain who can and will do that.
+This is one of the things that I had changed in my code in the lab.
+It's a huge benefit to expose the code that you've (@jordens
+https://github.com/jordens) refined in the lab while working on ion
+transport. What other things differ between your code in the lab and the
+code on github?
+Is it possible to simply commit your updated code? As @kgilmo points out,
+what's on github is broken anyway. Perhaps m-labs has the bandwidth to
+streamline integration.
+The pdq2 driver and wavesynth need a bit of work to integrate
+and finish. I am uncertain who can and will do that.
+Can you outline the steps needed to complete the integration?
+-Joe
+Joe, good that you want to work on this. Kevin has attached a full diff to the first post in this issue.
+Committing this is certainly possible but does not help much.
+To get somewhere, you have to explore the wavesynth topic and determine convince yourself that the data format and the API are viable, useful, and to what extent and how it can be mapped to the dumb DACs and the smart ones. Then the different ways of synchronizing and steering the DACs need to be designed and matched with the capabilities of the hard- and gateware. Much of all this is already done but it should be revisited. Then all the things from wavesynth over the different software and gateware simulation methods to the hardware backends as well as the unittests have to be pieced together and linked.
+I'll redesign significant parts of the software and gateware stack. This should cover the upper layers of the gateware (communication, protocol, parsing), the triggering/frame selection logic, and the binary pdq2 data assembly. The goal is to get the most out of this annoying bit of hardware while still producing code that has maximum reusability for the future artiq hardware. It seems wise to actually implement SPI on the old frame-select/trigger lines (that will get rid of many problems) and implement sufficient interlocking for the data transfer process.
+Would the notion be to replace the USB communications with SPI communications, or to have them be supplementary?  In other words, will the SPI be used just to communicate frame selection information or would it be more generally for waveform data upload/modification?  If the latter, we need to ensure that the core device is not unduly bogged down by communicating waveform data to the PDQs.  In addition, it seems it would make sense to implement the SPI in such a manner that multiple PDQs can share the same serial bus, lest we run out of TTL lines.  I assume this would be a 3-wire SPI, leaving one remaining input on the PDQ cards to provide a TTL trigger.
+This should work now. I need a guinea pig for testing. @raghavendrasrinivas @dhslichter
+Pending improvements through #276.
+I'll try to get to this this week but probably not before Wednesday.
+On Mon, Feb 22, 2016 at 7:37 AM, Robert Jördens notifications@github.com
+wrote:
+This should work now. I need a guinea pig for testing.
+@raghavendrasrinivas https://github.com/raghavendrasrinivas @dhslichter
+https://github.com/dhslichter
+Pending improvements through #276
+#276.
+—
+Reply to this email directly or view it on GitHub
+#178 (comment).
+So, we've tested the pdq2_controller with rpc_tool and can send it commands. Is there anything in particular to test?
+Yes. Try https://github.com/m-labs/artiq/blob/master/examples/master/repository/coredevice_examples/transport.py (or some variation thereof).
+To avoid the recurrent mistake with Python string escapes in shell commands I have added an interactive mode to rpctool ...
+We're currently testing this in the Penning lab with just one pdq2 connected, and could potentially have 3. How should we define electrodes in the device_database? It seems like it's calling functions from the mediator which isn't imported into the pdq2 driver.
+https://github.com/m-labs/artiq/blob/master/examples/master/device_db.pyon#L137
+and the following entries.
+@kgilmo , @r-srinivas: how is testing going? Can we close this?
+No not yet. We had some software issues on the computer in the penning lab so we were going to test it on the new pdqs we were setting up for the magtrap but that hasn't finished yet. Maybe next week.
+@kgilmo @r-srinivas @dhslichter This is the last hardware thing that you need to test before 1.0.
+I tried running transport.py on 1.0rc3 on linux. With the default values I get an underflow error,
+That seems to be fixed by adding a delay between self.pmt.count() and turning bd_sw.off()
+It's a little hard to test the waveforms now because our artiq_crate and pdqs are in different rooms. It seems like connecting to the pdq_controllers works fine. I'd suggest maybe closing the issue for now and I'll do a more thorough test about timing issues once we are better set up to do this. I'll raise any issues then if I run into them.
+That code snippet is not what's in transport.py.
+Yes, and the underflow is normal and expected (pmt.count makes the CPU wait until the gate closes).

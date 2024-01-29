@@ -1,0 +1,38 @@
+Description
+We are interested in a HPC-boosted QuTiP version, both for  generally dynamical equation solvers  and quantum circuit simulation. The idea would be to enable multiprocessing on single node (which should be easier) and then MPI for multi-node simulation. Also consider an integration with CuPy and GPU computation.
+Possible approach
+For what concerns the equation solvers, we had a look at qutip.mesolve and qutip.sesolve and we have seen that at the core of the integration method there is scipy.integrate.ode.
+Our first (maybe trivial) idea was to replace scipy.integrate.ode with a solver that would enable single node multiprocessing.
+For what concerns the possibility of using  MPI for multiple nodes.. this would probably require a greater effort and significant changes in the code.
+For the quantum circuit simulation, we are not able to simulate a QFT circuit with more than 14 qubits.. maybe one first step would be to use a sparse matrix representation of unitaries instead of storing the full (2^N x 2^N) matrix.
+Additional context
+You can find info and specifications about our HPC infrastructure here  https://www.hpc.cineca.it/content/hardware
+The machines we will be using for this project are Marconi100 https://www.hpc.cineca.it/hardware/marconi100  and Galileo100 https://www.hpc.cineca.it/hardware/galileo100
+@riccameng Hi!
+I think this is very achievable. Depending a bit on your time scales, it might make sense to work with QuTiP 5, which is currently under development in the dev.major branch. Version 5 includes much better QobjEvo support, much cleaner and more pluggable solvers (which should be merged into dev.major later this week), and a pluggable data layer. Some of these might be very helpful to you.
+For the rest of the discussion I will assume we are targeting QuTiP 5 unless you tell me otherwise.
+Some questions and thoughts from my side:
+It's exciting to see QuTiP being used on really big hardware. Looking forward to working with you however we can.
+Great feedback @hodgestar. Let me add this: It would be nice to clarify explicitly benchmarks from the beginning.
+A bit like you did when mentioning the 14 qubit cap for QFT gate simulation.
+For example, goals of this would be:
+For all examples we could add details of a typical example with current times/bottlenecks (we could use gists).
+This can be of very wide interest, but finding physical examples of interests and use cases would be helpful. For example, qubit space nevertheless explodes exponentially. But adding even a bit more qubits in steadystate can impact state of the art simulation of dissipative phase transitions in many-body systems.
+I also think that having a sort of code design template could help. This is a more general point triggered by this issue. This may be a QuTiP idea but looks at some point more technical.
+Hi Riccardo,
+Since you also mentioned Cupy, please take a look at  qutip-cupy. It a GSoC project @MrRobot2211 did this summer to add gpu support to Qutip. When using it, you can have the data inside Qobj reside on the gpu and cupy's function will be used when working with them: when using matmul it will defer to cupy's array matmul, for tensor, it will use cupy's kron product, etc. It can't be used yet in solver since we are still using scipy's solver which are using numpy arrays for the states. But we are adding the capacity to add alternative ODE solver with some solvers which will work fully in Qutip's data type.
+I believe mpi support could come in a similar manner, starting with a new data layer.
+As for single node parallelism, v4 has openmp support for some operations when compiled manually. But this was removed in v5 with the idea to put it back in later. But there are some issues that need to be thought about before adding it back, starting with Mac not supporting openmp out of the box...
+Here are some reading about the data layer in v5 that could be useful:
+https://jakelishman.github.io/qutip-devguide/
+https://binhbar.com/tags/gsoc/
+Hi everyone and thank you all for the helpful advices.
+I started testing OpenMP on v4. Some news from my side:
+Unfortunately I didn't get any improvement.  Do you have any ideas about it? Am I using OpenMP wrong or is the example chosen not adequate? Can you point me a snippet of code that you are sure works with OpenMP?
+Thank you so much!!!
+@riccameng I think the first thing to check is whether QuTiP has been compiled with OpenMP and has successfully built its own OpenMP support. You can do this with:
+If the above shows that QuTiP has found OpenMP successfully, would you mind creating a pastebin or gist the actual code you ran somewhere, along with the values of the parameters? Debugging this with a later number of unknowns could potential waste a lot of time.
+If not, could you clarify (i.e. provide shell commands used) what "installed QuTiP with OpenMP" means.
+setup.py do not add the -fopenmp flag on linux. It still use the openmp version of the CSR * vector product but without any gain... Our tests only check that openmp does not break anything, not for speedup so it was broken for quite some time.
+It should be is quick fix.
+But even when fixed the scaling is not great, I get at most a 2x.

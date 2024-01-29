@@ -1,0 +1,26 @@
+setup.py manages a --with-openmp build option to provide openmp support.
+pyproject.toml was introduced in  QuTiP 4.6.0 to allow PEP517 build without (directly) using setup.py.
+But the --with-openmp option that previously worked with a setup.py build does not seem to be compatible with a PEP517 build.
+The problem shows up in the Debian build of the qutip package. Debian provides its own tool (pybuild from the dh-python package) to manage the build of python packages.  PEP517 is relatively new, so by default pybuild uses setup.py if it is available.  pybuild will use PEP517 instead, if the pybuild-plugin-pyproject package is installed and pyproject.toml is available.
+Without pybuild-plugin-pyproject installed, the Debian build was invoking
+using setup.py and specifying --with-openmp.  A successful build log for this method can be found at https://buildd.debian.org/status/fetch.php?pkg=qutip&arch=amd64&ver=4.6.2-3&stamp=1641397514&raw=0
+With pybuild-plugin-pyproject installed, the Debian build invokes a wheel build (command line given below).  But --with-openmp causes the build to fail.
+The PEP517 build should be able to be configured to support openmp.
+PEP517 support is new for Debian.  It is possible the pybuild build tool needs to be adapted to handle setup.py options like --with-openmp in the context of PEP517.  But I've tried to pose the issue here in terms of the underlying python3 build commands without needing to consider pybuild as such.
+Is there a different way in which --with-openmp should be configured when using a PEP517 build?
+python3 -mbuild has a -C option (--config-setting),  seehttps://pypa-build.readthedocs.io/en/latest/. It sounds like it could be used for build configuration options like qutip's openmp support.
+It doesn't seem to work with the current handling in setup.py however.  Permutations of -C--with-openmp, -Copenmp, -Copenmp=1 enable a succcessful qutip PEP517 build, but qutip.about() then reports
+indicating the option is ignored.
+I have found out how to use this after reading the source:
+One can read a little bit of somewhat useful information in PEP517 -- https://peps.python.org/pep-0517/#config-settings. I tried --build-option instead of --global-option, but that didn't work.
+I've added a note to the source on this in #1978, so I'll close this issue once that is merged.
+Not sure if it's that simple.
+actually gives me a build error:
+The other method
+appears to work in the sense that it builds successfully.  But after installing the package it reports that openmp is still missing
+--config-setting=--global-option=--with-openmp is still not working with git head (with #1978 merged). This is with
+@drew-parsons Is this still an issue for the Debian package? I'm not quite sure how to reproduce my side, but I am cutting the 4.7.1 release soon, so this would be a good time to address this if we can.
+Looks like it's resolved now (unless documentation should be updated on how to use the --with-openmp option with the new build method.  I'm not sure if end users should now be using wheels builds).
+Both --config-setting="--global-option=--with-openmp" and --config-setting="--build-option=--with-openmp" achieve a wheels (PEP517) build and python -c "import qutip; qutip.about()" reports OPENMP Installed:   True for both python3.10 and python 3.11.
+--global-option gets a warning message:
+So it's saying we should be using --build-option not --global-option

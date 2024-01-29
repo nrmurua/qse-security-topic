@@ -1,0 +1,174 @@
+Hello devs,
+I have been using the development branch with the mix_cl_trunc HF interaction potential and admm together and I have some strange behavior I don't understand. I'm hoping this is the best place to ask as opposed to the google group as it concerns new features.
+I have done a static calculation of the energy and band gap of NaCl for three different HF interaction potentials: shortrange, truncated, and mixed. The mixed potential calculation gives very good agreement with the experimental bandgap (8.45 vs 8.6) while the other two potentials are not quite as good for matching experiment. The total energy of the mixed calculation is very different though.
+Total energies:
+Shortrange: -7790.478101846264508
+Truncated: -7790.667318479232563
+Mixed: -7501.036735238549227
+While short and truncated differ by only ~.2 Ha, mixed is more than 200 Ha different, and this difference is in spite of the excellent band gap agreement, which reproduces the band gap of Skone et al (PRB 2016) to within .21eV for a similar range separated functional.
+If you look at the the module hfx_admm_utils.F in the development branch of cp2k, starting on line 722, it looks to me like the module is automatically activating the required XWPBE and PBE_HOLE_T_C_LR sections in order to perform the calculation. Its my inclination that something in here is going wrong on my end whereby the calculation is being performed roughly correct, but some energy is not being added back in to the total. To expedite help, here is how I am entering the mixed potential information, and I am not, myself setting anything in XWPBE or PBE_HOLE_T_C_LR, but I think maybe I misinterpreted the code in hfx_admm_utils.F and I must do this.
+The final point of confusion I have is why certain things are done in the hfx_admm_utils.F. If you look at the source you see the following function calls
+If you write out the short and long-range contributions and perform these substitutions:
+Shortrange:
+PBE&SCALE_X + XWPBE%SCALE_X + XWPBE%SCALE_X0 + SCALE_COULOMB
+=> PBE&SCALE_X + SCALE_LONGRANGE + -(scale_longrange + scale_coulomb) + scale_coulomb
+=> PBE&SCALE_X
+Longrange:
+PBE%SCALE_X +  XWPBE%SCALE_X0 + PBE_HOLE_T_C_LR%SCALE_X + SCALE_LONGRANGE
+=>  PBE%SCALE_X +  -(scale_longrange + scale_coulomb) + (scale_longrange + scale_coulomb) + SCALE_LONGRANGE
+=>  PBE%SCALE_X + SCALE_LONGRANGE
+I don't know if I'm reading it correct, but it seems like this is what its saying, and this wouldn't allow for both short and long range fractions to sum to 1.
+Now whether or not I'm reading the code right, some clarification is definitely needed for how this is supposed to be set-up, because as it is right now it does not return energies that are reasonable.
+Some comments:
+In the second part of the routine, we set up/adjust the DFT functionals for the primary basis, but with opposite sign, thus on paper the longrange-shortrange separation cancel each other.
+For your equations, you have to consider that we start from a longrange/Coulomb decomposition, but for DFT we need a shortrange/Coulomb decomposition.
+The second thing in your equations is the PBE_HOLE correction. It is just required for periodic systems to account for the missing longrange exchange from the truncated Hartree-Fock, thus can be ignored.
+Finally, longrange and shortrange contributions should not add up to 1 but the separate longrange and shortrange contributions should add up to 1 (compare derivations of range-separated hybrid functionals like wB97X). In the simplest case, just set scale_longrange and scale_coulomb to zero to have a pure density functional. Then you have 100% of both longrange and shortrange DFT exchange but no longrange or shortrange HF exchange. The separate contributions become 1 and the sum is 2. Further, you can compare derivations of range-separated hybrid functionals for that.
+Shortrange:
+XWPBE%SCALE_X + XWPBE%SCALE_X0
+=> -SCALE_LONGRANGE + (SCALE_LONGRANGE + SCALE_COULOMB)
+=> SCALE_COULOMB
+makes sense because the longrange potential does not contibute at all to the shortrange potential, the Coulomb potential contributes fully to the shortrange potential
+Longrange:
+XWPBE%SCALE_X0
+=> SCALE_LONGRANGE + SCALE_COULOMB
+makes sense because both partial potentials contribute fully to the longrange potential
+The shortrange and longrange contributions of the actual energies: Here we need the DFT exchange contributions and the HF contributions (related to the first term in the ADMM energy E_{HF}[P_2]).
+Shortrange:
+PBE%SCALE_X + SCALE_COULOMB
+=> 1 - SCALE_LONGRANGE
+To have 100 % shortrange exchange, you probably have to use a different ratio of shortrange exchange (1-SCALE_COULOMB).
+LONGRANGE:
+PBE%SCALE_X + SCALE_COULOMB + SCALE_LONGRANGE
+=> 1
+Here works everything fine.
+Probably, you have to use the XWPBE functional. Thus, your XC_FUNCTIONALS section should look like this:
+&XC_FUNCTIONALS
+&PBE
+# The exchange functional will be set with XWPBE
+SCALE_X 0.0
+SCALE_C 1.0
+&END PBE
+&XWPBE
+# Scales the shortrange PBE hole, thus does only contribute to the shortrange potential
+# beta
+SCALE_X 0.42
+# Scales the original PBE hole, thus fully contributes to shortrange and longrange potential
+# 1-alpha-beta
+SCALE_X0 0.33
+OMEGA 0.54
+&END XWPBE
+&END XC_FUNCTIONALS
+I hope I have not forgotten anything.
+Thank you @fstein93 , your explanation is very helpful and I have a general idea bout what the module is doing now.
+Seeing how you have recommended to modify my input file, I am able to get energies in good agreement in terms of energy with HSE and PBE0, but the band gap opens up a lot. I'm reasonably confident the band gap should be ~8.5. A previous studying using range separated hybrids with the same fractions reported around 8.5.
+It seems that the issue is that the MIX_CL_TRUNC, when used as you described it, has a short-range exact exchange of 1/r form, while most range separated forms use erfc(mur)/r, and then with long range correction we get 1/r+erf(mur)/r as the exact exchange in the short range. Perhaps what I need is a SHORTRANGE-LONGRANGE interaction potential split. Is there plan to add this to cp2k that you're aware?
+No, it does not matter because the exchange functional  is a linear functional of the interaction potential. Thus, it does not matter whether you have a longrange-Coulomb, shortrange-Coulomb or shortrange-longrange potential split because all of them can be transferred to each other.
+The Hartree-Fock code uses a longrange-Coulomb split. The DFT code uses different splits depending on the functional:
+-XWPBE uses a shortrange-Coulomb split
+-PBE_HOLE_T_C_LR is based on a longrange-Coulomb split (Coulomb refers to PBE%SCALE_X or XWPBE%SCALE_X)
+Why should the short-range exact exchange have a 1/r form? It is still using a erfc(mu r)/r potential. The scaling factors are just related to the scaling factors of the longrange-Coulomb potential.
+What you can still try is to add the PBE_HOLE_T_C_LR correction
+&PBE_HOLE_T_C_LR
+CUTOFF_RADIUS 2.04
+SCALE_X 0.33
+&END PBE_HOLE_T_C_LR
+Anyway: Are you using a k-points approach or a super cell approach? What is your cell size?
+Anyway: Are you using a k-points approach or a super cell approach? What is your cell size?
+k-points with HFX is not yet supported (but this is being worked on)
+I am using gamma point only, yes, with 250 atom cells. DZVP for the basis sets, minimal auxiliary basis (cFIT3).
+If not the form of the HF interaction, I don't see what else would cause a change in the gap of >1eV. The ADMM is the biggest approximation, and it only causes shifts in eigenvalues of ~.1eV in my experience and by the literature.
+XC section for reference.
+`
+&XC
+&XC_FUNCTIONAL PBE
+&PBE
+PARAMETRIZATION ORIG
+SCALE_C 1
+SCALE_X 0.33
+&END PBE
+&END XC_FUNCTIONAL
+&HF
+FRACTION 1
+&SCREENING
+EPS_SCHWARZ 1e-07
+EPS_SCHWARZ_FORCES 1e-06
+SCREEN_ON_INITIAL_P True
+SCREEN_P_FORCES True
+&END SCREENING
+&INTERACTION_POTENTIAL
+POTENTIAL_TYPE MIX_CL_TRUNC
+CUTOFF_RADIUS 2.04
+T_C_G_DATA t_c_g.dat
+SCALE_COULOMB 0.25
+SCALE_GAUSSIAN 1
+SCALE_LONGRANGE 0.42
+OMEGA 0.54
+&END INTERACTION_POTENTIAL
+&LOAD_BALANCE
+RANDOMIZE True
+&END LOAD_BALANCE
+&MEMORY
+EPS_STORAGE_SCALING 0.1
+MAX_MEMORY 2000
+&END MEMORY
+&END HF
+&END XC
+`
+Also maybe will address why I thought 1/r shortrange would lead to an issue. Let a and b for exact exchange calculated with HF and 1-a or 1-b be terms for exchange calculated at PBE level.
+Exchange energy
+=> 1/r = longrange + shortrange
+= (HF longrange + PBE longrange) + (HF shortrange + PBE shortrange)
+= a*erf_HF + (1-a)*erf_PBE + b * erfc_HF + (1-b) * erfc_PBE
+How I suppose that the MIX_CL (ignore truncation) works:
+=> 1/r = longrange + shortrange
+= (HF longrange + PBE longrange) + (HF shortrange + PBE shortrange)
+= (a * erf_HF + (1-a) * erf_PBE) + (b * 1/r + (1-b) * erfc_PBE)
+So because the PBE level of theory is decomposed as 1 = erf+ erfc, using 1/r as the shortrange doesn't exactly reproduce the decomposition; at least, this i what I thought.
+Yes Juerg, I am using ADMM2.
+@fstein93 When I use the parameters you suggest (PBE_HOLO_T_C_LR or not, doesn't matter)
+Total energies Reiterated
+Shortrange: -7790.478101846264508
+Truncated: -7790.667318479232563
+Mixed: -7501.036735238549227
+Your recommendation: -7737.087861996698848
+Your recommendation also gives 6.75 eV band gap
+I am following the work in http://dx.doi.org/10.1103/PhysRevB.93.235106
+Which has
+E_x = E_HF_short + E_HF_long + E_PBE_short + E_PBE_long
+= a* E_HF_short + b* E_HF_long + (1-a)E_PBE_short + (1-b)E_PBE_long
+= aerfc_HF(wr)/r + berf_HF(wr)/r + (1-a)erfc_PBE(wr/r) + (1-b)erf(wr)/r
+If the way you described achieves this operator splitting, then I should reproduce the paper (a slight difference could be expected due to different pseudopotentials and use of ADMM) but your method gives very strange band gap, while my method gives very strange energy.
+Referring to your previous comment:
+No, it does not matter because the exchange functional is a linear functional of the interaction potential. Thus, it does not matter whether you have a longrange-Coulomb, shortrange-Coulomb or shortrange-longrange potential split because all of them can be transferred to each other.
+This does not make sense to me...  coulomb and longrange cannot sum to give you longrange+shortrange since 1 = erf + erfc. If you choose a negative longrange fraction, then you could convert MIX_CL into a shortrange, but I want positive HF contribution to the longrange.
+I really appreciate your help, and I'm very confused as of now.
+I need to have a look at the literature concerning band gaps. I've never used them.
+Concerning the potential splits:
+What is implemented in the Hartree-Fock section is a Coulomb/longrange potential split. The reason for that is that the expressions for the Coulomb and the longrange potentials are easier.
+In terms of DFT functionals, we need a shortrange/Coulomb potential split because we have something like PBE and wPBE (shortrange!).
+Starting from a splitting Coulomb(C)/longrange(L), we have (shortrange = S)
+a_C HF_C + a_L HF_L = a_C HF_C + a_L (HF_C - HF_S) = (a_C + a_L) HF_C - a_L HF_S
+or for a S/L split:
+a_S HF_S + a_L HF_L = a_S (HF_C - HF_L) + a_L HF_L = a_S HF_C + (a_L - a_S) HF_L
+a_S HF_S + a_L HF_L = a_S HF_S + a_L (HF_C - HF_S) = (a_S - a_L) HF_S + a_L HF_C
+Thus, we can transform a C/L split (l.h.s.) to a C/S split (r.h.s.) or a L/S split into a C/L split or a C/S split. For technical reasons, we offer only the C/L split for HF or a C/S split for DFT (replace HF with DFT).
+If you have a pure longrange or a pure shortrange potential, then it's more convenient to use these (keyword INTERACTION_POTENTIAL%POTENTIAL_TYPE) instead of MIX_CL. Especially for the shortrange potential, there are more efficient screening schemes available than for MIX_CL.
+It's basically like erfc = 1 - erf or erf = 1 - erfc
+Okay following your last set of instructions I ran NaCl again with the following XC section
+What happened was the energy was fixed, going to -7793.0078, which is at least much closer all be it not exact. There was a small decrease in the band gap to 8.26 from the lit value of 8.6 (overall an improvement I'd say). The small discrepancy that still exists makes me thing though. Is it possible that this is because I have a periodic system and I'm using MIX_CL_TRUNC?
+a_S HF_S + a_L HF_L = a_S (HF_C - HF_L) + a_L HF_L = a_S HF_C + (a_L - a_S) HF_L
+Focusing on the r.h.s, (a_L - a_S) makes sense if HF_C indefinitely, because a_S amount of long range is already in the HF term. In truncated version though, the -a_S is subtracting without any exact HF_C to counteract it. At best you can add the PBE_HOLE_T_C_LR
+Am I thinking about it right?
+Yes. That's why we have PBE_HOLE_T_C_LR. In the original papers, it was found that the convergence is much faster w.r.t. the cutoff radius. It does not mean that you are actually converged w.r.t. super cell size.
+Unfortunately, I can't really help you with the band gaps, I never use them. The implementation of range-separated hybrids with ADMM was a small side project from my side because I hoped, it might help accelerating my calculations but for my systems of interest the errors in energies were too large. Nevertheless, I considered it to be useful to others and pushed the code to the repository.
+According to your cutoff radius and your system, you have a cubic super cell of at least 12 A? So the band gap might be converged w.r.t. super cell size.
+If you are using PBE_HOLE_T_C_LR, it should be SCALE_X 0.42 . The differences might not be too large (to be checked), but that's related to the implementation of MIX_CL_TRUNC in Hartree-Fock. It uses the following mixture:
+(a_C + a_L) HF_trunc - a_L HF_C + a_L HF_L = (a_C + a_L) HF_C - (a_C + a_L) HF_trunc_L - a_L HF_S
+The l.h.s. is taken directly from the code (hfx_pair_lists.F:218). The r.h.s. is for the DFT part where each HF energy part reflects a DFT functional. Unfortunately, for the L part of the truncated Coulomb functional and the S Coulomb part we have different splits.
+The Coulomb parts have to add to 1, thus WXPBE%SCALE_X0 = 1 - 0.25 - 0.17 = 0.42 (correct). The respective L and S parts have to add to zero. So for the L part of the truncated Coulomb operator, we have PBE_HOLE_T_C_LR%SCALE_X = 0.42 (not 0.25). For the S part of the Coulomb operator, we have WXPBE%SCALE_X = 0.17 (correct).
+I did not check, whether you use the correct parameters of the functional. My considerations are based on the parameters of your HF section.
+What pseudopotentials are you using? It should be PBE0 pseudopotentials. Otherwise, I am running out of ideas either.
+@oschuett can you please add a comment why this was closed?
+It was my impression that all of @nwinner's questions have been answered.
+I believe everything I wanted to know has been answered. The functional works well now and I think I understand the implementation. Thanks everyone.

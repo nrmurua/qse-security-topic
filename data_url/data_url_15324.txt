@@ -1,0 +1,21 @@
+Here are more qiskit related versions:
+qiskit-ibm-runtime==0.6.2
+qiskit-ibmq-provider==0.19.2
+When using ibmq_guadalupe as a backend (num_qubits == 16), I see that for a circuit with 16 qubits initially that after transpile num_qubits is more than 16.
+The following code produces the problem for me:
+This prints 16 and then 20.
+Ideally, the next code here would be
+but that produces an error string which includes TranspilerError: 'Number of qubits (20) in circuit-78 is greater than maximum (16) in the coupling_map.
+The transpiled circuit should have a number of qubits consistent with the backend and it should be able to run the circuit on the backend.
+The behavior seems similar to #7677. I tried doing the transpile with both the backend object from qiskit_ibm_runtime (so BackendV2) and from qiskit-ibmq-provider (so BackendV1) but got the same result. I checked that len(backend.properties().qubits) was also 16 for the BackendV1 case.
+Stepping through in a debugger, I found that the problem occurred in this section:
+https://github.com/Qiskit/qiskit-terra/blob/8a3e760ffaf6dcd06c0a0e04f13612fdefd9ab3c/qiskit/transpiler/passes/layout/vf2_layout.py#L193-L195
+The chosen_layout had a mapping between 0, 1, 4, 7, 10 (virtual) and 0, 5, 10, 13, 15.
+In these methods:
+https://github.com/Qiskit/qiskit-terra/blob/8a3e760ffaf6dcd06c0a0e04f13612fdefd9ab3c/qiskit/transpiler/layout.py#L167-L183
+It then looped through and found that it needed to add bits starting from len(self) == 5, so skipping 1-4. I am not sure where the breakdown in assumptions occurred but it seems like the layout was assuming physical qubits had been densely mapped with no indices skipped?
+If I tweak the example circuit so that it includes a gate on every qubit 0-15, then the transpile produces a circuit with 16 qubits as expected.
+#8767 should fix this. TBH, I'm kind of impressed the bug was there for as long as it was. The logic there was clearly wrong, both from what I assume the logic of the code was intended to be (and what I changed it to be) or from what the docstring says. From what I can tell that method has been there since for a very long time (since before I started working on Qiskit)
+TBH, I'm kind of impressed the bug was there for as long as it was.
+The example code I gave was a shortened version of something another user was having an unrelated issue with in Qiskit Slack. I asked to see the circuit and they shared it in QASM form so I converted back with from_qasm_str. Maybe the usual QuantumCircuit initialization (like just passing an int) sets up all the qubits and this issue is only encountered when doing something more complicated (like from_qasm_str does) on a circuit with holes.
+Well you could trigger it with any circuit given the right conditions which depends on having a register that has a number of unused qubits and given the previous allocation where it add qubits loops from len(layout) (ie used circuit qubits). I'm guessing it's probably not come up because it needed people to have over allocated registers. But I'm not sure, either way it should be fixed in 0.22 after #8767 merges.

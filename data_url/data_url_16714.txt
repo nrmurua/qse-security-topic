@@ -1,0 +1,76 @@
+With the introduction of more IQX services, such as transpiler-as-a-service, we are moving towards a model where there are local and remote executions of the same task (e.g. simulation, transpilation), and additionally remote executions can be low- or high- latency (e.g. simulator vs. device run).
+In order to make it easy for users to switch between different types of executions, we would like to create a uniform API between local vs. remote executions, and additionally accomodate both low- and high-latency executions in a natural way.
+The proposal is as follows:
+Introduce two methods for explicit sync and async runs, and allow the user to choose one that suits their specific run. run() waits for results and returns the result. run_async() returns a job handle that can be later queried for result. One would use run() for local simulation, small remote simulations, and typical transpilation. run_async() can be used for device runs or large remote transpilation jobs.
+Remove Result as wrapper of a job result, which has to be queried again for the things you care about. Instead, directly return the thing that the run was intended for, be it counts, memory, unitary, statevector, or a circuit.
+So a generic service API will look like:
+Concrete examples:
+We need to keep a deprecation period for the old style to still work. This could be like:
+execute is edited to default to use run_async() so that it works in the same way but add a message that it will be depreicated.
+Can we do the setup in a Pythonic way for remote services as well? i.e. instead of
+doing
+and have the config persist across multiple remote runs.
+This would be be my preference as this allows the user to see what the service provider can set up
+In the above, the setup is done with a configuration, currently in the form of PassManagerConfig or RunConfig objects. Should we remove these classes and just have pm.setup() and backend.setup() accept these kwargs directly?
+This proposal has a lot of overlap with what we've been working on in Qiskit/RFCs#2 which is the current working proposal (I've been meaning to update it for a couple of weeks now) for reworking the interface between terra and providers. I think we should move the discussion there so we're all on the same page for the new interface.
+I'm ok but can you edit your rfc and then let me know as it does not go far enough yet (as well as name). I want the terra interface to be more like this for the extra services being made.
+There are many proposals here, but I'm going to focus only on two of them: async/sync and Result.
+Async interfaces are becoming an standard in almost every interface design which has
+some significant computational tasks. I'd say that this is the majority of our use
+cases, but it's true that there are experiments run locally that can be pretty fast
+and a simpler design is desirable.
+By introducing the differentiation between async and sync in the interface,
+we are moving towards an hybrid design (async/sync), thus leaving behind the interface
+uniformity we have now, and that is something that I'd not feel comfortable with.
+I think the problem you brought to the table, is more related to having the
+wrong abstractions over our async interface, let me explain:
+Any given current example:
+There are 3 abstractions here (we don't care about the circuit abstraction here):
+And we have these 3 abstractions mainly because the cloud computing has been a major
+driver in the design of a big part of Qiskit, due to the time it takes for an
+experiment to run in our machines, so the concept of job has had a principal role.
+In the other hand, we have local simulations where the concept of job may fade away
+in importance because we have almost instant results, so why having a job in the
+first place? it will only introduces an extra useless step, right?
+Well, maybe we have the wrong abstractions.
+What if we merge the concepts of job and result?
+Example:
+result is the final result of the computation.
+It can act as a future/job for cloud based experiments, so we don't block program
+main threads, we can query for the status of the computation as we do with
+job, and there's no extra step for local simulations, the results are in
+there and we could, for example, override __str__ or __repr__ to get the desired
+output (or/and export an interface). We are moving the responsibility of implementing the
+result object to the providers, offering them just a simple base interface to inherit from.
+This new result object will have to expose some of the interface we have in job
+as well, and to be honest, this is the part I like the less because breaking Single
+Responsibility Principle makes me nervous, so I guess it all depends on how much
+complexity we are adding to it.
+Yes, I don't like our current Result class either, and now that I talked about breaking
+principles, this is a flagrant Liskov violation. It exports many methods that only make sense for specific types of simulations. Here my proposal is a common practice in fixing
+Liskov's: specialize Result per output type, so we have CountsResult, StatevectorResult,
+UnitaryResult, etc... so the backend decides which type of result returns.
+Actually, the Result class is fairly pointless.  The use case is always job.result().  So the result just needs to be part of the job, not the other way around.
+I am ok with the results (or job) but it needs to be a class per service and sub-service (simulator vs real backend)
+Actually, the Result class is fairly pointless. The use case is always job.result(). So the result just needs to be part of the job, not the other way around.
+The way I see this, Result is a transversal concept to all the use-cases: we always want a result from an execution. job however is a consequence of the async model we choose (there are others that know nothing about jobs), only applicable to the case of cloud computation as local doesn't really need it.
+That's why I'd move job into Result, so code like this is more expressive:
+Otherwise we have the current model: querying job to get a result, right?
+I prefer results over the job as well. We can have a method result.job_id() or results.job_status to give the feeling that there are jobs running. But I do like that we are all agreeing that there is not the need for two classes.
+@atilag also good if you edit my original with your proposal.
+Will do.
+This is a major change in the API, so I'd love to have more consensus with the rest of the team.
+Summoning @kdk @ajavadia @1ucian0 @mtreinish to get some more feedback.
+Again, the job has everything we need already built in. One can supplement the job with things like having the call statement give the results, but moving in the direction that every is a result is not a great idea. Especially given that the cloud usage is the long term direction over local execution. I honest thought this was decided months ago by @jaygambetta @ajavadia and myself.
+I think we are saying the same thing call job or results somehting_cool   we want something_cool to come back from service.run() or service.run_async() I don't have strong view on the name but it should not be two objects. From looking at the code I would prefer results but I'm happy with job.
+I started a WIP on this last week: mtreinish@dd25e46. My biggest concerns here are around the backwards compatibility of the user facing api mainly making run() sync instead of async and changing the return type. The issue is that returning something other than a Job from run() will basically break anyone who has written code for qiskit that runs a circuit. I tried to workaround it by adding result() methods to all the possible result types for backwards compat (so the normal pattern you'll see of qobj.run.result()) but that wasn't enough in all places.
+I think the way to resolve this is to make run() either async or sync and have it return a job object (which is actually how it works today). I agree for things like BasicAer wrapping the execution in concurrent futures is an unnecessary overhead and adds needless complexity (it's been a big headache for me the last couple of weeks in the marshmallow removal PRs), but there is nothing actually requiring it's use, run can just return a completed Job/Result object without any async execution. We can also add an explicit optional run_sync and run_async method in addition to that for backends to implement if they want.
+I do not see why we need change anything about a job being returned.  We just need to modify a few things about the job.  There are use cases where one actually does want to run simulators async (noise modelling on large or many circuits.)  We no longer need BasicAer with the quantum_info module features, so that should not be holding us back, i.e. we need not worry about jobs there.
+I agree with Paul we should remove BasicAer -- But paul this needs to be its own issue and also implications to show how to switch to quant-info. Lets not mix this with this issue -- happy to start a new one.
+The run is my big question for me.  Talking with @chriseclectic he suggested we could do run defaults to async and introduce for blocked run
+backend.run().block_until_ready()
+The object returned I don't care what it is called but I like this code
+counts =backend.run([circuit]) and if it is not finished it is empty and if finished it has the counts in it I can plot by simply going
+plot_histogram(counts)
+if counts is official a job object with a counts.id etc im good.
+This has been mostly done now that we've moved to a new versioned providers interface. The BackendV1 and JobV1 abstract classes took a lot of ideas from this (like differentiating between sync and async) and most providers have migrated to use these new classes. We'll be continuing to evolve this interface over time (which is why it's versioned now) the next iteration is being planned and discussed in (#5894 and draft PRs #5885 and #5629). I'm going to close this and we can have further discussions on those newer issues about the next iteration of the interface. But, please feel free to reopen this if there is more to discuss here.

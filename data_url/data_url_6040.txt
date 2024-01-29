@@ -1,0 +1,14 @@
+On a windows system, i use VQE algorithm to resolve the tsp problem(25 qubits)  and it appears that i get sometimes this error: qiskit.exceptions.QiskitError: 'Data for experiment "circuit3" could not be found.' when an optimal parameter or the maximum number of iterations is reached. It's not occurs on a Linux machine.
+quantum_instance = QuantumInstance(backend=Aer.get_backend('qasm_simulator'), shots=1, backend_options={'method': 'matrix_product_state', 'fusion_enable': False})
+I can share the full code if needed.
+I investigated into the code and it looks like the execution of the varational form for optimal parameters found fails with the fusion_enable:False . The job has the status='ERROR: error: wrong SVD calc: A != USV*.
+According to @yaelbh and @merav-aharoni, Windows does not support 128 bit FP, which is needed for the SVD, and this may cause the problem.
+Why do we need extended precision fp numbers here?
+During the SVD algorithm, we sometimes reach a result of 0 when subtracting two numbers that are very close in value in double precision. This should not occur. If this happens, I convert the calculation to extended precision, and then the computation can continue.
+Since Windows does not support extended precision, we need to find some workaround for larger precision computation on Windows.
+Is this a custom svd?  Typically this means the algorithm in question needs to be tweaked to avoid this.
+We developed it here. It is based on an implementation by P. A. Businger and G. H. Golub. At first it only used double precision, but we sometimes had segmentation faults because of this problem, and this was the solution we reached.
+Are you using Aqua from stable for this? Under some conditions we saw recently Aer providing back a partial completion. Before Aqua expected success or fail period. Partial completion looked like success and so it went to get circuit results and would fail like you show i.e. qiskit.exceptions.QiskitError: 'Data for experiment "circuit3" could not be found. The partial completion status is now recognized and a error is raised with information from the failure i the partial completion. This change is just in the master branch. So while it would not change the overall outcome, as Aqua algorithms do not work with partial completion, the exception may have been more meaningful dependent on what information Aer put in the failed cct(s).
+In the master branch, I expect the exception would say "ERROR: error: wrong SVD calc: A != USV*", which is the result of @AzizNgoueya's investigation of the error.
+@AzizNgouey , can you please provide the full test-case? I am currently working on this bug and it will help if I can test on something.
+I believe this was fixed in #809

@@ -1,0 +1,22 @@
+Importing Qiskit Aer either implicitly or explicitly, as shown below, would get all GPUs on the system initialized, as evidenced by monitoring nvidia-smi (there are other tools to check this, but nvidia-smi is the simplest).
+Don't initialize the CUDA context at all at import time (with either explicit or implicit import). It hurts for many reasons:
+btw this bug is irrelevant of the number of GPUs -- even on a single-GPU system the issue would show up, but it does make the situation a lot worse on multi-GPU systems like NVIDIA DGX-A100.
+The implementation (not semantics!) of the following two functions must be re-designed:
+as they both together contribute to this bug. Currently, how Qiskit Aer lists all available methods/devices is to run dummy executions and check for errors. This incurs not only runtime overheads but also GPU init issues when available.
+I would suggest that these two attributes should be exposed all the way from C++ to Python through pybind11. This should be easily doable and enables much more lightweight checks, something we'd also like to ask for (but could be discussed in a separate ticket) 🙂
+Thanks!
+cc: @tlubowe @yangcal for vis
+(edited to add a CI/CD concern)
+Qiskit Aer uses all the GPUs specified in CUDA_VISIBLE_DEVICES environmental variable. Is it not enough to limit Qiskit Aer to use some of the available GPUs?
+Hi @doichanj, unfortunately it is not enough, and is not a preferred solution either. CUDA_VISIBLE_DEVICES is a brute-force solution that should only be used when users know exactly what they're doing (usually, HPC users; Dask also uses this internally to do GPU-process binding), but it's not meant for general users, and it certainly does not what usual Python users would do to launch a process.
+Typically, Python GPU users expect to choose the GPU at runtime. There are a number of framework specific options:
+and these should be honored based on the CUDA Programming Model (the CUDA Runtime APIs would honor the current/active CUDA context).
+Moreover, as described in my report, this impacts even the single-GPU users, who might only want to run the CPU backend via AerSimulator(..., device='CPU', ...) for any reason. At least this is how we discovered this bug 🙂 There are many users who just wanna install the battery-included GPU build and pick among all available backends to tailor for their need, and
+Finally, my above report also listed a number of other impacts, one being import qiskit_aer or even just print(qiskit.__qiskit_version__) would prematurely initializing GPUs. This impacts for example @wshanks who I just noticed is packaging Qiskit Aer on conda-forge (see conda-forge/staged-recipes#21404 (comment)) 😅
+@doichanj, is fixing this any priority? Who would we have to convince to make this a priority?
+I would really like to get CUDA support in the conda packages 😄
+I did not understand the point of this issue, but I have implemented target_gpus option to select GPUs to be used for simulation. But I think this is not the solution for this issue, right?
+I think we have to change the way to get available devices and methods to avoid initializing GPUs when using CPU simulator, is it what you want?
+I had high priority task to release Aer 0.13.1, but I have time to solve this issue now
+I think we have to change the way to get available devices and methods to avoid initializing GPUs when using CPU simulator, is it what you want?
+Thanks, @doichanj. It is correct. Since we have all the knowledge at compile time (we know what compiler flags are set to build what backends etc), we can just store them as static, readonly arrays, and at run time we query them to see if a backend was built, without ever needing to initialize a CUDA context or calling CUDA APIs 🙂 I'd love to see this fixed asap, as to avoid this issue on the packaging side would take a lot of unnecessary efforts. Also, this has generated multiple bug reports on our side (as we have internal/external multi-GPU users).

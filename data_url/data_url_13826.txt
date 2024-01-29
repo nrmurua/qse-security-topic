@@ -1,0 +1,13 @@
+The following example throws an error:
+Output:
+Since I explicitly called full_reduce, this error is unexpected for me. Is this a bug or am I misinterpreting things?
+Additionally note that the failed circuit extraction actually seems to change g: Calling zx.draw(g) after this error draws a circuit where the hadamard node has a phase of 0.
+PyZX Version: commit e4fe332 (current master at the time of writing)
+Just to make things maybe easier to understand, the above g seems to be equivalent to the following:
+Using this g reproduces the error. The graph_to_swaps docstring says:
+I think the intended meaning of "only normal and Hadamard edges" is "no vertices other than inputs and outputs" (since there are no other kinds of edges). The function (implicitly) assumes that the only neighbours of the outputs are inputs, and the above g violates that assumption by having a H_BOX in between. However, the following graph g2, which is let's say spiritually the same as g, satisfies the assumption (and won't raise the error):
+So I'm guessing that at some point, your g should've been converted into the g2 form, presumably in full_reduce. Or, if the input is in the wrong format and the user is expected to make such conversions, that should've been caught earlier with an assert upstream.
+Thanks for the analysis! Turning all Hadamard nodes into Hadamard edges (which in the json simply means replacing is_edge := "false" by is_edge := "true") indeed seems to avoid the error. Maybe full_reduce should turn all Hadamard nodes into Hadamard edges?
+full_reduce indeed assumes the diagram is a ZX-diagram, and hence does not have H_BOXes. The 2-ary H-boxes are maybe a bit confusing since they also correspond to the regular Hadamard generators in ZX-diagrams, although they were not intended to be used this way in PyZX. Perhaps we can add a call of hsimplify.from_hypergraph_form to full_reduce to ensure all 2-ary H-boxes are H-edges.
+full_reduce indeed assumes the diagram is a ZX-diagram, and hence does not have H_BOXes.
+Thanks for the confirmation! Then the workaround of replacing is_edge := "false" by is_edge := "true" in the json should indeed do the trick, I guess.

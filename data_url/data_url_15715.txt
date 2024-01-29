@@ -1,0 +1,8 @@
+The transpiler pass ConsolidateBlocks scales superlinearly in the number of circuit operations. Using a random circuit where depth = n_qubits the scaling behaves like n_qubits^3.3. This seems to be largely due to a list comprehension which checks whether predecessors exist in the block.
+
+
+This was profiled on version 0.19.0.dev0+637acc0.
+Yeah looking at the code I think we can rewrite that pass to be more efficient in a lot of ways. Looking at the code there are several spots that can be cleaned up. First it's traversing the dag so that it can track predecessors for the block:
+https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/transpiler/passes/optimization/consolidate_blocks.py#L84-L108
+The block list is a list of lists of DAGOpNode's we don't need to traverse the dag to find this, we can just ask for the predecessors of the block's nodes. Looking at the call graph this is a big chunk of time.
+There are other things in there that stick out to me too, like the use of a circuit to compute the unitary. We can just do this directly with gate.to_matrix() and dot products. I'll take a pass at this, it should be a quick fix

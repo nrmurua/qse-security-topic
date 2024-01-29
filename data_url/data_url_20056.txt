@@ -1,0 +1,42 @@
+The tests for BIKE fail when building for Debian's armhf architecture:
+The full build log is available at https://buildd.debian.org/status/fetch.php?pkg=liboqs&arch=armhf&ver=0.7.1-1&stamp=1639746131&raw=0.
+armhf corresponds to armv7 with VFPv3-D16 floating point, but NEON is not guaranteed.
+Hmm, this output seems to indicate this is a platform that's not really supported by liboqs:
+Target platform:  Unknown
+However, I note we do test armhf, but basically skip all tests: https://github.com/open-quantum-safe/liboqs/runs/4884373161?check_suite_focus=true . This doesn't seem right. Particularly "suboptimal" in this context seems 
+So, until we decide whether to fully support armhf (and consequently improve CI) or not, I'd recommend disabling BIKE on this platform: Either set -DOQS_ENABLE_KEM_BIKE=OFF in this build or if not possible (?) completely disable BIKE via PR for this platform, e.g. here: 
+The BIKE upstream code states Only X86_64/X86/AARCH64 platforms are supported. I think it should not be built on other platforms if this is the limitation.
+https://github.com/awslabs/bike-kem/blob/1d67131ee4812fc5ec5c032ee84271cde4ba9d2b/cmake/arch.cmake#L14
+I think it should not be built on other platforms if this is the limitation.
+Looking deeper inside liboqs it seems we already have code to handle this limitation -- but it obviously doesn't catch this situation correctly: 
+@sebastinas When looking for the reason why ARCH_ARM32v7 is not getting set (already correctly disabling BIKE) I stumbled across this line in the Debian build immediately preceding the error in your report:
+CMake Warning at CMakeLists.txt:69 (message):
+Unknown or unsupported processor: armv8l
+How can it be that a build that apparently builds for armhf (ARMv7) sets armv8l as CMAKE_SYSTEM_PROCESSOR?
+I think that this is the wrong variable to check. CMAKE_SYSTEM_PROCESSOR is documented as:
+When not cross-compiling, this variable has the same value as the CMAKE_HOST_SYSTEM_PROCESSOR variable. In many cases, this will correspond to the target architecture for the build, but this is not guaranteed.
+And CMAKE_HOST_SYSTEM_PRECESSOR is defined to be
+... uname -m on GNU, Linux, Cygwin, Android, or ...
+The build is running on an ARMv8 host with in an armhf chroot. So the toolchain is armhf, the target is armhf, but the processor is is an ARMv8 CPU which can also run ARMv7 code. So this is on of the cases where the this variable is not the target architecture.
+The build is running on an ARMv8 host with in an armhf chroot. So the toolchain is armhf, the target is armhf, but the processor is is an ARMv8 CPU which can also run ARMv7 code. So this is on of the cases where the this variable is not the target architecture.
+Good point. But then shouldn't this sentence of the cmake documentation hold:
+When cross-compiling, a CMAKE_TOOLCHAIN_FILE should set the CMAKE_SYSTEM_PROCESSOR variable to match target architecture that it specifies (via CMAKE_COMPILER and perhaps CMAKE_COMPILER_TARGET).
+? No such -DCMAKE_TOOLCHAIN_FILE= invocation (of liboqss armhf toolchain file) is visible in the Debian build log: The liboqs build seems to be triggered as follows:
+--> Should this be flagged as an omission to the Debian maintainers? Making liboqs cmake system try to guess whether it's being cross-compiled (e.g., evaluating compiler names and platform names) doesn't seem like a robust solution.
+The builds are not cross compiling. In GNU terms, host and build are the same. It's running native armhf code and building armhf code.
+Note that uname -m is aarch64 for ARMv8 in 64-bit mode. armv8l is ARMv8 in 32-bit mode. See also https://developer.arm.com/documentation/den0024/a/Porting-to-A64/Issues-when-porting-code-from-a-32-bit-to-64-bit-environment/ARM-Compiler-6-options-for-ARMv8-A.
+Thanks for the additional explanations. So would you have a suggestion how liboqs' build system shall determine the actual target architecture instead of using CMAKE_SYSTEM_PROCESSOR or CMAKE_TOOLCHAIN_FILE? Doing a test-compile and check for some #defines? Which ones? I don't have such "ARM64v8->ARM32v8->ARM32v7" setup to check myself :-(
+On the other hand and the more I think about it, the way liboqs is built in Debian doesn't seem "right": The strategy to activate "OQS_PERMIT_UNSUPPORTED_ARCHITECTURE" was meant as a "last resort" -- but if I understand all of the above right this build is meant to be an armhf/ARM32v7 build, right? Then the question remaining is how can this information be delivered to liboqs' build system (such as for BIKE to be disabled)? I'm open to any suggestions -- maybe @merkys has a view to help out here?
+If the goal is to disable BIKE on 32-bit ARM, checking if CMAKE_SYSTEM_PROCESSOR starts with arm and if CMAKE_SIZEOF_VOID_P is 4 should be good enough.
+Looking at the mipsel build log and powerpc build log, where BIKE also fails, it might be safer to just disable BIKE when building for a 32 bit architecture except in the cases where it's known that it works.
+So your suggestion is to add the simple cmake rule
+?
+On the other hand and the more I think about it, the way liboqs is built in Debian doesn't seem "right": The strategy to activate "OQS_PERMIT_UNSUPPORTED_ARCHITECTURE" was meant as a "last resort" -- but if I understand all of the above right this build is meant to be an armhf/ARM32v7 build, right? Then the question remaining is how can this information be delivered to liboqs' build system (such as for BIKE to be disabled)? I'm open to any suggestions -- maybe @merkys has a view to help out here?
+Right, maybe me enabling OQS_PERMIT_UNSUPPORTED_ARCHITECTURE was not the right choice. I did so as an experiment to see which of the unsupported architectures would compile and pass the tests, but surely I should have taken your word for that. I can disable OQS_PERMIT_UNSUPPORTED_ARCHITECTURE in the next upload unless there are objections.
+Personally, I think it would be nice to disable just the unsupported features in each of the architectures, as opposed to disabling entire architectures. This way there could probably be a list of core features supported in all architectures.
+Personally, I think it would be nice to disable just the unsupported features in each of the architectures, as opposed to disabling entire architectures. This way there could probably be a list of core features supported in all architectures.
+Yup - that's a very reasonable goal. We are somewhat limited by the number of platforms we have set up in CI, though, as we don't want to "over-promise".
+It might be an idea to keep using the more complete platform test matrix in Debian (via the "OQS_PERMIT_UNSUPPORTED_ARCHITECTURE" flag) to see limitations such as those of BIKE on platforms liboqs doesn't test in CI: Would that be acceptable to everyone reading (surely @merkys @dstebila)? If so, please keep things as-is in the Debian build. For liboqs there's now #1180 to fix this issue: No platform to test in liboqs, but with the Debian test matrix to ascertain it's OK.
+Makes sense. I've approved and merged #1180.
+It might be an idea to keep using the more complete platform test matrix in Debian (via the "OQS_PERMIT_UNSUPPORTED_ARCHITECTURE" flag) to see limitations such as those of BIKE on platforms liboqs doesn't test in CI: Would that be acceptable to everyone reading (surely @merkys @dstebila)? If so, please keep things as-is in the Debian build. For liboqs there's now #1180 to fix this issue: No platform to test in liboqs, but with the Debian test matrix to ascertain it's OK.
+I think it is fine to build on all architectures supported by Debian. I am uploading only tagged releases of liboqs now, thus there should not be too much strain on Debian infrastructure.

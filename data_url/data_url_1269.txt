@@ -1,0 +1,32 @@
+Description of the issue
+Attempting to print a multi-qubit circuit with asymmetric depolarizing noise results in an error being thrown.
+How to reproduce the issue
+ValueError: Wanted diagram info from cirq.asymmetric_depolarize(error_probabilities={'XX': 0.1, 'II': 0.9}).on(cirq.LineQubit(0), cirq.LineQubit(1)) for [cirq.LineQubit(0), cirq.LineQubit(1)]) but got cirq.CircuitDiagramInfo(wire_symbols=('A(XX:0.1, II:0.9)',), exponent=1, connected=True, exponent_qubit_index=None, auto_exponent_parens=True)
+Cirq version
+1.0.0
+@tanujkhattar  I think the output of the above snippet should be
+What do you think?
+I thought I had left a comment on this issue when I added the labels, but looks I never finished the draft. Anyways, here are my thoughts:
+This is a bug and should be fixed. The reason is that the diagram info method returns a single string, instead of returning an Iterable[str] with length equal to number of qubits.
+
+#3262 made the original change to generalize the channel from 1 qubit to multiple qubits. Even though the PR correctly identified that the diagram info would need to be updated, the update that was done was incorrect. This is because for a gate / operation that acts on N qubits, we need to return N strings that should be drawn on wires corresponding to each qubit (or a CircuitDiagramInfo(wire_symbols=tuple(symbols_to_draw))).
+One easy fix would be to change the return statement to return self._num_qubits copies of the same formatted string.
+So, change
+
+to
+In this case, the diagram for the above snippet would look like:
+Another alternative would be to return a sequence of strings so that the string corresponding to the gate name along the error probabilities  appears on the 0'th qubit and then from qubits 1...N - 1, we just print an integer specifying the ordering of qubits used to apply the gate to construct an operation. i.e.
+In this case, the diagram for the above snippet would look like:
+This would make sure that the diagram has enough information for users to figure out which error channels are applied on which qubits in case the error is asymmetric (eg: XYZ error on qubits q[0], q[1], q[2])
+We could also do a hybrid where each term is the entire A() formatted string + an integer specifying the index of the qubit.
+cc @viathor for opinions on different approaches to plot the diagrams.
+cc @tonybruguier since you made the original change to generalize the gate to multiple qubits.
+And while we are at it, I should also point out that cirq.approx_eq(op1, op2) also raises if op1 and op2 are both multi-qubit asymmetric depolarizing channels. This is because _approx_eq_ is also implemented assuming that the gate acts only on a single qubit and the implementation should be updated:
+
+From cirq sync:
+Let's use do the second approach for diagrams and keep it consistent with other multi-qubit gates like QFT:
+
+@tanujkhattar Just to clarify, in the qft example it looks like they're starting from 1. So for example, you get something like this:
+Why don't we start from 0 so the number corresponds to the line qubit #?
+Discussion from cirq cync:  python is zero-based indexing, so we slightly prefer zero based indexing here as well.
+From Cirq Sync...0 based indexing.

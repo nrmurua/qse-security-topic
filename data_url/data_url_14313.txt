@@ -1,0 +1,16 @@
+The PauliTrotterEvolution class fails to exponentiate any Pauli operator that contains a $YYYY$ component. Attempting to do so gives the error message
+"ValueError: Operator contains complex coefficients, which are not supported."
+This causes issues for chemistry applications, for example when running phase estimation for Hamiltonians on 4 qubits (and likely any multiple of 4), since there will likely be a component that is all $Y$s.
+The following code is a minimal working example. If reproduced correctly, the code should fail with the error "ValueError: Operator contains complex coefficients, which are not supported."
+Any Pauli operator should be able to be exponentiated without issue. This is a very critical bug for any chemistry applications.
+I found out the cause of the bug, which I will do my best to explain briefly here. If there are any questions please let me know and I will clarify any points.
+The key equation is the line 132 in the sparse_pauli_op.py file, which I have copied here for ease of explanation:
+In the above example, phase = np.array([0]), count_y = np.array([4]), and coeffs = np.array([1.+0.j]).
+The following snippet allows reproducing the above situation:
+The above code will 1.+0.j, which is what we want.
+However, it turns out that both the phase and count_y variables are initialized as numpy arrays with dtype=uint8. This forces the subtraction to equal phase - count_y = [252]. This is because the variables are initialized to the smallest possible dtypes that can contain the variable (See line 691 of base_pauli.py).
+Due to floating point error, this causes the code above to return [1.-5.8857324e-15j], which is a "complex coefficient" that isn't allowed by the PauliTrotterEvolution class. This situation can be reproduced with the following code snippet:
+I'm not sure what the most "Qiskit-like" fix would be, but I have two suggestions that would avoid this from happening.
+I think suggestion 2 is a better fix, but since the root cause is related to suggestion 1, I wonder if fixing that will help avoid similar errors in other parts of the code. If a Qiskit developer can shed light on which fix is better for the project I'm happy to make the fix.
+@ikkoham While the title seemed to imply an opflow issue it seems the author has narrowed down the issue to what seems to be due to numpy types used in quantum info SparsePauliOp and BasePauli. Hence I labelled the issue this way.
+@shifubear We're moving away from opflow, and you can instead use the PauliEvolutionGate to construct evolutions of Pauli operators. For example:

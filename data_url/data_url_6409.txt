@@ -1,0 +1,129 @@
+For better OpenCL support I'm building a qrack Docker version based on Ubuntu 18.04 instead of Ubuntu 16.04 and ran into the following compile error:
+In file included from /qrack/include/common/oclengine.hpp:29:0,
+from /qrack/include/qengine_opencl.hpp:19,
+from /qrack/include/qfactory.hpp:19,
+from /qrack/src/qengine/operators.cpp:14:
+/qrack/include/CL/cl.hpp:5843:62: error: ignoring attributes on template argument 'cl_int {aka int}' [-Werror=ignored-attributes]
+typename std::enable_if<std::is_pointer::value, cl_int>::type
+^
+/qrack/include/CL/cl.hpp:5855:63: error: ignoring attributes on template argument 'cl_int {aka int}' [-Werror=ignored-attributes]
+typename std::enable_if<!std::is_pointer::value, cl_int>::type
+^
+/qrack/include/CL/cl.hpp:6155:22: error: ignoring attributes on template argument 'cl_int {aka int}' [-Werror=ignored-attributes]
+vector<cl_int>* binaryStatus = NULL,
+^
+cc1plus: all warnings being treated as errors
+CMakeFiles/qrack.dir/build.make:165: recipe for target 'CMakeFiles/qrack.dir/src/qengine/operators.cpp.o' failed
+make[2]: *** [CMakeFiles/qrack.dir/src/qengine/operators.cpp.o] Error 1
+CMakeFiles/Makefile2:109: recipe for target 'CMakeFiles/qrack.dir/all' failed
+make[1]: *** [CMakeFiles/qrack.dir/all] Error 2
+Makefile:140: recipe for target 'all' failed
+make: *** [all] Error 2
+Any idea why this one fails ? I am pulling from the newest version@vm6502q/qrack
+
+Which Opencl package did you install to get that header?
+Thanks for the info.
+Just uploaded the v1.2 legacy header bindings, rebuilding now. Will look at this when finished. I got errors on the old Beignet CL driver @16.04. Some errors were fixed in Beignet 1.3, so therefore an upgrade to 18.04 was in place and it also provides access to newer CUDA frameworks.  ( 9.2+ )
+Will post the right version belonging to the right vanilla beignet 1.3@18.04.
+I'm not sure how support is from Beignet, anymore, but the Ubuntu 18.04 package entirely stopped working for me on even older Intel devices that had previously worked with Beignet, after Intel released their "Compute Runtime":
+https://github.com/intel/compute-runtime/releases
+Not sure why a device like a 5+ years old Xeon should work and then stop working after the updates, in my case, but I run Ubuntu 18.04 for development on 3 machines, and now I use a combination of Intel's "Compute Runtime" and NVIDIA's drivers, for my GTX. I don't use Beignet at all, anymore.
+By the way, I know we need to update our OpenCL version. It's a priority that I have time to tend to, now. I was distracted by working on integrating Qrack into ProjectQ for use with SimulaQron. You might be interested in this, for containerization, by the way:
+ProjectQ-Framework/ProjectQ#283
+My comment and commit thread is annoyingly long, apologies, but you can see they haven't gotten back to me, in quite a while, and I've been on my own. If I widen the float tolerances in ProjectQ and SimulaQron, slightly, I pass all SimulaQron unit tests. Alternatively, you might cmake Qrack with "-DENABLE_COMPLEX8=OFF" to turn on the double precision float build, and that might pass within defaullt tolerances. SimulaQron is here:
+http://www.simulaqron.org/
+SimulaQron is a quantum network simulator that will run with ProjectQ. Now, Qrack functions at a sufficient level as a "back end" for ProjectQ, such that it's possible to stack all three projects. I'll be cleaning this up in the next few days, as well as looking at updating the OpenCL headers. You could open ports for SimulaQron on your Docker containers, and then they could run as a virtual quantum cluster. I'll clean this work up and add it to our organization's repos, in some form, to officially support this stack.
+Thank you for your response.
+The scope for the CUDA-CL container image has been and will remain to:
+Coming up:
+Also looked at the longreads and I found only more confirmation for this container image to be as it can mix and match code and licenses without stepping on too much toes :)
+That sounds great! Let us know if you're still having problems with integration, but I can tell you that Beignet no longer works on my older Intel hardware, while the Compute Runtime does.
+We switched to LGPL, a few months back, and my understanding is the literal terms of the LGPL allow linking against our compiled library for optional functionality, under license terms of one's choice. At least, this is our intent. For the SimulaQron -> ProjectQ -> Qrack stack, for example, ProjectQ has a default simulator besides us, so the literal terms of the license allow that project to preserve Apache 2.
+I'm getting off topic in these issues, though. But feel free to open as many issues as is appropriate, regarding licensing, the SimulaQron -> ProjectQ -> Qrack stack, etc..
+As for GPU testing quipment for OpenCL i've got an
+I do the dev on the Cherrytrail, Testing on the AMD and production on NV hardware,
+and consider an environment ready when the container image run on all 3 GPU HW platforms.
+Beignet also doesn't run on the Cherrytrail HW, I'm going to toy a bit with it as to why ( and troll a beignet developer of 2 in the process ;) ) and then move on to the AMD hardware.
+If Qrack needs modification to support the other hardware, please let us know. I have developed on a couple of NVIDIA GTX series cards, Intel Cores, Intel Xeons, and Intel HDs.
+I was also recently gifted a Rasperry Pi, which I haven't experimented with. While it might just be novelty, or it might be infeasible, I'd even like to try to get some Qrack running on that.
+Progress so far:
+Todo
+< done > Fix for the noVNC session/connection issue
+That's great to hear!
+There are a couple of bugs in the integration with ProjectQ, still, that I'm working on isolating. Even if ProjectQ (which provides a middle layer in the SimulaQron integration) doesn't ultimately accept our PR, we intend to support the integration independently, if they have no objection.
+We can open one or more new issues, if and when the Ubuntu build works. We appreciate you keeping us in the loop. Benn is trying to get us into good habits with staying on topic with issues and PRs. Let us know if that part has been addressed.
+My original plan for the Output of a QC emulator was/is to put the data into a database and then be queried and visualized.
+Networking as aspired by SimulaQron is a nice-to-have because it could aggregate results in one go. But to be honest: the ability to emulate a 27Qbit machine in OpenCL and put the output inside a DB is the main goal. And that is getting close.
+Will let you know if there are issues compiling the code for AMD hardware.
+Sorry for the lack of updates; had to replace the AMD card.
+Preliminary tests show a luxury problem: a lack of selection of OpenCL devices in the ./benchmarks test
+
+Kalindi is the AMD onboard GPU of the Athlon APU
+Pitcarn is a R7-290X 2GB discrete card
+The test runs on the first valid device it finds; and as I've got 2 (AMD) devices recognised by the multistacked OpenCL ICD the first is the one and only benchmarked. What you can also see is that the OpenCL multi stack works: so ppl with hybrid laptops and/or desktop should be able to run Qrack code on all sorts of brands of GPU cards ( under Linux Docker )
+As the interesting data should come from the second AMD device it would be good to be able to select the OpenCL device per commandline  setting [?]
+Also; when used as a library or even as a service one would want to specifically select the device [?]
+However: AMD GPUs seems to work at first sight. 👍
+Thanks for the update!
+When a QEngineOCL is initialized, you can actually select the OpenCL device index (according to this printed list) in the constructor:
+https://qrack.readthedocs.io/en/latest/_static/doxygen/classQrack_1_1QEngineOCL.html#a91930ea635a392f7f9276a1bf3e79e8e
+You should also be able to port the QEngineOCL between devices on the fly, though not all the kinks might be worked out of that, yet.
+Since we anticipated that there might be multiple OpenCL devices, and since different QEngineOCL instances might run on different devices at the same time, we decided to put this in their constructors, and leave anything like command line device selection up to the user code.
+This might be nice to have as a command line option in the unit tests, though. I can look into that tonight, or within the next couple of days. (I'm debugging the unit tests on my Mac again, right now.) However, since you have multiple OpenCL devices, you might want to utilize them all the same time, by using the device ID parameter in the QEngineOCL constructors and connecting them to any command line options as fits your needs.
+We can add a device selection option to QUnit, as well. It would be simple. Is this a feature you could use? I imagine it is, for many applications.
+I have found a CLI OpenCL workaround in the form of
+export  GPU_DEVICE_ORDINAL=1
+and then execute ./benchmark, allthough it does mask a whole GPU on the system if not unset, for Docker tests it is ok: I'm getting good numbers and tests on the 2GB AMD card.
+( I'm an NVidian, so good OpenCL numbers are somewhat of a luxury :) )
+I don't want to haste anything fundamendal such as changing the internals of the Qrack libraries; for now masking is good enough for me as I can layer the Docker containers and call the GPUs in separate processes.
+OpenCL is so elegant by declaring avaliable memory; I'll be able to push it right over the edge of the framebuffer :)
+Found 2 errors on both AMD OpenCL devices:
+
+
+I think I need output with more debug info [?] the -w or --warn switch doesn't work for me.
+edit: Unittest also gives of errors in a similar fashion.
+
+Thanks for alerting us to the errors. I'll look into them tonight. The -nan might or might not be division by zero in the benchmark timing display code itself, looking at your other timing values. (Damn!) But I'll be able to patch that very soon, either way.
+Grover's search is probabilistic, so maybe I have to base that benchmark on probability rather than actual measurement, but I'm not sure how it's implemented, off the top of my head. It's looking like these might both be bugs in the test suites rather than the library, but I'll investigate.
+Based on your edit update, this looks like something in the library. Unfortunately, I don't have an AMD to test on. The last PR addressed a difference between the VC4CL OpenCL compiler for the Raspberry Pi 3, and Intel Compute Runtime on a Xeon. It's looking like there are some differences between the various OpenCL compilers, and I noticed last night that one of my dual boots passes on Linux and fails on Mac Mojave. I'm debugging that, tonight.
+The current master is working on my 4 physical test devices, in Linux: a GTX 1070, an older Intel Xeon, an Intel Core that I think is 8th generation, and an Intel Core HD or Iris that I think is 6th generation or earlier. I'm not in front of my hardware, right now. We also benchmark on a virtual Tesla V100 on AWS.
+As you can see, very regrettably, none of my physical or virtual hardware is AMD. Maybe I can rent a virtual AMD in the cloud, to experiment with what's different with them.
+I think I have personal access to a physical AMD CPU, but it's old. If anything turns up in the unit tests on that, though, that might be a good place to start.
+You might want to check out #150 - that fixes issues with the unit tests on Mac, and that issue might indicate something we shouldn't have done with a host-side allocated buffer. It's possible that your AMD hardware had the same issue.
+I do have access to an old AMD, right now, and I'm moving onto testing Qrack on there and debugging if necessary. (Booted it up, and I can already see that the hardware is nice and crispy.)
+I followed the last PR with #151, which debugs our Windows build and cross-device, cross-platform Compose, Decompose, and Dispose operations. This was part of an effort to test on still another AMD machine that is running Windows. If we still haven't identified the issue you're running into here, I'll try to find access to AMD hardware in the cloud.
+For completeness I've attached the output of clinfo and unittest
+unittest.txt
+clinfo.txt
+Yesterday evening I've been testing and benching several setups for sizing. The short story is that it might be very interesting to get the AMD side of things in working order because the fp64 performance of the Radeon VII is 10x that of an 2080 as they changed the fp32 to fp64 factor to 1/4. And a fast 16GB onchip framebuffer.
+Also; the Docker isolation of Qrack execution in OpenCL allows for separation and layering; given good timing it allows for more then one Qbit stack on one machine. I see a horizon at 16GB framebuffer around 27 Qbits@FP64 as a 2GB framebuffer can hold ~23 qbits. Coupled with the layering it opens up a huge opportunity for hosting multiple Qbit stacks, syncing, separating data, and such. Very interesting.
+Thanks for the update. I will be able to to continue debugging after work, tonight, and the text files help.
+Just saw some regression on the unittest with the new qrack build on my Intel dev machine, looks like whack-a-mole in more ways then one. :)
+
+/offtopic
+Working to get the big guns ready, Docker image already has most of the NV stuff in it. Waiting for an AMD CPU to arrive from the States. Depending on HW tests it could take a couple of weeks to months to get the production rig with AMD CPUs and NV hardware going. If the motherboard that I have now is broken for dual CPUs ( after 7 years of service ) I'm planning to order an H8QGi-F. Hope it won't be needed and I can continue with the current H8DGi.
+The H8QGi-F could be fun to play with because of the amount of CPU horsepower it has for larger then VRAM framebuffer calculations. Also, I am thinking about higher precision and separated workloads through stacked qbit setups. Creating a virtual qbit stack by coupling several separate qbit stacks. It would make it possible to break up the calculations and increase the precision. Just thinking about how those stacks would do the communication and still run in batches to form one virtual quantum machine.
+/yesweirdno?
+Firstly, the ApproxCompare() unit test issues are known and noted in the last release, (and persist to the current head of master). This is a "pseudo-quantum" method that we've added because of an expectation of amplitude-by-amplitude comparison in software we're integrating into. Failure due to ApproxCompare() is usually intermittent, seemingly due to our intentional pseudorandom phase initialization and randomization of phase on measurement. It's complicated by the fact that Qrack attempts to floor amplitudes that are on order of the residual left behind by gates that should round-trip as the identity operator, like two consecutive Hadamard gates on the same bit. Direct amplitude comparison has no true quantum computational equivalent, so I prefer to avoid using the method responsible for this, but we're working on it. If it's in the library at all, the method should work as well as it can, (it's approximate,) and at least the unit tests that use it should be reliable.
+/offtopic
+Sound cool as hell! Qrack will also build with double precision throughout, for starters. The default is float accuracy. Some of the unit tests fail on accuracy, depending on the system and build, (due to the concerns above, and I can explain further,) but you should be able to coordinate multiple devices via a virtual quantum network, provided by a stack of Qrack as the simulator, ProjectQ as a compiler layer, and SimulaQron interfacing on top of ProjectQ. We're probably going to have go through few iterations of changes for yours and general purposes. Keep us posted!
+By the way, see #152 for a fix for ApproxCompare().
+I'm still trying to figure out where I can get a virtual AMD. AWS uses them for one of their managed hosting services, but that's managed hosting.
+GPU eater has amd GPUs
+Thank you, I noticed. I was just commenting on that on our Discord channel. I just wanted to make sure that they're legit, but it looks like I'll probably use them, for this.
+I have good news and bad news: the good news is, with the current head of the master branch, all Qrack unit tests pass when built and run on a GPUEater AMD Radeon RX 580 instance with their default ROCm/TensorFlow image, plus a couple of packages for the ICD loader and OpenCL headers. The bad news is, if the current head of the master branch doesn't work for you, I don't know what should change to make your personal configuration work. It might be a configuration issue, or it might not be. I don't have a way to test it, at the moment, but it doesn't appear to be a universal AMD issue. (I haven't debugged the benchmark suite, yet, but one thing at a time. We should figure out the unit test suite, proper, first.) So, we're going to need more information. What OpenCL are you using, for starters? Are you using ROCm, and what version? (I notice you have a vestigial beignet installation in some of your console outputs, which should be removed if it's not used by any device on the system.)
+Now that we've fixed a couple more bugs and achieved a build and unit test pass on Windows 10, for us, this is the most stable and general platform support Qrack has ever had. We tagged v3.1 to this end, but I want to tag a quick v3.2, at about this point, given that we've just iterated stability and platform generality by a tick, and an important one. I'd like to make sure we figure out your issue before the tag, if it's a bug we need to fix in Qrack.
+EDIT: Some of this might be in your clinfo.txt. I'll take another look at that, too.
+Okay, I see you're using POCL, I think. Is there any way you could try this with ROCm? I'm not sure whether it's compatible, in this case.
+EDIT: We'll also consider your potential licensing issues, if we can, but if that's an issue with ROCm, it'd still be nice to know if it works, if that's feasible.
+Very happy to hear the unit test works on amd; congrats on the new release ! :)
+I was already looking to integrate rocm on docker, i've been a long time on their look list at the github project. Also happy to hear that the problem seems to be focussed around the pocl. I did the unit test with and without the beignet driver, gave the same result on the amd setup. Will work towards eliminating those errors. Thanks and once again congrats !
+Edit: kinda busy this weekend, the rocm integration could take some time; you just go ahead and tag it IMHO.
+I cleaned up a lot of the OpenCL stack and found that the Kalindi core ( R3@APU ) finish the unittest succefull.
+
+With the AMD Accelerated Paralel processing stack.
+
+Building a solid full OpenCL stack in Docker remains quite interesting :)
+Edit: also integrated ROCm into the Docker image.
+I see no problems with compiling under 18.04, ticket can be closed IMHO.
+Excellent to hear! Please keep us posted, and please open a new ticket (or reopen this one, as appropriate,) if new issues arise.

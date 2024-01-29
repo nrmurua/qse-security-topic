@@ -1,0 +1,67 @@
+In previous versions of Qiskit, inserting barriers between identity gates was a way of forcing a delay, for example in a T1 experiment:
+However this is actually not what a barrier is supposed to do. A barrier is to enforce some timing between gates, or to prevent optimizations across the barrier. It is perfectly legitimate to remove the id gates in the above picture. In fact, this is what the transpiler does now.
+I think the correct way to do this experiment is to actually set up an even simpler circuit:
+
+and then turn of optimizations during compilation. For example one could do:
+this will preserve the identities, even though no barriers even exist.
+Ignis should update its circuits to not rely on this old behavior (e.g. the pad_id_gates function). The notebooks should be updated to circumvent optimizations.
+I fixed the T1/T2 notebook here: #197
+Are there other parts of ignis that behave like this?
+RB kind of, there are barriers to prevent compiling across cliffords. But there it's a bit subtle because you may also want to enforce timings.
+"It is perfectly legitimate to remove the id gates in the above picture" .. I assume you mean barrier?
+Regarding RB, the only case that I see interesting is when the randomly selected gate is the identity one. @dcmckayibm do you see more interesting cases? @ajavadia I've been trying to find information about the different optimization levels, without success. Specifically I want to understand the effect of the optimization level when translating a non-basis gate to a sequence of basis gates. This is in order to understand what will happen to RB if we set the optimization level to 0.
+I used execute(circuit, backend, optimization_level=0) to preserve identities for a T2 experiment since barriers don't do that anymore. However, the effect of preserved identities is still not seen in the results. Can you please help to make sure a number of identity gates work as expected?
+I used execute(circuit, backend, optimization_level=0) to preserve identities for a T2 experiment since barriers don't do that anymore. However, the effect of preserved identities is still not seen in the results. Can you please help to make sure a number of identity gates work as expected?
+Which terra version? Maybe @ajavadia can comment.
+It should work. Can you split execute to transpile, assemble_circuits, and run. Then you can print the output of transpile. I think you'll see that the sequence of id gates is still there.
+I used execute(circuit, backend, optimization_level=0) to preserve identities for a T2 experiment since barriers don't do that anymore. However, the effect of preserved identities is still not seen in the results. Can you please help to make sure a number of identity gates work as expected?
+Which terra version? Maybe @ajavadia can comment.
+The terra version I am using is 0.8.0
+It should work. Can you split execute to transpile, assemble_circuits, and run. Then you can print the output of transpile. I think you'll see that the sequence of id gates is still there.
+I used print(ramsey_algorithm.qasm()) and I saw the sequence of id gates the way I am expecting them but the results are still not reflecting any change with the existence or the change of the number of identity gates.
+Which backend do you run?
+Which backend do you run?
+backend = qk.IBMQ.get_backend(device, hub = 'ibm-q')
+and the device could be ibmq_16_melbourne or ibmx4
+Can you share the code? Also what happens if you replace the backend by a simulator backend.
+Can you share the code? Also what happens if you replace the backend by a simulator backend.
+When I run the code using the simulator, I get the same results that I get when running on the 2 devices (ibmq_16_melbourne and ibmx4). Let me see if I can share the code.
+Thank you.
+Ok, the information that this happens also with the simulator is helpful. Now, what happens if you try to estimate T2 using https://github.com/Qiskit/qiskit-tutorials/blob/master/qiskit/ignis/relaxation_and_decoherence.ipynb instead of your code - do you see the effect of a different number of id gates?
+Ok, the information that this happens also with the simulator is helpful. Now, what happens if you try to estimate T2 using https://github.com/Qiskit/qiskit-tutorials/blob/master/qiskit/ignis/relaxation_and_decoherence.ipynb instead of your code - do you see the effect of a different number of id gates?
+I tried to run a T1 experiment example code by ibmq:
+1- with identity gates and barriers between them
+2- with identity gates and barriers between them and optimization_level set to 0
+3- without any identity gates
+In the three cases, the results were the same.
+I checked in a little more detail and now remember that this was behavior in 0.8.0 that we've since changed. You can check if the identities remain by running (e.g on the t1 circuits)
+circs2 = qiskit.compiler.transpile(t1_circs, backend=backend, optimization_level=0)
+print(circs2[0])
+and see if the id gates remain. In 0.8.0 the identities are removed if backend is a real device (but not a simulator). In 0.8.1 the identities remain.
+If you do not want to update to 0.8.1 you can run
+circs2 = qiskit.compiler.transpile(t1_circs, backend=backend_sim, basis_gates=['u1','u2','u3','id'], optimization_level=0)
+qobj = qiskit.compiler.assemble(circs2, shots=shots)
+job = backend_real.run(qobj)
+where backend_sim is the qasm simulator backend and backend_real is one of the real devices.
+I checked in a little more detail and now remember that this was behavior in 0.8.0 that we've since changed. You can check if the identities remain by running (e.g on the t1 circuits)
+circs2 = qiskit.compiler.transpile(t1_circs, backend=backend, optimization_level=0)
+print(circs2[0])
+and see if the id gates remain. In 0.8.0 the identities are removed if backend is a real device (but not a simulator). In 0.8.1 the identities remain.
+If you do not want to update to 0.8.1 you can run
+circs2 = qiskit.compiler.transpile(t1_circs, backend=backend_sim, basis_gates=['u1','u2','u3','id'], optimization_level=0)
+qobj = qiskit.compiler.assemble(circs2, shots=shots)
+job = backend_real.run(qobj)
+where backend_sim is the qasm simulator backend and backend_real is one of the real devices.
+I used the code you suggested for the 0.8.0 version, and it worked! Thank you so much!
+@dcmckayibm
+Hi! My fellow researcher is working on the same experiment and is experiencing this problem: when he runs on ibmqx4 and calls this line: "ramsey_results = ramsey_experiment.result()", the resulting error appears:
+JobError: 'Invalid job state. The job should be DONE but it is JobStatus.ERROR' 
+and in the results page on the website, the status of the experiment is 'ERROR_RUNNING_JOB'
+Note: his code works on the simulator.
+@dcmckayibm
+Hi! My fellow researcher is working on the same experiment and is experiencing this problem: when he runs on ibmqx4 and calls this line: "ramsey_results = ramsey_experiment.result()", the resulting error appears:
+JobError: 'Invalid job state. The job should be DONE but it is JobStatus.ERROR' 
+and in the results page on the website, the status of the experiment is 'ERROR_RUNNING_JOB'
+Note: his code works on the simulator.
+This isn't really the forum for backend errors, unless you think it's something with the ignis code itself. Can you try posting on qiskit slack?
+This issue is fixed by Qiskit/qiskit#2663

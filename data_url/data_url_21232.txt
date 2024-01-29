@@ -1,0 +1,13 @@
+sys.path is different when running an experiment through the ARTIQ master or using artiq_run. Most noticeable, the current working directory is added when using ARTIQ master, which is very convenient. I could not quickly find why it is different for the two cases. Is there a good reason for that? It might be more convenient to unify that a bit more, preferably to the sys.path of ARTIQ master.
+For example when using print(sys.path) in an experiment:
+Is there a good reason for that?
+Not as far as I know. Let us know if you find out what is going on.
+If you are using Nix, the installed frontends will be wrapped by Nix to rewrite the Python site-packages to Nix stores, then runs original entrypoint. It looks something like this:
+But if you ran an experiment through master, it will spawn a worker as subprocess:
+
+Since it is running an internal module using python -m artiq.master.worker_impl, indeed it will not include Nix wrappers to the package resolution path.
+However, this also means setting PYTHONPATH as a global in the shell of master will modify the package paths of the worker (as a subprocess), because the environmental variables of the child process spawned are inherited from the parent
+Since it is running an internal module using python -m artiq.master.worker_impl, indeed it will not include Nix wrappers to the package resolution path.
+Hmm, right though, but the general intuition should lead to the correct way. While sys.executable is not "python" and is still wrapped by Nix:
+here I found out there are more wrappers in the installed frontends and not just the default Nix Python wrapper.
+Which corresponds to wrapPython in nixpkg. Seems like the additional site.addsitedir are what made the difference.

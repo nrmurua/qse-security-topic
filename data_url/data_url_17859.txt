@@ -1,0 +1,110 @@
+Going through the tutorial I noticed many things not the same as the spec. I will list them but I want to start the thinking about what needs to be done to get the spec and fields to match.
+Obvious ones
+the structure returned does not match spec:
+configuration structure returned does not match spec:
+properties is empty on some. For melbourne:
+The Result object is missing the properties: 'backend_version', 'qobj_id', and 'success'. It does,   however, have Result.status.
+The list of exp_result returned by Result.results() is an experiment result object instead of a dictionary. It is missing the properties: 'shots', 'success'.
+fixes #1150
+in #1121 the status was fixed
+Simulator backends do not have n_qubits in their configuration.  They are supposed to return -1.
+This is the first of a series of comments focused on listing the different data structures and interfaces inside Qiskit backends infrastructure. It is aimed at reflecting the real state of the current definitions and implementation in the several sources referring to it.
+Code: qiskit.backends.basebackend.BaseBackend.
+(1) Introduced in #1401: properties refer to physical properties so simulators can or cannot return these. If None is returned, properties are assumed to be ideal.
+(2) Only for OpenPulse
+The backend run method accepts a QObject object to be executed. This object can come from untrusted origins. With "untrusted", we are not only referring to malicious sources but also to incorrect QObjects coming from flawed transpilation processes. A validation process is required to confirm that the running QObject is semantically correct.
+Code: qiskit.backends.models.backendconfiguration.BackendConfigurationSchema
+Schema: qiskit/schemas/backend_configuration_schema.json
+(*) Validation introduced in #1277
+(1) Introduced in #1388. This field no longer return -1. What's the new value for simulators?
+(2) Indicates the configuration is for an OpenPulse backend or an OpenQASM one.
+(3) Introduced in #1391
+(4) Introduced in #1402
+(5) coupling_map is in the schema but not required, nor explained in the specs nor validated in the code.
+(6) Seems very specific and it is not in the specs. Should we remove it from the code and schemas?
+Code: qiskit.backends.backendconfiguration.GateConfig
+Schema: qiskit/schemas/backend_configuration_schema.json
+(*) Field validation introduced in #1277
+Code: qiskit.backends.models.backendproperties.BackendProperties
+Schema: qiskit/schemas/backend_properties_schema.json
+(*) Field validation introduced in #1277
+(1) Definition in the spec is ambiguous, it first says it is a list of nduv items but after, it says it is a list of
+general_parameters and refers to a non-existing parameters attribute.
+Code: qiskit.backends.models.backendproperties.Nduv
+Schema: qiskit/schemas/backend_properties_schema.json
+(*) Field validation introduced in #1277
+Code: qiskit.backends.models.backendproperties.Gate
+Schema: qiskit/schemas/backend_properties_schema.json
+(*) Field validation introduced in #1277
+Code: qiskit.backends.models.backendstatus.BackendStatus
+Schema: qiskit/schemas/backend_status_schema.json
+(*) Field validation introduced in #1277
+(1) In the spec, it says only operational and status_msg are required but in the schemas and the code, all of them are mandatory.
+Code: qiskit.backends.baseprovider.BaseProvider.
+Code: qiskit.backends.basejob.BaseJob.
+Code: qiskit.backends.jobstatus.JobStatus
+Code: qiskit.result.result.Result.
+Schema: qiskit/schemas/result_schema.json.
+(*) Validation for all properties added in #1277
+Code: qiskit.result.models.ExperimentResult.
+Schema: qiskit/schemas/result_schema.json.
+(*) Validation for all properties added in #1277
+Code: qiskit.result.models.ExperimentResultData
+Schema: qiskit/schemas/result_schema.json.
+(*) Validation for all properties added in #1277
+(1) It seems there is some ambiguity regarding the type of unitary and statevector properties. It seems safe to assume that one statevector is an array of complex values while one unitary is an array of statevectors.
+That said, the schemas define the properties unitary and statevector as collections (lists) of their respective types which do not match the spec. The spec defines unitary and statevector as single values of their proper types (the examples in the spec are wrong too).
+The simulator is currently aligned with the JSON schemas and returns collection of the proper types.
+Summarizing, there are two alternatives:
+(2) The snapshots field is loosely defined and it does not specify the types of snapshots nor the specific fields of each type.
+how is the easiest to comment on this.
+@delapuente I would change a few of these tables to not have "in the schema" because you are listing functions for the objects and there are no schemas for those.
+Labelling as 0.7 preliminarly, to keep it under the radar.
+Code: qiskit.qobj._qobj.Qobj.
+Schema: qiskit/schemas/qobj_schema.json
+(*) The OpenQASM flavour of the Qobj is not specified in the specification document. Should we introduce it and document there?
+(1) These fields are currently required but not validated.
+(2) Current implementation accepts extra parameters but they are not validated in any case.
+(3) schema_version and type are mandatory in the schemas but not in the code.
+Code: qiskit.qobj._qobj.QobjConfig.
+Schema: qiskit/schemas/qobj_schema.json
+(1) These fields are currently required but not validated.
+(2) Current implementation accepts extra parameters but they are not validated in any case.
+(3) max_credits seems very specific to our backends.
+Code: qiskit.qobj._qobj.QobjHeader.
+Schema: qiskit/schemas/qobj_schema.json
+(1) Current implementation accepts extra parameters but they are not validated in any case.
+Code: qiskit.qobj._qobj.QobjExperiment.
+Schema: qiskit/schemas/qobj_schema.json
+(1) These fields are currently required but not validated.
+(2) Current implementation accepts extra parameters but they are not validated in any case.
+(3) The schema describes config as a way to replace the Qobj configuration per experiment but it does not specify the type of the attribute to be qobj.qobj_qasm.config
+Code: qiskit.qobj._qobj.QobjExperiment.
+Schema: qiskit/schemas/qobj_schema.json
+(1) Experiment name is used in the Result API in methods (get_ran_qasm, data, get_counts, get_statevector, get_unitary, get_snapshots, get_snapshot and average_data) but it is not mandatory. The code treats this field as if it were compulsory. Should we do it mandatory?
+(2) Current implementation accepts extra parameters but they are not validated in any case.
+Code: qiskit.qobj._qobj.QobjInstruction.
+Schema: qiskit/schemas/qobj_schema.json
+(*) Instructions are oddly defined. In the spec, there are 7 types of instructions and one of them is "Gate" which define a generic gate with name and qubits as mandatory and optional params, texparams and conditional fields.
+However, in the schemas are 14 types of instructions. They include the 7 mentioned before and also include all the standard library explicitly. Spec definitions and gate definitions are mixed together. Gates definitions are fine-tuned in these several types by providing restrictions on the number of parameters each specific gate accepts.
+Some types in the spec are also merged with gate definitions. For instance, reset is defined along with id, h, s... I find this practice confusing since it does not allow differentiating between semantically different types of instructions (as is intended in the spec).
+Some definitions, for which certain gate properties does not make sense include gate properties but constrained to be 0-length. For instance, the spec says snapshot has properties label and type but the schema also includes register, texparams, type and memory, all of them constrained to 0 items.
+It is possible these constraints are added to avoid misunderstandings when parsing the instruction. If that's the case, we should document it.
+Options here are:
+(1) These fields are currently required but not validated.
+(2) Current implementation accepts extra parameters but they are not validated in any case.
+(3) Mandatory in the spec but optional in the code.
+(4) Its referred as register in the code and schemas, should be changed in the spec.
+Schema: qiskit/schemas/qobj_schema.json
+(1) name is not mandatory in the schema.
+(2) The list of valid relationships is missing. It should be open-ended.
+(3) The representation is missing. Is it a signed or unsigned integer? A float? A double?
+Schema: qiskit/schemas/qobj_schema.json
+(1) source and target should be the common name for these and are shorter.
+Schema: qiskit/schemas/qobj_schema.json
+(1) source and target should be the common name for these and are shorter.
+This looks great now
+I'm reopening this since there are several things not yet reviewed. I'm restoring the labels for tracking too.
+@delapuente i think we should close this and move the information about the qobj to the new issue and track it there as we finish the qobj
+@delapuente can we get a summary of what is left to do here?
+This appears to be done, or not receiving much attention in any case. If anyone is still looking into it, please reopen.

@@ -1,0 +1,49 @@
+Consider the following examples:
+This code raises:
+This code raises:
+This code raises:
+I would expect all these examples to work. A parser should not care if variables had been declared or not. The AST nodes should agnostic of the variable names. The only part is relevant is the syntaxis and elements like the "type" of the statement. This means if(creg==int) qop; is syntactically  different to
+gatename(params) qargs;. However, U(theta,phi,lambda) qubit|qreg; and CX qubit|qreg,qubit|qreg; are not that different.
+Take the example of the Python parser:
+In this example, a is not declared but the program is parsable.
+Hello @1ucian0 , is this issue being worked on? If not I would be keen to take it up. I see some changes have been made to the AST in #906 , will they affect this?
+The issue #923 is an epic to refactor the parser. I think we should collect ideas first. Please, dump your  thoughts in #923 and, the meanwhile, I will put this one on hold. Thanks!
+TL;DR None of these are bugs.  They're actually features, and show that the parser's error-detection is robust.
+Uh, I think this is a misunderstanding of the Dragonbook, and the basics of how compilers are written.
+Ex 1: Yacc (and most parser-generator) grammars are LR(1).  This is a
+subset of context-free.  It is well-understood that nearly all
+semantic processing isn't context-free.  Sure.  But it is ALSO
+well-understood that much semantic processing (e.g. checking for
+variable-binding, well-typed-ness in languages where types are
+declared beforehand) can be done during the parse, and this
+[minor] (a) results in faster parse-time (back when parsing CPU usage wasn't trivial)
+(b) results in error-messages being better-localized to the token that induced them
+point #b is pretty important.  And you'll find that MANY parsers do
+things this way.  Python is a particularly dynamic language: one could
+expect that its parser isn't so great in this regard.  And we can
+easily see that -- consider the following program
+Python coughs a hairball badly here:
+One would WANT the compiler to tell us the line on which the variable
+"z" occurred, but instead, all it knows is the last line on which the
+expression was present (that is, the last one on which the expression
+had some tokens).
+More generally, settled wisdom in compiling [e.g. in my compilers
+class in 1986] teaches us that we divide semantic processing into the
+part that can be done -during- the parse, and that part that must be
+done on the AST once it is constructed.  And we're taught that it's
+good to do as much as possible during the first phase.
+Ex 2: "TX" is neither an identifier, nor a reserved word (keyword,
+e.g. "CX").  There is a point to having strictly-defined syntax
+classes, and also defining keywords.  Even Python makes this
+distinction:
+Notice how in this case, Python IS able to identify the PRECISE token that caused the parse-failure, whereas in the case of the undeclared identifier above, it could only get it down to the (approximate) line-number.  Even Guido understands the importance of precise error-messages during parsing.  Just not enough.
+Ex 3: Same story as with Ex 1.
+Thanks for you input!
+I think one of the main challenges here is that Qiskit tries to be very backend agnostic and the instruction set depends a lot on the backends. The internal DAG representation of the circuit is also moving that direction. I see Qasm as a Qiskit input to construct a DAG circuit, which care much less about instruction definition until the Qobj is constructed.
+Possible, the way to go is to have many input formats. An openqasm format more strict and a more generic qasm format.
+It would be -very- useful to understand the variation you expect to see in QASM and its variants.  If all the variation is in the instruction-set, and not in the syntax of gates and declaration of variables (e.g. bit-vectors), then it's very straightforward to define and implement QASM in such a way that it can be used for all these languages without any ambiguity or mess.
+There is great value in having a -syntax- for these configuration "languages", instead of having them all be a "framework" of operations on in-memory objects.
+It might be useful to discuss this ......
+Is there a Backus–Naur form for the parser?
+@OxBrdgRbtx: I guess you mean the grammar more than the parser.  If so, the original paper describing OpenQASM 2 has a BNF grammar in Appendix A.  If you're interested, the latest version of the OpenQASM specification (3.0) is under active development, and we have a reference LL(*) parser written using ANTLR which uses a grammar-description file that looks rather EBNF-ish.
+This issue is very old now, so I'm going to close it as stale: we're massively overhauling all of this for OpenQASM 3 support, and the AST-generation steps (what's being talked about in this issue) will all be handled by a separate package.

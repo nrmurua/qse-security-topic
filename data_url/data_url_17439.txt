@@ -1,0 +1,19 @@
+I would expect that defining a gate to be in the basis gates would not unroll to the U gate equivalent.
+I took a look at this, it looks like the first time we call the unroller as the first stage of the transpile passes it passes in the user provided basis gates and that does what we both expect: https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/transpiler/transpiler.py#L211
+But if there is a coupling map set for some reason there is a later pass we call on the dag that runs the unroller again with a hardcoded basis set:
+https://github.com/Qiskit/qiskit-terra/blob/master/qiskit/transpiler/transpiler.py#L232
+I'm not sure what purpose that serves or why it's needed. The simple fix would be to either remove that line or add a conditional to not run that if the user provides a basis_gates list. Looking at the git history that line was added by @1ucian0 in #1442 maybe he can provide an explanation as to why it was added.
+Ah, reading that patch it looks like it does the unrolling to that hard coded basis set so the 1q optimize pass can do the gate cancellation. It was just happening under the covers in a single function before instead of being called directly in transpile.
+So the basis gate set input kwarg is only meaningful for simulators.  I do not think that that is the expected behavior (I do not think we mention it anywhere).  However, I do see the point of unrolling.
+Yeah, that's what it looks like. I'm not sure the best way to handle this because I agree the current behavior is unexpected. We can preserve the expected behavior pretty easily by not running optimize 1q there (or making it not fully effective by skipping the unroller call when an user input basis set) but then the output circuit potentially won't be fully optimized. I'm not sure which to view as more important in this case.
+FWIW the patch I had in mind above was:
+That might be a good balance because for real backends it will be unrolled to the devices' basis gates already, which should be the same set, so we can safely skip that. But, it will preserve the manual basis set in your case, although without the tradeoff of not being able to optimize things fully.
+This is a good point, and we need to decide what the default pass manager looks like (I'd like to include a couple default pass manager pipelines corresponding to different optimization levels).
+The current way things are done is not well thought out (if coupling_map exists, invoke optimize_1q_gates).
+In this case I agree that if the user passes in basis_gates then we should not invoke optimize_1q_gates pass, as that pass requires unrolling to the basis it can work with (u1,u2,u3).
+Well I'd still argue we should run optimize_1q_gates even with an input basis_gates just skip the unroller step (like what I did in the patch above). It might still be able to optimize something, if it encounters gates it can't interpret it will just ignore those. Also when you run with a real device backend set there will be an input basis_gates set (by the time we get to transpile_dag we can't differentiate between that) so we don't want to skip it in that case either.
+We could optimize and see if the optimized gates are the same (in trace norm or other) as the non-U, id, or cx gates in the basis set, and just replace the optimized U's with the basis ones where possible.
+work around is to set an empty passmanager to the transpiler for your case.
+But then the circuits just get packaged to a qobj which is not what I want.
+It seems to me that the optimization pass should be "basis-aware". For example, a HGateCancellation would make sense with this basis but not our current Optimize1qGates...
+That would be a mess given the myriad of possible gates and combinations there of.  There is probably a smarter way to do 1q optim without unrolling everything.

@@ -1,0 +1,17 @@
+I've tried to simplify my circuit as much as I can and this is what I've settled with. I have a circuit with 2 qubits. The circuit has a swap gate followed by a Y gate followed by at least 18 other gates (it doesn't seem to matter what type of gate? but I'm just using Z gates in the provided example) followed by a Y gate. Attempting to convert this circuit to Qasm3 results in the following error:
+Run the following:
+The circuit should execute normally without error.
+No response
+On each of these issues, please can you try updating to the most recent version of Qiskit and seeing which of the problems persist? I don't know if any are fixed, but that's always the first diagnostic step.
+Sorry, I didn't notice I wasn't on the latest version there! I reran each on 0.45.1 and still encountered the same bugs. I'll edit my reports to this version.
+Thanks - it's good to know.
+This appears to be related to the UnitaryGate operation that the transpiler at level 3 uses during optimisation.  One of the things we do is to collect all 2q runs into a single matrix (the UnitaryGate), then directly resynthesise that back into basis gates.  When no basis gates are supplied, we output the UnitaryGate directly, since in Qiskit's data model, it's a valid gate - simulators often have it in their basis gates.
+The problem comes because UnitaryGate somewhat breaks the params model of Qiskit, by having an entire NumPy array in there (the matrix).  The OpenQASM 2 exporter detects that it can't handle the parameter and sensibly doesn't attempt to emit one, but the OpenQASM 3 exporter doesn't have the same handling - in general, OpenQASM 3 is more expressive, so there's more that could be represented.
+The bug doesn't appear on main, but that's not really because we've fixed the OpenQASM 3-export problem, it's just changes in the transpiler have meant that we no longer collapse the gate chain into a UnitaryGate in the same way.
+For the time being, if OpenQASM 3 export is necessary for you, you might need to set some basis_gates, or use optimization_level=2.  For what it's worth, calling transpile with basis_gates=None and coupling_map=None won't do all that much - it might make a few simplifications here are there, but largely it needs some basis gates or a coupling map (or better yet, a full backend) before its most powerful passes can know what to do.
+Here's a minimal reproducer that reproduces the complete bug directly on main, as well as Qiskits 0.25 and 0.45:
+I encountered this exact same bug, but I wasn't using transpilation. You already have the minimal repro case, but for the record I was trying to manually create the Hardy state 1/sqrt(3)(|00> + |01> + |10> by doing the following:
+I can stick to OpenQASM 2 export for now, but is there a workaround for OpenQASM 3?
+The best workaround I can think of would be to tranpsile the circuit with no coupling map and a basis gates containing stuff in the Qiskit standard library - something like
+It's not ideal, since you'll lose the structure of your circuit, and we're for sure interested in improving the exporter so a) it doesn't choke on gates it should be able to handle and b) it does this kind of gate decomposition automatically to match the header files it's exporting against better.  That's on the roadmap, somewhat encompassed by #10737.
+Fwiw, OpenQASM 3 is mostly an interoperation language for Qiskit, and we can't generally round-trip our circuits losslessly through it.  If you're looking for a way to persist circuits to files, you might want to look at qiskit.qpy.

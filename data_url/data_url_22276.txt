@@ -1,0 +1,22 @@
+I have the following code here,
+Which runs fine, but the kernel invariant was mistyped. However, there's no error or warning raised. Calling self.x in the kernel is still an expensive operation that costs a lot of slack. It could be useful to generate an error message or warning if a kernel_invariant does not match any variable, in case the user mistypes its name.
+Unfortunately, this is not possible. The reason is that which code will be compiled into a kernel is only discovered at runtime. Consider the real case of TTLClockGen. It has self.acc_width marked as kernel invariant, however if only set_mu and not set is ever called on it, no code that uses self.acc_width will be compiled, or even discovered.
+Eagerly typechecking all code marked @kernel would be prohibitively slow.
+Something we could do is add a static analyzer that, when explicitly ran, suggests which variables could be marked as kernel invariants.
+Impossible? What about iterating through kernel_invariants and checking that attributes exist, printing a warning if they don't (maybe with a bit of Levenshtein)?
+@sbourdeauducq This means that variables accessible to kernels should be never conditionally set. If this is an acceptable restriction, sure, I can implement that.
+With conditionally set variables, I think that having a spurious warning that you can suppress by giving the variable a dummy value (e.g. in build) is totally fine.
+And there would be no typechecking so that dummy value can always be None.
+This is a band-aid and one can question whether it is worth applying. There are many ways a spelling error can go unnoticed here. You could misspell kernel_invariants or the spelling error could lead to the wrong variable being in kernel_invariants.
+Wouldn't the real solution be some more "static" typing, along the lines what Enthought traits did or what attrs does, like x = attr.ib(invariant=True) in the class body?
+This is a band-aid and one can question whether it is worth applying.
+My primary concern here is false positives, since an analysis with lots of false positives in practice just means that people ignore it (or turn it off). It is not a monumental amount of work and if it's good false positive wise then I see no reason not to implement it.
+Wouldn't the real solution be some more "static" typing, along the lines what Enthought traits did or what attrs does, like x = attr.ib(invariant=True) in the class body?
+Unless I'm missing something, you can still misspell x here...
+I am fine with applying a band-aid if it's not much work and if there is a benefit.
+The idea would be to enforce that all attribute use by kernels must be typed like this. Then you can't misspell it.
+The idea would be to enforce that all attribute use by kernels must be typed like this. Then you can't misspell it.
+If we make annotations on attributes that are referenced in kernel code mandatory, then that comes with a large benefit: we can make user-defined objects parameterizable. E.g. a hypothetical TTLWrapper would admit both TTLIn and TTLInOut objects as a value of one of its attributes. It would not be a burden to implement at all, since all the plumbing is already there (and is used for e.g. list), but adding this without explicit annotations would just be an awful experience.
+But it was my impression that this is prohibitively tedious for the kinds of use ARTIQ gets.
+Something we could do is add a static analyzer that, when explicitly ran, suggests which variables could be marked as kernel invariants.
+I think that's probably useful for the debugging we'd like to do. Basically if we had some tool that could let us know what was kernel invariant and what isn't, we could improve the code (by setting the appropriate variables as kernel invariant) to reduce the demands during the experiment.

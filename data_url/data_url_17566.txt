@@ -1,0 +1,16 @@
+Setup:
+Running the following works the first time:
+Attempting to run it again (in a notebook) gives the following error:
+To get it to work again, it is not enough to create a new pass_manager but I also must reload the coupling_map:
+This is suggesting that the coupling_map is being modified by the compile process.
+I should be able to compile multiple times with the same coupling_map and pass_manager.
+Here is the explanation for this bug: each time that q = QuantumRegister(20) is called, a registry with different names is created. Based on that name, a layout is created when StochasticSwap.run is executed (by the transpiler) and the attribute StochasticSwap.initial_layout is set to the layout. Because the way that we handle passes, the second StochasticSwap() does not give you a fresh instance, but they same one than before (see MetaPass.__call__ in transpiler/_basepasses.py). So, an old "layout" is being used in the second compilation.
+I will consider some fixes for this.
+A bit confused. If I create a new pass manager instance and add passes to it, should they not be new instances of the passes?
+No. The cache is a class attribute of MetaPass. The pass manager is not involved.
+What is the use case fir this caching?
+As part of the scheduling, passes are store in sets, such as requires and preserves. Therefore, they need to have equivalence between instances. Instead of doing like in other parts of the code and hack around the hash, we decided to return the same instance.
+I took a few minutes to get somewhat up to speed around the MetaPass cache, and it seems like here, the bug arises because the pass is holding internal state that is dependent on something other than the pass arguments. This breaks the assumption that the class name + __init__ arguments are sufficient to uniquely identify a pass.
+I think the answer here is to either restructure how StochasticSwap keeps track of a user-provided vs. an auto-generated initial layout, or to move layout generation out of the mapper pass ( my preference, see #1723 ).
+Re-__init__-ing will lead to other bugs. e.g.,
+Good point. For your first suggestions, probably adding immutability to passes would be a way to help "enforcing" it.

@@ -1,0 +1,32 @@
+for lockbox the code is ready..
+Automatically calling _setup() in setup_attributes, making excessive use the attribute setting "call_setup=True", and initializing submodules automatically upon the first reading has removed much code from _init_module(). Can we finally place it at the end of Module.__init__ ?
+i cleaned a lot in this regard. can we move the _init_module to the end now?
+To clarify what you want to do here: we completely get rid of the function _init_module() and we just use the following pattern for places where there is still some code inside _init_module:
+By the way, I browsed through the code and I saw that you didn't use the standard signature for the __init__ of Loop, but
+OK, in this case it is probably fine (for instance, adding Loop in the list of modules should work out of the box because the signatures are still "compatible"), but basically, the idea behind the introduction of _init_module was to prevent the subclass from screwing-up with the __init__ signature.
+I agree that it maybe is a bit heavy because it forces the user to learn the new interface _init_module rather than just using the standard pattern, so I am fine with sticking to the standard __init__-only solution.
+As far as I can remember we never decided to completely forbit using the __init__ function in Modules, we just introduced _init_module as a shortcut for simple programming without having to extend the superclass constructor. I agree that it is more readable to simply extend the constructor, even if this adds one more line per module. That also allows you to put the construction details anywhere in the __init__ function, even though I believe we should make an effort to have higher-level modules initialize their stuff at the very end.
+btw, I merged everything into develop-0.9.3 but wont have time for testing until tomorrow i guess.
+so you should choose your working branch and
+git pull origin develop-0.9.3
+OK, so in that case, I will replace _init_module by __init__ + super everywhere...
+ok, im good with this. should only concert 3-4 modules anyways, right?
+That's correct
+OK, then I think it would really make sense to take away the _load_setup_attributes from the __init__ function: each function should be doing only 1 thing, especially when subclassing the base class, you want the initialization to be completely terminated (including initialization of the base class, then initialization of the derived classes), and only then, loading the attributes, otherwise you need to make dirty trick for the load to work eventhough the object is not fully initialized...
+ok for me as well. but are you aware that the _load_setup_attributes only occurs at the end of startup anyways?
+If you prefer to remove it, do so (but i dont understand the reason with the above code in mind) and put the corresponding call explicitely into pyrpl.py where the modules are intialized.
+I think what you have in mind is not class inheritance, but module inheritance. For instance, it is true that LockboxSequence will be fully initialized before _load_setup_attribute is called on the the Lockbox instance.
+However, what I have in mind is for instance SpectrumAnalyzer, that is a "top-level module", but that inherits from AcquisitionModule. The initialization steps should be:
+At the moment, I don't see how it could be done without making 2 separate calls or a _init_module() like function...
+ok i see your problem, i did not have it before. so we should totally remove _load_setup_attributes from the constructor and call it explicitely on the pyrpl instance, after having made it inherit from module (or alternatively iterate explicitely through all submodules of the pyrpl instance). From there, the call will propagate through the module hierarchy... We should also think about what order makes more sense (deepest submodule first or last), in my opinion either one is better in certain situations so that the programmer should make the settings 'commute' with each other.
+OK, the pyrpl inherit from module sounds a bit extreme, but indeed, it would make some sense, I can give it a try... BTW, there is still a _init_module in Lockbox.Input line 432, you should put it in __init__
+and in stage line 75 as well...
+If all modules are submodules of pyrpl, do we also want the config file hierarchy to reflect that (see example below) ? Otherwise, I would say it s enough to just make a loop on the modules in the pyrpl init....
+default_pyrpl_instance0:
+How do you handle multiple instances of pyrpl right now ? I guess for the moment you have one config file per instance. The natural consequence of having pyrpl inherit from BaseModule is the following:
+The drawback is that you add a level of hierarchy in the config file.
+Right now in the branch spectrum_analyzer, I have implemented the easy way (moving _load_setup_attributes explicitly in pyrpl.py, without having Pyrpl inherit from Module), but I am open to the other option. If you want to give some time to think about it, we can just postpone the decision to version 0.9.4 ?
+Im okay with just a simple loop in the pyrpl initialization, this way it is also more explicit. I am happy with the config file right now, especially would not like to have the pyrpl entries at the root level. I like your simple solution.
+I do not see large benefits from having several pyrpl instances per config file. Disadvantages are a reduction in speed, and increased risk of errors due to crosstalking effects. I do not see any advantages. If two pyrpl instances live in the same kernel, they can access each other directly (through the user api), including their config files. Especially, if one pyrpl instance serves for another one, I usually make it a property of the higher-level pyrpl instance, such that all interactions between them are defined in the code of the higher-level instance. Why would we want anything different? Do you have use cases in mind?
+OK that's fine for me, then we simply need to clean-up the stage/input of the lockbox (that still contain _init_module) and we can close the issue. Let me know if you do it or I can do it right now if you want?
+ok, i did the migration in the lockbox modules from _init_module to __init__. the code is in branch develop-0.9.3 and you should git pull origin develop-0.9.3 into your branch. We can fully delete _init_module from Module once tests are passing i guess

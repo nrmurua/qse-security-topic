@@ -1,0 +1,18 @@
+Description
+Jobs submitted asynchronously to a DWaveSampler à la the example in the from_future documentation may return done() == True before they're actually done.
+To Reproduce
+Consider the following code:
+Run it with sampler = DWaveSampler() as written.  Then comment out that line, uncomment the sampler = EmbeddingComposite(DWaveSampler()) line, and run it again.
+Expected behavior
+With sampler = EmbeddingComposite(DWaveSampler()), most of the time is attributed to waiting for all the jobs to finish, as expected:
+However, with sampler = DWaveSampler(), most of the time is attributed to accessing info, which implies to me that the future is returning done() == True before the job is actually done, and tickling info is forcing the wait for completion:
+Environment:
+If you change ss.done() to ss._future.done() does the behaviour stay the same? Or do you get an AttributeError?
+The behavior stays the same.
+Cool bug! Without an obvious fix.
+When a sample set is constructed using from_future, it saves that future as an attribute on itself. So if you change your first while loop to
+you'll see that the future created by executor.submit(...) is claiming to be done, which SampleSet is then propagating to you.
+The reason that the ThreadPoolExecutor's future is claiming to be done is because it is executing the .sample method, which is successfully sampling, then not blocking. So the executor is seeing that job as "done".
+One thing you could try is make a new function
+then use that
+I just plugged that into my "real" code, and it works!  Thanks for the workaround.

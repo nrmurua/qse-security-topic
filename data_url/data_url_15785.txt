@@ -1,0 +1,47 @@
+When using rx(theta, qbit) I need to specify a theta angle twice of what it should be.
+https://github.com/Qiskit/qiskit/circuit/library/standard_gates/rz.py:114
+should instead be
+as it is for the U1 gate, see
+https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/circuit/library/standard_gates/u1.py:130
+I am not 100% sure if other backends are affected, but my impression is that it may only by the unitary simulator. Within the unitary similators though it indirectly affects other gates like rxx() that use rz() internally.
+The matrix in your "steps to reproduce the behaviour" section is the identity matrix, as you say it should be (up to a global phase).  The matrix is the second section isn't - note the top left element is imaginary, but the bottom right is real - it's actually an Sdg gate (up to a global phase), which is expected, since you've now done Z^(-1) * sqrt(Z) = 1/sqrt(Z) = Sdg.
+Jake, do you have Terra 0.18.1 (my version)?
+I still get the wrong matrix, and I think it's due to to
+https://github.com/Qiskit/qiskit-terra/blob/main/qiskit/circuit/library/standard_gates/rz.py
+line 114 (see above):
+ilam2 = 0.5j * float(self.params[0])
+Could you confirm that you see the same line in your version, please?
+I'm trying to reproduce your correct output but I cannot.
+I'm just reading the output you gave in your examples - the first matrix you wrote down is the identity matrix (multiplied by a global phase of e^(i pi / 4), which doesn't affect the dynamics).  The second matrix is the Sdg gate, with a global phase of i.
+For clarity:
+I see about my code, that was not a good example (my mistake mis-reading the output).
+But I still think there's a mistake here.
+Short example:
+Looks to me like the PhaseGate is correct, the RZGate is not. It should be the same as the PhaseGate.
+I have a longer example if I'm missing something here.
+No worries - RZGate is only the same as PhaseGate up to a global phase factor, and that matches your new example here (but with a phase of pi/8 so it's harder to see).  That's documented in the "See also" of the PhaseGate documentation.
+At any rate, the discrepancy in this second example can't be explained by doubling the angle here, so it's definitely not that. The factor of one-half that you saw in the code is because the RZ gate evolves the phases of 0 and 1 away from the start point in opposite directions by half the angle, while the phase gate evolves only one state away by the full angle.
+Interesting. Seems like an unconventional global phase, I would have expected the same for P and RZ.
+This is the longer example that had me chase this down:
+import numpy as np
+from qiskit import *
+from qiskit import Aer
+backend = Aer.get_backend('unitary_simulator')
+qc = QuantumCircuit(2)
+qc.cx(1,0)
+#CNOT is its own inverse, see if MS-based CNOT works
+qc.ry(np.pi/2,1)
+qc.rxx(np.pi/2,1,0) #bug?? works but should be qc.rxx(np.pi/4,1,0)
+qc.ry(-np.pi/2,1)
+qc.rx(-np.pi/2,0)
+qc.rz(-np.pi,1) #bug?? works but should be qc.rz(-np.pi/2,1)
+#qc.p(-np.pi/2,1) #works
+#qc.sdg(1) #works
+job = execute(qc, backend)
+result = job.result()
+print(result.get_unitary(qc, decimals=3))
+#yes, we get ID matrix back but only for -pi, not for pi/2 as one would expect
+Compare that to
+https://www.researchgate.net/figure/Two-qubit-modular-gates-a-Decomposition-of-the-CNOT-gate-The-geometric-phase-chij-of_fig2_299483242
+There's a notational discrepancy between what RZ means here (between literature and Qiskit, I would argue).
+Is it a bug? I guess it depends on the definition of RZ. I'll let you decide, above my pay rate :-)

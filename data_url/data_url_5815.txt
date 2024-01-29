@@ -1,0 +1,11 @@
+Related to #1214
+When part of a circuit fails (running on simulator), the resulting JSON can not be loaded with Result.from_dict()because there is no "results" field. This is causing a test to fail in qiskit-ibm
+Create a qobj with one good and one bad instruction
+Run the qobj on the simulator, and the raw_data returned does not contain "results"
+Partial results should still be schema compliant and be able to loaded from  Result.from_dict()
+So I took a quick look at this with @chriseclectic and it's not actually a schema issue. The output from the standalone aer simulator is valid, it's just different from 0.8.x and different from what your test is expecting. 0.9.0 is returning:
+which is schema compliant per the IQX API result response payload as an error response. The change here is a difference in behavior if the auto simulation method is used it now fails if there is a gate outside the supported gate set of all the methods when it's figuring out the method before simulation. While before it was done on a per circuit basis.
+I'm not sure how we're going to fix this or if we're just going to accept this as slight behavior change from 0.8.x to 0.9.x and document it as an upgrade note in the release notes. But in the meantime just update your test to set a simulation method (probably just use statevector) and that should bypass the failure you're seeing.
+But the result schema says results is a required field: https://github.com/Qiskit/ibm-quantum-schemas/blob/main/schemas/result_schema.json#L107
+Ah good catch, I completely missed that it was missing the results field. So it should be added there as an empty list in the error case too (although that wouldn't fix the test failure qiskit-ibm is hitting). The workaround I suggested before will still work in the short term, I'll come up with something and get it backported for 0.9.1 (see #1366 ).
+Ok, I pushed up #1371 to fix the partial result behavior to be consistent with 0.8.x which I marked as fixing this issue. The results field missing on error should be fixed by #1372

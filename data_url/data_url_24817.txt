@@ -1,0 +1,20 @@
+Conditional pulses (defined via BranchPulseTemplate and LoopPulseTemplate) may rely on hardware triggers (if supported by the devices) to make branching decisions.
+Determine how Condition objects can "encode" the required information so that the PulseHardwareUploadInterface can configure the hardware appropriately prior to pulse playback.
+Part of #13.
+A general problem with conditions for Branches and Loops is that how they are evaluated depends on the hardware setup.
+For example, in one setup a condition for a BranchPulseTemplate might be evaluated by measuring some experimental data during playback, stopping the playback, evaluating the measured data in the software and thus and then deciding which branch to play next. In another setup evaulation of measured data for this specific condition might be implemented in some hardware device which sends a trigger to the playback device. In this case, the playback device must be configured to branch/jump correctly when the trigger signal occurs.
+Thus, for the same conditional PulseTemplate, different hardware setups result in very different pulse instantiations and playback patterns.
+It is thus not possible to store conditions in PulseTemplates. Conditions behave more like Parameters: How to evaluate a certain condition can only be determined at the time of pulse instatiation/sequencing.
+However, the condition in such a Branch-/LoopPulseTemplate has a certain semantic and the branching an intention. For example, a pulse might depend on some temperature measurement and execute different branches if the temperature exceeds a certain threshold to avoid overheating. To convey this semantic, braching PulseTemplates should provide a meaningful condition identifier.
+Changes to the current design:
+BranchPulseTemplate, LoopPulseTemplate
+PulseTemplate
+The Condition class/interface is then only used by the sequencer and in the build_sequence() method of LoopPulseTemplate and BranchPulseTemplate. It affects only the instructions generated. In case of software evaluation, it will produce a stop instruction and then, when the sequencer is invoked again to instantiate the remaining pulses, the condition evaluates and inserts the correct branch. In case of hardware evaluation, it inserts corresponding cjmp/goto instructions.
+An explicit interface for Condition will follow soon.
+Class Diagram for Condition and subclasses:
+
+When build_sequence is called on a BranchPulseTemplate or LoopPulseTemplate object, it finds the corresponding Condition object in the given conditions dictionary and delegates to build_sequence_branch/build_sequence_loop.
+HardwareCondition creates new InstructionBlocks for the branches/the loop body and generates according jump instructions depending on the trigger.
+SoftwareCondition tries to evaluate its evaluationCallback and either generates a stop instruction, if evaluation is currently not possible, or pushes the corresponding subtemplate to the sequencer and exits, which results in the subtemplate being translated as the next hardware instruction sequence.
+The following diagram depicts the flow of the build_sequence_{branch, loop} methods of SoftwareCondition:
+

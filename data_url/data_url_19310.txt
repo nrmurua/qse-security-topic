@@ -1,0 +1,22 @@
+When I execute within a GradientTape()  context a 10-qubit qibo.models.Circuit with the option density_matrix=True enabled and noise added using the with_noise() method,  I see a continuous increase in memory usage that eventually ends up in an OOM error (when it gets to more than 15 GB consumption).
+Here is a small example code to reproduce this issue. I'm running the code in Ubuntu 19, qibo 0.1.9, tensorflow 2.11.
+If I remove the context manager with tf.GradientTape(), the issue disappears and memory consumption remains below 1GB. Changing the number of threads doesn't have any significant noticeable effect.
+Is this behaviour to be expected?
+If it helps, when I remove the c = c.with_noise(noise_levels) line, memory consumption only increases to around 1.6GB
+@DiegoGM91 thanks, @MatteoRobbiati could you please try to reproduce this issue?
+@DiegoGM91, I had a quick look and here my observations:
+In summary, I would say the performance you observe is expected and most likely comes from the tf.einsum gradient resources usage. Let me know.
+Regarding this, I was trying to reproduce the error, but your example worked for me using some combination of qibo  (0.1.9, 0.2.0dev) and tensorflow (2.9, 2.11).
+Should I have run into a specific error?
+@MatteoRobbiati please note that the example indeed works, however the memory consumption is high.
+Thank you @MatteoRobbiati and @scarrazza for looking into this.
+@scarrazza unfortunately memory consumption does not stop at 8GB in my laptop, it keeps increasing until i get OOM (16GB RAM in my case).
+In any case, I see your point and I understand that the Pauli channels will increase significantly the number of operations, hence the number of nodes in the graph and the number of derivatives that tensorflow computes. (did I get this right?)
+However, the derivatives of these Pauli channels with respect to the density matrix are easy to compute analytically  (and identical throughout the circuit) and so there is no point in allocating all the resources that tensorflow automatically allocates. Ideally, one would like to leverage both automatic differentiation for differentiation with respect to the variational parameters in the circuit, and the a priori knowledge about the derivatives of channels with respect to density matrices.
+I don't know how complicate this might be from a technical point of view, though. Happy to further discuss it if you think it may be possible to implement something like that.
+@scarrazza unfortunately memory consumption does not stop at 8GB in my laptop, it keeps increasing until i get OOM (16GB RAM in my case).
+On system, I see the +8GB when running your example, so this depends on the base memory usage of your system, e.g. if you have already 8GB in use it will raise OOM.
+In any case, I see your point and I understand that the Pauli channels will increase significantly the number of operations, hence the number of nodes in the graph and the number of derivatives that tensorflow computes. (did I get this right?)
+Yes, tensorflow builds the gradient analytical expression using graphs and the memory management is build on top of the primitives provided by their framework, in our case the einsum operator.
+I don't know how complicate this might be from a technical point of view, though. Happy to further discuss it if you think it may be possible to implement something like that.
+Changing the default behaviour of the memory management of tensorflow's automatic gradient might not be possible, however if you spot some operations that could be simplified when computing the forward pass of these predictions it may help, see https://github.com/qiboteam/qibo/blob/master/src/qibo/backends/numpy.py#L256

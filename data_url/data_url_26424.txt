@@ -1,0 +1,108 @@
+Hello everyone,
+I have been trying to get cp2k with CUDA working and I partly succeed, but also partly fail.
+I have two systems in which I have tried compilling cp2k with CUDA. my home PC with consumer CPU and GPU (ryzen 5600X and RTX3060ti) and on a supercomputer which has a Intel Xeon Platinum 8360Y and a A100.
+Let me start with the issues of my home PC. I installed the latest CUDA version 12.2 and that is working fine. When I use the toolchain to build cp2k with ELPA however I get some weird error messages (home_PC_toolchain_ELPA.txt). Although the toolchain does not say that an error has occured. However when I continue with the usual steps and try to build cp2k I do get errors (home_PC_build_ELPA1.txt). SOme of these errors are related to ELPA and an other one is related to the LIBS -lz flag in the ARCH file. Removing that flag removes these errors, however the ELPA errors remain (home_PC_build_ELPA2.txt). So I am not able to get a working cp2k version with ELPA installed together with CUDA. I did get a cp2k version version with ELPA working without CUDA support.
+Next I tried a toolchain run without ELPA but with cusolvermp. The toolchain ended without error, but during building I did get an error (home_PC_build_cusolvermp.txt).
+Since I cannot get a build working with ELPA or cusolvermp I made a build without them. I then get to the next small issue. within the ARCH files local.psmp and local_CUDA.psmp there is a -lz flag for LIBS which gives an error while building. I solved this by simpling removing said flag, but I do not know what kind of effects this has on cp2k, but the build at least finished without errors.
+Finally this brings me to the performance issues with GPU acceleration. I used the benchmarks/QS/H2O-64.inp as a benchmark and tried with and without GPU to see the difference in speed.  When using a single core I did see a speedup of 2x (H2O-32_single_core_no_GPU.out and H2O-32_single_core_GPU.out). While if I use 4 cores I see roughly a 2x speed decrease! (H2O-32_parallel_4_1.out and H2O-32_GPU_4_1.out) I expected way better GPU performance. Is this just the kind of performance I should expect from cp2k or is there something wrong with the installation? Would EPLA or cusolvermp help with this? I can also imagine that part is due to my weaker and commercial GPU instead of a strong professional GPU.
+I just now also noticed that the difference between 1 core with GPU and 4 cores with GPU is more or less nothing. Is that the expected bahviour?
+On the supercomputer we do have top end hardware, Intel Xeon Platinum 8360Y and a A100. However, I have less control about the installation of cp2k and therefore I do not know the exact details of how it was installed. On top off that I can only make comparisons between calculations on different nodes. This will change the results a bit, but I still find the GPU performance to be quite lacking. 16 cores without GPU vs 18 cores with a GPU gives roughly a 2x speed decrease! (no_gpu.out and GPU.out) When using a single core instead we see a factor 4 speedup. (no_gpu_single_core.out and GPU_single_core.out)
+Now that I have a closer look I see that the difference between 1 core and 16 cores with GPU is almost nothing only like 25%. SO in this case we use top of the line hardware, but we see similair issues with the GPU performance when using multiple cores. Is that what is expected? or is there soemthing wrong with?
+Would anybody be able to help me with these issues?
+Kind regards,
+Roel v/d Ven
+files.zip
+Hi, thank you for sharing your feedback! It looks like you have multiple specific issues around (1) ELPA and cuSolver, and a more general issue with (2) CPU vs GPU.
+Let me try addressing (2) and CPU performance in particular. First, benchmarks/QS/H2O-64.inp is pretty small for contemporary higher core count CPUs, and time to solution can go as low as 10s (end-to-end). Let's call it a sanity check. I think on a single system you still want to use MPI and OpenMP aka CPU-hybrid execution aka PSMP version of CP2K. For both MPI and OpenMP affinitizing the cores can be important. Adjusting CPU affinity for MPI is specific to your flavor aka MPICH/2 or OpenMPI. For OpenMP, please try export OMP_PROC_BIND=TRUE. The latter might be good enough as starting point.
+GPU-wise like (2) again, H2O-64 being small still holds plus your GPU (consumer) may only yield a fraction of supposedly high FLOPS/s when running double-precision calculations (SP:DP ratio). I think your model is rated at ~340 GFLOPS/s (DP), which can roughly equate to ~four contemporary CPU-cores. Then, hiding transfer and other overhead may not worth using the GPU.
+Finally this brings me to the performance issues with GPU acceleration. I used the benchmarks/QS/H2O-64.inp as a benchmark and tried with and without GPU to see the difference in speed. When using a single core I did see a speedup of 2x (H2O-32_single_core_no_GPU.out and H2O-32_single_core_GPU.out). While if I use 4 cores I see roughly a 2x speed decrease! (H2O-32_parallel_4_1.out and H2O-32_GPU_4_1.out) I expected way better GPU performance. Is this just the kind of performance I should expect from cp2k or is there something wrong with the installation? Would EPLA or cusolvermp help with this? I can also imagine that part is due to my weaker and commercial GPU instead of a strong professional GPU.
+I just now also noticed that the difference between 1 core with GPU and 4 cores with GPU is more or less nothing. Is that the expected bahviour?
+There is a script under tools (diff_cp2k.py) that you can use to compare CP2K output timers. I did for your outputs and these are the important lines:
+So, you are limited by the GRID part, which runs on the GPU:
+What's strange is the case with 4 cores and GPUs, where the GRID part increases. My only guess is that your CPU affinity is somehow wrong, so you are oversubscribing the same cores?
+Let me try addressing (2) and CPU performance in particular. First, benchmarks/QS/H2O-64.inp is pretty small for contemporary higher core count CPUs, and time to solution can go as low as 10s (end-to-end). Let's call it a sanity check. I think on a single system you still want to use MPI and OpenMP aka CPU-hybrid execution aka PSMP version of CP2K. For both MPI and OpenMP affinitizing the cores can be important. Adjusting CPU affinity for MPI is specific to your flavor aka MPICH/2 or OpenMPI. For OpenMP, please try export OMP_PROC_BIND=TRUE. The latter might be good enough as starting point.
+I am not too familiar with MPI and OpenMP, so I hope that I understand it correctly. Currently I run cp2k using this command for the CPU:
+mpirun -n 4 -x OMP_NUM_THREADS=1 ~/theochem/software/cp2k-2023.2/exe/local/cp2k.psmp -i H2O-32.inp -o H2O-32_parallel_4_1.out &
+and for GPU:
+mpirun -n 4 -x OMP_NUM_THREADS=1 -x CUDA_VISIBLE_DEVICES=0 ~/theochem/software/cp2k-2023.2/exe/local_cuda/cp2k.psmp -i H2O-32.inp -o H2O-32_GPU_4_1.out &
+So now you are suggesting to use export OMP_PROC_BIND=TRUE, which should be equivalent to adding -x OMP_PROC_BIND=TRUE right?
+When I did my run I swa 4 processes with 100% utilization,now with OMP_PROC_BIND=TRUE I see 4 processe with 25% usage. The calculation was also absurdly slow. Roughly 2 order of magnitudes slower.
+GPU-wise like (2) again, H2O-64 being small still holds.
+I did try some calculations of some other larger systems (32 butanol molecules) and they showed a similar relative speed, so still a slowdown with the GPU.
+butanol.zip
+I didn't let this calculations finish as they took quite some time and I have a limited budget on the supercomputer.
+Your GPU (consumer) may only yield a fraction of supposedly high FLOPS/s when running double-precision calculations (SP:DP ratio). I think your model is rated at ~340 GFLOPS/s (DP), which can roughly equate to ~four contemporary CPU-cores. Then, hiding transfer and other overhead may not worth using the GPU.
+Is there such a big performance difference in consumer and professional GPUs for these workloads? I often hear that they deliver similar performance, but that the professional GPUs are way more energy efficient and stable, hence they are preferred for HPC.
+There is a script under tools (diff_cp2k.py) that you can use to compare CP2K output timers.
+Oh that is a helpfull I didnt know yet!
+So, you are limited by the GRID part, which runs on the GPU:
+What's strange is the case with 4 cores and GPUs, where the GRID part increases. My only guess is that your CPU affinity is somehow wrong, so you are oversubscribing the same cores?
+I am not too familiar with all the terminology regarding computing, but if I understand correctly you are suggesting that the I am putting too much load on the cores that are running in cp2k?
+My CPU has 6 cores and I only have a browser running that is using some of its resources, so in principle my CPU should not have this issue right?
+Could there be something that I should add to my mpirun command? Currently I use these commands for the CPU and GPU runs respectivly.
+mpirun -n 4 -x OMP_NUM_THREADS=1 ~/theochem/software/cp2k-2023.2/exe/local/cp2k.psmp -i H2O-32.inp -o H2O-32_parallel_4_1.out &
+mpirun -n 4 -x OMP_NUM_THREADS=1 -x CUDA_VISIBLE_DEVICES=0 ~/theochem/software/cp2k-2023.2/exe/local_cuda/cp2k.psmp -i H2O-32.inp -o H2O-32_GPU_4_1.out &
+If you see 4 cores engaged, then it is clear you are not oversubscribing cores. So, there is something affects the resources when you use the GPU. Could you try 2 ranks? Then next step is run a CUDA profiler and see where you are spending time in details...
+Let me try addressing (2) and CPU performance in particular. First, benchmarks/QS/H2O-64.inp is pretty small for contemporary higher core count CPUs, and time to solution can go as low as 10s (end-to-end). Let's call it a sanity check. I think on a single system you still want to use MPI and OpenMP aka CPU-hybrid execution aka PSMP version of CP2K. For both MPI and OpenMP affinitizing the cores can be important. Adjusting CPU affinity for MPI is specific to your flavor aka MPICH/2 or OpenMPI. For OpenMP, please try export OMP_PROC_BIND=TRUE. The latter might be good enough as starting point.
+I am not too familiar with MPI and OpenMP, so I hope that I understand it correctly. Currently I run cp2k using this command for the CPU: mpirun -n 4 -x OMP_NUM_THREADS=1 ~/theochem/software/cp2k-2023.2/exe/local/cp2k.psmp -i H2O-32.inp -o H2O-32_parallel_4_1.out & and for GPU: mpirun -n 4 -x OMP_NUM_THREADS=1 -x CUDA_VISIBLE_DEVICES=0 ~/theochem/software/cp2k-2023.2/exe/local_cuda/cp2k.psmp -i H2O-32.inp -o H2O-32_GPU_4_1.out &
+What is this ampersand after your command? If it's part of your command line, can you try without? Have your enabled SMT aka Hyperthreading? Can you add --map-by slot:PE=4 or --map-by slot:PE=6 to your mpirun flags and omit -x OMP_NUM_THREADS=1? Also, using 4 ranks on a 6-core CPU is not the best idea...
+So now you are suggesting to use export OMP_PROC_BIND=TRUE, which should be equivalent to adding -x OMP_PROC_BIND=TRUE right?
+Your -x looks like OpenMPI and it's alright in this case.
+When I did my run I saw 4 processes with 100% utilization,now with OMP_PROC_BIND=TRUE I see 4 processes with 25% usage. The calculation was also absurdly slow. Roughly 2 order of magnitudes slower.
+Let's get this resolved.
+GPU-wise like (2) again, H2O-64 being small still holds.
+I did try some calculations of some other larger systems (32 butanol molecules) and they showed a similar relative speed, so still a slowdown with the GPU. butanol.zip I didn't let this calculations finish as they took quite some time and I have a limited budget on the supercomputer.
+OK, then let's worry about H2O-64. Just saying it's not a big problem for a single contemporary system.
+Your GPU (consumer) may only yield a fraction of supposedly high FLOPS/s when running double-precision calculations (SP:DP ratio). I think your model is rated at ~340 GFLOPS/s (DP), which can roughly equate to ~four contemporary CPU-cores. Then, hiding transfer and other overhead may not worth using the GPU.
+Is there such a big performance difference in consumer and professional GPUs for these workloads? I often hear that they deliver similar performance, but that the professional GPUs are way more energy efficient and stable, hence they are preferred for HPC.
+For instance https://www.techpowerup.com/gpu-specs/geforce-rtx-3060-ti-gddr6x.c3935 supposedly lists your card with specs. Look at "FP32 (float)" performance of 16.20 TFLOPS. The "FP64 (double)" performance is however only 253.1 GFLOPS and the DP:SP-ratio is pretty bad (1:64). I guess your 6 CPU cores should be as capable and practically better. Your GPU is FP32-wise in line with professional GPUs. However, FP64 performance is 1/64th and datacenter GPUs usually provide an DP:SP-ratio of 1:2.
+If you see 4 cores engaged, then it is clear you are not oversubscribing cores. So, there is something affects the resources when you use the GPU. Could you try 2 ranks?
+This command would result in running with 2 ranks right?
+mpirun -n 2 -x OMP_NUM_THREADS=2 -x CUDA_VISIBLE_DEVICES=0 ~/theochem/software/cp2k-2023.2/exe/local_cuda/cp2k.psmp -i H2O-32.inp -o H2O-32_GPU_4_2.out
+I did and it resulted in more or less the same time (<1% difference).
+Then next step is run a CUDA profiler and see where you are spending time in details...
+How would I go about this. the NVIDIA page is quite intimidating...
+The cp2k page however seems more managable. However, I am not sure how I should do this step: and linking against -lnvToolsExt
+Let me try addressing (2) and CPU performance in particular. First, benchmarks/QS/H2O-64.inp is pretty small for contemporary higher core count CPUs, and time to solution can go as low as 10s (end-to-end). Let's call it a sanity check. I think on a single system you still want to use MPI and OpenMP aka CPU-hybrid execution aka PSMP version of CP2K. For both MPI and OpenMP affinitizing the cores can be important. Adjusting CPU affinity for MPI is specific to your flavor aka MPICH/2 or OpenMPI. For OpenMP, please try export OMP_PROC_BIND=TRUE. The latter might be good enough as starting point.
+I am not too familiar with MPI and OpenMP, so I hope that I understand it correctly. Currently I run cp2k using this command for the CPU: mpirun -n 4 -x OMP_NUM_THREADS=1 ~/theochem/software/cp2k-2023.2/exe/local/cp2k.psmp -i H2O-32.inp -o H2O-32_parallel_4_1.out & and for GPU: mpirun -n 4 -x OMP_NUM_THREADS=1 -x CUDA_VISIBLE_DEVICES=0 ~/theochem/software/cp2k-2023.2/exe/local_cuda/cp2k.psmp -i H2O-32.inp -o H2O-32_GPU_4_1.out &
+What is this ampersand after your command? If it's part of your command line, can you try without? Have your enabled SMT aka Hyperthreading? Can you add --map-by slot:PE=4 or --map-by slot:PE=6 to your mpirun flags and omit -x OMP_NUM_THREADS=1? Also, using 4 ranks on a 6-core CPU is not the best idea...
+I use the ampersand so the command is asynchronous from the terminal, so I can still use it to look at the outputfile as it is being written to or to look at my cpu usage via htop.
+Hyperthreading is enabled, so I have a 6 core 12 thread CPU. When I remove -x OMP_NUM_THREADS=1 it defaults to using 2 threads and if I then use '-n 4' or '-n 6' I see that the calculations is a bit slower ~25%.
+If I add --map-by slot:PE=4 or =6 it doesn't work, I only got it working with =1 and in that case it is equivalent to without it.
+Your GPU (consumer) may only yield a fraction of supposedly high FLOPS/s when running double-precision calculations (SP:DP ratio). I think your model is rated at ~340 GFLOPS/s (DP), which can roughly equate to ~four contemporary CPU-cores. Then, hiding transfer and other overhead may not worth using the GPU.
+Is there such a big performance difference in consumer and professional GPUs for these workloads? I often hear that they deliver similar performance, but that the professional GPUs are way more energy efficient and stable, hence they are preferred for HPC.
+For instance https://www.techpowerup.com/gpu-specs/geforce-rtx-3060-ti-gddr6x.c3935 supposedly lists your card with specs. Look at "FP32 (float)" performance of 16.20 TFLOPS. The "FP64 (double)" performance is however only 253.1 GFLOPS and the DP:SP-ratio is pretty bad (1:64). I guess your 6 CPU cores should be as capable and practically better. Your GPU is FP32-wise in line with professional GPUs. However, FP64 performance is 1/64th and datacenter GPUs usually provide an DP:SP-ratio of 1:2.
+Okay interesting. Thank you for the explenation!
+If you see 4 cores engaged, then it is clear you are not oversubscribing cores. So, there is something affects the resources when you use the GPU. Could you try 2 ranks?
+This command would result in running with 2 ranks right? mpirun -n 2 -x OMP_NUM_THREADS=2 -x CUDA_VISIBLE_DEVICES=0 ~/theochem/software/cp2k-2023.2/exe/local_cuda/cp2k.psmp -i H2O-32.inp -o H2O-32_GPU_4_2.out I did and it resulted in more or less the same time (<1% difference).
+Then next step is run a CUDA profiler and see where you are spending time in details...
+How would I go about this. the NVIDIA page is quite intimidating... The cp2k page however seems more managable. However, I am not sure how I should do this step: and linking against -lnvToolsExt
+Sorry, I was not clear here. I'm asking for 2 ranks and a single thread each. The idea is to see the performance when only 2 cores are engaged.
+Concerning the profiler, you can to use the Nvidia profiler, no need to recompile CP2K. The idea is to see if the slowdown is on the GPU kernels only.
+If you see 4 cores engaged, then it is clear you are not oversubscribing cores. So, there is something affects the resources when you use the GPU. Could you try 2 ranks?
+This command would result in running with 2 ranks right? mpirun -n 2 -x OMP_NUM_THREADS=2 -x CUDA_VISIBLE_DEVICES=0 ~/theochem/software/cp2k-2023.2/exe/local_cuda/cp2k.psmp -i H2O-32.inp -o H2O-32_GPU_4_2.out I did and it resulted in more or less the same time (<1% difference).
+Then next step is run a CUDA profiler and see where you are spending time in details...
+How would I go about this. the NVIDIA page is quite intimidating... The cp2k page however seems more managable. However, I am not sure how I should do this step: and linking against -lnvToolsExt
+Sorry, I was not clear here. I'm asking for 2 ranks and a single thread each. The idea is to see the performance when only 2 cores are engaged.
+Ah like that. I ran such calculation and it showed more or less the same speed as 1 rank and therefore also the same speed when using 4 ranks.
+Concerning the profiler, you can to use the Nvidia profiler, no need to recompile CP2K. The idea is to see if the slowdown is on the GPU kernels only.
+I couldn't get the visual profiler working as I am using the most recent CUDA toolkit and in there it is replaced by nsight. I ran the profiler both for a single core job and for a dual core job.
+I could not upload the files directly so I used wetransfer: https://we.tl/t-OJFbYDc3JY
+Just in case, could you run without any GPU and see if the CPU part scales with the new number of ranks? At this point, the first test is to check if the CPU scales.
+Just in case, could you run without any GPU and see if the CPU part scales with the new number of ranks? At this point, the first test is to check if the CPU scales.
+In my initial post I had output files of a single rank calculation without a GPU and also a calculation with 4 ranks (also without GPU). The single rank calculation was around ~200s, while the 4 rank calculation was ~70s, so around a 3x speedup, which seems reasonable.
+OK, sorry, I misssed it. Then, I assume you have MPS enabled on your system, so that multiple ranks can access the same GPU?
+OK, sorry, I misssed it. Then, I assume you have MPS enabled on your system, so that multiple ranks can access the same GPU?
+I do not know for sure. I simply use this command:
+mpirun -n 4 -x OMP_NUM_THREADS=1 -x CUDA_VISIBLE_DEVICES=0 ~/theochem/software/cp2k-2023.2/exe/local_cuda/cp2k.psmp -i H2O-32.inp -o H2O-32_GPU_4_1.out.
+Would I need to add something special to enable it or is it by default enabled?
+I do know that when I use nvidia-smi it shows the same amount of processes of cp2k as there are ranks. Would that be an indication that it is working?
+I am not sure, really.
+But I suggest to follow the CUDA MPS instruction to check it.
+This is what I do:
+I am not sure, really. But I suggest to follow the CUDA MPS instruction to check it. This is what I do:
+I ran with these settings and now I do see a slight speedup when using multiple CPU cores, roughly 10 % faster when using 4 cores. However, not using a GPU would still be a lot faster.
+MPS.zip
+OK, I think we are coming to a conclusion here:
+Overall, I don't see anything wrong with CP2K (neither a bug nor a performance issue), so I think we can close this issue (note that the github issues are for reporting bugs or discuss developements).
+You can ask more advice on how to run CP2K in the google forum..

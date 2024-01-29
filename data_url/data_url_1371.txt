@@ -1,0 +1,34 @@
+Datetimes come in two flavors: with ("aware") or without ("naive") timezone information. There's also the timestamp integer which is always UTC.
+You can generally convert between the three forms.
+A naive datetime is inappropriate for serialization, so we use its timestamp.
+(3) is annoying to users when we could easily up-convert, especially if errors only appear during serialization which might not be caught by tests. Users could easily end up with a mish-mash of aware and naive datetimes and have to learn about all this nonsense.
+(4) is also pretty annoying to users but they won't have a mish-mash. Annoying for developers who have to remember to put in checks
+(1,2) vs (5) is a decision about where to break roundtrippability: in our containers or during json.
+There's probably a hidden (6) option to serialize datetimes exactly as they come and if you serialize naive datetimes you are free to screw yourself up.
+https://docs.python.org/3/library/datetime.html
+In #5274 I implemented (3) but in #5152 it was kindof annoying so I started to implements parts of (5)
+I think @maffoo would choose (1) or (2).
+I haven't quite decided yet. I think we should promote having timezone information as much as possible just for being explicit. I admit it's not very ergonomic compared to naive datetimes.
+I think  the fact that it comes from the protos as "aware" and a lot of the workflow tools mean users won't be creating datetimes directly is more points for biting the bullet for "aware" datetimes. But this argument is compatible with (1,3,4)
+I think I prefer (1)
+Thanks for writing this very helpful overview!
+I could get on board with (1). Just to be clear, does (1) mean we would also upconvert naive datetimes to aware when serializing? That would be a slight difference from what we do now (currently we raise a TypeError if you try to serialize a naive datetime). Another thing that would be helpful to clarify in this case is that since classes we write would accept both naive and aware datetimes, we should always convert to .timestamp() to do comparisons, as mixed comparisons could fail.
+If you upconvert naive datetime, maybe instead of a TypeError it should raise a warning on serializing?
+Just to be clear, does (1) mean we would also upconvert naive datetimes to aware when serializing?
+Short answer: yes; (1) and (2) would deviate from current behavior by allowing either flavor during serialization
+Slightly more detail: we'd technically (up-)convert during deserialization; since the json document is a unix timestamp -- a third flavor
+Another thing that would be helpful to clarify in this case is that since classes we write would accept both naive and aware datetimes, we should always convert to .timestamp() to do comparisons, as mixed comparisons could fail.
+This is along the same argument of option (5) where our classes should somehow help the user do things better. Just as upconverting during the constructor has:
+upconverting during the __eq__ method would make our classes behave as not-a-bag-of-data
+I don't think we should override equality, since python has made the decision to not allow comparisons between aware and naive datetimes
+If you upconvert naive datetime, maybe instead of a TypeError it should raise a warning on serializing?
+I usually consider warnings a symptom of: "gee we really should have been more strict about this but we don't want to break backwards compatibility". If we don't think people should be doing something, we should not let them
+To drive this forward: the current proposal is to
+cc @dstrain115
+Another "option 0" would be to serialize Python datetimes field-for-field and not use unix timestamps in our json format. No one likes this idea; json is supposed to be somewhat interoperable and unix timestamps are very interoperable
+After a final chat offline we're all in on option (1). Practically: I need to remove the "aware-only" restriction from the serialization code.
+(This is a random comment from the peanut gallery which you are absolutely free to ignore.)
+The discussion above leaves me wondering what will happen in terms of backwards compatibility with user's stored json (if there is such). Referring to this comment in issue 4321,
+Breaking stored experimental data is 100% unacceptable. We must never ever break backwards compatibility with serialized data. This is not negotiable, it is a hard requirement of serialization to disk. I feel rather strongly about this point. If I come back 30 years from now and try to load my janky old cirq circuits, they had better load.
+is there a chance that the proposed changes will (possibly silently) be incompatible in this way? (I don't know the answer, and probably you all have thought about it, but just in case …)
+We use a unix timestamp as the serialized form, which should work forever. If we do (1), you "lose" whether or not the original form had timezone information.

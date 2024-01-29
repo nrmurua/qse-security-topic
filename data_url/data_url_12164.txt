@@ -1,0 +1,107 @@
+I have constructed a 5 qubit, 3 classical bit circuit. This circuit works fine if the backend is the simulator. But when I try to run it on the real quantum processor, it failed and print the following error message:
+Traceback (most recent call last):
+File "quantum.py", line 89, in 
+result_real = job_exp.result()
+File "/usr/local/lib/python3.5/dist-packages/qiskit/backends/ibmq/ibmqjob.py", line 195, in result
+job_response = self._wait_for_result(timeout=timeout, wait=wait)
+File "/usr/local/lib/python3.5/dist-packages/qiskit/backends/ibmq/ibmqjob.py", line 209, in _wait_for_result
+'it is {}'.format(str(status)))
+qiskit.backends.joberror.JobError: 'Invalid job state. The job should be DONE but it is JobStatus.ERROR'
+Just run the following program, then supposedly the error message will come out. By the way, I do have an IBMQ experience account with some free accesses to the real quantum processor.
+import matplotlib.pyplot as plt
+import numpy as np
+import math
+from qiskit import QuantumCircuit, ClassicalRegister, QuantumRegister
+from qiskit import available_backends, execute, register, get_backend
+from qiskit.tools.visualization import plot_histogram, circuit_drawer
+from qiskit.tools.visualization import matplotlib_circuit_drawer as drawer, qx_color_scheme
+from qiskit.tools.qi.qi import state_fidelity
+from qiskit import Aer
+from qiskit import IBMQ
+#import the real machine
+from qiskit.backends.ibmq import least_busy
+IBMQ.load_accounts()
+backend = Aer.get_backend("qasm_simulator")
+#q[0] is the control bit, q[1], q[2] are to be measured, q[3], q[4] are to construct quantum switch
+#on classical quantum computer.
+q = QuantumRegister(5, "q")
+c0 = ClassicalRegister(1, "c0")
+c1 = ClassicalRegister(1, "c1")
+c2 = ClassicalRegister(1, "c2")
+qc = QuantumCircuit(q, c0, c1, c2, name = "qc")
+#prepare q[0] in superposition
+qc.h(q[0])
+#put q[2] q[3] into \phi^+
+qc.h(q[2])
+qc.cx(q[2], q[3])
+#put q[1] into maximally mixed state
+#put q[4] into |+>
+#q[4] is only to generate a random grey code
+qc.h(q[4])
+qc.measure(q[4], c0[0])
+qc.x(q[1]).c_if(c0, 1)
+#Controlled Swap q[1] q[2] conditioned on q[0]
+qc.cswap(q[0], q[1], q[2])
+#flip q[0]
+qc.x(q[0])
+#Measure q[1] in fourier basis
+qc.h(q[1])
+qc.measure(q[1], c0[0])
+#Measure q[2] in computational basis
+qc.measure(q[2], c0[0])
+#Controlled Swap q[1] q[2] conditioned on q[0]
+qc.cswap(q[0], q[1], q[2])
+#Measure q[2] q[3] on \phi^+
+qc.cx(q[2], q[3])
+qc.h(q[2])
+qc.measure(q[2], c1[0])
+qc.measure(q[3], c2[0])
+#measure q[0] in fourier basis
+qc.h(q[0])
+qc.measure(q[0], c0[0])
+#drawing
+"""cmp_style = qx_color_scheme()
+cmp_style.update({
+'usepiformat': True,
+'showindex': True,
+'cregbundle': True,
+'compress': True,
+'fold': 20
+})
+drawer(qc, filename="AMDExample.pdf", style = cmp_style)"""
+"""# Create a Quantum Program for execution
+job = execute(qc, backend, shots = 40000)
+print(job.status())
+result = job.result()
+plot_histogram(result.get_counts('qc'))"""
+#running on a real machine
+large_enough_devices = IBMQ.backends(filters=lambda x: x.configuration()['n_qubits'] > 5 and
+not x.configuration()['simulator'])
+backend = least_busy(large_enough_devices)
+print("The best backend is " + backend.name())
+#qiskit_job_status
+shots = 8192           # Number of shots to run the program (experiment); maximum is 8192 shots.
+max_credits = 5        # Maximum number of credits to spend on executions.
+job_exp = execute(qc, backend=backend, shots=shots, max_credits=max_credits)
+result_real = job_exp.result()
+print(result_real.get_counts("qc"))
+In expectation, the circuit should run successfully and the program should print a plot indicating the statistic.
+I need help with this
+Hi @gaoning041x could you give some more information, which backend were you using? I don't think the physical devices currently support operations after measurements, so you may need to re-write your code or use one of the simulators instead.
+Hi @maddy-tod thank you for your reply. I was trying to run this circuit on the 16 qubit machine. I want to run this circuit on a 4 qubit machine, but I need an extra qubit to generate a qubit mixed state, like I/2. So do you mean that I cannot manipulate the state after I measure it? Can I just do something like measure the system on one basis, then measure it on another basis?
+Yes that is what I mean. I don't think that measuring like that is currently possible on the real backends. However I managed to get your code running using the Aer simulator, Aer.get_backend('qasm_simulator'), so it might be better to use this for now.
+@maddy-tod, thanks for clarifying. The circuit does work fine on simulators.
+Besides these problems, I would also like to ask one additional question if you don't mind: how can I generate a mixed state like I/2, how can I do this without introducing an extra qubit? I searched through the documentation and I cannot find it... Thanks for your help.
+Hi,
+IMHO, mixed states are not supported yet, but there are at least two workarounds:
+(1) By purification, you can work on corresponding pure states by doubling the number of qubits
+(2) Or, you can combine randomized coin flipping with the current pure states simulator/real-devices
+Hi @rraymondhp, thanks for the suggestions, but either one would require an extra qubit right? The circuit  I'm using now essentially adopts the second suggestion: I use an extra qubit (to do coin tossing) and classical control to  generate a mixed state. Anyway thanks for help.
+A mixed state is represented by a density matrix. On a real device you always have a state vector. A density matrix is what you get after performing infinitely many realizations of an experiment and averaging.
+In principle, conception of reduced density matrix (https://en.wikipedia.org/wiki/Quantum_entanglement#Reduced_density_matrices) may be applied even for single experiment due to entanglement with environment.
+Hi @gaoning041x
+The second one will not require extra qubits. And as @nonhermitian  pointed out, density matrix is an average of many experiments on pure states.
+So the conclusion is that, this issue is not a bug and can be closed, right?
+@rraymondhp Right, I don't need extra qubits in principle if I follow the second suggestion.
+The original problem I was asking is actually not about mixed states, but it's been answered by @maddy-tod and yes, I think my questions are all clear now and I'm happy with you closing this issue. Thanks.
+@gaoning041x great to hear! If you need any help in future the Qiskit Slack workspace is a great place to start.

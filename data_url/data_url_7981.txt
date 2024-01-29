@@ -1,0 +1,28 @@
+I am currently using Qutip 5.0 prerelease. When performing calculations involving 4-mode operators like $e^{A\otimes B\otimes C\otimes D}$, and setting the Hilbert space dimension to be N=7, it takes forever to finish! However, when I use Qutip 4.7, it takes only 1 second to finish same calculations with N=20...
+This is giving me a serious problem because I need the .logm() function from Qutip 5.0...
+Anyone facing the same problem? Would be nice if someone can help me :)
+@Chengie6 Thank you for the bug report. Could you post a small snippet of code that demonstrates the issue? Then I can attempt to reproduce the issue.
+The likely cause is that since operators may now be either sparse or dense, it is possible to accidentally use the kind that is much slower for a particular operation. However, we would like to reduce how often this happens so whatever the cause, we are keen to fix things so that they just work.
+Hi @hodgestar, thanks a lot for offering helps :) So here's the sample code I just tried:
+
+
+the first one is using Qutip 4.7 and the second one is Qutip 5.0
+I had a quick look at this since i was benchmarking expm() anyway.  Essentially I think the issue is your A operator is diagonal, and in 4.7  there is a check that notices it is diagonal, and quickly returns the result.
+In v5,  there is a similar check for sparse matrices, but the default behavior is to convert to dense, so the check is not done.
+if you use expm(dtype="CSR") the v5 example should be quick (with the caveat that the result is nan in both 5 and 4.7).
+I guess we need to add a check for diagonality for dense cases too.
+edit:
+@hodgestar pointed out that A.to("dense") helps too, so I guess it is just
+
+@nwlambert Thanks for the help, it somehow solves the problem a bit. However, it doesn't really help much when I increase the Hilbert space cut-off to N=20 or 25. In fact, 4.7 still calculates instantly, but 5.0 will report an error that the space required is too large, or the kernel just shuts down itself...
+I don't know so much about algorithms, but from your answer it seems that 4.7 and 5.0 are using completely different ways to handle matrices? It seems the 5.0 method is in general a bit slower to handle heavier calculations?
+The reason this operation is at all possible for such a large matrix is because A is diagonal, so ideally expm() shouldn't be doing much work in calculating e^{A} as the exponential of a diagonal matrix is trivial.
+A.expm(dtype="CSR") in v5 does work even for N=20 for me, but i do get memory issues when doing it in conjunction with the state multiplication, though doing it first then multiplying works, i.e.,
+ B= A.expm(dtype="CSR")
+print(state.dag()*(B*state))
+I think again its some hijinks with the data layer, as coherent() is returning a dense state (at least for me).  doing
+(state.dag().to("CSR")*(A.expm(dtype="CSR"))*state.to("CSR"))
+also works.
+as an aside, I still get nans as output (printing the output) in all cases, probably just because you have matrix elements in e^A which are very large, since the larger elements are order e^(N^4)?
+Ahhhhh I see! @nwlambert You're right, I didn't really keep tracking the diagonality of my operators, and it solves my problems :) And for the current 4-mode calculations, I have non-diagonalized matrices and it seems that it is indeed very heavy calculations :( Wish there could be some good algorithms discovered for such problems :)
+Thank you very much for you and your colleagues' helps!

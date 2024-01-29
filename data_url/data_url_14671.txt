@@ -1,0 +1,14 @@
+Opening a catch-all issue to track some of the places where Parameter, ParameterExpression and ParameterVector would benefit from further or improved documentation, either in terms of their user-facing API or their internal architecture philosophy and relationship with sympy. Most of this has already been discussed, but scattered through issues and pull request discussions (some links added) and has not found its way into the docs.
+User facing questions:
+Developer facing:
+Forward facing:
+This information would be good to collect. From my own perspective it looks like the main use case for Parameters is to give a namespace/scoping to parameters that is by necessity not well aligned with the python built-in constructs (since circuits are not implemented as functions), and to allow partial binding. Given  that, I'm unclear on how important sympy is to the whole endeavor, since sympy has a lot of performance overhead and from looking at the code it seems there's a fair bit of logic to work around sympy and we're still left with mismatches like #5877.
+Would a version built around lambda's and functools.partial meet all our needs? At least from a performance point of view it seems very preferable:
+In both cases, build an expression of 3 variables, then bind 2 of them, then bind the 3rd, then resolve to a python float. Timing for my testing is:
+Sympy: 116 µs
+lambda: 0.7 µs
+I can see that the gradient code currently relies on sympy Derivative but there are several packages that can do automatic differentiation on python code, so I assume that wouldn't be too hard to move away from sympy.
+template_matching uses sympy solve.solve(equations) and I'm not clear if that really needs sympy or if the equations are of some more special form that could be solved without sympy, and if not I'm guessing that the parameterized template matching must be a pretty slow pass, that could potentially be made optional and only load sympy if requested.
+I would be very much in favor of using the lambda approach instead of sympy. The overhead from sympy can end up being quite a large percentage of the time in the transpiler (even when gates are not parameterized in the input circuit), it often ends up being the bottleneck for transpiling circuits that aren't wide (because the routing is quick). For example, transpiling a 7x7 qv model circuit on ibmq paris has a profile that looks like this:
+
+We're spending ~35% of the transpile time there in sympy evaluating the parameters for basis translation.

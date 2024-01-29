@@ -1,0 +1,31 @@
+A Q# Jupyter Notebook cell like this:
+does not print a matrix of a CNOT operation, as expected. Instead, it either prints nothing (if I run it on a local IQ# installation) or prints DumpMachine output for a state which I suspect is the Choi–Jamiołkowski state for the given operation (if I run it on Binder).
+DumpOperation works fine for me from regular cells (executed using %simulate), so I suspect something goes wrong when redirecting output streams with %kata magic vs the DumpReferenceAndTarget operation.
+QDK version: 0.17.2105143879 (both for local setup and for Binder)
+@anjbur I'd really appreciate it if you could look into this!
+Hi @tcNickolas @anjbur , adding this following line to the KataMagic.cs inside Simulate() seems to fix the bug.
+@tcNickolas. I would love to do that. But I think it doesn't fix the problem completely
+In Superposition kata, if I add DumpOperation(2, ApplyToFirstTwoQubitsCA(CNOT, _)); , it works perfectly fine.
+
+However, in BasicGates kata, if I add DumpOperation(2, ApplyToFirstTwoQubitsCA(CNOT, _)); , it works perfectly fine till it prints "End of DumpDiffOnOneQubit..." but then it prints the some extra output associated with DumpOperation
+SS1
+
+SS2 Extra output
+
+@tcNickolas , I am trying to figure out the cause of this odd behaviour b/w the Superposition and the BasicGates kata since they use a similar testing harness.
+Initially I thought it might be due to the initial state preparation step in the BasicGates kata which converts |0> to 0.6*|0> + 0.8*|1>, so I commented out the statePrep step but its not helping as evident from the above ss.
+One difference I see between Superposition and BasicGates is that Superposition only uses plain version of the task operation, and BasicGates uses both the plain version and the controlled one. Might be something about the implementation of the controlled version of DumpOperation...
+Hi @tcNickolas ,  I also initially thought on the same lines.
+Finally found the culprit in BasicGates. It was the call to AssertOperationsEqualsReferenced function in the test. Removing this line now doesn't give the additional output. Unfortunately a large number of tests use this operation, so would need to think a fix for the same.
+Yeah, that operation is the core part of a lot of tests :-)
+But internally it only calls the test operation again, so I would understand if we got two matrices in BasicGates, but not the DumpMachine output instead...
+Hi @tcNickolas, the controlled version of the operation is indeed troubling. Passing the basic version, gives two matrices.
+Aha, so it looks like there are two things in play here:
+I suggest we fix the first part in the Katas - that will definitely be an improvement, since a lot of the tests don't use controlled variants of the task operations. Meanwhile I'll try to track down the definition of the controlled variant of DumpOperation and file the second part as an issue against that repo.
+Hi @tcNickolas , I am observing same DumpMachine output in RippleCarryAdder kata, if I add DumpOperation(2, ApplyToFirstTwoQubitsCA(CNOT, _)); in LowestBitCarry operation and then try to implement TwoBitAdder in Task 1.6.
+I am able to reproduce the behaviour of Adjoint DumpOperation in regular Q# Jupyter Notebook cell as you did for the Controlled Variant here.
+Controlled DumpOperation(new Qubit[0], (2, ApplyToFirstTwoQubitsCA(CNOT, _))); prints DumpMachine output instead of matrix, but that happens regardless of the katas, I can reproduce this behavior in a regular Q# Jupyter Notebook cell.
+Here is a screenshot for the same
+
+Yes, the reference solution for TwoBitAdder uses Adjoint LowestBitCarry, so it makes sense it fails in the same manner.
+Good point about adjoint! I edited the issue to add it to the controlled.

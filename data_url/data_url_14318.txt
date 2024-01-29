@@ -1,0 +1,14 @@
+block_to_schedule() (as used by ScheduleBlock methods that require scheduling) inserts unnecessary delays when the ScheduleBlock includes an instruction on a channel and nested ScheduleBlock that uses the same channel as the first instruction as well other channels not used by the first instruction.
+The following example is based on the example given in Qiskit slack:
+The code in the previous section gives:
+but one would expect that the Play instruction would occur at 0 since the SetFrequency instruction has 0 duration and the Play instruction is the first instruction in the following ScheduleBlock.
+The comments and docstrings for the AlignLeft class are not clear enough for me to tell how align() is supposed to treat channels not shared between instructions in a Schedule. Amongst the shared channels, I would expect the start time of schedule 2 to be set to the end time of schedule 1 when the two schedules share all of their channels. When schedule 2 has a channel that schedule 1 does not, I am not sure if the instructions on that channels should be able to back up into overlapping with schedule 1 or just start at the end of schedule 1, but it seems like something about the logic for this case is off here:
+https://github.com/Qiskit/qiskit-terra/blob/cc28f826448986a5d225ab49101fcd1ef650dad8/qiskit/pulse/transforms/alignments.py#L159-L163
+since it is causing later instructions on non-shared channels of schedule 2 to push back the start time of content on shared channels.
+Thanks @wshanks I agree this is a bug. Note that this is sort of an edge case because you don't need nested context;
+I don't quite remember how this was originally designed (according to the blame this is the code I wrote, but I just moved this from the deprecated align schedule module). But this seems to guarantee the start time of non-shared channels to be always greater than the original channel start time, and we should not independently reschedule channels. However, I think this is not properly implemented.
+When we run this transform
+we obtain
+in which weird 50 dt buffer is inserted in between two instructions on D0, and with
+we get
+Actually, starting the second schedule at t0=300 which is the local start time of DriveChannel(1) doesn't make sense. I want to start D1 channel so that it does NOT overlap with the any of predecessor instructions (e.g. to prevent crosstalk), so I would give t0=250 which is simply

@@ -1,0 +1,21 @@
+Hello,
+I was trying the library for the first time and I'm getting a segmentation fault when trying to run this example.
+Here is the bt:
+I build liboqs 0.7.2 with these options (for more details check this PKGBUILD for Arch Linux):
+And I'm using have glibc 2.36. Please let me know anything else I could do to help debug this issue. I will try to build liboqs with CMAKE_BUILD_TYPE='Debug'.
+This seems weird, indeed. I just re-built with your cmake settings and everything is OK as expected on my machine. So, Yes, please do re-build with debugging to also show the so far "invisible" functions triggering the SEGV in your case. Oh, and to ask the obvious: The liboqs build itself went without errors? Could you execute for example build/tests/kat_sig OK? Can you please share the output (config info) of that program?
+Actually, it's not just this example, but some other tests as well. I tried both with the release 0.7.2 and with the main branch and 19 tests fail for me.
+I was just writing this and I didn't see your previous comment. I will do what you suggested and come back later.
+The trace above already helps: It's indeed only Kyber and Dilithium failing... AFAIK they share code that may be the culprit, so tagging @bhess FYI/additional questions regarding your setup.
+Can you please check and see whether you can run build/tests/test_sha3 successfully (and post the output)?
+Mmm... I just saw in the compile options that it is using -O3 instead of -O2 as I thought (which is what I intended by setting CMAKE_BUILD_TYPE=None)
+Thanks for the report, I was able to reproduce it. Will have a closer look.
+This config output indicates use of OpenSSL3 for SHA3 but the bt symbols then point to OQS code... If you feel like trying something else, please recompile without OpenSSL support and see whether that changes sth... I'm not too sure too many people have used liboqs with OpenSSL3... Thanks @bhess for the "reproducer". Also with OSSL3 or 1.1.1?
+The issue only occurs with OpenSSL SHA3. Kyber and Dilithium might be the only ones using this particular API. I only tested with OpenSSL 1.1.1q.
+Yes, exactly, just tried with -DOQS_USE_SHA3_OPENSSL=OFF and all tests passed and example_sig runs fine.
+Looks like an issue in the OpenSSL code for sha3x4. After a reset, the context needs to be initialized again before use. Otherwise we get the segfault as observed:
+
+...compared to the implementation for sha3(x1) reset:
+
+I will open a PR with the fix.
+Applying that patch fixes the issue for me. Thanks!

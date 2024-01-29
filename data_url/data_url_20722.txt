@@ -1,0 +1,24 @@
+After having integrated parts of the Dilithium aarch64 code into my library to provide a performance boost, I had to apply the patch [1]. The key of the patch is the change of the NTT_params.h:constants definition from:
+to
+Considering the C implementation which uses Q1prime instead of the negative value, I am wondering why this negative value is in the aarch64 code base of PQClean.
+Please note that after applying that change, the aarch64 code base calculates the very same signatures as my C or AVX2 implementations. I tested it on an Apple M2, and on an Raspi4 where the code is both compiled for user space and Linux kernel space.
+Unfortunately I was not yet able to develop a small test application linking with PQClean analyzing whether the current PQClean code indeed returns the same results as leancrypto.
+[1] smuellerDD/leancrypto@c370539
+@mkannwischer
+Hi, @smuellerDD
+I don't think this constant is actually used. Beware that when long multiplications (smull, smull2, smlal, smlal2, smlsl, smlsl2) are used, there are at least two ways for implementing Montgomery multiplication:
+(i) ( a (b R mod q) + (a (b R mod q) (-q^{-1}) mod R) q ) / R
+(ii) ( a (b R mod q) - (a (b R mod q) (q^{-1}) mod R) q ) / R
+Both are the same if we use signed multiplications entirely (the "s" in the beginning of the instructions stands for "signed").
+Both (i) and (ii) are suitable for accumulating several long products, while (ii) results in a shorter sequence of vector instructions.
+The number -Q1prime corresponds to -q^{-1} mod R here.
+To see why this constant is actually not used, it suffices to identify where Montgomery multiplications are applied.
+In the NTT, we use Barrett multiplication instead.
+Montgomery multiplication is used only for point-wise multiplication.
+If you take a look at function poly_pointwise_montgomery in poly.c and polyvecl_pointwise_acc_montgomery in polyvec.c where Montgomery multiplication is used,
+you'll find that they are using q^{-1} mod R.
+And if you further dive into __asm_poly_pointwise_montgomery and __asm_polyvecl_pointwise_acc_montgomery, you'll find that we use smlsl instead of smlal for Montgomery reduction.
+In summary,
+the Montgomery parts are using (ii) where q^{-1} mod R is loaded from other places.
+I agree that this is not very good programming practice. And I'm still rewriting the code base in a more orthogonal way.
+Vincent

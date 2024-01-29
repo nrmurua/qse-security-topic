@@ -1,0 +1,65 @@
+I have attempted to build for the Intel Broadwell cpu with the latest 6.1 release as well as the current git repo. In each case I end up with the following error:
+...
+ifort  -fopenmp  -m64 -I/projects/opt/intel/compilers_and_libraries_2018.3.222/linux/mkl/include -I'/usr/include' -I'/home/dog/benchmark_code_characterization/cp2k/cp2k/tools/toolchain/install/libint-1.1.6/include' -I'/home/dog/benchmark_code_characterization/cp2k/cp2k/tools/toolchain/install/libxc-4.0.3/include' -I'/home/dog/benchmark_code_characterization/cp2k/cp2k/tools/toolchain/install/libxsmm-1.9.0/include'   -D__LIBXSMM  -D__FFTW3  -D__LIBINT -D__LIBINT_MAX_AM=6 -D__LIBDERIV_MAX_AM1=5 -D__LIBXC   -D__COMPILE_ARCH=""local"" -D__COMPILE_DATE=""Mon Oct 22 11:21:44 MDT 2018"" -D__COMPILE_HOST=""cn422"" -D__COMPILE_REVISION=""git:40be634"" -D__DATA_DIR=""/home/dog/benchmark_code_characterization/cp2k/cp2k/data"" -Wl,--enable-new-dtags  -L'/usr/lib64' -Wl,-rpath='/usr/lib64' -L'/home/dog/benchmark_code_characterization/cp2k/cp2k/tools/toolchain/install/libint-1.1.6/lib' -Wl,-rpath='/home/dog/benchmark_code_characterization/cp2k/cp2k/tools/toolchain/install/libint-1.1.6/lib' -L'/home/dog/benchmark_code_characterization/cp2k/cp2k/tools/toolchain/install/libxc-4.0.3/lib' -Wl,-rpath='/home/dog/benchmark_code_characterization/cp2k/cp2k/tools/toolchain/install/libxc-4.0.3/lib' -L'/home/dog/benchmark_code_characterization/cp2k/cp2k/tools/toolchain/install/libxsmm-1.9.0/lib' -Wl,-rpath='/home/dog/benchmark_code_characterization/cp2k/cp2k/tools/toolchain/install/libxsmm-1.9.0/lib'  -L/home/dog/benchmark_code_characterization/cp2k/cp2k/lib/local/ssmp -o /home/dog/benchmark_code_characterization/cp2k/cp2k/exe/local/libcp2k_unittest.ssmp libcp2k_unittest.o  -lcp2kstart -lcp2kmc -lcp2kswarm -lcp2kmotion -lcp2kthermostat -lcp2kemd -lcp2ktmc -lcp2kmain -lcp2kgrid -ldbcsrarnoldi -ldbcsrx -lcp2kshg_int -lcp2keri_mme -lcp2kminimax -lcp2khfxbase -lcp2ksubsys -lcp2kxc -lcp2kao -lcp2kinput -lcp2kpw -lcp2kfft -lcp2kdbcsr_tensor -ldbcsr -ldbcsrmm -ldbcsrops -ldbcsrbblock -ldbcsrbdist -ldbcsrbase -ldbcsrdata -lmicsmm -lclsmm -lcp2kacc -lcp2kaccmic -lcp2kaccopencl -lcp2kfm -lcp2kcommon -lcp2kmpiwrap -lcp2kbase -lxsmmf -lxsmm -ldl -lpthread -lxcf03 -lxc -Wl,-Bstatic -lderiv -lint -Wl,-Bdynamic -lfftw3 -lfftw3_omp   -Wl,--start-group /projects/opt/intel/compilers_and_libraries_2018.3.222/linux/mkl/lib/intel64/libmkl_gf_lp64.a /projects/opt/intel/compilers_and_libraries_2018.3.222/linux/mkl/lib/intel64/libmkl_core.a /projects/opt/intel/compilers_and_libraries_2018.3.222/linux/mkl/lib/intel64/libmkl_sequential.a -Wl,--end-group -lpthread -lm -ldl -lstdc++
+libcp2k_unittest.o: In function main': libcp2k_unittest.c:(.text+0x0): multiple definition of main'
+/projects/opt/intel/compilers_and_libraries_2018.3.222/linux/compiler/lib/intel64_lin/for_main.o:for_main.c:(.text+0x0): first defined here
+/projects/opt/intel/compilers_and_libraries_2018.3.222/linux/compiler/lib/intel64_lin/for_main.o: In function main': for_main.c:(.text+0x2a): undefined reference to MAIN__'
+make[3]: *** [/home/dog/benchmark_code_characterization/cp2k/cp2k/exe/local/libcp2k_unittest.ssmp] Error 1
+make[3]: *** Waiting for unfinished jobs....
+make[2]: *** [all] Error 2
+make[1]: *** [ssmp] Error 2
+make: *** [all] Error 2
+Here are the steps I followed to build. I have loaded the intel/18.0.3 module which sets CC, CXX, FC, as well as MKLROOT.
+Grabbed the latest repo
+cd cp2k/tools/toolchain
+$ ./install_cp2k_toolchain.sh -j 8 --mpi-mode=no --with-gcc=no 
+--with-mkl=/projects/opt/intel/compilers_and_libraries_2018.3.222/linux/mkl 
+--enable-omp 
+--with-libxc=install 
+--with-libint=install 
+--with-fftw=system 
+--with-mkl=system 
+--with-libxsmm=install 
+--with-reflapack=no
+This concludes successfully with the following output.
+Done!
+Now copy:
+cp /home/dog/benchmark_code_characterization/cp2k/cp2k/tools/toolchain/install/arch/* to the cp2k/arch/ directory
+To use the installed tools and libraries and cp2k version
+compiled with it you will first need to execute at the prompt:
+source /home/dog/benchmark_code_characterization/cp2k/cp2k/tools/toolchain/install/setup
+To build CP2K you should change directory:
+cd cp2k/
+make -j 8 ARCH=local VERSION="sopt sdbg ssmp"
+I think what is missing is the line
+LDFLAGS_C = $(FCFLAGS) -static-intel -nofor_main
+inside the arch file under arch/local.{sopt|sdbg|ssmp|}
+Could you confirm that by adding this line you can compile CP2K?
+Is this an actual bug in toolchain?
+Well, the problem here is that the toolchain does not really support the Intel compiler.
+When compiling with Intel Fortran (ifort), people have to manually adapt the arch files to ifort by following the examples in the arch files + INSTALL.MD instructions.
+We have to make it clear in the toolchain info and in https://www.cp2k.org/howto:compile?s[]=toolchain.
+I will try to improve the documentation.
+@dogunter Sorry for the late reply, I don't know if you have found a solution in the meantime, your last error is a linking problem, it cannot find LAPACK. You can add it to some LDFLAGS. You can use some of the intel arch files, for example:
+https://github.com/cp2k/cp2k/blob/master/arch/Linux-x86-64-intel.ssmp
+Sorry, we cannot assist you more here, you are doing something which is not supported. You can post in the google forum and get some help from other users.
+I have managed to build the code with Intel 18.0.3 as well as Intel 19.0.2. I get a cp2k.ssmp executable. However, it segfaults immediately upon launch.
+I have yet to fine one solid set of documents that will tell me how to build this code with the Intel Compilers.
+Do I have to forego the toolchain script entirely and build every single dependent package by hand?
+It would be nice if there was a set of instructions about how to go about this.
+There two different parts:
+Now, for the 1) the toolchain does not support the Intel compiler. I would propose to give a try with GNU. For the 2) we do use the Intel compiler, so you can use it.
+So my proposal is to first understand if you have problems in the compilation of some libraries or it is a problem in CP2K compilation.
+Note that we do use Intel 18.0.3 and 19.0.3 in our tests, see the list of tests at the end of the table at https://dashboard.cp2k.org/
+Just to be sure, for compiling CP2K (instructions at https://github.com/cp2k/cp2k/blob/master/INSTALL.md#3-compile ) you have to prepare an arch file. Examples for Intel are already inside the arch directory.
+Yes, I see the test results but, unfortunately, it says nothing about how those versions were built.
+If you build the toolchain with GCC, how do you specify that you want to use MKL and its FFTW and such?
+Well, I assume (never tried though) that you have to set:
+--with-mkl=
+Alternatively, you can set MKLROOT.
+Concerning FFTW, it is already part of MKL, so you don't need to install it:
+--with-fftw=no
+Then, once the toolchain has installed all software, you have to link MKL in your arch file, see for example:
+https://www.cp2k.org/static/regtest/trunk/swan-skl28/CRAY-XC40-intel-mkl.psmp_18.0.3.222.out
+(the arch file is reported on top)
+It would be better to integrate the arch file provided by the toolchain so that you get all links to the other libraries.

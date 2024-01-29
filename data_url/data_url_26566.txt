@@ -1,0 +1,121 @@
+Do we really want to set COSMA as default for cp_gemm?
+On my AMD EPYC 7401 with 36 cores I see:
+do_scalapack
+cp_gemm                            809  6.9    0.002    0.003   94.027   94.945
+cp_gemm_fm_gemm          809  7.9    0.002    0.002   94.025   94.943
+cp_fm_gemm                      809  8.9   94.023   94.941   94.023   94.941
+do_cosma
+cp_gemm                            809  6.9    0.003    0.003 1016.553 1017.590
+cp_gemm_cosma               809  7.9 1016.551 1017.587 1016.551 1017.587
+Did you use many OpenMP threads?
+Our performance test show that COSMA does not really take  advantage of threads (which is unfortunate).
+Just to clarify, it is BLAS which should be threaded (which is not our case). COSMA works well (on the CPU only case) when multiple ranks are involved. However, the same should affect SCALAPACK too (at the end it is the same BLAS). The difference is really large...
+Fair point, we should probably switch to threaded BLAS.
+Yes, that's what I do with OpenBLAS. Then you should make sure that you set
+to avoid nested parallelism.
+I am using threaded BLAS by default, it was an argument in the past to keep "POPT" pure (no threads). POPT configuration is now gone by default, and we should assume BLAS/OpenMP to consider a threshold before using threads (aka OMP_DYNAMIC=true).
+Just some more info:
+This is a popt executable with 36 tasks, so no threading. There was also no accidental threading.
+When running with 16 tasks, CPU time improves from 435 sec to 309 sec per iteration!
+@juerghutter Which input do you run? I observe only minor differences between COSMA and ScaLAPACK on daint-mc for the H2O-256 benchmark using 2 nodes (72 MPI tasks, 1 OMP thread per MPI task).
+Here is a simple Libtest input. On my computer using popt with 36 tasks I get:
+PDGEMM:   1.725 sec
+COSMA :   32.719 sec
+&GLOBAL
+PROGRAM_NAME TEST
+RUN_TYPE NONE
+&FM
+TYPE_OF_MATRIX_MULTIPLICATION PDGEMM
+&END
+&END GLOBAL
+&TEST
+&CP_FM_GEMM
+K 6512
+M 512
+N 6512
+TRANSA FALSE
+TRANSB FALSE
+N_LOOP 20
+&END
+&END
+I get for that test input on Merlin using one node with 44 cores exclusively (cp2k.popt from current master, intel 21.3 and MKL):
+PDGEMM: 2.76 s
+COSMA: 1.52 s
+and with GNU 10.3.0, MPICH 3.3.2, OpenBLAS 0.3.18:
+PDGEMM: 1.72
+COSMA: 1.46
+I get with cp2k.sopt from current master, gcc 11.2
+PDGEMM 43.3 s
+COSMA    48.3 s
+I get with cp2k.popt from current master, gcc 11.2 and 1 task
+PDGEMM  46 s
+COSMA     388 s
+There seems to be an interference with the popt executable. If I run two runs (1 task each) time goes up, jobs are competing for the same resources, but load stays at 2 * 100%. Is COSMA spawning hidden threads?
+The resources for my parallel tests were restricted to one compute node by SLURM.
+If I run just one task and one thread using cp2k.popt (GNU 10.3.0):
+PDGEMM: 13.74 s
+COSMA: 19.16 s
+Is COSMA spawning hidden threads?
+I guess not, COSMA relies on the BLAS library which is linked-in at user's choice (which can be threaded). Further care must be taken with OpenBLAS, it comes with a threaded variant which is not based on OpenMP but Pthreads. I think CP2K's toolchain always links a sequential variant of MKL but does something else for OpenBLAS. If I remember correctly, CP2K's toolchain prefers the OpenMP runtime wrt OpenBLAS flavors, which implies OpenBLAS is considered with threads (I have not checked the details of the logic).
+COSMA is not spawning any additional threads. However, COSMA should be linked to a multithreaded BLAS in order to take advantage of all the available threads.
+Just a sidenote: even when COSMA is used, you can still make COSMA dispatch the problem to ScaLAPACK by specifying the environment variable COSMA_DIM_THRESHOLD. If any matrix dimension is less than this threshold, the problem is considered too small and COSMA will dispatch it to SCALAPACK. Hope this might come in handy here when testing.
+We are preparing a new release in January for COSMA that should bring a major performance improvement.
+I'm using the toolchain with defaults (+gcc 11.2). COSMA-v2.5.1 OpenBLAS-0.3.18 openmpi-4.1.1
+For ssmp I get the expected behavior and performance for COSMA and PDGEMM.
+For psmp I don't see the threads spawned to different cores for COSMA, for PDGEMM again, it works as expected.
+Can you try adding --cpu_bind=sockets as a parameter to srun on Piz Daint, so that the thread affinity is properly set? I remember that @pseewald had a similar problem which was resolved by adding this flag.
+I'm not running on Piz Daint, this is a local Linux box with 2x24 cores.
+export OMP_NUM_THREADS=8; mpirun -np 4 --map-by node:pe=8 cp2k.psmp fm.inp
+shows the same problem with COSMA but works for PDGEMM
+Another observation is that COSMA's performance varies by up to 80% when threads are used. This can be seen from both the GW_PBE_4benzene and H2O-hyb benchmarks.
+This might be related to thread binding as well. However, I wonder why COSMA seems disproportionately affected?
+Just a sidenote: even when COSMA is used, you can still make COSMA dispatch the problem to ScaLAPACK by specifying the environment variable COSMA_DIM_THRESHOLD. If any matrix dimension is less than this threshold, the problem is considered too small and COSMA will dispatch it to SCALAPACK. Hope this might come in handy here when testing.
+@kabicm Is COSMA_DIM_THRESHOLD something we can use in CP2K? My understanding is that this variable is only for the pdgemm wrappers (at least, this is what I read in your description), while now CP2K uses the direct cosma call.
+Never mind, I tried and it works too.
+With the latest changes to the toolchain, I get the following results:
+./install_cp2k_toolchain.sh --with-gcc
+cp_gemm_cosma                        1  4.0   32.052   32.054   32.052   32.054
+./install_cp2k_toolchain.sh --with-elpa=no --with-sirius=no
+cp_gemm_cosma                        1  4.0    1.099    1.102    1.099    1.102
+I don't know what side effects cause this behavior. System gcc used in 2nd build is
+gcc (SUSE Linux) 7.5.0. Installed gcc in 1st build is gcc (GCC) 11.2.0.
+UPDATE:
+./install_cp2k_toolchain.sh --with-gcc  --with-elpa=no --with-sirius=no
+cp_gemm_cosma                        1  4.0   32.052   32.054   32.052   32.054
+Can somebody confirm that COSMA compiled with gcc 11.2.0 is slow? What about other gcc version between 7 and 11?
+If yes, is this a compiler problem and can we have a workaround in COSMA?
+@juerghutter confirmed.
+I compiled the current CP2K master version on my local desktop PC (4-core Sandy Bridge, Intel(R) Xeon(R) CPU E31245 @ 3.30GHz running openSUSE Leap 15.3, system compiler is gcc 7.5.0)
+which implies the follow toolchain run
+using GCC 11.2.0 and MPICH 3.3.2 to build CP2K.
+The test input above run with
+results in
+The current default COSMA is more than an order of magnitude slower.
+Is there practical value/performance for COSMA (beside of supporting GPUs)? I wonder if effort should be shifted to SPLA (which supports CPU and GPU)?
+AFAIK, SPLA offers local dgemm only. We could return to using DBCSR and soon also DBM.
+AFAIK, SPLA offers local dgemm only. We could return to using DBCSR and soon also DBM.
+Sounds like enough work or a reasonable workstream which is also desired for other reasons. Though, it's appealing to simply replace pdgemm but maybe not easy to get under control. It could be also of value to look at COSMA's explicit interface.
+AFAIK, SPLA offers local dgemm only. We could return to using DBCSR and soon also DBM.
+SPLA can be used a PDGEMM replacement...
+It would be good to compile COSMA with profiling and check what's going on here... I can believe the problem is too small and we spend a lot of time in transforming the matrix...
+AFAIK, SPLA offers local dgemm only. We could return to using DBCSR and soon also DBM.
+Sounds like enough work or a reasonable workstream which is also desired for other reasons. Though, it's appealing to simply replace pdgemm but maybe not easy to get under control. It could be also of value to look at COSMA's explicit interface.
+What do you mean by COSMA explicit interface? We already using it...
+You can simply toggle between the different multiplication drivers via the input and we are already using COSMA's explicit interface.
+SPLA can be used a PDGEMM replacement... It would be good to compile COSMA with profiling and check what's going on here... I can believe the problem is too small and we spend a lot of time in transforming the matrix...
+@alazzaro here is the profiling output from COSMA:
+All time is spent in the computation. ScaLAPACK needs 0.6 instead of 29.6 s. This was a single core run (Skylake, RedHat 7.9). It seems that a newer CPU shows an even larger factor (50 for Skylake vs 10 for Sandy Bridge).
+thanks @mkrack . Well, in both case I assume we call BLAS (the same BLAS library), so I have no idea where the time for computation goes... As you said, the difference is quite large and the fact that it changes with new CPUs let me think that it is related to vector instructions... For what I can understand, COSMA does the call to BLAS here:
+https://github.com/eth-cscs/COSMA/blob/35e2ddaeda9310e1bf27837240c93a9468575272/src/cosma/local_multiply.cpp#L122
+Maybe for some unknow reason it does more splitting than necessary?
+I think the next step is to reproduce it via the COSMA miniapp, which allows to compare to SCALAPACK too. In this way we can exclude any CP2K dependency (which I doubt). Next step is to open an issue with COSMA people...
+It seems that the performance problem can be caused by the link order, if -lgsl -lgslcblas precedes -lopenblas and COSMA picks up a wrong (not tuned) gemm routine.
+@juerghutter please check.
+So, it is the toolchain which is wrong. According to this output, I see the following:
+Can we remove -lgslcblas at all? It is not optiimzed...
+Can we remove -lgslcblas at all? It is not optiimzed...
+Not sure, PLUMED needs libgsl and libgsl needs libgslcblas. We can try it.
+The major problem is, however, that the LIBS line is not built in a coordinated (non-redundant) manner. The toolchain should create automatically arch files in the style of the the hand-written ones.
+It depends on how GSL was built as far as I know. Spack has the +external-cblas variant which makes GSL use an already provided (C)BLAS as a fallback. This indicates that there might be inconsistencies if GSL is built against one implementation but linked against an other one? Maybe use --start-group ... --end-group for GSL instead?
+According to the documentation linking in an external cblas is fine. Presumably, Spack needs that patch to solve some packaging specific problem.
+Hence, I think we should remove libgslcblas entirely. If we keep it around it will just come back and bite us again.

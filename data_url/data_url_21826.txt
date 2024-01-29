@@ -1,0 +1,42 @@
+Support assignment of the core device IP address by DHCP.
+See also #955
+smoltcp-rs/smoltcp#63 and smoltcp-rs/smoltcp#186
+I think I'm basically there with a patch for this now. A couple things that have come up:
+I've made it so that DHCP is only enabled if the ip config option is set to "use_dhcp", adding another config option initially seemed like the obvious thing to do but this way there's no ambiguity between the precedence of the config options and it maintains backwards compatibility, which defaulting to using DHCP if no IP address was specified wouldn't have. What do you think?
+It seems quite common that the first DHCP DISCOVER is dropped before it reaches the DHCP server, I suspect that the ethernet device isn't always quite ready when it's sent. I've put in an early retry for this so that you don't have to wait 10s for a IP address in this case. I was wondering if it was possible to get link status from the ethernet device?
+it maintains backwards compatibility, which defaulting to using DHCP if no IP address was specified wouldn't have
+IMHO the current mode of operation when no IP address is supplied (defaulting to a fixed IP address 192.168.1.70) is not a very principled approach. My firm preference would be to default to DHCP if no IP address is programmed in /or/ if the "ip address" field is set to "use_dhcp".
+My logic here is that in most cases the default hard-coded IP address is not useful, whereas defaulting to DHCP will make the Kasli work out of the box on most networks without requiring the user to program any settings.
+I was wondering if it was possible to get link status from the ethernet device?
+Don't think the link_up signal is exported from misoc Ethernet phy as a CSR at this moment...
+Kasli would need such a CSR indeed, which is quite straightforward to implement.
+KC705 would need MDIO which is currently not implemented at all.
+MDIO infrastructure is required and available on ZC706 and Kasli-SoC.
+My firm preference would be to default to DHCP if no IP address is programmed in /or/ if the "ip address" field is set to "use_dhcp".
+I'm happy with this, so I'll make this change, before I post it.
+Don't think the link_up signal is exported from misoc Ethernet phy as a CSR at this moment...
+Kasli would need such a CSR indeed, which is quite straightforward to implement.
+KC705 would need MDIO which is currently not implemented at all.
+MDIO infrastructure is required and available on ZC706 and Kasli-SoC.
+Well it's probably not worth worrying about, it'll just mean that DHCP is slower in some corner cases like the network not being plugged in on start up and switching between network cables.
+whereas defaulting to DHCP will make the Kasli work out of the box on most networks without requiring the user to program any settings.
+They would still need to find out what IP address the DHCP server assigned and copy it into the device database. On some DHCP servers and without special configuration, the IP would also change from time to time.
+Some ways out of this are:
+They would still need to find out what IP address the DHCP server assigned and copy it into the device database. On some DHCP servers and without special configuration, the IP would also change from time to time.
+Indeed I was planning to document looking at the console output to achieve this. You could also find out from the DHCP server in most cases.
+Some ways out of this are:
+This would require more support in smoltcp, so I'd need to get that merged upstream first. I'm also not sure how common this configuration is. Anecdata: We had this setup at the last company I worked at, but we don't at my current one.
+From wikipedia:
+Although the Windows 10 implementation was limited to discovering networked printers, subsequent releases resolved hostnames as well.
+That sounds perhaps newer than I would like to trust from MS.
+The other thing is the bootloader, I wasn't planning to add DHCP support to that, mostly because I incorrectly thought the DHCP features in smoltcp required alloc. They don't so it probably wouldn't be hard to add it to the bootloader also. I'm not sure how this feeds in to this conversation, it would obviously become a lot more compelling if the bootloader could support bootp/pxe booting, but that also requires some smoltcp changes.
+You could also find out from the DHCP server in most cases.
+I'm pretty sure this is a very difficult thing to do in many typical situations e.g. in government facilities :)
+I'm pretty sure this is a very difficult thing to do in many typical situations e.g. in government facilities :)
+Indeed that's an excellent example of when it would be very hard.
+Maybe Kasli 2.1 could have a little LCD or OLED display to show this kind of information.
+Maybe Kasli 2.1 could have a little LCD or OLED display to show this kind of information.
+Sounds good, when can I get my hands on one of them 😜
+I also don't think that the platform specific default IP addresses are documented anywhere and are all different from the documented IP address that Kasli's from M-labs ship with (192.168.1.75).
+Maybe Kasli 2.1 could have a little LCD or OLED display to show this kind of information.
+I don't think that's the best solution. Better do proper m2m discovery through mdns or some broker mechanism.

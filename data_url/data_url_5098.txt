@@ -1,0 +1,31 @@
+TNQVM does not work with Intel MKL (at least on some common systems like my Ubuntu 18.04 desktop). The runtime error is below:
+tnqvm/tests/ExatnVisitorTester
+[==========] Running 6 tests from 1 test case.
+[----------] Global test environment set-up.
+[----------] 6 tests from ExatnVisitorTester
+[ RUN      ] ExatnVisitorTester.checkExatnVisitor
+H(Rank:2, Volume: 4): [(0.707107,0)(0.707107,0)(0.707107,0)(-0.707107,0)]
+CNOT(Rank:4, Volume: 16): [(1,0)(0,0)(0,0)(0,0)(0,0)(1,0)(0,0)(0,0)(0,0)(0,0)(0,0)(1,0)(0,0)(0,0)(1,0)(0,0)]
+CNOT(Rank:4, Volume: 16): [(1,0)(0,0)(0,0)(0,0)(0,0)(1,0)(0,0)(0,0)(0,0)(0,0)(0,0)(1,0)(0,0)(0,0)(1,0)(0,0)]
+Q0(Rank:1, Volume: 2): [(1,0)(0,0)]
+Q1(Rank:1, Volume: 2): [(1,0)(0,0)]
+Q2(Rank:1, Volume: 2): [(1,0)(0,0)]
+X(Rank:2, Volume: 4): [(0,0)(1,0)(1,0)(0,0)]
+H(Rank:2, Volume: 4): [(0.707107,0)(0.707107,0)(0.707107,0)(-0.707107,0)]
+INTEL MKL ERROR: /home/div/intel/mkl/lib/intel64_lin/libmkl_avx2.so: undefined symbol: mkl_sparse_optimize_bsr_trsm_i8.
+Intel MKL FATAL ERROR: Cannot load libmkl_avx2.so or libmkl_def.so.
+Segmentation fault
+Alex, please add Thien to this issue, I am still unable to add him because github does not recognize his nick "tnguyen-ornl".
+The problem is likely related to our use of CPP Microservices and dynamic library loading since by itself MKL work perfectly fine (e.g., in standalone ExaTN tests). If we are unable to make MKL work with CPP Microservices, we need to look for an alternative mechanism and some workaround. MKL is a de facto standard linear algebra library on any Intel machine and we cannot afford losing those.
+One thing I noticed is that the MKL error comes from a missing symbol mkl_sparse_optimize_bsr_trsm_i8, which by its suffix looks like an ILP64 function (i8) whereas we have LP64 built (i4). Not sure why this shows up only when we use rpath and CPP Microservices ...
+LD_PRELOAD with libmkl_sequential.so resolves the missing symbol, but we are not supposed to use libmkl_sequential.so because we are interested in parallel (multi-threaded) execution. So, we cannot use this as a workaround in production.
+By the way, the missing mkl_sparse_optimize_bsr_trsm_i8 is contained in libmkl_gnu_thread.so, which means the latter is not loaded properly for some reason.
+The proper workaround is this (but we still need to understand why this is happening):
+LD_PRELOAD="/home/div/intel/mkl/lib/intel64/libmkl_intel_lp64.so:/home/div/intel/mkl/lib/intel64/libmkl_gnu_thread.so:/home/div/intel/mkl/lib/intel64/libmkl_core.so:libgomp.so" tnqvm/tests/ExatnVisitorTester
+No idea how this happening yet, but looks like libiomp5 is being used
+Yeah, that would explain all these issues and segfaults.
+So we know this bug is related to CppMicroServices + dlopen on the tnqvm-exatn plugin. I was able to track down this stackoverflow post (https://stackoverflow.com/questions/54694862/intel-mkl-and-jni-how-to-add-a-shared-library-that-ld-searches-symbols-from) that describes a similar situation (here they are trying to load an MKL library using Java JNI System.loadLibrary()). They note that JNI by default calls dlopen() with the RTLD_LOCAL flag, which does not make its loaded symbols available globally. Therefore, they see the same library loading issues that we do because the correct symbol cannot be found from libmkl_gnu_thread.so (since it was loaded only locally). To fix this one can use LD_PRELOAD, which is a terrible hack and not good for deployment, OR they can force this library to be loaded with RTLD_GLOBAL, thereby making those symbols available for use by libmkl_avx2.so.
+I have tried this with the https://github.com/ORNL-QCI/xacc_application_example code. I can reproduce the same library loading issues by building like this
+If we add the following before initialization
+the symbols are loaded globally and are able to be found during Exatn initialization and use.
+I plan to update the ExatnVisitor::initialize() method with support for this fix in a manner that lets cmake insert the correct library paths at configure/build time (so as to avoid hard-coded paths)

@@ -1,0 +1,20 @@
+Instruction instances can be given any Python string as a name.  If the name is not of a known gate, the QASM 2 dumper will create a gate <name> { ... } block to describe it, and use Instruction.name verbatim.  If the name contains invalid characters for a QASM 2 identifier, they will be reproduced immediately.
+There's currently a bug in QuantumCircuit.qasm when working with UnitaryGate (#7051) which will throw a type error earlier, but in principle
+would produce something like
+Output identifiers should be valid.
+Either we only allow Instruction.name to be valid QASM identifiers, or we escape invalid characters when outputting the identifiers.  Using escapes (e.g. just replacing all invalid characters by an underscore) is probably the best, because it'll be the easiest to work with when we have QASM 2 and 3 outputters - QASM 3 is far less restrictive in what's an allowed identifier, and we're more likely then to be in a position when users are giving us their own names.
+If possible, I'd like to work on this :). I wasn't able to find the format valid identifiers should follow in the documentation page for QASM, could you direct me to where this information is located?
+Sure, I'll assign you.  OpenQASM 2 identifiers must follow the regex [a-z][a-zA-Z_0-9]* (i.e. a lowercase letter followed by zero or more letters, underscores or digits).  The identifier in the example doesn't match because it's got literal square brackets [ and ], and commas , in it.  The paper describing OpenQASM 2 in full is here on arXiv: https://arxiv.org/abs/1707.03429.
+Bear in mind that currently the QASM 2 exporter gets the name from fields in these instructions such as Instruction.name.  We can't really change those without affecting other parts of Qiskit, so the best bet is probably to make sure that the QASM exporter takes the name it's given, and turns it into a "safe" form by replacing invalid characters, or such like.
+Hi @jakelishman, I came up with the following code to check the name of an instruction and correct it if it doesn't match what QASM requires.
+For this to work re needs to be imported. So, I was wondering if that's all right? Also, qasm_pattern is defined as qasm_pattern = re.compile("[a-z][a-zA-Z_0-9]*").
+Now, right now I'm placing this piece of code at line 1608, so it runs for every instruction that is not a measure instruction.
+https://github.com/Qiskit/qiskit-terra/blob/6af71f9d1e249a3747772449f299160df4047b83/qiskit/circuit/quantumcircuit.py#L1607-L1609
+However, this gives some strange behavior. For example,
+Gives the output
+As you can see, the first [custom gets printed twice, once with a valid name and once with its invalid name. But then the secon [custom gets corrected and it even identifies that there is already one instruction with the same name. I guess this issue has to do with where I've placed my code, but I can't figure out exactly what's going on. Can I get a hand with this?
+re is part of the standard library, so it's fine to import - it's not an external dependency - and we actually already use it in a few places.
+For escaping strings, it's probably a bit easier to do something like:
+Here simplicity is a virtue, because it's easier to see if something's wrong in the future, and it'll be easier to maintain for us.
+Looking at the full output of your QASM there, you're probably missing another place where instruction.name is accessed, likely in the part of code that handles nested gate calls.  Everywhere that tries to get a QASM name from an instruction needs to know to attempt to escape the name before it's put down in the file.
+I've added changes that fix the issue in a draft pull request. I made it a draft since I believe the functionality could be put in a function of its own and then be called wherever it is needed, but I wanted to check if this is okay with you first. Please check it out :)

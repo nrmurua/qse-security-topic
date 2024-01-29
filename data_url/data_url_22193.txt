@@ -1,0 +1,17 @@
+Running 2.0.
+I'd like to schedule some calibration experiments that run every x seconds such that they interrupt the main experiment.  The calibration experiments need to use the newest values of the various parameters (that are being computed by other calibration experiments), so I'd like to run them with Flush=True.  However, when my main experiment calls scheduler.check_pause(), it always returns False because the calibration experiments were submitted with Flush=True, so the calibration experiments never run.
+I actually think that the behavior of scheduler.check_pause() makes sense, but can we add another function to the scheduler that returns true if there is a higher priority experiment in the schedule that was submitted with Flush=True?  Then when this new function returns True I can end the current experiment and reschedule it.
+Are you sure you want to do that, and not simply set the lowest priority on your long experiment that calls pause in a loop (so if there are any other experiments in the pipeline, they would always get executed when there's a pause, and it would finally reach your flush=True experiment)? Note that ARTIQ supports an arbitrary number of priority levels.
+And if you really want that, you can write this function yourself and put it into the experiment. This will come in handy: https://m-labs.hk/artiq/manual-release-2/management_system.html#artiq.master.scheduler.Scheduler.get_status
+I have set the lowest priority on my long (main) experiment, and the calibration experiments still never run.  I believe this is because scheduler.check_pause() only looks for experiments that have finished prepare and doesn't look for experiments that are waiting for the queue to flush.  I assume the same is true for scheduler.pause().  However, my calibration experiments cannot finish prepare until the main experiment ends, because I've submitted them with Flush=True, so they get stuck in Status=Flushing and never run.
+I've also already written this function myself, but I figure that other groups will also want this functionality, so it probably makes sense to build it into artiq.
+I have set the lowest priority on my long (main) experiment, and the calibration experiments still never run.
+Please post a screenshot of the scheduler showing the problem.
+In the example below, ExpA is the "main" experiment, and ExpB is the "calibration" experiment.  ExpA is submitted first with Priority=0.  ExpB is submitted second with Priority=1 and Flushing=True.  Exp never runs.
+Screenshot:
+
+If you look at
+
+I ran into this problem as well. It would be useful if experiments set to flush at a higher priority would run ahead of experiments running in the background at a lower priority.
+This is not a bug, "flushed" previously meant "nothing else ahead of us", which is a perfectly valid definition. It now means "nothing else ahead of us at our and higher priority levels".
+Without complexity explosion, we can have either behavior selectable at experiment submission time, if that's relevant. Open a new issue if you want that.

@@ -1,0 +1,29 @@
+We currently have a major issue with lwIP: the internals of the stack get corrupted. The symptoms are as follows:
+Exchanging small amounts of data works.
+Sending large amounts of data device->host works (the Payload1MB test always succeeds).
+Sending large amounts of data host->device fails, with packets being apparently silently dropped. This also rarely results in this assertion failure:
+Closing the connection surreptitiously causes incoming packets to a new connection to be silently dropped, and the next connection causes an assertion failure:
+I do not see anything wrong with our usage of lwIP API, and I don't think the Rust code is overwriting lwIP stuff via either its heap or its stack (but we could really use the trivial MPU here...)
+For now the roadmap is as follows:
+The reproduction steps we have:
+From working with embedded lwIP on the Zynq before, I'd be inclined to triple-check that the assumptions made by its API are followed (e.g. w.r.t. send buffer lifetimes and the copying flags). The lifetime mechanics are sometimes poorly documented to the point where they could be called buggy under a less charitable interpretation.
+I also found the ability to compile an emulator binary for Linux to be invaluable (rigging up a tap device for networking and stubs for the various Xilinx platform methods), because then Valgrind and all the usual tools are available if invalid memory accesses are not outright turned into segfaults. No idea if that is currently feasible for ARTIQ, though.
+I'd be inclined to triple-check that the assumptions made by its API are followed (e.g. w.r.t. send buffer lifetimes and the copying flags).
+Absolutely, and I've spent a great deal of time reading lwIP docs and sources and comparing them to our use of the API (which btw is rather minor, and contained in the runtime.rs/liblwip crate). Do you think you could take a look also? It could use a fresh set of eyes.
+No idea if that is currently feasible for ARTIQ, though.
+Not easily. The Rust runtime is somewhat designed with that in mind (hence libstd_artiq, for easy switching to libstd proper--though for now runtime::clock and friends make that nontrivial anyhow), but running kernels seems complicated; even ignoring our RTIO peripherals, just getting the emulator to cooperate and to export basic MiSoC peripherals like the timer and mailbox is a major work.
+I've fixed a lifetime issue (interestingly, on the Rust side exclusively) in 668928a, let's see if that helps.
+668928a has not fixed anything (more or less as I expected; the code in sched.rs was mildly suspicious but ultimately it did the same thing).
+Integrate the trivial MPU and become really sure that Rust code is not clobbering lwIP by accident with its stacks (as the method I used to check before now is unreliable).
+Unfortunately this cannot be integrated so easily: #544 (comment).
+But, I've enlarged the stacks significantly, and that didn't appear to affect the bug in any way, so this is probably not the culprit.
+I've tried always copying input data in the call to tcp_write. This did not improve anything.
+just getting the emulator to cooperate and to export basic MiSoC peripherals like the timer and mailbox is a major work.
+This isn't worse than for the Zynq work @klickverbot mentioned. And a repro might not actually need to execute kernels.
+With smoltcp merged this is issue is not present any more.
+Does smoltcp support gateways? NIST sometimes requires one.
+@sbourdeauducq ARTIQ never initiates connections, why would it ever need explicit support for gateways?
+I know it is too late to respond, however, maybe someone looking for solution of this issue and come through this.
+So, what I have done and it solved my issue was if the buffer out of memory the wait for the acknowledge to come (By receiving the Ack it means there will be a free space in your buffer for sending further data)
+Hope it helps.
+Regards,

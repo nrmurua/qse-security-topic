@@ -1,0 +1,19 @@
+Description of the issue
+Pauli gate initialization is somewhat slower than other gates
+How to reproduce the issue
+Here's what I get on my machine:
+Cirq version
+1.3.0.dev20230802160330
+I'd like to take this up as my first investigative issue. Thanks!
+Hey @suyashdamle, I'd be interested in collaborating on this with you if possible, also new to contributing haha?
+I think this is due to validation during the construction of GateOperation. you can turn off validation to boost performance
+a better way would be to do that using contexts e.g.
+Thanks for the extra context @NoureldinYosri
+Will do some analysis to confirm & send a PR if needed at all
+@shef4 Thanks! I'm not sure yet about the scope of this issue.. will LYK after investigation if I need extra hands! Thanks!
+@zchen088 Constructing pauli's operations is slower because the Pauli gate class, when applied on qubits, yields SingleQubitPauliGateOperation, which is an operation type that derives from both GateOperation and PauliString. The other gates in your example, when applied on qubits, simply yield a GateOperation. The complicated type hierarchy for Pauli's exists to support the workflow where you can multiply single qubit pauli operations to get back a multi qubit pauli string (i.e. cirq.X(a) * cirq.Y(b) * cirq.Z(c) is a valid 3 qubit operation)
+After some investigation, it looks like the relative imports within the Pauli.on() method was hurting performance. I've opened #6316 to fix this. I've used the following code as a test and compared performance before / after my PR
+As you can see, the single qubit pauli operation here is ~4x slower than the other two.
+In this case, the single qubit pauli operation now is only ~2x slower. This is as fast as it gets with the current type hierarchy.
+If this is still a bottleneck, maybe you can share your exact workflow and we can try to look for potential optimizations without making any major changes to the Cirq's type hierarchy, which would be a pretty big backwards incompatible change.
+xref #6097

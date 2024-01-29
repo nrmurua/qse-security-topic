@@ -1,0 +1,18 @@
+When a function call is expanded inline, the resulting code can "see" the bindings in the enclosing context in some cases.
+For example, given the following snippet:
+The symbol aaa is not defined within t2, and calling foo should fail.  In pyqgl2, however, this program succeeds because the aaa defined in foo is "visible" within t2 when t2 is inlined into foo.
+We had this right at one point.  I suspect that part of the problem is that we don't have the infunc blocks any more, which were used to define the start and end of function scopes, among other things, but it might have been something that I broke in my most recent changes to the inliner.  I'll have to compare the behavior on master vs. the behavior on my branch to see whether things started to fail.
+If it's due to the removal of in-func blocks, which is my first hunch, then it's going to require some cleverness to figure out how to fix this without reintroducing them.  Either that, or we define QGL2 to be dynamically scoped, and live with the fallout.
+It looks like the problem is the same on master, so my hunch might be correct.
+I was wrong to say that we can just define QGL2 to be dynamically scoped, however, since this is something more gross.
+The good news is that we do detect that something looks odd about this code and warn the user that they're probably making a mistake.  Unfortunately, we can't flag this as an error because there are some difficult-to-distinguish cases where odd-looking code is correct, and we can't have the compiler fail for those cases.
+The problem is different on master than it is on my branch.  Some cases work correctly that fail on my branch; I did something that made it worse, so my hunch about with-infunc is probably wrong.  More investigation to do.
+It looks like there might be a fairly straightforward way to work around this (but it needs some experimentation to see whether it handles all of the corner cases).
+The names of local variables are rewritten during the inlining process, so that changes to this variable won't conflict with variables by the same name in other scopes.  The problem here is that the variable (in the example above, aaa) is not local to t2 (i.e. it is not assigned or otherwise created within the scope of t2) so we don't rewrite its name, and it therefore matches the name in the outer scope, which is still visible here (because we don't have infunc).  But if we rewrote the names of the variables in the initial scope, then aaa wouldn't match any more.
+The difference is illustrated by the following change to the previous example:
+This looks the same, but doesn't behave the same way, because qux is expanded inside foo, which means that the variable aaa has its name mangled.  The mangled name is visible within t2, but not as the name aaa, so this fails in the expected manner.
+So a quick fix would be to rewrite all the names in the @qgl2main method, so that they become invisible from inner scopes.
+Seems like a reasonable approach to me.
+I found a few more places where we were skipping checks, and fixed them, and now the unit tests are about 60% slower.  That's no good.  More head-scratching to do.
+I added a name mangler to rewrite the names in the qgl2main function, but this breaks a bunch of the unit tests, since they compare the output literally (including the symbol names).  Therefore I've disabled the name mangler for now; we can turn it back on if we figure out a clean way to deal with this.
+I don't want to rewrite the unit tests so that they use the mangled names, because the mangled names could change (they're not meant to be seen by humans, and I'd like to shorten them).

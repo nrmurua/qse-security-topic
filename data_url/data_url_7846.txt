@@ -1,0 +1,44 @@
+The output is not consistent with what we get on an Intel chip. It either fails, does complete but has invalid output data (times and states data not the same sizes), or gives different simulation results entirely.
+As we see, the above code does run and produces an output, but the states list is not the same as the times lists (these should be the same length as they have a 1-1 correspondence). It actually appears it has only given data for the first 10 time-steps in this case.
+The same code works fine on Intel chip.
+We can increase the nsteps parameter to give the correct number of output states, but they do not agree with Intels output (also see below for related issue), and actually are not always even quantum states, so something in the solver went wrong.
+Another example, using the cython string formatting:
+brmesolve([[sigmax(), 'cos(t)']], psi0=basis(2,0), tlist=np.arange(0, 1, 0.01), a_ops=[[sigmax(), '1']]) works fine on Intel, but gives error Exception: ODE integration error: Try to increase the allowed number of substeps by increasing the nsteps parameter in the Options class. on M1.
+Moreover, if I do increase the nsteps sufficiently, this does appear to run correctly, but the output states are not the same as we get on Intel (and so I assume are incorrect).
+A few random observations, hopefully not just an issue on my side due to my local configurations. I installed qutip via conda, and it generally seems to work fine on M1. In the meantime, everything runs as expected with Rosetta.
+From what I understand, on intel, brmesolve seems to work correctly, but not on M1.
+This look like an issue with the eigensolver.
+Could you run the test suite to see if it fails the eigen and bloch redfield related tests: pytest path_to_qutip/qutip/tests. (Tests can take >30min).
+Also could you look at the tensor directly:
+If the tensor is wrong on M1, this would explain the error.
+Internal note: bloch_redfield_solve quit without raising an error when ode integration fails.
+From what I understand, on intel, brmesolve seems to work correctly, but not on M1. This look like an issue with the eigensolver.
+Exactly.
+Could you run the test suite to see if it fails the eigen and bloch redfield related tests: pytest path_to_qutip/qutip/tests. (Tests can take >30min).
+Yes it is failing these (and some others), but in particular it does fail everything in test_brmesolve.py and test_brmesolve_td.py. All failures I find seem to be related to the Exception: ODE integration error as mentioned in the original post.
+On an emulated Intel terminal, the tests are all passing as expected.
+This is strange, since I seem to find way more tests failing than reported in #1755.
+Perhaps this is an issue with my installation, rather than qutip itself. I installed it in the standard way using conda (using the Apple Silicon version at 4.13).
+Also could you look at the tensor directly:
+If the tensor is wrong on M1, this would explain the error.
+Actually, that looks fine surprisingly enough (agrees with the Intel version).
+Thanks for the quick response. If I figure anything out, i'll let you know.
+Could you post a list of the failing tests.
+If the tensor is right, then the eigensolver seems to work fine.  So the ODE solver could be the issue, but in this case, mesolve tests should also fail.
+Ah, you are right! It seems to be all tests using the ODE solvers are failing.
+Indeed mesolve and sesolve tests are also failing (with the same integration error).
+There are lots of tests which fail, I think most likely every test that calls a solver...
+I just did some basic testing with scipy's integrate.ode and this seems to have the same kind of issues, so I think as you mention, the issue lies with the solver...meaning it probably isn't installed correctly.
+Similar issues seem to have been raised for scipy previously (e.g. scipy/scipy#15077), though I don't see any currently open. I also updated scipy today and it didn't change anything unfortunately.
+I guess this issue can be closed, if it's just a scipy problem?
+Thanks!
+Hi @Ericgig , I opened an issue with scipy (scipy/scipy#16767) and it seems that is the most likely cause of the problems.
+Good.
+Still, brmrsolve failing without raising an error is on us, I will close this PR when we fix that.
+Actually let's also leave it open until I can determine if it is indeed scipy. After installing scipy with pip as the scipy folks suggested, the example I had in that issue is now working, but I get the same integration error with qutip and same tests failing.
+When I get time, i'll try to distill down the qutip error to a scipy error and post an update. Hopefully the main issue is just a scipy error, but would be good to confirm.
+Hi @Ericgig ,
+I just re-installed things with pip, and now the tests are passing (and my original examples work as expected)!
+For what it's worth, I found that using pip to install scipy and qutip worked and resolved the issues.
+The original problem seems to be related to conda installing a version of openblas which is buggy (in particular 0.3.20), see the scipy issue linked above for more info on that. Version 0.3.18 seems to work fine.
+Thanks for the help.

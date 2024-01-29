@@ -1,0 +1,13 @@
+Running the transpiler to translate a circuit (to an equivalent gate set) hangs the program and never terminates. This happens because the argument basic_gates can only accept certain forms of names, e.g., 'h' is accepted but not 'hgate' . And in case the user provides a different name or the configuration file of the backend contains a typo, then the program runs forever without clue (potentially stopping also a backend server in a malicious context).
+Run the following script:
+changing the basic gates to valid names works:
+I expect the transpiler to fail with an error if I give unsupported gate name. Since this current behavior could hang an entire compiler if the gate names in a backend configuration file are misspelled.
+The loop happens at this location in the loop of the _basic_search function:
+https://github.com/Qiskit/qiskit-terra/blob/fcec842f1de9fd12120e30a1bf73bf7c52b1bf81/qiskit/transpiler/passes/basis/basis_translator.py#L343
+I think that the error is in the input validation here, there is only check that the basic_gates are strings and not that they are valid gate names.
+The buggy code is probably this:
+https://github.com/Qiskit/qiskit-terra/blob/fcec842f1de9fd12120e30a1bf73bf7c52b1bf81/qiskit/compiler/transpiler.py#L699
+we should probably check that the string belongs to the set of all possible and valid gate names.
+Can I have a go at this?
+This is similar to #5539, perhaps a slightly different manifestation because here there are no valid gates in the set.  It's not actually an infinite loop, it's just unacceptably slow - if you let it run for a couple of minutes, it will eventually report that the basis is unreachable.
+The new basis-translation strategy in #7211 will fix this directly and have the failure be very fast.  We'll immediately detect that we can't use the given gates to generate anything, because the strategy is changed to expand out from the target set.  I'll close this as a duplicate of #5539, and we'll try to get #7211 merged soon - the blocker on it was retworkx 0.11, but that was released a few weeks ago.

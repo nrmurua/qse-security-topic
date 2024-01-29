@@ -1,0 +1,34 @@
+Objects which compare equal must have the same hash value; see https://docs.python.org/3/reference/datamodel.html#object.hash. This property is violated by Parameter.
+Note that a has type Parameter but aa has type ParameterExpression
+Any one of the following is acceptable in theory:
+Another option would be to deprecate Parameter and instead use sympy.Symbol directly.
+In this case we have to be a bit careful, I think: a Parameter is like a mathematical variable and we can use it to assign values to a circuit, e.g. as {Parameter: float}. A ParameterExpression on the other hand is a mathematical expression containing Parameters and other numbers, like Parameter + float. E.g. you could not assign parameters using a dictionary {a + 0: new_value}.
+So would say the Parameter a is not the same thing as the ParameterExpression a + 0, but if both were ParameterExpressions then yes. Maybe it would be good to make this distinction in the parameters.
+So would say the Parameter a is not the same thing as the ParameterExpression a + 0
+To put it concretely, you are saying that in my example, a == aa should evaluate to False, rather than True. Is that right?
+but if both were ParameterExpressions then yes. Maybe it would be good to make this distinction in the parameters.
+But both are ParameterExpressions (Parameter inherits from ParameterExpression).
+It depends: should == check whether the value of a is the same as aa (True) or whether I can use aa in places where I can use a (False for assignment)?
+Perhaps part of the solution is that ParameterExpression and Parameter should inherit from a common base type but not one from the other? It is weird that Parameter inherits from ParameterExpression but ParameterExpression.__init__() takes a dictionary with Parameters as the keys.
+Also, currently ParameterExpression.__hash__ hashes those Parameter keys. Maybe it could just do the hashing operation on the Parameters without invoking __hash__ on them so that Parameter did not need to override ParameterExpression's __hash__? Then the hash of a and a + 0 could be the same.
+Even with that, there are other issues with ParameterExpression.__hash__. Besides hashing the parameters, it hashes the expression string. As Jake pointed out here, that means that ParameterExpression({}, "0.125") and ParameterExpression({}, "1 / 8.") are equal but do not hash the same. I am not sure there is a good path to resolve this kind of issue short of doing full symbolic computation like sympy does to turn an expression into a tree that can understand that s + t is the same as t + s.
+I am not sure there is a good path to resolve this kind of issue short of doing full symbolic computation like sympy does to turn an expression into a tree that can understand that s + t is the same as t + s.
+At that point, I feel we might as well abandon Parameter and just use sympy.Symbol directly. What value does Parameter provide on top of sympy.Symbol anyway?
+What value does Parameter provide on top of sympy.Symbol anyway?
+The main difference that I see is Parameter assigns a UUID on creation, so Parameter("a") != Parameter("a") while Symbol("a") == Symbol("a").
+Another difference is that a Parameter can have a value bound to it and still be a Parameter rather than being replaced with a float (the problem in #10166). I am not sure if there is code that makes use of this feature. -- Actually, thinking about it, this is how parameter assignment works. The value gets bound to the Parameter rather than going through and replacing the parameter in every instruction using the parameter. I take it back again -- objects like QuantumCircuit keep track of their parameters and replace them in their own tables rather than mutating the bound value of a previously created parameter.
+These differences don't seem particularly compelling to me. In fact, they seem to cause user surprise, and bugs.
+The main difference that I see is Parameter assigns a UUID on creation, so Parameter("a") != Parameter("a") while Symbol("a") == Symbol("a").
+The behavior of Parameter here is pretty surprising, and I have encountered at least one situation where a user got tripped up by this. It also doesn't seem necessary; users can emulate this behavior by putting the UUID in the parameter name, for example.
+Another difference is that a Parameter can have a value bound to it and still be a Parameter rather than being replaced with a float (the problem in #10166).
+I am also not aware of how this "feature" is used, and as you point out, it is in fact a source of at least one bug.
+I think a motivation is also to decouple the Parameter from SymPy to allow different implementations under the hood. For example, we're using SymEngine if possible for better performance. If we used plain SymPy we couldn't easily do these optimizations 🙂
+Another reason to drop Parameter is that its arithmetic is not fully implemented. For example, #8959.
+I think a motivation is also to decouple the Parameter from SymPy to allow different implementations under the hood. For example, we're using SymEngine if possible for better performance. If we used plain SymPy we couldn't easily do these optimizations slightly_smiling_face
+For what it's worth, symengine integration is on the sympy roadmap:
+The plan is to use the SymEngine library as an optional fast symbolic core for SymPy. SymEngine is a symbolic library written in C++, with an emphasis on performance.
+https://www.sympy.org/en/roadmap.html.
+We use Parameter a bit in qiskit-experiments for calibration parameters. In that case, we allow the user to generate a set of schedules that can contain Parameter instances to be calibrated. Multiple schedules can contain the same Parameter and when generating calibrated versions of schedules with bound parameters each Parameter instance gets replaced with a single calibrated value. Currently, this feature relies on the UUID's to link the parameters together across schedules, so you can have x and y schedules with the same amp parameter but an sx schedule with a different amp parameter.
+Personally, I agree that this linking is confusing and would like qiskit-experiments to move away from it if possible (just treat parameters in each schedule independently by name; for linking parameters, build up larger gates/schedules referencing the smaller ones rather than linking parameters; or use code to redefine things that should be linked, which is more work but more clear).
+Still,  I think phasing out the UUID aspect of Parameter would require a lengthy deprecation. There might be a lot of code doing something like:
+where it is reusing the same parameter name many times in different gates/qubits and relying on the UUIDs to differentiate things  (the example is oversimplified but a more accurate example would be a lot of code; imagine different functions generating different gates or subcircuits each with the same parameter name).

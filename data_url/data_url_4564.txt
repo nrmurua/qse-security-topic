@@ -1,0 +1,24 @@
+When using a large number of shots for measuring a state, different errors pop out. Running a code similar to this one:
+For nshots below 10^10 I believe it works fine. From nshots=10^10 to 10^11 I face this error:
+ResourceExhaustedError: OOM when allocating tensor with shape[1,1215752192] and type int64 on /job:localhost/replica:0/task:0/device:CPU:0 by allocator cpu [Op:Multinomial]
+For nshots=10^12 or more:
+InvalidArgumentError: num_samples should be nonnegative, got -727379968 [Op:Multinomial]
+Related to #321.
+Thanks for opening this. I think the OOM error for 10^10 is expected because it tries to create a tensor with 10^10 elements (that's more than 2^33) which doesn't fit even in the CPU memory. I guess the problem is that it tries to consturct the tensor of samples (which has nshots elements) even if you only ask for the frequencies. Perhaps a solution would be to directly calculate frequencies without using the samples tensor when nshots is large.
+The 10^12 error looks like nshots is logged as int32 so goes back to negative if its value goes beyond 2^32. It's funny actually because if you try nshots=2^32+1 you will get a result containing a single shot (similarly 2^32+2 gives two shots, etc.). This should be easy to fix by changing the type of nshots to int64.
+@stavros11 concerning your last point, I believe tf is internally casting to int32.
+I guess the problem is that it tries to consturct the tensor of samples (which has nshots elements) even if you only ask for the frequencies.
+This sounds very inefficient, isn't it? I believe your proposed solution should be the way even for a smaller number of shots.
+This sounds very inefficient, isn't it? I believe your proposed solution should be the way even for a smaller number of shots.
+Indeed calculating only frequencies during the measurement execution should be more efficient.
+The only issue I have is that I am not sure how to include the measurement statistical noise in the frequency calculation. For example, given the probability distribution p(s) = | psi(s) | ^2, the corresponding frequencies would be freq(s) = nshots * p(s) rounded to a close integer such as the sum of freq(s) over all possible bitstrings equals nshots. Since this procedure is deterministic the frequencies obtained in such a way do not have any sampling noise. That is if you rerun the same circuit (same psi) several times you will get exactly the same frequencies. In principle one could add a random zero-sum integer vector, however I am not sure what should be the amplitude of this vector to get something statistically correct. Perhaps something involving sqrt(nshots) but certainly smaller than that.
+This sounds very inefficient, isn't it? I believe your proposed solution should be the way even for a smaller number of shots.
+Indeed calculating only frequencies during the measurement execution should be more efficient.
+The only issue I have is that I am not sure how to include the measurement statistical noise in the frequency calculation. For example, given the probability distribution p(s) = | psi(s) | ^2, the corresponding frequencies would be freq(s) = nshots * p(s) rounded to a close integer such as the sum of freq(s) over all possible bitstrings equals nshots. Since this procedure is deterministic the frequencies obtained in such a way do not have any sampling noise. That is if you rerun the same circuit (same psi) several times you will get exactly the same frequencies. In principle one could add a random zero-sum integer vector, however I am not sure what should be the amplitude of this vector to get something statistically correct. Perhaps something involving sqrt(nshots) but certainly smaller than that.
+@stavros11 you could do something similar to this:
+This way you can add the shot noise.
+I have tested the IBM simulator. It does not allow more than 10^6 shots, that is the way they avoid large number of measurements
+Every backend has got a max_shots' property that controls the maximum amount of shots allowed.Is 10^6 too large for us?
+@AdrianPerezSalinas thanks for the checks!
+Every backend has got a max_shots' property that controls the maximum amount of shots allowed.Is 10^6 too large for us?
+Thanks for checking. I believe 10^6 should work even with the current version of Qibo that is just based on tf.random.categorical. It can probably be done in a single batch too depending on the system.

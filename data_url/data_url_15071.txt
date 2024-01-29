@@ -1,0 +1,21 @@
+Hi. I am noticing a weird behavior when submitting algorithm via QuantumInstance API.
+
+This action somewhat spawns multiple jobs in sequential manner. I wonder if this is expected.
+
+Ps. similar behavior is observed when submitting algorithm via QuantumInstance API to Amazon Braket.
+Please advise.
+I believe the code should spawn only 1 job.
+No response
+QAOA is a variational algorithm, running using an optimizer to find a minimum of it's objective function. Each call to the objective function, to compute the value at the current point the optimizer is at, will execute circuits as a job, which it sends off to the backend. The next point the optimizer decides to try, in finding the minimum will be another job, and so on. So this can be many jobs - one for each point and done sequentially.
+Some algorithms/problems, say with a general Hamiltonian and VQE, can require many circuits at each evaluation. A job has a limit of max experiments based on the backend. In the number of circuits exceeds that then it will be split into multiple jobs at each point. This would not be the case with QAOA.
+Bottom line is what you are seeing is behavior that is expected given the algorithm/problem you have.
+Hi @woodsp-ibm ,
+Thank you so much for your prompt reply. I appreciate your effort and time, explaining the mechanism behind in detail.
+Perhaps, I have 2 follow-up questions based on your reply. Please find my questions as per below.
+I hope my inquiries are clear to you.
+Thanks.
+VQE/QAOA and other variational algorithms are this classical/quantum interaction where circuits are run and the next step (job) is evaluated based on the result of that run (job). Its a fundamental behavior. The extra level of splitting circuits in a given execution of a step, is to manage it to the provider/backend limits - if not an error would be raised by the provider. For QAOA you would not be seeing that as I mentioned above for an optimization problem that will be using an Ising Hamiltonian.
+The overall process is variational and is controlled and bounded by the optimizer. It would be limited by maxiter of the optimizer (an iteration can be multiple jobs if its doing a finite diff gradient in order to determine the next point where it should go). Optimization can stop earlier if the optimizer sees that the differences are now within the tol limit. By default QAOA uses SLSQP which for a noisy simulation - anything but an ideal statevector outcome, is likely not going to work well as SLSQP uses a finit diff gradient which means it evaluates a bunch of points (one in each dimension a very small delta from the current point). This can be badly impacted by shot/sampling noise (as it case with qasm simulator and shots) let alone real noise. Optimizers like SPSA were designed to work in noise, COBYLA is sometimes used too as its process is more tolerant to noise. SPSA does 2 evals (jobs) per point COBYLA does one. SLQSP it depends on the dimension (number of parameters in the ansatz which you have as the default so its 2 I think). QAOA has a max_evals_grouped which allows an optimizer to ask for a number of evals at once when they are indepedent e.g. when its doing the finite diff, and for SPSA the 2 evals it uses in order to determine the next point to go to. You can set max_evals groups which will end up with the circuits for this in one job (bear in mind too many circuits for the provider and QuantumInstance will split if it hits the provider limit - again I do not think this will happen for your example).
+I would try running things locally with the Aer simulator first to evaluate whether it finds a result. The remote qasm simulator should then do the same. A real device of today has other noise - i.e more noisy than just shot noise - so your result on an actual device may vary.
+Hope that helps.
+PS There is a link in the readme here to joins the Slack community. Discussions like this are preferable there - since here is more around developing the code.

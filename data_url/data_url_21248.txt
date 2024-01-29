@@ -1,0 +1,77 @@
+Transferring datasets between master and worker can be slow. For example, transferring 1 million floats currently takes 5700ms on my PC. This is a local transfer, not involving sypico's sync_structs and network capabilities, only using asyncio streams.
+Much of this time is spent in the serialization and deserialization of data. By using Pickle instead (which is powered by compiled c) you can get about a factor of 10x improvement.
+In PR #1675 I've added a unit test to check the speed of the ipc comms. Calling it with e.g. pytest artiq\test\test_worker.py -rP I get the performance mentioned above. Calling it again after applying all the changes in the PR gives 450ms for a 1 million float transfer: a speedup of ~10x.
+
+Before I mark the PR as ready for review, are there any considerations here which need thinking about?
+FYI the previous tests were transferring normal python lists. Transferring numpy arrays instead, the improvement is still there but not so dramatic.
+
+Isn't it a feature that there's only one protocol for use everywhere serialization is needed? or can we reach a consensus that different serialization protocols answer different needs?
+I think that the discussion should happen at the sipyco level, checking whether there are ways to make pyon faster in a backwards-compatible way (see e.g. m-labs/sipyco#16) or replacing it with something more established like e.g. msgpack (contrary to pickle, this would make writing (network-attached) tools in other languages than python easily possible).
+One question is surely whether it is really necessary that serialized data is "human" readable (e.g. for persistent datasets).
+For IPC I don't see an issue since both ends always come from the same software package AFAIK.
+Yes, I thought about trying to do this in sipyco instead, but decided against it (at least at this stage). Here, the worker comms use sipyco's ipc to make a binary stream, but then they use that with their own protocol which make swapping it easy. Doing the same for the whole of sipyco might be worth it, but I think you'd be better off with something like msgpack since you might have to talk to different python interpreters running on different computers over the network, whereas this pickle solution only ever talks to the exact same version of python as did the packaging.
+Does msgpack support all the data types we want?
+Nope, that's another drawback. Packages exist to add (fast) numpy support, but it has the same issues with tuples as JSON does. It's basically a binary version of JSON. So that'd need a solution, but it sounds solvable.
+If we were considering a rethink of sypico, I think ZeroMQ might be another good thing to consider (https://zguide.zeromq.org/docs/preface/). Whilst it does include some binary serialisation, it's really aimed at being a lightning-fast IPC / networking socket provider. That's a PR for another day, however.
++1 on using existing MQ approaches (having been a very long term zmq and mqtt user) for certain use cases.
+Does msgpack support all the data types we want?
+As @charlesbaynham mentioned, there's msgpack_numpy. For the other types that are not supported out of the box (e.g. slice, tuple, set) one could use the Ext type.
+If we were considering a rethink of sipyco, I think ZeroMQ might be another good thing to consider
++1 Like for msgpack, it would also easily provide better documentation / support thanks to their much larger communities.
+These are all very breaking changes. Would it make sense to introduce them at the same time as the new compiler?
+More info about performance: I've run the test both on python 3.6 and python 3.9 - it seems like python's pickle has undergone some considerable improvements between these versions. Here's the data:
+
+
+So in python 3.9, using pickle speeds up processing in all cases except the largest datasets (above 1E6 floats), and always beats PYON for native lists.
+In python 3.6 however, PYON begins to outperform pickle for arrays at 1E5 dataset lengths, and for lists around 1E6.
+(I'm not sure why python 3.9 seems to show worse performance for PYON lists vs. python 3.6, though this does seem to be repeatable on my system, i.e. Windows 10).
+Incidentally, I couldn't do the comparison for PYON for larger datasets because I ran into a bug: for datasets that are too long the asyncio stream readline() function gives up with the current code. This isn't a problem with the PR I've linked, since the stream reader is now reading a fixed size of data instead of waiting for a delimiter.
+So it seems like the PR as-is is an improvement for almost all accessible dataset sizes in python 3.9. In python 3.6 it's an improvement for all datasets smaller than 1E5 floats, and native lists smaller than 1E6 floats.
+It might be that there's a better serialization option than pickling which would be quicker for these large datasets. Even without this, pickling seems to result in faster data transfer for all scenarios except old python + huge datasets.
+I wasn't too happy with the above since good performance for large arrays was the motivation for this PR, so I've had another go but using Dask for the serialization instead. Dask is a parallel computing library, which therefore has to think hard about fast serialisation of data. Borrowing their serialisation, I could get instead of the above:
+
+
+
+
+I've pushed the code to #1675 - I'll tidy up tomorrow and discuss details there.
+Thanks for the detailed analysis!
+IMO we can easily switch to another protocol for IPC - note that this would apply to GUI/Applet communication as well.
+Pickle has the advantage of being part of the standard Python library and not requiring any extra dependency. Is Dask worth the hassle?
+I agree that adding an extra dependency is a pain. I think here it might be worth it though: those logarithmic plots are showing time per 1000 items, so pickle's loss in performance per item for arrays with lots of items translates to some pretty huge total times.
+On the other hand, the PR I've submitted uses:
+We might be better off moving to a solution like Apache Arrow's pyarrow and using it both for IPC and, ultimately, for network sockets too. pyarrow's serialization seems as good as Dask's and a bit easier to use (no headers needed). The only reason I avoided it was because they're intending to deprecate it once python 3.9's pickle support for out-of-band data is fully adopted. However, if we don't roll our own IPC and use pyarrow for all the functions above, that's not a problem and would simplify ARTIQ's codebase.
+I wouldn't mind having a go at fully replacing the worker IPC with a solution based on pyarrow if there's appetite. I don't think it'd be worth doing if we were only going to use it here, but if the long-term goal is to use it for sypico's protocols too then I think it'd be a smart move.
+(Other candidates: I mentioned ZeroMQ earlier - this would be great for message routing, but doesn't come with any serialization, so we'd still have to make our own decisions on this, adding more dependencies and code. )
+Did you mean msgpack?
+Is there a simpler option? Two serialization libraries for this task sounds a bit heavy-handed.
+However, if we don't roll our own IPC and use pyarrow for all the functions above, that's not a problem and would simplify ARTIQ's codebase.
+There are reasons for the IPC situation, in particular Windows and asyncio support. When I wrote this code, this wasn't available anywhere.
+Other candidates: I mentioned ZeroMQ earlier - this would be great for message routing, but doesn't come with any serialization,
+I did look into ZMQ also. It did not support asyncio, did not have all the features we wanted (for example, doing the initialization step in sync_struct is a pain with ZMQ publish/subscribe), and I don't see why a ZMQ socket would be faster than a regular Python socket unless we use ZMQ features for e.g. distributing messages to several clients. But this does not seem to be the bottleneck here, especially as the number of connected clients is typically small.
+Yep, I did mean msgpack :)
+Is there a simpler option? Two serialization libraries for this task sounds a bit heavy-handed.
+I agree. msgpack comes with and is used internally by Dask, so it doesn't actually inflate the number of packages installed. However we'd still need it as a formal dependency, in case Dask stopped using msgpack at some point in the future. So yeah, we can easily drop that and use JSON or pickle or whatever we want for the headers: msgpack was just the recommended serving suggestion in Dask's docs.
+There are reasons for the IPC situation, in particular Windows and asyncio support. When I wrote this code, this wasn't available anywhere.
+Seems like ZeroMQ now does have an asyncio interface: no idea if it's quicker than asyncio's stream, but it might be a nice feature to have IPC and network comms both mediated by the same library, and ZeroMQ is beautifully scalable. ZeroMQ also has zero-copy memory access for free, which is hard to get right otherwise and hits performance for large transfers. PyArrow doesn't currently have asyncio support, so we'd need to manage that somehow if we wanted to use it.
+It seems to me that the serialization is the only place where we've currently got a clear way of improving performance. Moving the network comms to ZeroMQ or PyArrow would allow us to benefit from community support, including ready-to-go compatibility with other programming languages and compilation to c. We could use them for IPC, network comms, both or neither, but all those are major changes.
+So, I suggest that for this issue we:
+PS PEP574 at https://www.python.org/dev/peps/pep-0574/ has some good insight into serialization, how it's currently done and how pickle is being improved in future.
+Dask is also quite a heavy dependency and pulls a bunch of other ones (bokeh, pandas, SQLAlchemy, nodejs...)
+Can its serialization part be used separately?
+And I'm aware of these features of ZeroMQ but they mostly do not seem relevant for our use cases. I doubt Python can really take advantage of the zero-copy API for instance, nor do I think that in an application that processes data in Python, a low-level memcpy in the socket layer can often be the bottleneck.
+And portable ZeroMQ for IPC is TCP/IP-based, isn't it? Unix domain sockets for zmq_ipc do not work on Windows. So you're computing packet checksums and dealing with windows/acks for imaginary packet losses when sending data between processes, on a reliable medium. pipe_ipc in SiPyCo simply uses lightweight file descriptor inheritance on Unix, and IPC sockets on Windows, and then provides the same API to the user.
+And anyone on the same machine can connect to your localhost ZMQ socket, whereas file descriptor inheritance is more secure.
+Dask is also quite a heavy dependency and pulls a bunch of other ones (bokeh, pandas, SQLAlchemy, nodejs...)
+Can its serialization part be used separately?
+Not sure. Dask itself pulls in the following:
+and dask.distributed which is the part with the serialization uses
+So nothing too heavy there. tornado is probably the biggest.
+...nor do I think that in an application that processes data in Python, a low-level memcpy in the socket layer can often be the bottleneck.
+You'd be surprised! When I was optimizing the Dask serialization I was able to trim 5ms off a previously 15ms deserialisation by being smarter about memoryview.
+And portable ZeroMQ for IPC is TCP/IP-based, isn't it? Unix domain sockets for zmq_ipc do not work on Windows.
+Yep I think you're right about that, reading into it a bit more. So probably not the right choice for IPC.
+Not sure. Dask itself pulls in the following:
+Maybe copy the interesting bits from https://github.com/dask/distributed/blob/main/distributed/protocol/serialize.py into sipyco... msgpack is light and would be ok to add as a dependency.
+Hmm I'll see how feasible that is. Not sure how coupled it is with the rest of the Dask code.
+A comment from @stevefan1999 reminded me about this thread! Extracting the serialization logic from Dask turned out to be a bit of a pain, but I've done it now. PR #1675 now (as of 4a71965) contains code with no dependencies required other than msgpack (which itself has no dependencies). I've verified in a clean artiq installation that I get the same performance from this implementation as from the Dask code.
+So, if you agree with the concept @sbourdeauducq , I'd say it's time to move over to the PR, correct any merge conflicts which might have arisen in the last few months and polish off release notes etc.

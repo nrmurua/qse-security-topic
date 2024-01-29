@@ -1,0 +1,32 @@
+Hi, I need this patch to build ELPA as part of the CP2K 2023.1 toolchain in our setup (a rather bare CentOS base, separate compiler and MPI prefix, separate prefix for a lot of other dependencies from pkgsrc):
+The hopefully uncontroversial part is inclusion of the settled LDFLAGS, which contains things pointing to various dependencies here.
+Then, I got an error with missing libgfortran in configure test programs, using mpif90 for linking solved that. I guess that is a point for ELPA upstream? Also not sure what specific property of our setup triggers this.
+This goes together with this overall change I need to get my library paths in properly:
+Would that be fine for inclusion?
+It is difficult to predict the effect of such a change. It might fix the build in one environment, but might cause new problems in another one. I suggest that you submit a pull request.
+I'm working on a branch now. Just so that it doesn't get lost: I tried a plain build from cp2k git now, without me meddling with flags. The toolchain build went through, but the later build of cp2k itself stumbles over an pre-installed libint2 in the dependency prefix.
+For my full build, I handle that also by hacking the arch files to fix the order of LDFLAGS to ensure the freshly built specific dependencies are found first.
+Also, a prominent motivation for working with the flags is that my build uses complete RPATH tags in the binaries (I disable the new dtags, preferring RPATH throughout over RUNPATH). I see that this is rather irrelevant for (most?) toolchain libraries that get static builds only, but any end-user binaries need proper RPATH for my compiler toolchain and dependencies in the system (like BLAS).
+Maybe the cp2k build scripts can be modified to construct -L and -Wl,-rpath as I want. Then the question of just using provided LDFLAGS aligns with the question if users should be able to provide CFLAGS etc. in the environment to be used for toolchain and main  build or if you insist that everything needs to be constructed explicitly.
+I think it is good form to only augment user-provided FLAGS from the environment in a build system, but of course you can decide differently …
+Edit: Here we really prefer application binaries locating their shared libs via RPATH, not via pre-setting LD_LIBRARY_PATH.
+We are currently on the move to cmake (see here), but we are keeping the toolchain installer as long as the new CP2K build system is not fully functional. The reason for the move are issues like the ones you are rising. On the other, this makes it difficult to get someone to spend time on improving the toolchain.
+Ah, so you're getting rid of the toolchain stuff in future. I was under the impression that you need certain configs/build properties. If things fit with standard builds of all deps, one could even package cp2k for pkgsrc (our preferred solution so far, also compared to a spack tree).
+I could limit the time I spend on this, since we have a working build now, until users wand the next upgrade and there's a new build system with new problems (don't you think that CMake won't cause problems itself;-).
+one could even package cp2k for pkgsrc
+Yes, users should really install CP2K through a distribution. Unfortunately, there are quite a few of them. Therefore, our move to CMake is primarily an attempt to simplify the packaging of CP2K.
+Ah, so you're getting rid of the toolchain stuff in future.
+Personally, I don't think the toolchain will disappear completely because we'll still need a way to quickly test new library versions. Nevertheless, we'll probably start borrowing more from existing solutions like Spack.
+That being said, these migrations will take another year or two. So, if you have ideas for improving the existing toolchain please feel free to open pull requests.
+OK. What I wonder: Does cp2k have any special requirements on the setup of dependencies? I see that it chooses a specific config for libint2, for example, lmax5. Ist that just a sensible default for anyone?
+I see that it chooses a specific config for libint2, for example, lmax5. Ist that just a sensible default for anyone?
+Yes, the lmax=5 is a reasonable default. However, very accurate basis sets require a larger value, which comes at the cost of significantly longer build times and larger binary sizes.
+Note also that, the libint source code has to be generated for a given lmax value. To simplify the installation we're maintaining pre-generated tarballs in this separate repo.
+OK, this is getting off-topic … but I hope you bear with me. There is a very outdated libint packge in pkgsrc. I'd bring this to 2.7.2(?). It is used by one other package (mpqc) right now.
+Now, for a general package selection, there needs to either be an obvious choice of build parameters — at least something site-specific that works for every user there — or there should be several variants installable without conflict.
+Spack handles that with a unique prefix per package, solving a very general problem with a huge hammer.
+I wonder if we could just package libint-lmax-4, libint-lmax-5, etc. and have those variants in the system (/prefix/lib/libint2-lmax7.a, for example) and a way to point cp2k to use that one. Has libint upstream an opinion on this? Should libint usage always be an internal detail and be built with the using application instead?
+Is libint for cp2k somehow different than libint for mpqc or ORCA (which has it internalized)? Is it reasonable to have it as external dependency at all?
+Ideally, it would be a run-time option which lib to load, depending on user preference for lmax… providing one binary for a set of users is a nuisance otherwise. Are there other issues where cp2k behaviour depends on specific setup of a toolkit dep?
+OK, this is getting off-topic …
+Indeed :-) But those are all very good questions. How about you re-post them as a new issue?

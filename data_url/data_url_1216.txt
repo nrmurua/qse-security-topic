@@ -1,0 +1,29 @@
+Summarize the task
+Transformers implemented naively can be quite slow. In the snippet I am giving with a inversion of a circuit using the fact that the inverse of the Sycamore gate can be decomposed into single qubits gates + sycamore gate take 100x longer than doing the cirq.inverse function on the circuit.
+If there was a way to make this better, in cirq directly, or maybe give good practice on how to make these transfomer fast. it would be nice.
+Acceptance criteria - when is the task considered done?
+reasonable time for the specific transformer up to ~150ish qubits.
+** Python Script **
+I have a quick fix - #6174, that reduces the time to half, but I think it's still not good enough.
+Timing before my PR:
+Timing after my PR:
+Now, each of the transformer steps takes roughly ~0.5 seconds and speeding this up further would probably involve speeding up the map_operations / map_moments transformer primitives in the first place.
+The example code for 150 qubits takes the following time:
+On master
+On #6174
+@AlMrvn What should be "a reasonable time" for the transformer up to ~150ish qubits? Is <1 second a good target to aim for?
+@tanujkhattar that a decent increase! factor 2 already! Thanks a lot! I am already happy =D
+for a what would be reasonable, I would say that these circuit take few microsecond to be run on the hardware for 1 shot.  Let's say 4us per shot with some overhead. it will need a lot of shot, so let's say 1 million shots. this give us a run-time on hardware of ~4s. ideally the circuit creation would be small compared to this. so yeah 1s or 0.5s seems good.
+for order of magnitude, I usually precompute ~100 of these circuits
+xref #6097
+@AlMrvn @dstrain115
+Tl;Dr - #6250 significantly speeds up the transformer primitives so that the original transformer written using convenient transformer primitives is now very close to a faster optimal implementation and takes < 1sec for the 75 qubit circuit.
+After my last set of improvements as discussed in the comment above, the original transformer written by you using transformer primitives in the original issue was taking ~3.3 seconds for 150 qubits case. A rerun gives numbers as follows (pasted again for convenience)
+We also discussed that we can significantly speed up the transformer by completely rewriting it and not using any of the built-in transformer primitives. The implementation we came up with (offline) was as follows (given in the details block).
+The fast version has a runtime of ~1.7 seconds, i.e. running
+gives
+The ~1.7 second time gets rid of most of the overhead introduced by the built-in circuit transformer routines, like cirq.map_operations, and mostly comes from repeated computations of the unitary matrices for phased XZ gates that need to be merged. For example, here are the top 10 lines from snakeviz profiling output
+Now, as part #6250, I've improved the speed of built-in cirq.map_operations transformer primitive such that now, if you run your original implementation of the transformer, that uses the built-in transformer primitives, the runtime is much closer to the optimal runtime of the fast version. For example, running the original transformer on 150 qubits now gives
+You can see that the inverse_circuit and circuit_rev, both the stages use the cirq.map_operations_and_unroll primitive and their runtime reduced ~5x each while the runtime of merged_circuit stage remained roughly the same and is same to the optimal runtime of the fast transformer since this is the minimal cost paid due to computing unitaries and merging them.
+Note that all of these numbers are for 150 qubit circuits. For 75 qubits, the total runtime < 1sec.
+I think we can safely close this issue now once the linked PR is merged?

@@ -1,0 +1,44 @@
+Originally reported in #944. Tests seem to be failing for MacOS. We get errors like
+The build is pretty much always failing, but sometimes passes.
+I think we only get the errors when tests are run, the functions work fine otherwise. I think someone tried pytest and still got same errors. So kind of a nasty one to investigate, but there might be an easy fix if we can work out what to do.
+I believe @nathanshammah has done some quite thorough investigation and could probably add to this.
+I report local tests failing on my MacOS 10.13.6 by running qutip.testing.run().
+Tests fail for python 3.7 and 3.6 environments, if QuTiP 4.4. is installed in develop mode (openmp = True).
+Tests fail also for QuTiP 4.3.1 installed with conda.
+Broken test for python 3.6 with: (1) QuTiP 4.4-dev,  with openmp =True and (2) conda install qutip, QuTiP 4.3.1:
+Error Message below:
+Building the dev environment:
+Broken test for python 3.7 with: (1) QuTiP 4.4-dev,  with openmp =True and (2) conda install qutip, QuTiP 4.3.1
+Error Message below:
+Building the dev environment:
+In development version 4.4:
+I obtain an error at
+the error occurs at
+I think I pinned down the issue for local tests on Mac 10.13.6 (High Sierra) with Python 3.7 with the current qutip 4.4 dev version to the line
+in test_metrics.py.
+Even just running average_gate_fidelity(rand_super()) in a Jupyter Notebook can kill the kernel.
+It seems that average_gate_fidelity(super_matrix) does not like odd dimensions in super_matrix.
+So, now tests fail for Qobj subtraction, when running nose.run(defaultTest="qutip.tests", argv=['nosetests', '-v']) but they run just fine when running nose.run(defaultTest="qutip.tests.test_qobj", argv=['nosetests', '-v']).
+Note that before, for the metrics, the error was occuring even if only  nose.run(defaultTest="qutip.tests.test_metrics", argv=['nosetests', '-v']) was run.
+It might be something ill allocated due to the order of how tests are run.
+I also wonder if there is an issue with pycache. Also, in my folder there are both py36.pyc and py37.pyc files. Here there is a discussion that might be related (?)
+pytest-dev/pytest#200 (comment)
+Deleting the pycache and running nosetests gives the following warning messages
+cc @Ericgig.
+"""
+.................................................................................................................................../Users/nathanshammah/github/qutip/qutip/control/optimizer.py:1070: DeprecationWarning: Using or importing the ABCs from 'collections' instead of from 'collections.abc' is deprecated, and in 3.8 it will stop working
+elif not isinstance(self.pulse_generator, collections.Iterable):
+..............................................................................................................................................................SSSSSS.......................................................................................................................Segmentation fault: 11
+kills nosetests, which do not even start doing QuTiP's tests.
+Running nosetests in a conda environment in Python 3.6 on a Mac High Sierra 10.13.6 gives
+and kils the tests.
+If I understand correctly it refers to line 300 in test_metrics, which has a new hellinger metric test by @wrzadkow . Could it be that using  "for _ in range(10):" is a problem?
+If I understand correctly it refers to line 300 in test_metrics, which has a new hellinger metric test by @wrzadkow . Could it be that using "for _ in range(10):" is a problem?
+The following observations:
+make me think that the issue may be caused by \otimes that I used in the docstring explanations. Don't have a Mac to reproduce and check whether removing this will help, though.
+My guess is that something will need to be changed in metrics.average_gate_fidelity to resolve this issue
+While the tests now pass for Mac on Travis CI, this is the error messages I get locally on Mac,
+this on the 4.4.0 release version.
+On the dev version,
+and with nosetests
+This somehow got fixed before 4.4.0.

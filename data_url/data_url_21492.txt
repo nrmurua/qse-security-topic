@@ -1,0 +1,39 @@
+ExperimentDB scans the whole repository when looking for experiments. This is extremely slow on a relatively large repo (takes ~10 mins to scan our experiment repository).
+Add an experiment subdirectory when starting artiq_master, and ExperimentDB should only scan experiments in this subdirectory.
+See https://github.com/m-labs/artiq/compare/master...Jayich-Lab:mf/artiq_master_experiment_subdir?expand=1 for a patch that implements this solution. It should be backward compatible (default experiment_subdir=""), and we can run experiments from the explorer GUI. I can create a PR for this if it looks good.
+What else do you have in your repositories that aren't experiments?
+Can those files be eliminated quickly instead in the scan process to make it faster?
+In the repository we also have analysis code which we would rather not move elsewhere. We also have test code, GUIs, etc.
+Certainly the problem can be solved by moving other files away. If defining an experiment subdirectory is supported, users can be more flexible about code organization though which I think is a good thing. It seems that the _RepoScanner was designed probably with this issue considered: subdir is already an argument of _RepoScanner._scan function but it is currently not used in ExperimentDB.
+That's not necessary if the whole repos can be scanned but non-experiment files eliminated quickly as I suggested.
+Are the bulk of the files that make it slow Python *.py files, or something else?
+Yes they are python files (I think non-py files are skipped in the scan).
+Would opening the file and eliminating it immediately (before spawning the worker) if it doesn't contain the strings "import artiq" or "from artiq import" resolve this?
+What is slow is creating the worker processes. Recycling worker processes would also improve scan speeds generally.
+This works for me (but I am not sure if it works for others group). We can add import artiq to all experiments.
+Another way is to add a module docstring containing a specific string for all experiment modules, such as
+It seems to me that checking the import is probably better than the docstring.
+We can add import artiq to all experiments.
+Don't you have it already?
+And possibly the scan would be fast enough with just worker process recycling. Can you try?
+We currently have it in the format of from artiq.experiment import *. I imagine people can also do from some_module import * where some_module imports everything in artiq.experiment.
+By recycling the worker, do you mean this? https://github.com/m-labs/artiq/compare/master...Jayich-Lab:mf/recycle_exp_scan_worker?expand=1
+Yes, though you do want to handle errors and probably restart the worker after some experiments have been scanned (either fixed number or based on memory consumption) to avoid using too much memory (otherwise all your Python files get loaded at the same time).
+I did not see a significant improvement from recycling the worker (it has been running for 7 mins now and has not finished, and I shut artiq_master down due to high memory usage (as you mentioned it would be an issue).
+If your machine began swapping, it would slow things down.
+Yes I agree. I think even ~1 min to scan a repository (before it has to use the swap) seems really slow though.
+I guess each file will also create a new process...
+The experiments module will process each file by
+
+It seems that nearly all the time is spent importing the modules
+
+I tested adding a if statement so the above line is run only if file is in the experiment subdirectory of the repository, and the total run time is reduced to ~seconds. This indicates that creating the processes is not the bottleneck at least for our setup. If I put the condition after this line, the total run time is not much reduced, so the bottle neck is really the line of code above.
+@sbourdeauducq as you said, adding a check on import artiq would probably solve this problem. It seems to me that supporting an experiment subdirectory can solve this problem in a backward compatible way though.
+It seems that nearly all the time is spent importing the modules
+
+I tested adding a if statement so the above line is run only if file is in the experiment subdirectory of the repository, and the total run time is reduced to ~seconds. This indicates that creating the processes is not the bottleneck at least for our setup. If I put the condition after this line, the total run time is not much reduced, so the bottle neck is really the line of code above.
+Just wondering, are the Python files scripts (that does some non-trivial things) or libraries? If they are scripts, do they have
+to prevent the code from being executed when the module is imported?
+All scripts we have have if __name__ == "__main__": to prevent execution on loading. They do import many modules which should take time. We have ~1000 python files in the repository.
+We have many experiments here that don't from artiq import *, as ndscan its own convenience wrapper (from ndscan.experiment import *) for the from artiq.experiment import * convenience syntax. I suppose we could add a configurable match pattern (?).
+OK, in this case I don't see a better option than the originally proposed subdirectory specification.

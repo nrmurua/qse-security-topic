@@ -1,0 +1,67 @@
+Given an operator (matrix) determine if it is block-positive.
+The definition of block-positivity can be found in Section 2.2.5 in arXiv:1207.1479.
+Determining block-positivity is a very useful tool in the context of quantum state discrimination. Such an example application can be found in arXiv:1408.6981. Roughly speaking, the utility is because the cone of block-positive operators constitutes the dual cone of separable operators--and hence determining block-positivity can be useful for proving separability results for certain quantum state discrimination schemes.
+An implementation of determining whether an operator is block-positive can be found in QETLAB's IsBlockPositive function. This will be a useful reference implementation to test against.
+Will require feature that allows computing the S(k) norm
+#73
+to be completed as a pre-requisite.
+I'm interested in taking this! I've read through a bit of arXiv:1207.1479 and I still need to work through it a bit more to understand how to implement a function that determines if a matrix is block positive or not. I will try to implement a function with functionality similar to QETLAB's reference implementation (supporting K-block positivity, dimension of the subsystems)
+I have a few questions @vprusso
+Hi @vezwork. That's fantastic, I'm thrilled that you're interested in this feature. I believe this will be a very useful feature once implemented, and I expect it to be a fun one to work on as well :)
+Regarding your questions:
+Could you point me towards where I would place such a function in the toqito codebase?
+Of course. I think an appropriate place for this function would be within the toqito/matrix_props directory; as this function will be responsible for determining a given property of a matrix.
+What format/data-structure should I expect the input operator to be in? Will it be a non-sparse matrix? Would you have a reference for the format of operators that toqito uses?
+That's a good question. The toqito project is fairly "function-driven" in design, and as a result, lends itself quite nicely to being fairly agnostic to any proprietary data types. So, basically, the input to the function should be of type np.ndarray. You can take a look at some of the other functions in matrix_props to get a sense of how they operate.
+Specifically, I'm imagining a function prototype along the lines of:
+Will I have to worry about numeric precision in my implementation? I haven't worked with scientific computing in python before so I'm not sure what the mechanism for specifying numeric precision is.
+Another good question. You most likely will have to take that into account on some level. In fact, if you look at the other functions in matrix_props/, you'll notice that the function prototypes often take rtol and atol optional parameters that are used where appropriate (for instance, checkout matrix_props/is_hermitian.py).
+So, the function prototype with the precision issue taken into consideration may look something like:
+If you have any other questions, please do not hesitate to ask. I am looking forward to seeing what you can put together for this task!
+I have just finished reading up to and including Section 2.2.5 in arXiv:1207.1479.
+To say where I'm at:
+I have some sort of a grasp of what it means for an operator to be block positive based on the definitions
+ and based off of the inequality on page 36 of arXiv:1207.1479.  With that being said, it is still unclear to me how one could computationally decide whether a given matrix is block positive or not. In QETLAB's IsBlockPositive function the problem seems to simply reduce to either checking if the matrix is positive semidefinite (for matrices acting on subsystems smaller than k) or computing the S(k) operator norm (for matrices acting on subsystems larger than k). I haven't found information on the S(k) operator norm, how it relates to block positivity, or how to compute it yet (other than QETLAB's SkOperatorNorm implementation) but that seems like a necessary next step, unless there are other methods for computing block positivity that I haven't come across yet.
+Hi @vezwork.
+Right, this seems to align with my understanding as well. In the event when the local dimension is small, indeed, checking whether the input is PSD is sufficient. The more elaborate and interesting cases will most likely involve computation of the SkOperatorNorm as per QETLAB. I am not aware of how one would deem the block-positivity of an operator in a different manner--that is, in a way that does not involve this approach. So it would seem as if the ability to compute the S_k operator norm would be a necessary pre-requisite to this function.
+Let me know if that doesn't make sense or if you have any follow-up questions. This is something of exploration for myself, so there should be some excitement in uncharted territory here for me as well! Cheers.
+Hi @vprusso, my apologies for the gap in communication, I haven't gotten back to working on this much until today.
+By the way I wanted to say thanks for your kind, detailed responses and quick communication.
+Upon consideration of QETLAB's implementation and the papers they cite, I've realized that computing the SkOperatorNorm (defined in Proposition 4.5 here) is a difficult problem (the paper even says so haha). It is possible to narrow down upper and lower bounds on the Sk operator norm (and narrow down some associated witness vectors) using tricks outlined in that paper and related papers (as QETLAB has done). It also seems to be possible to efficiently and approximately compute the Sk operator norm using a convex optimization program (as QETLAB also does). I found a Convex Optimization library for python here: https://www.cvxpy.org/.
+Now, in terms of my ability, I am a bit out of my depth here. The math in these papers is a bit beyond my level and is pretty concise, I haven't done convex optimization before, and unfortunately I have limited time right now to work on this. I'd love to be able to contribute something here, and I'll be back to work on it more this weekend, but I don't feel confident I will be able to make any substantial progress before the end of Unitary Hack. If anyone else is reading this, please feel free to try to tackle this problem and I'd be happy to share anything I've learned in the comments here.
+I got Toqito running and played around with it though! It's really easy to use.
+Hi @vezwork. No problem at all, and thanks for getting back to me.
+I will agree that the calculation of the SkOperatorNorm is certainly a non-trivial problem. Indeed, the code to calculate this does exist in QETLAB (as you pointed out), but it might take some time to port over to Python. One nice thing about an external implementation is that one would be able to step through each part of the MATLAB implementation and sanity check as you go in Python. Indeed, QETLAB has served as a great inspiration to many of the functions in toqito, and I have done precisely this for a number of the functions.
+Indeed, there is quite a lot of usage of the cvxpy module throughout toqito. Convex optimization naturally lends itself quite well to a number of problems that arise in quantum information--mostly because the natural ingredients of quantum information like states, channels, and measurements can all be represented by positive semidefinite matrices which lend themselves to this optimization technique.
+I wouldn't let you consider yourself out of your depth here--I've taken a look at your code contributions on other projects, and you seem like you're a very competent and intelligent developer. If there are gaps in your knowledge, I'm happy to help you navigate those, but of course, if you think your time would be better spent on another feature, that's okay too. In either case, I'll try to provide whatever support I can, but I also don't want to put you in a situation where you feel forced to work on a task you don't feel inclined to.
+Basically, happy to help if you think I can fill in some gaps, and in any case, very much welcome whatever contributions you do make to the toqito project. Cheers.
+Here's a cheat sheet I made tonight for computing block positivity:
+
+This cheat sheet leaves out one trick to quickly decide k-blockPositivity depending on the dimension of the subsystems the operator acts on (dim).
+As we discussed, computing the S(k) operator norm is not easy. It is clear that it is not trivial from the above picture, since it is the supremum of a set of products of an infinite number of vectors v and w.
+I plan to also create a cheat sheet of tricks for narrowing down lower and upper bounds on the S(k) operator norm.
+What isn't obvious to me at this point is how QETLAB's dim argument is used in its S(k) operator norm implementation to more quickly compute the norm. The mathematical definition of the norm does not include any variable called dim or even a notion of the operator acting on subsystems (although the above mathematical definition probably assumes it operates on the tensor of complex spaces i.e.
+
+Once I get into documenting the tricks I'm sure I will come across where dim is used though.
+@vprusso if you could, let me know if I've made any mistakes or incorrect assumptions above!
+Hi @vezwork. Looks like you're off to a great start here. Let me just reply to some of your points:
+This cheat sheet leaves out one trick to quickly decide k-blockPositivity depending on the dimension of the subsystems the operator acts on (dim).
+Nice, that's a great concise cheat sheet you've put together here. Gives a lot of information from a quick glance.
+I plan to also create a cheat sheet of tricks for narrowing down lower and upper bounds on the S(k) operator norm.
+That exercise may be useful in and of itself. One thing that may be useful in doing so as a simplification is to note that checking for block-positivity only requires known what the upper and lower bounds on what S(k) is. The other information you get from computing this quantity like the witnesses doesn't get utilized.
+What isn't obvious to me at this point is how QETLAB's dim argument is used in its S(k) operator norm implementation to more quickly compute the norm.
+I'm not sure I am entirely sure why this simplification can be made either. My understanding is that there is some relationship between "k" and the dimension of the input, such that if the dimension is less than parameter "k" then it somehow suffices to simply check whether the input is positive semidefinite. This is probably overly naive on my part, but I'm taking that fact as a given if the specifications of the problem are provided as such.
+Once I get into documenting the tricks I'm sure I will come across where dim is used though.
+I think that's a good approach. It seems like you're already getting a good grasp on the boundaries of the problem.
+if you could, let me know if I've made any mistakes or incorrect assumptions above!
+I can't see anything about your assumptions that is off to me. I'd say keep chugging along. One tip might be to see if you can make use of MATLAB to compare with Python as you go. If you don't have access to MATLAB, there are temporary licenses that can be obtained for free. If you need any help setting up that environment, do let me know. Keep going though, you're doing great!
+Hi Elliot (@vezwork)
+Hope you've been doing well. I'll be posting this task again for the upcoming UnitaryHack challenge this year. If you are interested in throwing your hat into the ring, let me know--I think you had some great initial progress on this last time.
+Hi Vincent (@vprusso)
+I've been quite good, hope you have been too! Thanks for letting me know that block-positivity will be back in UnitaryHack next month.
+I'm not sure I'll have the time to have a go at it this year, although I'm still interested. I re-read through my notes, and I must admit that I am a bit intimidated to get back into this... Perhaps you could share some links or code snippets of some examples of the convex optimization used in toqito with some short explanations? I think this would help me to understand what the first steps to attacking this problem again would be.
+Hi Eliot (@vezwork)
+Very nice to hear from you again.
+Indeed, if I can directly help out with this one, you can let me know and I'll be happy to jump in. Whether that's working directly on it in tandem or working out some details via a Zoom call--I would be happy to help out.
+I think one bite-sized bit might be having the ability to calculate the sk-vector norm. This is a pre-req for the sk-operator norm and is quite a bit less complicated to implement.
+In terms of examples of convex optimization in toqito, here are a handful of examples:

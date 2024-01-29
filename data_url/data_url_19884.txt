@@ -1,0 +1,92 @@
+From #1560:
+our implementation of Falcon-1024 differs from the upstream on a single KAT, number 82. I put together a demonstration here: https://github.com/SWilson4/falcon-diff
+This seems to be explained by the signature buffer size used for the KATs: our implementation uses the signature size of 1280 bytes while the upstream code passes a larger buffer of 1330 bytes (even though the signature size upstream is still defined to be 1280 bytes). I'm not sure yet why this is done, but redefining the signature size to be 1330 in liboqs does make all 100 KATs pass.
+I recently received insight into this issue from Gregor Seiler of the Falcon team. This is my paraphrase of what was written to me:
+The scheme samples (and resamples) signatures until one which is short enough to fit in the given buffer is found. The "maximum size" (quotation mine) of 1280 bytes was chosen somewhat arbitrarily. It's a "nice" (presumably meaning divisible by 128) number such that signatures usually are small enough on the first try. However, the buffer size for the KAT testing was chosen such that no retrying would be required---hence the larger value of 1330 bytes.
+I've confirmed that this is the cause of the mismatch by modifying the Falcon reference KAT generation program to use a 1280-byte buffer and to retry signatures if necessary. With these modifications, it agrees with the (yet unmerged) OQS test program on all 100 KATs.
+I see three different approaches we could take to resolve this:
+I don't love any of these, especially not the third option. I lean toward the first. If anyone would like to weigh in on one of these or present a different path, please do so here.
+I'm not sure if anyone will get a notification about this by default, so pinging @baentsch @dstebila @praveksharma @bhess for input.
+Thank you for looking into this @SWilson4!
+I'm not sure if testing the the KAT program against its own output would be entirely appropriate if that's what you're suggesting in 1? I'm leaning towards 2 but I don't know the changes that this would necessitate and how this would impact maintainability.
+The scheme samples (and resamples) signatures until one which is short enough to fit in the given buffer is found.
+This is a pretty unusual API: The less memory a user passes, the longer the computation will take...
+In most cases (i.e., users not knowing about this and trusting the reported sig size) this is a waste of CPU cycles, particularly if done in and triggered&supported by a library more widely used. No solution aiming for a good ecological impact should permit users to inadvertently cause wasteful computations.
+Hence my preference clearly is on option 3: Set the value such that the algorithm always performs the minimum amount of computation.
+Beyond that clear preference, option 1 is not "quite right" anyway following @praveksharma 's argumentation. Option 2 is a stopgap measure not solving the general problem of a conceptually wasteful algorithm (on small buffer sizes). Also, a similar problem can always reappear when different implementations use different buffer sizes.
+@praveksharma Maybe you can ask people at the hackathon what they would do in this scenario?  It seems like option 1 is most compliant with the Falcon spec, and option 2 and 3 are admitting that the Falcon KAT generation is not compliant with the Falcon spec.
+option 1 is most compliant with the Falcon spec
+Having to write one's own KAT generator to match an implementation doesn't sound very spec compliant. Or did you want to say "option 1 is most compliant with the Falcon reference implementation"? That I would concur with. But still it's weird to have to write custom code for that...
+option 1 is most compliant with the Falcon spec
+Having to write one's own KAT generator to match an implementation doesn't sound very spec compliant. Or did you want to say "option 1 is most compliant with the Falcon reference implementation"? That I would concur with. But still it's weird to have to write custom code for that...
+By "spec" I mean the PDF document that the Falcon team submitted to NIST for Round 3, which describes a Falcon signature as being 1280 bytes.
+Hi @ounsworth asked for opinion on that, so there it is.
+I would like to suggest 4th option. So, Falcon has three signature formats:
+"Compressed format": this is the one which was used in the first
+PQC submission of Falcon it has a variable size. The macro
+FALCON_SIG_COMPRESSED_MAXSIZE() returns the theoretical maximum
+size that you could get. In practice you'll get something quite
+shorter.
+"Padded format": it is the compressed format + some padding to get
+to a fixed size, and the signature generator retries if the
+obtained compressed signature does not fit. The output size
+is guaranteed, but sometimes at the cost of doing the signing
+twice. FALCON_SIG_PADDED_SIZE() returns that guaranteed size.
+"Constant-time format": it is an uncompressed format, fixed size
+with macro FALCON_SIG_CT_SIZE() providing the signature size.
+I think OQS uses "Compressed format", as that's the only format that has
+variable size signatures. I would like to suggest OQS uses "Padded format".
+One can thing about "variable size" signatures in Falcon as form of optimisation.
+It is interesting optimisation, but as any optimisation, may not be suitable
+for all use cases. From my experience, the padded format makes implementation
+easier. That's what we do in PQShield's implementation.
+Comparing fixed size vs variable size signatures - for Falcon 512 it is always 666
+bytes (1280 for Falcon-1024). For variable size signatures - here below I've statistics
+for running singing on 100K signatures, the median is 614 bytes, which means that on
+average signature is 52 bytes bigger (sorry, don't have those numbers for 1024, but
+can do further checks if that's interesting).
+The switch to padded format requires code changes and re-generation
+of KAT vectors. But I think that solution allows to resolve your problem in
+a clean way.
+Let me know if that's interesting and I can provide a help to do it.
+Otherwise, I would just go with option 3 proposed by @SWilson4
+Thanks for explanations, tests and measurements, @kriskwiatkowski !
+The switch to padded format requires code changes and re-generation of KAT vectors
+It seems nearly all options require a change of KATs -- and thus a change breaking interop with "previous" code.
+Now the question to people doing an interop hackathon: Is there any consensus (maybe a "preferred" spec draft) answering this? What's the majority of implementations doing? Otherwise, thanks for supporting option 3 :)
+Thinking about it a bit more. I wonder if it would make sense to have two versions of Falcon - one with variable signatures sizes and one with fixed-size signatures. Each flavour would gets it's own OID.
+That way OQS could enable further experimentation with each flavour, which hopefully could help to understand pros/cons better.
+I wonder if it would make sense to have two versions of Falcon - one with variable signatures sizes and one with fixed-size signatures. Each flavour would gets it's own OID.
+That way OQS could enable further experimentation with each flavour, which hopefully could help to understand pros/cons better.
+Enabling experimentation is one of the goals for liboqs, so I like the idea. Also nice(r) would be a version with constant time properties. Different OIDs are a downstream topic (in oqs-provider); in the library, we'd need a different name. Proposals (and PR implementing this :) welcome. But first probably would need to be an idea how/where to put & pull this from (currently we take the code from PQClean, so it may be (more?) reasonable to add it at that project. @dstebila : Your take?
+But one issue still is open: What (sig-length) constant to use for the variant we currently have? The one in the Falcon documentation (current state) or the one that generates all KATs (desired state from an interop perspective)?
+A discussion of the various signature formats for Falcon starts here at line 120, for the curious.
+I'm not sure if testing the the KAT program against its own output would be entirely appropriate if that's what you're suggesting in 1? I'm leaning towards 2 but I don't know the changes that this would necessitate and how this would impact maintainability.
+It wouldn't really be testing against its own output. It would be testing against the output of the Falcon reference code when run with a slightly modified KAT program. The only changes to the KAT program would be
+This is a pretty unusual API: The less memory a user passes, the longer the computation will take...
+In most cases (i.e., users not knowing about this and trusting the reported sig size) this is a waste of CPU cycles, particularly if done in and triggered&supported by a library more widely used. No solution aiming for a good ecological impact should permit users to inadvertently cause wasteful computations.
+Hence my preference clearly is on option 3: Set the value such that the algorithm always performs the minimum amount of computation.
+I don't think that setting the buffer to 1330 bytes would accomplish this: that value just happens to be chosen such that the algorithm never retries for the 100 NIST KATs, which use the same "randomness" each time. I believe we would have to use the "compressed" format to ensure that there are no retries.
+I think OQS uses "Compressed format", as that's the only format that has variable size signatures. I would like to suggest OQS uses "Padded format".
+OQS (via PQClean) currently does use the "padded" format. That's why
+the signature generator retries if the obtained compressed signature does not fit.
+I guess that a more precise summary of the issue, using terminology from the Falcon documentation, would be this:
+With this in mind, I'd like to amend my posited "option 3":
+3. Use the "compressed" signature format, which entails a 1462-byte maximum buffer for Falcon-1024.
+I personally like the idea of supporting both "compressed" and "padded" (and possibly "constant time") formats. However, this would still require us to modify the reference KAT generation program to produce KATs for the "padded" version.
+Follow-up to the above: I'm second-guessing myself now after reading through #1591. OQS does use the "padded" signature size (we inherit our signature size macro from FALCON_SIG_PADDED_SIZE in the reference code), but are we actually producing fixed-length "padded" format signatures?
+Note that in padded format "the signature generator retries if the obtained compressed signature does not fit". So, you shouldn't be getting signature that's "too big".
+(see https://falcon-sign.info/impl/falcon.c.html line 478)
+Note that in padded format "the signature generator retries if the obtained compressed signature does not fit". So, you shouldn't be getting signature that's "too big".
+The implementation in liboqs does indeed retry: see https://github.com/open-quantum-safe/liboqs/blob/main/src/sig/falcon/pqclean_falcon-512_clean/pqclean.c#L201. However, our implementation does not zero-pad signatures up to 1280 bytes as we should if our intention is to implement the "padded" version. The liboqs implementation is pulled directly from PQClean, so maybe @thomwiggers can offer insight as to whether this is a deliberate choice or an oversight.
+Ah, I see! It is "padded" flavour, but it doesn't add any padding.
+In such case, going with option 3 may cause incompatibilities. I would definitely NOT go with option 3. Just remove KAT that is failing - clearly that KAT is wrong. I think if you go with option 1 then you end up with same set of KATs except for the the one which is wrong (assuming you choose same seed). I think that's right thing to do (yup, use falcon reference code as you described above).
+Still, I think fixed size signatures makes life easier. As implementation already uses padded flavour, the only change to KATs would be to pad all signatures with zeros. Except that, the actual values stay the same (modulo broken KAT vector).
+I agree that we should be padding, otherwise we may also be leaking bytes from memory! But I don't think I did anything deliberate here, other than trying to use the fixed-length version of Falcon. I might have accidentally omitted some lines when porting falcon.c from upstream: https://falcon-sign.info/impl/falcon.c.html (480-483).
+It seems we may have had this bug since the initial inclusion of Falcon in PQClean.
+It seems we may have had this bug since the initial inclusion of Falcon in PQClean.
+Thanks for the analysis. But I am now a bit confused: Can someone remind me where the KATs are coming from? Are the current (all 100) Falcon KATs to be treated as the goal to match (by an improved implementation) or as another element to be updated? The latter surely if we'd anyway consider having different Falcon flavours supported. In any case the documentation ought to be updated (as to what Falcon variant liboqs actually implements).
+PQCleans KAT value are just generated from my computer I'm afraid. I don't think the NIST-published KAT were compatible with the key sizes published in the Falcon spec for round 3.
+How to best address this issue came up in meetings this week.
+The first priority is to get an implementation that correctly follows either the "compressed" format or the "padded" format. For now, it seems like the simplest fix is to support the "padded" version (which is also the version that PQClean intended to implement). I'm going to get to work on a PR for PQClean. When it's merged we can pull it in here via copy_from_upstream.
+Looking further ahead, it would be nice to support both formats, and possibly the "constant time" format as well. I've made issues here (#1608) and in PQClean (PQClean/PQClean#523) to track both the short-term fix and progress toward this longer-term goal.

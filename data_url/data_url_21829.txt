@@ -1,0 +1,31 @@
+I am running the following experiment with gateware and software at commit 60b2221, and looking at the SERDES TTL signals 1092 and ttl_g8 on a scope. Our target is based off the kc705 NIST clock with some additional TTLs
+The pmt is a TTLInOut, the rest are TTLOut. Running this experiment generates 29 copies of "firmware.runtime.rtio_mgt:RTIO sequence error involving channel 52" (channel 52 is ttl_g8). I see the 1092 TTL pulse as expected, but ttl_g8 does not.
+I have tried to reduce the code for easier repro, but small changes cause the problem to go away; no RTIO sequence errors and ttl_g8 pulses as it should.
+Specifically, changing t_pulse by even +- 1us, removing one of the pulsing TTLs, swapping the sequential block for parallel ttl.pulse(t_pulse) calls for each TTL, and removing the pmt.gate_rising all cause the problem to go away.
+Adding another TTL in the sequential block (i.e. pulsing 5 TTL's) causes RTIO sequence errors on channel 20 (channel 20 is the 1092 TTL)
+The artiq_coreanalyzer trace shows the expected bug-free behaviour, which does not match reality (i.e. what is actually produced on the TTLs as measured by the scope)
+Try setting enable_spread to False in gateware/rtio/sed.
+In gateware/rtio/sed/core.py, line 15, I changed the default enable_spread argument to False in the __init__ of the SED class. I rebuilt the gateware and flashed it to the core device. Running the same script as above I see the same RTIO sequence errors
+Here is a minimized repro:
+Note the most important changes:
+@kesht123 Can you try to minimize it to this level next time?
+This is not a bug, the core is behaving as expected.
+Look at how SED lanes get allocated (the core needs to get a new lane every time the timestamp of an event is not strictly increasing):
+You can do two things to fix this problem in your setup:
+For the second solution, it is a bit hacky: for inputs, you'd have to use the private TTLInOut._set_sensitivity() method (look at the source code of TTLInOut.gate_rising()).
+A possible extension to SED would be to also have a sorting network at the cpu side that would make smarter lane choices instead of just advancing, to achieve better packing. I.e. it could choose the lane that has the largest timestamp queued that still meets strict monotonicity.
+That would increase RTIO latency further.
+The submission-to-output latency maybe. Does that matter? But AFAICT the user-visible RTIO latency (from trigger to output or the break_realtime() value) is dominated by RTIO API and CPU, not by the gateware.
+But we want to optimize the former, don't we?
+The gateware latency? As long as it's orders of magnitude less than the RTIO API and CPU latency then I'd happily get better lane utilization at the expense of a couple cycles of gateware latency.
+A possible extension to SED would be to also have a sorting network at the cpu side that would make smarter lane choices instead of just advancing, to achieve better packing. I.e. it could choose the lane that has the largest timestamp queued that still meets strict monotonicity.
+With two more years of perspective, do you guys have any further opinions on this idea? I think it'd be really useful.
+For example, we have an experiment which schedules a really long pulse and then does a lot of other stuff while that pulse continues. The way it currently works, we get a sequence error once the other 7 lanes have all been used once. Naively, I assumed that having 1 lane with an event scheduled way into the future wouldn't affect operation with the other 7 lanes so it was a bit surprising to find out that it does.
+The timing (as in FPGA timing closure) of the event submission logic is pretty tight, and a bunch of large comparators + priority encoder might break it. And we need to be able to determine if the destination lane is full in order to block the kernel and avoid losing events, which obviously requires knowledge of which lane is going to be used. Maybe a suitable heuristic is to block the kernel if any lane (not necessarily the one we are writing to) is full.
+A possible extension to SED would be to also have a sorting network at the cpu side
+If we do that (which is a larger change) then a sorting network is not necessary: we can have a (lane#, last_timestamp) array sorted by last_timestamp, and keep it sorted by shuffling elements every time a last_timestamp entry is updated (i.e. run one step of bubble sort). This has lower latency than a full sorting network.
+So you'd go through the list starting with the events furthest in the future, then put your event into the first lane it fits into. Do you think that could happen fast enough block the kernel if required? It'd be amazing to avoid the "any lane is full" heuristic too.
+Do you think that could happen fast enough block the kernel if required?
+Note that it would also block DMA.
+It'd be amazing to avoid the "any lane is full" heuristic too.
+I don't see a way of avoiding it. Remember that FPGAs are slow.

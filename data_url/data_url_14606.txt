@@ -1,0 +1,66 @@
+When performing a circuit assignment, _parameter_table is not updated to remove the discarded instruction, causing certain methods to fail (i.e., .copy()).
+prints
+Now, modify circuit by assignment in some way, for example by adding a control to the RZGate:
+prints
+Note that there are two instructions in the parameter table, one corresponding to CRZGate that was assigned, and the original RZGate that is no longer in the circuit. This causes errors when trying to map between parameter tables, for example the .copy() method:
+prints
+In this case, we see that the error was caused by instruction 140722385862320, which corresponds to the original RZGate instruction.
+The parameter table should be updated upon assignment.
+Remove overwritten instructions from the parameter table.
+Thanks for the report! I believe we had similar issues with append/compose but fixed them there as they are the primary methods for modifying the circuit.
+@kdk Since the data attribute is used a lot internally (e.g. to append) do you have an idea of whether adding a parameter table update here could have a performance impact? If no it might be good that we add a safeguard, otherwise we should maybe just clearly state that it doesn't handle the parameters properly 🤔
+@kdk Since the data attribute is used a lot internally (e.g. to append) do you have an idea of whether adding a parameter table update here could have a performance impact? If no it might be good that we add a safeguard, otherwise we should maybe just clearly state that it doesn't handle the parameters properly 🤔
+The fix here shouldn't have a substantial performance impact. All of our existing tooling (append,compose) should be updating the circuit through QuantumCircuit._data and manually handling ParameterTable updates. The bug here is with the validation we automatically do for setting/adding instructions through QuantumCircuit.data (without the _).
+In https://github.com/Qiskit/qiskit-terra/blob/2eee566/qiskit/circuit/quantumcircuitdata.py#L59 , we already update the ParameterTable to account for the incoming instructions, but neglect to remove ParameterTable entries for the replaced instructions, which I think is the source of this bug.
+(It would be good if at the same time we can update .insert to likewise update the ParameterTable.)
+Can I work on this problem ?
+It is the first time for me to contribute to Qiskit, but I would be happy if I could try.
+Sure thing, assigned to you @TakahitoMotoki! Ler us know if you need any help 😄
+Thank you very much ,@javabster !
+I have one question about a code test.
+According to CONTRIBUTING.md, I need to run "tox -epy310" and "tox -elint" to check soundness and style of the modified code.
+However, it seems that I cannot run tox command since my laptop is Macbook Pro with ARM processor.
+Though I am trying to figure out the solution, is there any alternative way for testing?
+Hi @TakahitoMotoki I'm not aware that ARM processors cause issues with tox. As we currently don't yet support 3.10 I'd recommend trying tox -epy39 instead. Also for linting tox -eblack should work quicker than tox -elint and automatically fixes most linting errors. If you're still facing issues could you share the error message you're getting so we can help more.
+Also might be worth making sure you have tox installed 😄
+@javabster
+Thank you for your kind support!
+I switched python from 3.10 to 3.9, then "tox -eblack" successfully worked on my PC.
+However, I still got an error when executing "tox -epy39".
+I tried to build jaxlib from source, but it didn't work. (https://jax.readthedocs.io/en/latest/developer.html)
+Followings are error messages.
+Thank you again for your kind support.
+python version: 3.9.7
+Processor: Apple M1
+RuntimeError: This version of jaxlib was built using AVX instructions, which your CPU and/or operating system do not support. You may be able work around this issue by building jaxlib from source.
+================================================================================
+The above traceback was encountered during test discovery which imports all the found test modules in the specified test_path.
+ERROR: InvocationError for command /Users/takahitomotoki/Qiskit/Dev/qiskit-terra/.tox/py39/bin/stestr run (exited with code 100)
+______________________________________________________________________________________ summary ______________________________________________________________________________________
+ERROR:   py39: commands failed
+ok so this looks like an issue with jax not tox. It seems others have had the same issue, you could try some of the solutions people have mentioned here: google/jax#5501
+@javabster
+Thank you!
+@javabster I could solve the jax problem above (I could pass the tox test!) and finally created a pull request. I am really grateful for your help.
+Could I please try and fix the code? I am a newbie but I would like to try and learn.
+I don't know if this will reach anyone on here but I think it was an issue of control and target.
+Here's the code I wrote and please help me if it's wrong (which, I'm positive, it is)
+Code:
+from qiskit import *
+from qiskit import QuantumCircuit, QuantumRegister
+from qiskit.circuit import Parameter
+theta = Parameter('$\theta$')
+qr = QuantumRegister(2, 'q')
+qc = QuantumCircuit(qr)
+qc.rz(theta, 1)
+qc.rz(0, 1)
+print(qc)
+print(qc._parameter_table[theta])
+for idx, (instr, qargs, cargs) in enumerate(qc.data):
+g = instr.control(1)
+qc.data[idx] = (g, [qr[0]] + qargs, cargs)
+print(qc)
+print(qc._parameter_table[theta])
+%matplotlib inline
+qc.draw(output = 'mpl')
+P.S. The only thing I added here was the 8th line and the mpl plot.

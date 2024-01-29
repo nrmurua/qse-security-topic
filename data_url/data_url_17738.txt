@@ -1,0 +1,27 @@
+This issue defines a convention for how mappers work in Qiskit.
+"Mapping" is the general problem of transpiling a given arbitrary circuit to execute on a given arbitrary backend. This is not a monolithic transformation, but rather a series of consecutive stages. Below is a breakdown:
+1- Embed: embeds the circuit (DAG) into a coupling map, by finding a layout. This can be manual (supply a manual layout) or automatic (find best layout). At the end, a DAG is returned with as many wires as qubits in the coupling graph (chip), and those DAG qubits are relabeled to match the device qubits.
+2- Unroller: expand to 1-qubit and 2-qubit gates (any 1- and 2-body interaction is fine. unrolling to native gates (e.g. cx) happens later).
+3- 2QBlockCollection: collect blocks of 2-qubit gates, so every node is a SU(4) now (except when odd number of qubits). This reduces the complexity of the mapping process (much fewer gates to consider). Only two qubit blocks are germane to the mapping process, not the single qubit gates they may contain.
+4- SwapMapper: Given a DAG (which is now embedded), insert swaps to make the 2-qubit interactions compatible with the coupling map. The coupling map should be considered undirected here. Fixing the directions happens later.
+5- Unroller, KAK, ...: expand each SU(4) to native gate set (e.g. cx). This can be done using the inverse of step 3, or by a more optimal method (such as KAK).
+6- DirectionMapper: Fix the directions in case the coupling map is directed.
+7- Optimize1Q, CXCancellation, ...: apply any final optimizations (e.g. template peephole optimizations).
+We have 5 different mapper passes in progress (#1270, #1236, #1169, #1141, #AWC). These are all implementing variations of step 4. We will implement variants of steps 1, 5, 7 too.
+The interface to all of them should be the same, and we enforce this if we add new mappers in the future.
+All variants of step 4 should have the signature (XSwapMapper(coupling_map, **kwargs)), where coupling_map is a Coupling object. So we have:
+StochasticSwapMapper, BasicSwapMapper, LookaheadSwapMapper, ExtensionSwapMapper, AStarSwapMapper.
+A layout is just the embedding of a dag into a chip. That's it. The layout is not something that changes. Even though mappers often need some internal bookkeeping to keep track of how qubits move around.
+If a user wants to map to a desired set of qubits, they use a manual embedding in step 1 (i.e. they don't call any smart embedder). The rest of the pipeline should not alter this embedding if the circuit is compliant with the backend (choosing an embedding is only the job of the embedding pass).
+SwapMappers should care only about 2 qubit interactions. The circuit must be unrolled to 2-qubit interactions, and further 2-qubit blocks collected. They should not go looking for cx or CX gates.
+I updated the original issue description with more explanation, after several internal discussions.
+Can a quality metric function be an optional argument (where the default for, say, a swap mapper, might be "count of two-qubit gates")?  I ask because the swap choreography could be different if your goodness measurement changed (count/time/fidelity).  For example, if the system has a wide range of two-qubit gate fidelity or some pattern of simultaneous signal applications that you need to avoid (forcing serialization on these things, making the run-time longer).
+I’m good with this.
+About Philosophy 3.
+The layout is not something that changes.
+The stage "1- Embed" can change the layout, right?
+I assume XSwapMapper(coupling_map, **kwargs) (StochasticSwapMapper, BasicSwapMapper, LookaheadSwapMapper, ExtensionSwapMapper, AStarSwapMapper) should be XSwap(coupling_map, **kwargs)) (StochasticSwap, BasicSwap, LookaheadSwap, ExtensionSwap, AStarSwap).
+Related with the interface, in PR #1579, I'm introduciong the following workflow: if the layout is not defined at pass __init__ time, it should be grabed from `self.property_set["layout"] or a default layout is constructed.
+Maybe make sense to refactor this code out so it will be handle automatically.
+About "3- 2QBlockCollection", this pass probably needs to unroll first or be smart to detect 2q gates that are CXing. For example:
+this is pretty much done

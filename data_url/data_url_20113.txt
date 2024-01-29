@@ -1,0 +1,23 @@
+When building package for ALT Linux for liboqs 0.6.0:
+When I try to "fix" like this:
+What would you suggest?
+That somewhat sounds familiar. Might it be an option to completely disable BIKE for that environment (i.e., set cmake config option '-DOQS_ENABLE_KEM_BIKE=OFF`)? @dkostic: Should BIKE compile OK on Cortex-A72?
+It seems that code sets -mcpu=cortex-a5 which conflicts with -march=armv7-a set on our generic cmake line (for this arch):
+If I delete this line or replace with -mtune=cortex-a8 (I don't know really what -mcpu= I should set in that case, gcc -Q --help=target shows that -mcpu= is empty) it compiles successfully.
+@baentsch It seems not particularly BIKE related, but just the first algo where error appears.
+@vt-alt the problem is with passing "-march=armv7-a" manually.
+[00:00:06] + cmake -DCMAKE_SKIP_INSTALL_RPATH:BOOL=yes '-DCMAKE_C_FLAGS:STRING=... -march=armv7-a
+If you want to build the library that only runs on Cortex-A72 and is optimized for Cortex-A72, then you should pass
+OQS_DIST_BUILD=OFF and OQS_OPT_TARGET=cortex-a72.
+I want to build a package for our distribution (ALT) that works on all armh (which is armv7hf) machines, not just on Cortex-A72 which happen to be on this build box. We have default gcc flags like this:
+I'm not really familiar with ARM but wouldn't the two comments above call for setting OQS_DIST_BUILD=OFF and OQS_OPT_TARGET=armv7-a?
+@baentsch It does not work, because -DOQS_OPT_TARGET=armv7-a goes into -mcpu= and produces error:
+-mcpu= should be set to one of above OR not set at all. I am not ARM expert either, so I trust setting that our people set as defaults for our 32-bit ARM platform.
+Setting -DOQS_OPT_TARGET=cortex-a8 does not work either:
+because -DOQS_OPT_TARGET=armv7-a goes into -mcpu= and produces error
+Yes - my mistake: I thought it goes into -march. Will check things next time before commenting "from memory" :-/
+I suppose it makes more sense to use -march instead of -mcpu (which implies -mtune) when OQS_OPT_TARGET=generic. I'll make a PR.
+option(OQS_DIST_BUILD "Build distributable library with optimized code for several CPU microarchitectures. Enables run-time CPU feature detection." OFF)
+I want exactly that, because I build for distribution. I fear if I unset OQS_DIST_BUILD to OFF and set (in the future) -march= via -DOQS_OPT_TARGET= it will make code somehow non-generic enough and not compatible with other armh hardware. I see there is a lot of #if defined(OQS_DIST_BUILD) in the code.
+Perhaps, the best solution for our build is just to remove this line from .CMake/compiler_opts.cmake:
+This will avoid me setting -march (or whatever) manually leaving working defaults, and don't need to change compilation recipe, which now is the same for all architectures (while adding manual setting of -march have chance to break some other arch).

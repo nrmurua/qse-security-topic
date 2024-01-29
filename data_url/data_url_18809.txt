@@ -1,0 +1,30 @@
+On pp. 23 of https://arxiv.org/pdf/2104.14722.pdf, an else if statement is used.
+Is this allowed? It is not in the spec right now, but I think we should include it for the purposes of generic control flow.
+Additionally, the spec does not mention removal of {} from if/else for single lines. I believe we should clarify this as well (this is also used in the example on pp.23).
+I would prefer not having else if and implicit { }. It seems to me as an unnecessary complication.
+The implicit { } on single statements are necessary for compatibility with OpenQASM 2, which doesn't have the braces at all.  Once you have that, then else if is automatically allowed, because it's parsed just like else x $0; would be: an if is a valid single statement in the language, like x $0;.  To disallow else if, you'd have to have specific grammar rules to forbid it.
+I think the complication would be if we had an extra keyword, like Python's elif. Python needs it because it requires the ":" token for blocking, and has significant indentation.  We don't have those limitations, so no need; else if works just fine.
+edit: in other words, the way I read it, the paper is completely consistent with itself on this point.  else if (cond) x $0; being valid is a natural consequence of else x $0; being valid.
+It gets weird quickly when nested conditionals.
+Consider this example:
+Which of the following is it equal to?
+If the blocks are like a stack, then would be the first one. In that case we need some sort of null function to express the second scenario:
+One possible solution is that if/else are not a "single" statement. Something like the following will be syntax error:
+This will force the user to add the {} and minimise the ambiguity.
+There's no actual ambiguity in the language, because all our parsers (or parser generators) have associativity and precedence rules baked in.  This particular one is an absolutely classic shift/reduce conflict, and we solve it just by saying that "else binds to the most recent if statement" - this is exactly what C does, and what (I believe) both ANTLR and bison/yacc do already.
+This is the kind of thing that's probably best as a linter rule.  It's very similar to questions of operator associativity and precedence - it's easy to write long statements of binary operators that are hard for a human to understand, but there isn't actually any ambiguity in the rules.
+There's no actual ambiguity in the language, because all our parsers (or parser generators) have associativity and precedence rules baked in. This particular one is an absolutely classic shift/reduce conflict, and we solve it just by saying that "else binds to the most recent if statement" - this is exactly what C does, and what (I believe) both ANTLR and bison/yacc do already.
+This is the Dangling Else problem, and it is a well-known problem in Computer Science:
+https://en.wikipedia.org/wiki/Dangling_else
+Absent braces, there are no built-in precedence rules for solving this conflict:
+https://www.gnu.org/software/bison/manual/html_node/Shift_002fReduce.html
+I doubt ANTLR can solve it by built-in precedence rules.
+C and derivatives decided by fiat that, absent braces, a terminating else binds to the immediately preceding if. But this is not a baked-in precedence rule, this is simply a compiler implementation fiat decision. It is also not necessarily what the programmer intended.
+From your link (which I read before posting that comment), exactly under and example of if x if y else z;:
+Bison is designed to resolve these conflicts by choosing to shift, unless otherwise directed by operator precedence declarations.
+ANTLR does a similar thing, as I understand.
+C and derivatives decided by fiat, that ...
+That's just another way of saying they specified the precedence rules in the language.
+I could have been clearer about saying that we should write the precedence rules in the specification.  I do think we should do that.
+Bison decides to shift by fiat as well. Bison doesn't shift only when it encounters a dangling else. Bison always prefers to shift.
+Implicit curly brackets are also a problem for the user eye. they are the source of many bugs in C-like languages, including the Apple SSL bug from 2014, iirc.

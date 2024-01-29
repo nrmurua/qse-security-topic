@@ -1,0 +1,10 @@
+It seems that PR #1815 introduced a bug in depth().
+Yes, the depth is zero.  The change to QuantumCircuit in #1993, that computes the depth without the DAG, is correct, i.e. 7.
+The problems is that DAGNodes considers every node with the same name equal. I will have a look...
+Probably the same issue that @kdk detected here #1815 (comment).
+@1ucian0, @kdk and I discussed it during the review and he pointed out that equality in Python is meant to be for when two objects are semantically equivalent which those two cx gates are as they have the same name and same parameters. This can easily be reverted by reintroducing the version of the __eq__ method here which checks that the ids of the two operations are also the same.
+We should decide how strict we want the equality method to be, as to use our current depth() method we would need the stricter form but this goes against Python convention.
+Agree that the current DAGNode implementation of __hash__/__eq__ is inconsistent. From https://docs.python.org/3/reference/datamodel.html#object.__hash__ ,
+The only required property is that objects which compare equal have the same hash value; ...
+If we want DAGNodes to be used as the labels of the networkx graph, we need semantically equivalent gates (as in the example) to be neq so that they can be safely hashed and compared ( line where u != v in https://networkx.github.io/documentation/stable/_modules/networkx/algorithms/dag.html#dag_longest_path is where the current example goes wrong.)
+If that's the path we go, we can remove DAGNodes __hash__/__eq__ and add a weaker "semantic equivalence" check to be used in comparing DAGCircuits (which do __eq__ by semantic equivalence.)

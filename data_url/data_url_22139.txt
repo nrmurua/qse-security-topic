@@ -1,0 +1,17 @@
+It should not take 10 s and an error to compile 10 k ints.
+A shot in the dark without even looking at the IR: Does the compiler use [10240 x i32] internally somewhere as a value type, for example when passing parameters, or to load from and store into another pointer? We had similar issues in LDC a while back; [a x b] is rather deeply ingrained as meaning "a collection of registers" in LLVM, and loading to then store to another pointer, as mentioned before, will result in LLVM trying to load everything into registers first. Turns out the LLVM error is due to "manually" generated code, not lowered array types. Sorry for the noise.
+No and no and no, it uses that just for the global. The slowness comes from the type inferencer, which has to unify ten thousands of type variables. It is actually already taking an optimized path.
+LLVM ERROR: Error while trying to spill R2 from class GPR: Cannot scavenge registerwithout an emergency spill slot!
+What causes the error?
+What causes the error?
+The ARTIQ compiler emits a sequence of 10240 individual stores to initialize the array contents, rather than writing it out as data and memcpying it over. A function this long is (hopefully) not something you would see very often, and presumably that's what triggers the register allocation issue. (Of course, all the registers can be re-used for the repeated initialization code, so it might be a hard-coded "safety" limit being hit somewhere or something like that.)
+Of course, all the registers can be re-used for the repeated initialization code, so it might be a hard-coded "safety" limit being hit somewhere or something like that.
+It isn't. This function hits a pathological case in LLVM's register allocator, for no especially good reason. I've hit similar bugs before.
+It isn't. This function hits a pathological case in LLVM's register allocator, […]
+That's exactly what I was trying to explain to Joe. Some passes have limits built in to avoid super-linear behaviour, some other bits have different arbitrary limitations. Of course, if these result in an LLVM ERROR on a certain piece of code, at least one genuine bug is involved one way or another, but I thought that would be understood anyway.
+[…] for no especially good reason.
+I'd contest that a basic block of 20500 Instructions might count as somewhat of an extreme circumstance, even if there is still a bug. By the way, LLVM 3.9 targeting ARM or x86 handles the test case just fine, so you might find some solace in knowing that in-tree targets are much more robust.
+But this whole discussion is besides the point anyway, as the ARTIQ compiler needs to emit large array initialisers as constants, not code, if they are to be supported in a sensible way.
+The slowness comes from the type inferencer, which has to unify ten thousands of type variables. It is actually already taking an optimized path.
+Actually, it doesn't, not for this particular case. It turns out that we already handle this issue in a reasonably efficient way, but we only do that for attributes. No reason we can't do it for kernel arguments too though.
+Not a problem on NAC3

@@ -1,0 +1,36 @@
+Hi,
+I am new in the field of Redpitaya.
+I would like to know whether the Redpitaya concept can be of any help on my setup.
+I want to control the position of a beam in both horizontal & vertical directions. I use 2 x 2 errors signals (to get the beam shift&tilt in both directions) and 2x2 correction signals (2 actuators in 2 directions). Ideally I would like to read 2 more DC signals in order to normalize the error signals with respect to the optical power shining the sensors. The loop is supposed to have a frequency unity gain. around 200 Hz which requires to have the signals well defined up to 2 kHz I guess.
+Last the commutation matrix between the error signals and the correction signals is not diagonal and may have some coupling coefficients which implies to mix the 4 error signals to get each output.
+My question is :
+Many thanks for your feedback
+Best regards
+Frédéric
+Do you think it is possible to use the 4 auxiliary ADCs together with the 2 fast ADCs in order to get the 6 inputs which will cover my need?
+In principle, yes. The bandwidth of the aux ADCs is ~ 100 kHz, and they can be sampled at upto 1 MSPS (all four up to 500 kSPS).
+should I use two redpitaya cards to run two independant servo-loops. Each dealing with 2 inputs and 2 outputs. In this case I will have to forget about the possibility of a third input for normalization of my error signals and I must consider that the two servos run independantly (my comutation matrix is a set of 2 2x2 subsets).
+This would certainly be the easier solution, which should work nearly out of the box (currently, only 3 PID controllers are available, but we could easily modify the design to add a fourth one).
+Overall, the Red Pitaya hardware should be able to accomodate your needs. Not that only two fast outputs are available, so you would need to also use PWM outputs (the "slow/aux DACs"), which require aggressive filtering to have no extra noise below 2 kHz (e.g. I would place a ~10 Hz analog lowpass before the actuators and after PWM outputs, set the PI crossover to 10 Hz, and play with the gain magnitude - i.e. change P and I simultaneously - until getting unity loop gain at 200 Hz). For simplicity, I would use the AUX ADCs for the four input signals, and - as you suggest - feed the normalization signals to the fast inputs.
+This leaves you with the task to get the software working. There are different ways to tackle this, but i believe you won't get around some FPGA modifications, having essentially 3 choices:
+Hi Leonhard,
+thanks a lot for your fast feedback, here are some more questions if you don't mind
+Here, you consider the scenario with only 2 fast inputs and 2 outputs together with 4 PIDs (assuming a fourth one will be implemented soon); 2 PIDs being attached to one single input. Is that correct?
+Assuming we use the 4 slow inputs it would requires 16 PIDs in total to get completed the fullsize intercommutation feature (mix of 4 inputs toward 4 signals). Is that correct?
+Do you confirm that some changes in the FPGA configuration would do the job: I mean integrating the 4x4 mixing matrix (at the price of some more developpments)?
+Regarding the management of the PWM you propose, I was expecting that low-pass-filtering the signal above 2 kHz would be enough (I have read somewhere that the PWM carrier is 1.6 MHz). We could also use some higher order filter or do you imagine some drawback?
+Regarding the Open Loop Transfer Function of the servo, we target something like 1/f^4 below the UGF and 1/f around the UGF.
+In our specific case with four actuation path which must feature such a filter, it seems there is now way we make it. Since both PID and the IIR filters are usable in parallel rather in serie. Do you imagine any other possibilities?
+Last, do you confirm that PyPRL supports only the Redpitaya 14 bits card?
+Many thanks for your comments
+Frédéric
+Hi, sorry for my late reply:
+Here, you consider the scenario with only 2 fast inputs and 2 outputs together with 4 PIDs (assuming a fourth one will be implemented soon); 2 PIDs being attached to one single input. Is that correct?
+yes
+Assuming we use the 4 slow inputs it would requires 16 PIDs in total to get completed the fullsize intercommutation feature (mix of 4 inputs toward 4 signals). Is that correct?  Do you confirm that some changes in the FPGA configuration would do the job: I mean integrating the 4x4 mixing matrix (at the price of some more developpments)?
+Yes I think so. I had not thought about this amount of multiplications. Having 16 (or 32 for P+I-gains) multipliers work in parallel (or pipelined) is possible, but quite a bit of rework, mainly because you'd have to throw out other stuff from the FPGA design to have enough FPGA resources for this. Maybe using a microprocessor platform with ADC's/DAC's (e.g. ADUC 7020) would however make your life easier here, as you could program all this in C, and do not nearly need the >100 MHz clock speed for this application.
+Regarding the management of the PWM you propose, I was expecting that low-pass-filtering the signal above 2 kHz would be enough (I have read somewhere that the PWM carrier is 1.6 MHz). We could also use some higher order filter or do you imagine some drawback?
+Probably is enough. I would not use a higher-order filter due to the phase margin going to zero or negative in that case. However, you could set the analog cutoff at 100 Hz and digitally compensate for it (using a larger proportional gain).
+Last, do you confirm that PyPRL supports only the Redpitaya 14 bits card?
+Yes, not sure what happens with the other cards (the 10 bit card likely works, but some scaling might be unintuitive. The Zynq7020 version wont work out of the box).
+So I hope you came to the same conclusion as I did: use a different platform for this purpose, rather microcontroller-based.

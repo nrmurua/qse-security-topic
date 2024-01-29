@@ -1,0 +1,93 @@
+Abusing the issue system for a restructuring proposal, which is a bit of a dependency for freezing the modular interface, since the naming inside and outside of OpenQL would preferably be and remain the same.
+This is a rather nested structure, but I would always argue that it's better to use more categories and do some
+extra typing now, than it is to have to revise the structure again later because things exploded into a million
+files again.
+using namespace only allowed in C++ files or private header files (in the src directory). You can
+abbreviate types and namespaces within your own namespace to save typing, however. Also, you should always use
+relative names when possible. I keep seeing ql:: in the code, which makes no sense, because everything is
+already in the ql namespace.
+Sources and private header files go in src, public header files go in include. Within these directories,
+the subdirectories mimic the namespace trees.
+A public header file is any header file that either is itself an API header or a header #include'd by an
+API header. That's almost all the current header files, aside from one of the visualizer headers I think.
+Private header files are exclusively #included by source files.
+The distinguishment and file structure is important: if we ever want to be able to install OpenQL as a proper
+library, we can't just spam something like ir.h in /usr/local/include, which would be necessary with the
+current structure. With the suggested structure,
+That means you'd get /usr/local/include/ql/ir.h, which is fine (as long as ql is unique; it's a bit short,
+but fine).
+Code should use the #include "ql/...h" syntax. Relative paths are also okay but frowned upon.
+#include <ql/...> must NEVER be used, as it would prefer the installed version of OpenQL (if any) over the
+source tree you're trying to build; <> syntax is for the standard library and external libraries only.
+Ideally, a header file defines only one (big) class, preferably named the same as the class it defined but
+lower_case. If you need more than one class to do something, split the classes up into multiple files.
+Preferably, implementation detail classes should be used such that they don't need to be defined in public
+header files; this reduces compilation time and strengthens abstraction. You can do this by forward-declaring
+a class using just class Name; and wrapping them in Ptr or Opt when used as a private class member in
+a public class.
+Passes are categorized using the following intentionally short names, reflected in the namespace tree.
+Within this, each pass has its own namespace with the name of the pass, named using lower_case (like all other
+namespaces). In this, the pass class is defined as UpperCasePass, where UpperCase is the same set of words
+as the namespace, with a using Pass = UpperCasePass typedef for just Pass as well.
+The name of the pass should be in verb/"do" form, for example "Optimize" or "Map". This is both shorter and
+more generically usable than the "doer" noun alternative form that's also used (and was suggested by Hans
+earlier). I tried coming up with names for all passes in "doer" form, but that required quite a bit of
+creativity, because for example "CCLPrepCodeGeneration" has no proper "doer" form ("CodeGenerationPreparer"?
+That's not a word) eventually became "ConsistencyCheck" because it was the best I could come up with.
+Pass classes derive from one of:
+These are thin shells around driv::AbstractPass, which defines the common get_passes() and run() entry
+points for the driver, handles pass option management, pass-specific logging facilities, etc.
+Instead of logging macros, move toward using logging objects, that allow scoped specification of loglevels,
+allow teeing to files, etc. They may also gather timing information based on users entering and exiting logging
+scopes. The pass classes will provide a root object for this, preconfigured using common pass options.
+Pass implementations have to be registered with the driver such that it can match the pass type names to the
+respective classes. Eventually this should be done automatically using a simple code generator, but for they
+should be registered within the constructor of Driver. Registration includes stringified documentation that can
+be printed from Python. The type names must be the same as the namespace inside pass, but using . instead of
+:: and UpperCase for the final namespace (i.e. the pass name) to be more familiar for Python devs (it
+follows Python naming conventions, where modules are lower_case and classes are UpperCase) and to be
+slightly shorter. For example, the resource-constrained scheduler would in C++ have the full name
+ql::pass::sch::rc_scheduler::RcSchedulerPass, abbreviated to ql::pass::sch::rc_scheduler::Pass via the
+typedef, and would have the full name sch.RcSchedule in Python.
+However, the driver does the following desugaring/checking for names when passes are added:
+The API for the driver/pass manager/compiler, whatever you want to call it, should include methods for
+inspecting which passes exist (along with documentation of what they do), their options, etc., and methods to
+introspect or procedurally modify the pass list (actually a tree due to PassGroups). For example, it should
+be easy to wrap one or more pass instances in a group that includes cQASM writers before and after the target
+passes.
+The driver ensures that preprocessing passes come before any other passes, but all bets are off otherwise.
+Driver interface (without const& C++ stuff):
+PassRef interface:
+I mainly like this proposal, but would like to make a few notes:
+to me the namespace hierarchy may lead to overly verbose code (like the ir:: we already have) and I'm not sure whether we need all the protection within what's basically a single project. Also see https://abseil.io/tips/130
+As for the problem abseil sketches, I'm going to need an example for why this is a problem in practice, because I think I'm missing the point. If I understand them correctly, their argument against nested namespaces is that if someone defines std::unique_ptr or whatever inside the nested namespace (or something else that's using namespace'd into the current scope) then it will use that one rather than ::std::unique_ptr. But the whole point is that no one else should be touching the nested namespace you're in. I would actually argue that this is more likely to happen when you just have a single, in the end shorter root namespace. If their point is that a malicious user can use this to break things, well, so can #define true false, and if their point is that an oblivious user can break things by reusing common names for namespaces somehow, then I raise them reusing common type names, because the latter doesn't even break until after successful runtime linking the compiler-generated prologues and epilogues start allocating the wrong amount of bytes on the stack (this was the symptom of the problem I was referring to that actually happened). C++ in general lets you break everything implicitly on a whim unless you know exactly what you're doing. I would then rather have a clear structure that I might break than the lack of a structure with everything on the same pile that I might break.
+So unless I'm missing something shockingly fundamental (which I might), I would argue that this is simply a matter of taste, except:
+the name driv for "driver" is heavily overloaded, so I'd suggest "passMngr" or something like that
+I'm not sure why this is a problem per above. If you mean that someone might make a variable named driv, that just shadows the namespace without causing issues outside the scope it's declared in. I'm also not really sure what driv would be commonly used for other than as an abbreviation for driver.
+apart from adding proper logging, I think we also need a proper mechanism for reporting errors to the user (and share that with libqasm)
+Beyond an error loglevel for recoverable things and exceptions for unrecoverable things? In case of libqasm, it keeps track of errors in a simple string vector and fails if it's nonempty after compilation.
+currently we have a separate .JSON file to configure the passes, I would prefer to be able to put this information in the main .JSON
+I personally don't really care where what is, but we have settled on this within the compiler team already;
+Actually, if the keys in the outer objects are designed not to conflict, I see no reason why you wouldn't be able to define both platform and compiler configuration in the same file. You'd just be loading the same file in both contexts. Although that would have to become a properly documented use case then, because I want to at some point make it so that unrecognized keys in the JSON file cause errors rather than that they're silently ignored.
+But ultimately I'm not sure why you want everything in the same file.
+namespace:
+you convinced me :-)
+driver:
+I don't foresee any C+ problems here, but only that the term 'driver' is rather implicit, you cannot tell from its name what it is driving
+error reporting:
+we currently don't have a real distinction between errors in the user-provided input (program, .JSON) and internal errors. As an end user, it can be very difficult to interpret errors and solve them. I introduced QL_JSON_FATAL as a sort of a first step to at least convey that a problem is in the JSON. And it would also make sense to return warnings that relate to user input. Maybe we should just use stdout for things returned to the user, and stderr for internal trouble, but I don't know whether that works with Python.
+JSON:
+the 'problem' with having the extra file is that it introduces an implicit extra dependency, and that it precludes having several configuration files in a single directory that use a different pass setup (not sure whether that makes sense, and of course you use separate directories). So not a big deal, but having a single file that contains the full picture is easier to manage.
+I don't foresee any C+ problems here, but only that the term 'driver' is rather implicit, you cannot tell from its name what it is driving
+I was under the impression that "driver" is pretty well-accepted terminology within a compiler, but I guess that's just me (Hans also voiced concerns/confusion about its naming). If we do go for the PassManager name as it is right now I would use pm for the namespace though. I like to make acronyms about 4 characters in length, so it's on the short side, but pass_mgr or pass_mngr or something is quite long for a namespace IMO (namespaces are typically lower_case).
+ETA: or pmgr, actually. That'd work for me.
+As an end user, it can be very difficult to interpret errors and solve them.
+IMO that's down to the fact that error detection is poor (leading to internal inconsistency errors rather than user errors), and the actual error and log messages that do exist aren't that great. Ultimately, the user should get a Python exception either way, because that's how a Python programmer would normally expect to get errors. Python isn't made to receive multiple errors at a time. Although maybe its warning system can be used, I've never used it myself and don't know how it works but I know it exists. Would probably be difficult/annoying with SWIG though.
+Maybe we should just use stdout for things returned to the user, and stderr for internal trouble, but I don't know whether that works with Python.
+Python has nothing to do with stderr/stdout, and in fact couldn't even capture OpenQL's stderr/stdout even if it wanted to, because it's not a subprocess but a library (unless it would use system calls to reopen the stdout/stderr streams to a pipe in POSIX or whatever Windows has for this on Windows for every OpenQL library call, and reopen back to the original streams when the call completes, because otherwise Python's print would also not work anymore). Also, mixing stdout and stderr (as is already done now actually) is a terrible idea because there is nothing in the OS that synchronizes these two streams; even if you flush after every line there is no guarantee that the messages actually appear in the sent order. 2>&1 does sort of do this because in the OS it makes both stderr and stdout references to the same pipe, but then you lose any benefit it might have had. Common practice is that all logging and other spurious information goes to stderr, while stdout (analogous to stdin) is reserved for explicitly requested program I/O.
+I'm also not sure whether there is any synchronization guarantees between sys.out and stdout (or sys.err and stderr), because Python's file classes can do their own buffering on top of OS buffering.
+In DQCsim I built a whole system for logging that allows Python to set a callback function for log messages, such that the messages can be piped to Pythonic logging modules without polluting stdout/stderr. But that logging system is half of DQCsim, in part because callbacks from C++ into Python are a royal pain because you have to hold a reference to the PyObject while the function pointer is live somewhere, so you need to make a class for every callback function, and so on.
+the 'problem' with having the extra file is that it introduces an implicit extra dependency, and that it precludes having several configuration files in a single directory that use a different pass setup
+Huh? The name for the pass configuration file is not fixed. Maybe you got confused because it's derived from the eqasm_compiler key of the platform JSON file when using the legacy API? That's just a compatibility layer for Python stuff written before pass management was a thing.
+Some additional ideas for the API, to keep things as close to the current situation as possible, and to resolve the remaining inconsistencies (I've already solved the group stuff with an explicit call that freezes the options and subsequently allows the sub-pass list (if any) to be modified):
+sounds great, makes the transition a lot smoother

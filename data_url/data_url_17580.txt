@@ -1,0 +1,12 @@
+test.draw(output = 'latex')
+
+test.draw(output = 'mpl')
+
+possibly a issue with latex or windows, might not be terra related
+This is definitely a bug, and almost certainly related to the barrier implementation in the qiskit/tools/visualization/_latex module. I think what's going on (but I have yet to confirm this) is that the index where we insert the barriers is incorrect and ends up overwriting the hadamard gates instead of inserting a barrier after (which is the intended behavior). You can at least confirm that the barriers are what's at fault in your example by calling test.draw(output='latex', plot_barriers=False) which will show all the gates as expected.
+Yep, I just confirmed what I suspected is the cause of this, is indeed the underlying cause of this bug. For example, the list of latex commands used to draw the circuit (for the qn_5 qubit) goes from being:
+ ['\\lstick{qn_{5}: \\ket{0}}', '\\qw \\barrier{0}',  '\\gate{H}',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  '\\qw', '\\qw',  '\\qw', '\\qw', '\\qw', '\\qw', '\\targ', '\\gate{H}', '\\qw', '\\qw']
+prior to drawing the barrier, and becomes:
+ ['\\lstick{qn_{5}: \\ket{0}}',  '\\qw \\barrier{0}',  '\\gate{H}',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  \\qw',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  '\\targ',  '\\qw \\barrier{0}',  '\\qw',  '\\qw']
+after drawing the barrier. So the index we use to insert the barrier into this case is incorrect. I'm not sure why this is the case but with a simple reproduce case it'll be just a matter of debugging the cause. (this is just another example of why I think we should rewrite this module, since it's a rats nest) The expected output should be:
+ ['\\lstick{qn_{5}: \\ket{0}}',  '\\qw \\barrier{0}',  '\\gate{H}',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  \\qw',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  '\\qw',  '\\targ', '\gate{H}',  '\\qw \\barrier{0}',  '\\qw']

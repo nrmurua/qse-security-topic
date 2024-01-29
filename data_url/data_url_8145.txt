@@ -1,0 +1,20 @@
+Some TestDicke tests in test_piqs.py (test_lindbladian, test_lindbladian_dims, test_liouvillian) fail with the recent scipy 1.6.1 release.  They were previously passing with scipy 1.6.0.
+To Reproduce
+The test error message from TestDicke.test_lindbladian is
+Likewise for TestDicke.test_lindbladian_dims and TestDicke.test_liouvillian.
+Your Environment
+qutip 4.5.3 built on Debian unstable.
+It's probably relevant that scipy 1.6.1 fixed some problems with sparse matrices (with COO format constructor), see https://docs.scipy.org/doc/scipy-1.6.1/reference/release.1.6.1.html including PR#13403 scipy/scipy#13403
+Thanks for the bug report and the detailed look into it!  As a temporary work-around, in file qutip/cy/piqs.pyx, change lines 431 to 433 
+and recompile.  If you want to make a PR of something similar against QuTiP, I'll accept it.
+I would actually file this against scipy.sparse - I think our usage is completely in line with the contract of scipy.sparse.csr_matrix and they've got a bug in their dtype handling.  You currently can't construct a CSR matrix using the COO triplet format for complex data, unless the dtype is made explicit somewhere, but the constructor is meant to correctly infer a suitable dtype if one is not passed.
+Basic Scipy reproducer to illustrate the problem:
+This can be fixed either by passing dtype=np.complex128 to the constructor, or passing the data inside a NumPy array, since that'll also fix the dtype.
+I imagine with their implicit conversions, SciPy may also need to test the special cases where all list elements are things like 1+0j, which have type complex but can be safely represented by reals - the Python call float(1 + 0j) is forbidden even though the imaginary part is 0.  I actually originally thought this was the problem in this issue, since all the Lindbladian data tested is real numbers with complex type.  I suppose it's up to SciPy to decide how they want to handle that case - either always maintaining complex or putting in a special-case cast (np.real(x)) for known-safe complex -> float conversions.
+Note: they're already talking about a change in scipy/scipy#13585 and scipy/scipy#13586.  I'll post this repro on the bottom of that.
+Thanks for the speedy response @jakelishman .  Looks like scipy 1.6.1 is not quite as stable as we would have liked it to have been.  I'll wait for the scipy dust to settle.
+We can still merge the workaround into qutip if you'd like to make the PR (otherwise I'll take care of it).  There's no harm in being explicit since we know we will always want complex dtype.
+Agreed, safer to make it explicit.  I'll prepare a PR.
+Hi @jakelishman , cqobjevo.pyx also uses csr_matrix, already with dtype=complex.   Is it correct to use dtype=complex128 in piqs.pyx and dtype=complex in cqobjevo.pyx, or should the two cases use the same type?
+Numpy interprets the Python base type complex as equal to np.complex128 when passed as a dtype.  Personally I think np.complex128 is much clearer (since it specifies the size in the name too), but I wouldn't worry too much about changing everything everywhere.  cqobjevo.pyx in particular is going to be nearly entirely rewritten in the next major QuTiP release anyway.
+No worries, I'll stick with just piq.pyx then.

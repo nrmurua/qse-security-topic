@@ -1,0 +1,20 @@
+I am trying to analyze the circuit for HHL for a set of matrix inversion problems. I am currently trying to compile the circuit for solving this 16x16 system, dilated from a 9x9 system. The dilation is performed by padding the off diagonal terms with 0's and putting 1's on the diagonal.
+with forcing term:
+You can reproduce the issue by
+with K and f_vec defined as above. It takes a really long time to just compile the program. This seems to be unreasonable, it shouldn't intend too great an effort to spit out a qasm file, right?
+I would expect that compiling the circuit shouldn't be a major overhead. Simulation, sure, but compilation ought not to be.
+You can compile HHL sequentially. The QPE routine is essentially repeated twice, so you should only have to compile that part of the circuit once and then apply the Hermitian conjugate QPE after the controlled rotation step. I'm not sure where the major bottleneck is.
+@anedumla Any comment/thought?
+I also wanted to add some relevant details, the condition number of the above matrix is ~46 and the norm of f_vec ~2. Epsilon, 1e-1. The number of qubits is certainly >4, because of the encoding qubits used to store the values for the controlled rotations. I've been using the log(kappa^2/eps) as a rule of thumb for estimating the number of encoding qubits, so in this case ~4 encoding qubits, 1 ancilla, and 4 qubits for storing the 16 states of the matrix. In all, I'd anticipate about 10 qubits are involved in this computation. Does that volume cause any difficulty?
+Just bumping this thread to see if anyone has any suggestions here. A complete circuit description isn't even that important, if one could just even cost out the number of 2-qubit unitaries that would be useful.
+The problem seems to be QPE with the unitary returned by QuantumCircuit.unitary(exp(k)), if instead of your K you create some 16x16 TridiagonalToeplitz matrix the circuit gets constructed very fast.
+I see. That won't really work for what I'm doing, but thank you for letting me know!
+I started just playing with the ToeplitzTridiagonal for HHL as well. I wanted to compile it to qasm, but get the following error:
+Here's the code:
+I did a line profiling on HHL.construct_circuit on 3 qubits. The most time-consuming parts are indeed the PhaseEstimation construction, and then its inverse:
+However, the most time-consuming part of the PhaseEstimation construction is actually the .control() step.
+Here is the line profile of https://github.com/Qiskit/qiskit-terra/blob/e4e4646f18d6e7d5dae0bc5308bcb5f5c9aa206d/qiskit/circuit/library/phase_estimation.py#L94
+I think I can get 280x speedup of that last line by replacing
+with
+where control_unitary is defined as
+I tested the correctness of the result. For 2 qubits, the first 2 elements of my statevector matches, but for 3 qubits, the elements of my statevector are so small (~1e-16) that even though they are different, it doesn't make sense because they are effectively 0.0. And so, not sure.

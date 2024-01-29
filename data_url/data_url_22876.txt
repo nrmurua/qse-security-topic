@@ -1,0 +1,34 @@
+Hi!
+I'm planning on using the PID module to actively adjust the phase of an optical signal using an electro-optic phase modulator. An electro-optic phase modulator has a 2pi equivalent phase modulation on a voltage change of ~7 V. The outputs of my red pitaya can be amplified to a maximum of ~10 V (using my equipment), meaning just a little more than 2pi phase shift is covered by the entire DAC range. This is ok but it implies that the integral in my PID module will saturate quickly (no prop. gain). To maintain lock I only need the phase phi to satisfy phi=m2pi where m is an integer, hence upon saturation my problem is solved if the integral value is shifted a voltage corresponding to 2pi phase shift in the modulator.
+-I would like to define a V_2pi variable that is used to shift the int_reg value upon saturation as in the picture below (from "/pyrpl/tree/master/pyrpl/fpga/rtl/red_pitaya_pid_block.v"):
+
+Preferably one would be able to set this V_2pi voltage in the GUI. However, since I'm in a little bit of a hurry, and have little to no idea of how to implement this in Pyrpl and the fpga code, I would appreciate any suggestion on how to implement this function, with/without including it in the GUI. In the simplest case, if it's tricky to define a new variable, maybe just exchange V_2pi by the a bit-number that I have to calculate for my particular setup that matches that 2pi-phase shift.
+I could (I suppose) exchange the code on row 252 with the code on row 254 and vice versa and then make sure "upper_limit - lower_limit=V_2pi" but that is suboptimal.
+Thank you in advance!
+Sooo, after pulling my hair for most of today I managed to get my "suboptimal" solution to work. If anyone is interested I changed the code in "/pyrpl/tree/master/pyrpl/fpga/rtl/red_pitaya_pid_block.v" from my above post to:
+always @(posedge clk_i) begin
+if (rstn_i == 1'b0) begin
+ki_mult  <= {15+GAINBITS{1'b0}};
+int_reg  <= {IBW{1'b0}};
+end
+else begin
+ki_mult <= $signed(error) * $signed(set_ki) ;
+if (ival_write)
+int_reg <= { {IBW-16-ISR{set_ival[16-1]}},set_ival[16-1:0],{ISR{1'b0}}};
+else if (int_sum[IBW+1-1-2:IBW+1-2-2] == 2'b01) //normal positive saturation
+int_reg <= {1'b1,1'b1,1'b1,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b1,1'b1,1'b1,1'b0,1'b0,1'b0,1'b1,1'b1,1'b1,1'b1,1'b1,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0,1'b0};
+else if (int_sum[IBW+1-1-2:IBW+1-2-2] == 2'b10) // negative saturation
+int_reg <= {1'b0,1'b0,1'b0,{IBW-1-2{1'b1}}};
+else
+int_reg <= int_sum[IBW-1:0]; // use sum as it is
+end
+end
+the long binary value corresponds to -1V and now the output is entirely bounded by +-1V.
+It wasn't as easy as I thought to just exchange lines 252 and 254 because apparently, the internal voltage range is set to +-4 V which means the internal pid-value will continue climbing up until +4 V while my DAC-output caps at +1 V ! :(
+See output signal on oscilloscope:
+
+Not happy about that so had to subtract 2 (divide by 4) in the else-if statements. Line 252 and 254 also needed to be altered to input the correct shift values. But now it works!:
+
+Both ways:
+
+however, although I get the entire 2V output range I manually using amplifiers and attenuators have to adjust this range to match that 2pi phase shift I mentioned above, it's doable, but still looking for a nicer solution because my fix is pretty dumb.

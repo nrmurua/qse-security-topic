@@ -1,0 +1,11 @@
+Hi, there
+Recently I'm trying to debug the "tutorial_example.c" on the MPI mode, but I'd encountered 2 errs:
+1.  "E_CANNOT_FIT_MULTI_QUBIT_MATRIX" from "validateMultiQubitMatrixFitsInNode" from "validateMultiQubitMatrix" from "validateMultiQubitUnitaryMatrix" from "multiQubitUnitary". I guess the discriminant condition "qureg.numAmpsPerChunk >= (1LL << numTargets)" makes every distribute one error.
+2.  "MPI_Sendrecv" from "exchangeStateVectors" in file "QuEST_cpu_distributed.c". Think that "int pairRank = flipBit(flipBit(oddParityGlobalInd, qb1), qb2) / qureg.numAmpsPerChunk;" returns a out-of-border value which makes "MPI_Sendrecv" error.
+Looking forward to your reply.
+Hi there,
+Strange that the error message didn't display (I take it invalidQuESTInputError() was redefined, hence the subsequent error), but it would have said:
+In distributed mode, the amplitudes of the state-vector (or density matrix) are evenly distributed between the available nodes. Each node then has a buffer (of equal size to its state-vector segment) which it uses to receive amplitudes from other nodes, when that becomes necessary. The size of the buffer limits how large a unitary matrix can be applied to the state, since a larger unitary matrix involves "more amplitudes" in the calculation of the changed amplitudes - and those amplitudes are communicated via the buffers.
+Line 82 of the tutorial example performs a 3 qubit unitary. If run in distributed mode, this would require each node has a buffer of at least size 8 amplitudes. However, the state itself (created Line 32) is only 3 qubits large. So simulating with any more than a single node (e.g. 2 nodes) will mean the buffer size becomes less than 8 (e.g. 4 amplitudes), and multiQubitUnitary() cannot be performed.
+If you'd like to test the tutorial in distributed mode, simply increase the size of the Qureg at Line 32. You'll need at least 8 amplitudes in the buffer/state-vector per node, so letting N be the number of nodes and Q the number of qubits, you'll need to satisfy  2^Q/N >= 8, or Q >= log2(8 N). For example, using N=8 nodes, the Qureg must contain at least Q>=6 qubits.
+Hope this helps!

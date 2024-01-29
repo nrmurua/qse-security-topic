@@ -1,0 +1,55 @@
+Currently, the cuda toolchain does not include ELPA. I briefly tried to build ELPA with GPU support and failed. Anecdotal evidence suggests that it's not quite ready yet. Nevertheless, we should give it a try every once in a while.
+updating ELPA may help #189, #190
+What version of gfortran is your toolchain using?  Our (FHI-aims/ELSI) experience is that ELPA should be buildable with GPU support, but it can be a bit finicky with compiler versioning.
+The test is using GCC 7.4.0 from Ubuntu 18.04 and Cuda tools 10.1, V10.1.168.
+Since you manged to build ELPA with CUDA, what kind of speedups do you typically see?
+There is now elpa-2020.05.001.rc1 with lots of GPU improvements.
+I made some progress.
+Turns out the segfaults actually occur when the the block size is suitable for the GPU but ELPA notices that it has OpenMP:
+So, for the Cuda build we need to link in the non-OpenMP version of ELPA.
+So, the conclusion is: we cannot use OpenMP and if we don't run on the GPU (because 2^n), the overall execution will be slower. Is this correct? If so, I would not make this library as default in the toolchain.
+BTW, have you tried in the multigpu/node case?
+As I already wrote here we probably have to tweak our blocking to provide the data in block sizes ELPA can use. No drop-in magic anymore, unfortunately.
+we cannot use OpenMP and if we don't run on the GPU (because 2^n), the overall execution will be slower. Is this correct?
+Yes, that's correct and I agree that we should not enable ELPA GPU under these circumstances.
+It would be very useful to gain some visibility into the ELPA roadmap. Both limitations seem fixable. So, maybe we just have to wait?
+Does anybody have ties to the MPCDF?
+I am meeting Andreas M. every week. I will check and forward this issue as a first step.
+Dear all,
+maybe I can clarify a bit the situation.
+2.) blocksize for the GPU version
+for ELPA 2stage at the moment in the GPU version a blocksize (nblk) of 2^n is needed. Otherwise, ELPA2 will give a warning and will fallback in some parts of the algorithm to a CPU execution. There is no such limitation for ELPA1. With the autotuning functionality of ELPA you can easily find out, whether in such a situation (i.e. fallback to CPU execution in ELPA2 due to blocksize) and not using OpenMP will produce a slower solution of the EVP. I guess not, but this clearly depends on the matrix size, number of MPI ranks per node... It is worth a try.
+3.) multi-GPU and multi-node runs
+ELPA (both 1 and 2) can run with several GPUs/node and several nodes (tested up to 256 nodes a 4 GPUs). Have a look e.g. at https://arxiv.org/abs/2002.10991
+Please note that at larger node counts for a given problem size, the CPU version will beat the GPU version, simply because the work per GPU will shrink and at some point data transfers start to dominate.
+4.) Building ELPA with GNU compilers.
+ELPA can be build with GNU compilers. If the compiler is too old and e.g. Fortran 2008 features are not fully supported one can switch of Fortran 2008 at the configure step. At least for gfortran/gcc 8.x and newer there must be no problems when building ELPA.
+5.) Please report problems with ELPA, for example as an issue at https://github.com/marekandreas/elpa
+I guess this is a limitation internal to ELPA (fine). However, this means ELPA/GPU is not thread-safe, right?
+( CP2K calls ELPA using the master thread (I believe), and the idea [see above]
+"to link in the non-OpenMP version of ELPA." should be just fine. )
+3.) multi-GPU and multi-node runs
+ELPA (both 1 and 2) can run with several GPUs/node and several nodes (tested up to 256 nodes a 4 GPUs). Have a look e.g. at https://arxiv.org/abs/2002.10991
+Please note that at larger node counts for a given problem size, the CPU version will beat the GPU version, simply because the work per GPU will shrink and at some point data transfers start to dominate.
+I'm sure ELPA works in multi-gpu. The question is how. In CP2K, there are other libraries that use GPUs (Sirius, COSMA, DBCSR, and more will come). For instance, in DBCSR we use to attach each rank to a corresponding single GPU and make sure that this assignment is preserved. I assume ELPA does something similar?
+I guess this is a limitation internal to ELPA (fine). However, this means ELPA/GPU is not thread-safe, right?
+( CP2K calls ELPA using the master thread (I believe), and the idea [see above]
+"to link in the non-OpenMP version of ELPA." should be just fine. )
+ELPA (in both the CPU and GPU version) should be thread-safe, i.e. you can call different ELPA-instances (which should not be "shared" in OpenMP jargon) from different threads. If you encountered an error with this, then this is clearly a bug to be fixed. The problem with ELPA in the GPU version and OpenMP enabled within ELPA is a different one: parts of the internal algorithms are different in the OpenMP code paths and there, the complete GPU logic has not yet been implemented. In other words all  the GPU logic is currently only available if ELPA is build with --disable-openmp. As said this should be changed in the near future
+I'm sure ELPA works in multi-gpu. The question is how. In CP2K, there are other libraries that use GPUs (Sirius, COSMA, >DBCSR, and more will come). For instance, in DBCSR we use to attach each rank to a corresponding single GPU and make >sure that this assignment is preserved. I assume ELPA does something similar?
+At the moment the solve-routines of ELPA bind each MPI task to a GPU on the host, if you have more MPI tasks per node than GPUs per node, several MPI tasks are bound to the same GPU (using the NVIDIA MPS Daemon increase performance drastically in this situation). The task -> GPU  assignment is not stored, but re-computed in exactly the same way if subsequently multiple calls to a solve step are done. Would it be necessary/helpful if one could set the binding of each task to a GPU-id via the set/get methods (of course then this would be stored into the elpa object as long as it exists) ?
+I'm sure ELPA works in multi-gpu. The question is how. In CP2K, there are other libraries that use GPUs (Sirius, COSMA, >DBCSR, and more will come). For instance, in DBCSR we use to attach each rank to a corresponding single GPU and make >sure that this assignment is preserved. I assume ELPA does something similar?
+At the moment the solve-routines of ELPA bind each MPI task to a GPU on the host, if you have more MPI tasks per node than GPUs per node, several MPI tasks are bound to the same GPU (using the NVIDIA MPS Daemon increase performance drastically in this situation). The task -> GPU assignment is not stored, but re-computed in exactly the same way if subsequently multiple calls to a solve step are done. Would it be necessary/helpful if one could set the binding of each task to a GPU-id via the set/get methods (of course then this would be stored into the elpa object as long as it exists) ?
+This is a wise solution (re-compute of the ask -> GPU assignment). In DBCSR I was thinking to keep it static and reset for each call. So I like your idea to use set/get methods.
+Another common problem I see is that every library does its own memory management and keep pools, which can be reused across different libraries. I assume this is not the case for ELPA...
+Dear @marekandreas, thank you for joining in - I really appreciate it!
+In my case the program hits one of the STOP statements in elpa2_trans_ev_tridi_to_band_template. While this works in serial, when running with mpiexec the program segfaults. This could probably be avoided by calling mpi_abort instead of STOP.
+In other words all the GPU logic is currently only available if ELPA is build with --disable-openmp. As said this should be changed in the near future
+That's great news! Then we can safely select the GPU kernel by default without the risk of triggering a STOP.
+2.) blocksize for the GPU version for ELPA 2stage at the moment in the GPU version a blocksize (nblk) of 2^n is needed
+This is a big limitation for us. Are there any plans to support all block sizes up to 32?
+I assume, it stems from these reductions? Maybe the new collectives for coalesced groups from Cuda 11 could help?
+This is a big limitation for us. Are there any plans to support all block sizes up to 32?
+Well, here I do not want to promise anything yet. This will depend on when we find time to work on this...
+But what you can try is to use the redistribution feature of ELPA: ELPA always to internally redistribute the matrices to another block-cyclic distribution. You can check whether redistributing to a blocksize of 2^n internally to ELPA will give you a descent speed up since you can then employ the GPU version. If this speedup is (much?) larger than the cost of the (back-and-forth) redistribution you still gain and you do not have to fall back to the CPU kernels...
+Fixed via #2407.

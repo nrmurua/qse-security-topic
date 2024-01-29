@@ -1,0 +1,13 @@
+Description of the issue
+It appears density matrix simulator does not work with subcircuits? After looking through the noise simulation code I was trying to check whether noise propagated through subcircuits but I'm unable to even get a measurement. Entirely possible I'm using this incorrectly, or that this is expected behavior.
+Note: if changed to the sparse simulator, the test passes.
+How to reproduce the issue
+Cirq version 0.10.0.dev (latest master)
+I think the root cause is that DensityMatrixSimulator considers only ops.MeasurementGate for sampling. The fix would be to use protocols.is_measurement instead of circuit.findall_operations_with_gate_type(ops.MeasurementGate).
+This should apply to (almost?) everything in Cirq using MeasurementGate checks. Related to #3678.
+Reproduced.
+@smitsanghavi thanks, that got past the first error. Now it's failing at the next step, and this one seems thorny. What's happening now is that the subcircuit operation is returning true for protocols.is_measurement. And since the subcircuit is terminal, the iterator just ignores it.
+Then when it tries to sample all terminal measurement gates
+that subcircuit operation gets included and it crashes.
+Seems like we either need a way to sample a subcircuit, or we unroll the circuit before calling _run_sweep_sample, Sampling the subcircuit would probably involve a recursive call to run the simulation on the subcircuit moments.
+Found a workaround by forcing run_sweep_repeat instead of run_sweep_sample when subcircuits exist.

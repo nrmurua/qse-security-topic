@@ -1,0 +1,25 @@
+I believe there is a bug in the keep functionality of cirq.decompose. Perhaps I am just using it wrong. Consider the following code.
+I would have expected this code to decompose things until stopping at "MyGate". Instead, it assumes that I really want it to decompose everything that isn't MyGate, including things that cannot be decomposed further. Thus, I get the error message:
+ValueError: Operation doesn't satisfy the given keep but can't be decomposed: (cirq.Z**1.4321001256099544).on(cirq.LineQubit(0))
+This is very counter intuitive at best. But fine, perhaps when I use this keep functionality I need to explicitly tell the decomposer to stop when things don't have a decompose method. Thus, I tried changing stop_at_mygate in the following way:
+But that also did not work. What is going on here?
+As a final note, if I do decompose things all the way (I don't pass the keep argument) then things get compiled into Molmer-Sorensen gates. Who ordered that!? Those gates are only relevant for ion traps. My feeling is that nothing in Cirq should compile to MS gates by default.
+This is intentional behavior. The keep predicate is supposed to indicate the set of things that you are willing to accept, and so decompose keeps going until it can satisfy those desires or else it fails. This is important when e.g. saying "I want this to decompose into things that define a unitary method". If the decompose fails to reach something with a unitary method, the code that follows and assumes the unitary method is present is going to fail.
+You can activate the functionality you want by also specifying on_stuck_raise=None.
+We could potentially rename keep to require or something like that. I agree that the specific semantics we chose will not be universally understood as the obvious ones. We could also add a variant of keep like stop_if or happy_to_stop_at we was equivalent to specifying both keep and on_stuck_raise=None.
+I do think, in this ambiguous situation, that it is better to ere on the side of causing an exception than on the side of silently accepting additional outputs. The exception gives us the chance to better describe what to fix.
+I see, fair enough. Indeed, I would vote for a stop_if function but I'm not willing to implement it myself right now either! I'll close this issue but note that I am still a bit put off by the compilation to ion trap gates without me asking for that!
+@Strilanc I am reopening the issue because your solution (as I understood it anyways) does not seem to work. I've now changed the decompose call to
+cirq.Circuit.from_ops(cirq.decompose(MyOtherGate().on(a, b), keep=stop_at_mygate, on_stuck_raise=None))
+but when I do this, it ignores my request to stop at MyGate and compiles all the way down to YY gates, CZ gates and still to my great dismay, MS gates. What I want it to do is to stop the compilation at MyGate.
+An XXPowGate with global shift of -0.5 is by definition a MS gate. The reason an MS gate shows up in your circuit is because you put one in it, not because decompose is attempting to construct a circuit with it.
+Also your "keep" method
+def stop_at_mygate(gate): return isinstance(gate, MyGate) 
+will only return True if the thing that is passed into it is a Gate. You are passing it GateOperations via your generator. Does the following "keep" function give you behavior you expect?
+EDIT: What is your expected output?
+Thank you, yes, that did solve the problem so I will close this issue.
+Regarding the MS gate, I still maintain cirq should not be showing that. Indeed, the MS gate is a gate and it has a unitary that is the same unitary as an operation showing up in my circuit. But the thing called an MS gate is not just the name of a unitary: it is the name of a specific way to realize that unitary that is specific to ion traps and has to do with coupling laser radiation to motional sidebands of the trapped ions. So it really has no business showing up in a general API for programming quantum computers.
+I am reopening based on @Strilanc 's suggestion as we both agree this behavior is sufficiently unintuitive that it should probably be addressed in some way.
+I've create #2958 here about further disentangling MS and XXPowGate naming.
+@babbush - now that MS and XXPowGate are "disentangled" do you think that issue still has to stay open? It is unclear from #1636 (comment) which part of the behavior was still unintuitive - was there anything left regarding the decompose method/args?
+I think we can close this now, thanks!

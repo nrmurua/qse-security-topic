@@ -1,0 +1,197 @@
+Making the experiment repository a basic python package and trying to import from other files within it doesn't work in conjunction with git integration; I'm wondering what the canonical way of doing this is.
+To elucidate, consider the following example experiment repository:
+qux.py:
+bar.py:
+(The reason for having such a structure is that most experiments are composed of repetitive blocks of standard operations, for example state preparation, and these should obviously be reused throughout the more complex composite experiments.)
+If this is just on the filesystem, then running artiq_master -r experiments works perfectly, Bar shows up in the dashboard explorer, and running it prints the expected message.
+However, if I follow the git integration steps (initialize a bare repository in another directory, say experiments.git, initialise experiments as a repository, configure experiments.git as a remote and push to it), artiq_master -g -r experiments.git fails to load the experiment: the import fails because the module experiments does not exist (relative imports also fail). I understand that this is expected due to the nature of python -- what I don't understand is how one is supposed to make use of the git integration, while also having a sensible codebase that doesn't have unnecessarily duplicated code.
+The obvious workaround is to maintain a library of the common functionality that is installed as a standard python package in the conda/nix environment; but then the "building block" type experiments are separate from the "composite" experiments, and composite experiments can easily be building blocks for yet more complicated experiments, so in fact everything may as well reside in this separate package (as we did in Oxford for the HOA2 experiment). At this point the git integration is useless, because all the functionality is no longer in the experiment repository itself, and so its git hash is irrelevant. One would have to look at the run time of the experiment, cross reference with commit times in the external package, and hope that it was in a clean unmodified state when the experiment was run - the exact problem that the git integration seeks to solve.
+An addendum: using -g with the working tree instead of a bare repo sort of works (experiment runs, saves a git hash to the results file), but then uncommitted changes in qux.py are imported by the repository version of bar.py when the experiment is submitted. Again, this is not unexpected to me, but isn't really desired behaviour either.
+We use a flat hierarchy and update the python path per file. Something like:
+__file__ resolves to the temporary checkout directory so uncommited changes are not taken into account. This approach somewhat scales to more complex file hierarchies but is indeed not very beautiful.
+I have also found this frustrating. Some points I've come across:
+@ljstephenson You could create a blank __init__.py file in your foo and baz directories to make Python find importable modules there:
+However, this only works for modules that import something in their own directory, or in a subdirectory. Imports across two subdirectories do not work.
+To allow actual Python packages within experiments, what we could do is set PYTHONPATH to $REPOSITORY/library when an experiment is run. This way, the special library folder in the experiments repository can contain any number of user-defined Python packages, with arbitrary imports between them, and which are committed with the experiments. Each package would be in its own folder, for example you'd define the packages foo and bar by using library/foo and library/bar folders.
+artiq_master -g only takes the committed changes - use this for "final" experiments. For testing before committing, use artiq_client without the -R flag, or the equivalent "Open experiment outside repository" feature of the dashboard.
+If this is just on the filesystem, then running artiq_master -r experiments works perfectly, Bar shows up in the dashboard explorer, and running it prints the expected message.
+And this is just another case of the "subdirectory with __init__.py" pattern that I mentioned, and it has nothing to do with Git integration itself. Python simply takes the current working directory into account when importing, and sees your "experiments" folder there with a __init__.py inside and takes it as a Python package named experiments. With the git checkout somewhere else and not even named experiments, this does not work.
+artiq_master -g only takes the committed changes - use this for "final" experiments. For testing before committing, use artiq_client without the -R flag, or the equivalent "Open experiment outside repository" feature of the dashboard.
+Thank you, "Open experiment outside repository" is what we're currently using. I think the problem becomes a bit more complex for multiple remote users and when using experiments importing code from other files. I'm not aware of a solution that doesn't make the commit-hash misleading if another user is editing a file that is imported by an experiment I run. Admittably, this is an edge case, though one that we encounter fairly frequently. (Especially if uncommited changes are left in these files)
+Do you have a commit hash associated with experiments submitted via "Open experiment outside repository"?  Or are uncommitted changes making it through artiq_master -g? These woulds be bugs. For multi-file experiments, see my two suggestions. I can implement the PYTHONPATH modification in ARTIQ if people think this is a good idea.
+BTW on Linux we could also have Nix integration, with each experiment run in a nix-shell --pure with a Nix derivation and inputs tracked by ARTIQ. This way the whole environment of the experiment is also captured and reproducible, including all third-party Python libraries, C libraries, command-line tools, etc.
+...
+However, this only works for modules that import something in their own directory, or in a subdirectory. Imports across two subdirectories do not work.
+To allow actual Python packages within experiments, what we could do is set PYTHONPATH to $REPOSITORY/library when an experiment is run. This way, the special library folder in the experiments repository can contain any number of user-defined Python packages, with arbitrary imports between them, and which are committed with the experiments. Each package would be in its own folder, for example you'd define the packages foo and bar by using library/foo and library/bar folders.
+Not being able to import across subdirectories (basically enforcing a flat structure) probably isn't workable with ~100 experiments. I know that searching by name for experiments is possible, but having some logical grouping is still nice.
+The second option could work, but part of the problem is that there is some fluidity between what is an experiment and what is a library function -- for example, experiment A might do a simple measurement scanning one parameter, and experiment B runs experiment A at each value of a second parameter scan. Does experiment A belong in "library" or "experiment"? (Perhaps not the best example, since logically they would be experiments in the same subdirectory, but you get the point.)
+Do you have a commit hash associated with experiments submitted via "Open experiment outside repository"? Or are uncommitted changes making it through artiq_master -g? These woulds be bugs. For multi-file experiments, see my two suggestions. I can implement the PYTHONPATH modification in ARTIQ if people think this is a good idea.
+Uncommitted changes in qux.py were making it through artiq_master -g because in this case the working tree of experiments was in the python path by virtue of being in the cwd and being imported that way - again, to be expected, but an easy mistake to make. (Uncommitted changes in bar.py obviously had no effect).
+Is there anything stopping us just setting PYTHONPATH to $REPOSITORY? AFAICT this looks like a less-hacked version of @airwoodix 's solution (if it looks stupid but it works... it ain't stupid). But, everything would have to be one directory below this for it to work, right? So the repository would look like this:
+I guess my use case/need is any file able to import from any other within experiments. Potentially I would also have say, repository/analysis as well, but less fussed about that.
+BTW on Linux we could also have Nix integration, with each experiment run in a nix-shell --pure with a Nix derivation and inputs tracked by ARTIQ. This way the whole environment of the experiment is also captured and reproducible, including all third-party Python libraries, C libraries, command-line tools, etc.
+This is the sledgehammer but could definitely work for people on Linux - would there be a run time penalty? Personally I'm slightly less worried about capturing absolutely everything; IMO every experiment must save any raw data collected, then any analysis results can be recalculated if/when the analysis technique changes -- i.e. saving the analysis environment would be a "nice to know" for archaeology purposes but not vital. So long as I know what the pulse sequence was I'm happy.
+Apologies for presenting a problem without any good idea what solution it has...
+setting PYTHONPATH to $REPOSITORY? [...] But, everything would have to be one directory below this for it to work, right? So the repository would look like this:
+Correct.
+This is the sledgehammer but could definitely work for people on Linux - would there be a run time penalty?
+When everything is cached in the Nix store, nix-shell typically takes a few hundred milliseconds to start - heavily dependent on environment complexity and machine performance. The startup time would be pipelined by the ARTIQ scheduler.
+For my use case I'd be very happy with the PYTHONPATH solution - I don't have strong feelings about a Nix solution since we're stuck with windows for now. I'll leave others to comment on that!
+We can also just set the current working directory to the repository - fewer moving parts.
+Fine by me!
+There's the issue of experiments submitted outside the repository. And ensuring that an experiment file works the same regardless if it's submitted via the repository or not is tricky.
+IIRC relative imports from experiments fail as artiq sets a __path__ that's not based of the files actual location.
+Is there something wrong with __path__ and ARTIQ or is it just general difficulties with Python relative imports?
+https://stackoverflow.com/questions/16981921/relative-imports-in-python-3
+Seems this issue isn't fixable without a sys.path hack if we want to experiments outside the repository to run the same as when submitted via the repository.
+Not being able to import across subdirectories (basically enforcing a flat structure) probably isn't workable with ~100 experiments. I know that searching by name for experiments is possible, but having some logical grouping is still nice.
+You'd have:
+and experiments in group_a and group_b will need to add Path(__file__).parent to sys.path manually to import from library. AFAICT, due to how Python works, this is the only way to make imports work when experiments are run with the equivalent of python /absolute_path/group_x/experiment.py which is just what ARTIQ does when not using the repository. When using the repository, this sys.path hack is compatible, regardless of its ugliness.
+I've found no good way around the uncomitted changes problem and it is proving challenging in practice to ensure all users religously commit or clean up changes to the files.
+Nix integration with each experiment run in a nix-shell --pure and perhaps other restrictions so the experiment cannot arbitrarily access the filesystem? Then there cannot be any unregistered inputs when you're submitting from the repository.
+How about this: add some code to worker_impl.py before the get_experiment call which does something like the following:
+This would have the effect of
+User code could then define __artiq_repo_name__ = "my_experiments" in the __init__.py file and could then elsewhere in their code (or in externally submitted file) use from my_experiments import my_experiment or import my_experiments.libs.some_lib.
+By having this as an opt-in via the variable, it won't take anyone by surprise. We could later turn it on by default (choosing some sensible default name like "repository") if it works well. By using an __init__ file, we trigger python's usual package loading mechanisms which avoid the need for a custom finder in the meta_path. Adding a custom package to sys.modules is officially supported in the python docs, so this isn't a hack.
+This is complicated...
+What about an option to add a user-specified directory (which would correspond to the repository) to PYTHONPATH in the submit-by-file feature?
+That wouldn't address the ability of experiments in subdirectories to access libraries above their dirs
+It would, just specify an upper level directory to add to PYTHONPATH.
+True. Another few benefits of having the experiment repo be usable as a package though:
+Rather than having e.g.
+you'd have
+which makes things explicit and allows automatic code linters like pre-commit to sort imports properly.
+So with a structure like
+mylib1.py can call from ..lib2 import mylib2 instead of from lib2 import mylib2. Again, that's more explicit. Also, your IDE will now understand what you're doing and provide autocompletion for you, reducing bugs, and there's no possibility of accidental shadowing of modules.
+Any package metadata stored in __init__.py would be exposed automatically. For example, you might call repo.__version__ in your code to get a versioneer version stamp. ARTIQ archives this already for its HDF5 datasets, but it might be useful to have available in other places too. Or some other use of the normal python package metadata which I haven't thought of.
+I think implementing this would actually be dead easy, easier than adding config options to the GUI. Simplfying my above suggestion such that you always use the name "repo" instead of allowing the user to choose, you'd just alter
+in worker_impl.py to
+it's now clearer where imports come from
+Also doable with my solution, just create a repo folder in PYTHONPATH with a __init__.py.
+Libraries can now do relative imports
+Metadata
+AFAIK this would also be working with my solution.
+Implementation
+But it's complicated and ad-hoc. Adding a few widgets to the GUI is straightforward.
+True also - if you maintain your code in a repo subdirectory then you could then treat it as a package. One downside to this is that all your experiments will now sit under a "repo" top-level in the ARTIQ dashboard's browser - an annoyance. That could also be fixed with another GUI option to define a prefix for all searches, but that's now starting to get complex.
+Also, I thought from the above...
+Seems this issue isn't fixable without a sys.path hack if we want to experiments outside the repository to run the same as when submitted via the repository.
+that you weren't a fan of changing the path?
+Personally, I'd prefer to keep as much configuration in the code as possible, where it's nicely source-controlled (or, better, not to require any configuration). Adding more GUI options means you need to a) know what to set them to before code can be used and b) archive their settings to get full reproducibility of experiments.
+Also, is it so complicated? ARTIQ workers already work by manually importing the module containing the Experiment which is being run: this change would just be to also import the repository package at the same time.
+that you weren't a fan of changing the path?
+If it can be avoided and something better done instead...
+Searching for an __init__.py file in the root of the directory
+How is "the directory" specified?
+Also, what about artiq_run? Adding something to PYTHONPATH is easily done in the shell, but not modifying sys.modules.
+b) archive their settings to get full reproducibility of experiments.
+The "user library path" would become part of expid and archived the same.
+How is "the directory" specified?
+For runs managed by artiq_master, "the directory" is the repository passed via [-r REPOSITORY] when artiq_master was launched or, if using git integration, the path to wherever the current version is checked out for this run.
+Also, what about artiq_run?
+For artiq_run, the repository would be None by default (just like if you didn't put an __init__.py file in your repository). If you want to explicitly link your script to a directory of files, you'd pass a flag to artiq_run - possibly the same [-r REPOSITORY] flag as artiq_master uses.
+The "user library path" would become part of expid and archived the same.
+Sure that'd work. expid already contains a "wd" key which is parsed into repository_path in the worker. Right now that's just used for logging, but it could also be used for either the path-based or the package-based approaches.
+Adding something to PYTHONPATH is easily done in the shell, but not modifying sys.modules.
+Why not? artiq_run could just do the same thing as worker_impl. For artiq_run, as I mentioned above, you'd explicitly specify which repo to use since it's otherwise standalone.
+For runs managed by artiq_master, "the directory" is the repository passed via [-r REPOSITORY] when artiq_master was launched or, if using git integration, the path to wherever the current version is checked out for this run.
+Including for experiments submitted "outside the repository"?
+Sounds like a footgun in the typical use case where this submission path is used to test local changes. If you have local modifications to a library component, the master would silently and confusingly use the version from the repository instead.
+My proposal does not have this issue.
+If you have local modifications to a library component, the master would silently and confusingly use the version from the repository instead.
+Currently, the run would just fail because nothing other than the file itself is available to the worker (AFAIK). And you can't really do this accidentally: you'd have to explicitly type from repo import x, so I don't think it's a footgun compared to the current situation.
+I think there are two separate issues here:
+My proposal for 1. is that we default to the repository passed via [-r REPOSITORY] if an __init__.py file is present. For externally submitted experiments, we could also have a GUI option to override this. Yours, I think, is that we always select this via the GUI, even for the usual case where we're operating out of a repository.
+For 2., my proposal is to have this root directory available to import via import repo. Yours is to add it to the path, so that subdirectories and modules can be imported as if they had been installed.
+The solutions to 1. and 2. are independent: having a GUI config for the root directory doesn't stop you from making it available as a package, and detecting an __init__ file doesn't stop you adding that directory to the path. OTOH I think the __init__ approach makes the most sense when combined with the package approach since the presence of __init__ files is the same mechanism by which python defines packages.
+I also think we're imagining different use-cases here. I'm expecting that repository-based usage is the most common requirement, so should be the easiest to use. For external testing, I was expecting the submission of single files which currently cannot reference other files - after this PR, they'd have the option to access the existing repo if they wanted to.
+You seem to be imagining external submissions which pull in an entire directory of other files, so that changes to the entire repository can be tested via the "outside the repository" method - also a new feature AFAIK.
+That's a nice idea, and I think that it can be supported fine by the package approach. You use the __init__ method only when operating in repository mode and, for external files, you have a box in the GUI which allows you to also specify the root directory you want to use (or leave it blank for None). That way the GUI option is only needed for external files: for repository mode there's no config required.
+PS we should probably reopen this issue since we're obviously still discussing it!
+I'm expecting that repository-based usage is the most common requirement, so should be the easiest to use.
+Well, how do you test before committing?
+And, once we have a GUI setting for a directory, only modifying PYTHONPATH is the simplest option with the least consequences, and the most standard option wrt how the Python import system works. As I said it is even exposed in the Unix shell, and experiment files can still be imported easily without custom code that uses importlib.util and sys.modules. For instance you could still syntax-check an experiment file with python experiment.py, whereas this won't work if custom import code is required.
+Fair enough. For "what to do with the path", I still think that the package-based approach is most explicit and that using importlib.import_module is a pretty standard operation, but altering the path would also work fine.
+For "how to find out the path", a GUI option for external submissions seems unavoidable but, for normal repository usage, I think the directory should be defined somehow by your code. It's an integral part of the program, in that your code won't work unless the path is set correctly, so its setting belongs in that code. By default, it should just be the repository path. It would be really nice if there was an option to set it instead to a sub-directory of the repository and to set that as the root for ARTIQ searches too. That way you could choose to structure your repo as a normal python package:
+And the ARTIQ browser wouldn't prefix all your Experiments with repo
+PS the right-click menu for external submissions could be changed to be "Load experiment from external file" and "Load experiment from external repository". The former does the current behaviour, loading a single file with the path set as it currently is. The latter lets you select a folder, then a file.
+To give my 2 pence/cents/centavos/whatever - having everything under a repo directory would be a pretty minor annoyance in exchange for having something that is actually usable. Enforcing a flat structure or all imports below the experiment importing them is not usable, and means that several end users are not using the git integration at all.
+As far as I'm concerned, the solution using PYTHONPATH seems like it would be usable; if I've understood correctly:
+At this stage we can continue to argue about what the most elegant way of doing it is, or just pick one and do it. I think that the end result for users is the largely same whichever way it is done - files submitted outside the repository (GUI or otherwise) need to know about the python package, so we'd have to point to it somehow anyway.
+means that several end users are not using the git integration at all.
+There's always the option of editing sys.path in the experiment...
+experiments submitted from the GUI use the checkout of the repository as a bona-fide package
+experiments submitted from the GUI outside repository use nothing, or a user-specified folder
+experiments submitted using artiq_run (tiny minority, likely to be advanced users) use the PYTHONPATH variable, whatever they set that to be (or add a --repository option that does the same thing, makes it a little more user friendly)
+Yes.
+Ok I got a bit late in this discussion (now referred through #1571 ), hope I did not miss any important part of your discussion. Let me know if I am completely missing a point somewhere.
+So first, our project structure with "shared code" is designed as shown in this example project https://gitlab.com/duke-artiq/dax-example . Shared code is located in the dax_example "package" which can be imported from any experiment in the repository/ directory. It rarely happens that we import one experiment from an other, but if we do, we import it something like import repository.experiment. We do this all without modifying the environment. This works great for us and gives the git repository a package-like organization, which I personally like. The downside is that we can not use the ARTIQ git integration in our structure.
+From my perspective, our "package structure" approach makes more sense than making a repository/library directory that is magically added to PYTHONPATH. The only two "issues" that remain are 1) git integration and 2) knowing the location of the repository in experiments. git integration could be solved by doing repository discovery, which also works for sub-directories of a git repository. the current location of the repository could be accessible by something like #1571 .
+The downside is that we can not use the ARTIQ git integration in our structure.
+Even if you modify sys.path?
+Git repository discovery is a good idea, and we could use it as default for the path being added to PYTHONPATH. That would "just work" for many use cases I believe.
+Even if you modify sys.path?
+I am not sure how sys.path influences ARTIQ git integration. When using GitBackend, the pygit2 repository object is created by passing the path of the repository directory. The repository passed to the pygit2.Repository object must be the root of a git repo, which is not the case in our structure.
+Git repository discovery is a good idea, and we could use it as default for the path being added to PYTHONPATH. That would "just work" for many use cases I believe.
+That sounds reasonable to me in case ARTIQ git integration is enabled.
+I am not sure how sys.path influences ARTIQ git integration.
+It does not, but it could fix your import problems.
+It does not, but it could fix your import problems.
+Ah I see. Well, my conclusion was actually that we do not have any import problems with our structure. The structure is just incompatible with the ARTIQ git integration feature, but that can be fixed easily with repository discovery.
+The structure is just incompatible with the ARTIQ git integration feature,
+I don't know why you keep repeating that. If you edit sys.path in your experiment, you can make import works regardless of what the git integration does. Or is there something other than imports that would not work?
+I don't know why you keep repeating that. If you edit sys.path in your experiment, you can make import works regardless of what the git integration does. Or is there something other than imports that would not work?
+Ok I guess I did not explain that clearly. So for the DAX example project, we start the ARTIQ master in the root directory of the Git repository where the device db is located (e.g. ~/dax-example) and the "experiment repository" is at ~/dax-example/repository (the default location where the ARTIQ master looks). With ARTIQ git integration enabled, ARTIQ tries to create a pygit2.Repository object by passing ~/dax-example/repository, which is not the root of the git repository, resulting in an error. See the error below.
+It is possible to set the experiment repository location using artiq_master -g --repository ./. ARIQ git integration works in this way, but now the device db and many other files are scanned by the ARTIQ master while they should not be.
+So that is what I meant by incompatibility with the ARTIQ git integration feature. Or do I misunderstand how to use the ARTIQ git integration feature?
+hope I did not miss any important part of your discussion. Let me know if I am completely missing a point somewhere.
+I think there are multiple points being discussed, some of which you address. I'll attempt to resummarise:
+The initial discussion raises the following issues:
+The later discussion focuses on possible implementations that satisfy the above.
+This works great for us and gives the git repository a package-like organization, which I personally like. The downside is that we can not use the ARTIQ git integration in our structure.
+I haven't fully understood what you are doing. This sounds to me like another way of bypassing the git integration to allow imports?
+@pathfinder49 thanks for re-summarizing, I definitely did not capture all points.
+In that case, I guess I did missed some points and some of my comments might have been out-of-context. My apologies in case I caused any confusion. I do not think I have anything to add to this discussion at this moment.
+I haven't fully understood what you are doing. However this sounds to me like it is another way of bypassing the git integration to allow imports?
+Yeah we bypass git integration to allow imports in the way we prefer. Our code basically has 3 levels of volatility: repository/, the "project package" (e.g. dax_example/ for the example project), and libraries. The dax_example/ directory contains code shared between experiments in the repository and changes less compared to the experiments in the repository. We can import it directly from any experiment in the repository. Our most generic functionality is part of our DAX library which is part of the nix environment.
+For complicated things like this, you may want the Nix environment to be managed by ARTIQ and included/referenced in expid.
+I've thrown together a rough draft PR #1805 to hopefully address this (although so much has been discussed on this issue that I'm sure I missed a few cases). I think it addresses @ljstephenson's points:
+As far as I'm concerned, the solution using PYTHONPATH seems like it would be usable; if I've understood correctly:
+but more testing is definitely needed.
+Did anything changed about this topic? I am also interested in using the git integration with a repository that looks nearly identical to https://gitlab.com/duke-artiq/dax-example/. Unintentionally I tried the same thing that @lriesebos was saying should not work and that was running artiq_master -g from within the root repository:
+Ok I guess I did not explain that clearly. So for the DAX example project, we start the ARTIQ master in the root directory of the Git repository where the device db is located (e.g. ~/dax-example) and the "experiment repository" is at ~/dax-example/repository (the default location where the ARTIQ master looks). With ARTIQ git integration enabled, ARTIQ tries to create a pygit2.Repository object by passing ~/dax-example/repository, which is not the root of the git repository, resulting in an error. See the error below.
+On my machine and with my version of ARTIQ (6.7654.56b8c3c0), the master starts up without the mentioned error message and I am also able to connect to it via the dashboard allowing me to submit experiments. The master apparently does not scan only the repository subfolder, but the whole repository in the root directory (it even ignores the argument -r if I provide it specifically). The master therefore skips some files and throws some errors, when scanning files within the subfolder programs, that it should normally not scan:
+But nothing of this does affect the operation of the master as far as I can say. Only the experiments are then listed under the subfolder repository.
+I tested this scheme with my own repo more in depth. My layout is:
+Experiments within the repository folder can import the main package qlc just as wanted, e.g. measurement.py can import from qlc via from qlc.experiment import MyOwnEnvExperiment.
+Git integration seems to working correctly. Only commited changes are available through the dashboard, unstaged code can be run from artiq_client submit. And the whole repository is within the git monitoring.
+Since I am not running a bare git repo here I added a .git/hooks/post-commit script for now:
+that triggers when I do local changes in the repo. I guess one should also make it work for incoming changes from git pull and probably also with a bare repo.
+To get rid off the master skipping files, like the setup.py, one can add if __name__ == "__main__": blocks where necessary.
+I don't understand the behavior of artiq_master here, but it might fix the problem with the git integration if I am not mistaken. Do I miss anything here?
+Did anything changed about this topic?
+The solution that we seem to converge to is:
+(First proposed here: #1805 (comment))
+The solution that we seem to converge to is:
+- "Open experiment outside repository" feature is removed
+- Repository path is added to PYTHONPATH
+- Multiple repositories can be configured at the same time in the master and dashboard, including repositories backed by bare files, which replaces the "Open experiment outside repository" feature.
+That seems like a good solution that also should work for us.
+What I don't understand is why artiq_master -g is currently behaving like it does. But we will continue to utilize this as a feature, since it solves all the git integration problems, that @lriesebos also mentioned, as far as I can tell for now.
+I think that being able to run the master/dashboard with both a git backend (stable code) and a file backend (development/testing) makes a lot of sense, although I suspect it will require a decent bit of work since AFAICT the backend is immediately abstracted away upon creation of the experiment db.
+Is that necessary? I realized it might be a somewhat redundant feature if these changes are made, but I don't think it hurts anything to keep it. And I think the latest version of #1805 handles out-of-repo experiments with a "repository path" decently enough.
+Repository path is added to PYTHONPATH
+Would this not be potentially risky when files or subdirectories in the repository path have names that are the same as package names? We have already experienced such situations before with the existing population of PYTHONPATH
+Is that necessary?
+Definitely. Not only is it redundant, but it is also broken as package imports would not work correctly when it it used. Adding a repository path in that situation adds complexity to the code (especially in the GUI) and does not improve UX compared to adding a file-backed repos.
+Would this not be potentially risky when files or subdirectories in the repository path have names that are the same as package names?
+Python already has plenty of such issues anyway and users need to be aware of them. Try running a Python program if you have e.g. an asyncio.py in the current directory. It can be mitigated by adding a repository/packages directory, but I'm not sure if this is necessary considering how common the problem already is with Python.
+Adding a repository path in that situation adds complexity to the code (especially in the GUI)
+I see that you basically avoided the difficult parts and just put a "todo" comment in your code for #1805. Better just remove that redundant and messy feature entirely.
+Ah, yeah, I forgot about that part. Sounds good.
+Is that [removing the "Open experiment outside repository" feature] necessary?
+Definitely. Not only is it redundant, but it is also broken as package imports would not work correctly when it it used. Adding a repository path in that situation adds complexity to the code (especially in the GUI) and does not improve UX compared to adding a file-backed repos
+You could just not do anything to PYTHONPATH, and add nothing to the GUI. That way you don't remove a feature that presumably some people do use. You can't use "Open experiment outside repository" to test library-dependent code, but you can't do that currently either, so nothing lost. And we're adding the multiple repository sources test option, to test library-dependent code. I don't have strong feelings about it though.
+Multiple repositories can be configured at the same time in the master and dashboard, including repositories backed by bare files, which replaces the "Open experiment outside repository" feature.
+This should also support multiple branches / tags / commit ids from the same repository. That's probably the most common way you'd test a feature: by creating a feature branch, testing it out, then merging.
+I think going the PYTHONPATH route sounds like the most pragmatic way to get this feature live, so +1 from me!

@@ -1,0 +1,33 @@
+In motion/integrator.F (line 1582 of the current master branch) there is a check to make sure the elements in the trajectory snapshots are consistent:
+IF (element_symbol /= element_symbol_ref0) THEN
+errmsg = "Atomic configuration from trajectory file does not match the reference configuration: Check atom "// &
+TRIM(ADJUSTL(cp_to_string(i)))//" of step "//TRIM(ADJUSTL(cp_to_string(trj_itimes)))
+CPABORT(errmsg)
+END IF
+If kinds in the .xyz reference trajectory are specified with aliases (e.g. O1   ) the variable 'element_symbol' will be 'O1' while 'element_symbol_ref0' will have the value of 'O', thus failing the check. Currently this completely hinders the use of element aliases with ensemble REFTRAJ.
+[CP2K:18687] Error with Reftraj ensemble
+Dear All,
+I am reporting the same issue as someone else has found on github:
+#2704
+'In motion/integrator.F (line 1582 of the current master branch) there is a check to make sure the elements in the trajectory snapshots are consistent:
+IF (element_symbol /= element_symbol_ref0) THEN
+errmsg = "Atomic configuration from trajectory file does not match the reference configuration: Check atom "// &
+TRIM(ADJUSTL(cp_to_string(i)))//" of step "//TRIM(ADJUSTL(cp_to_string(trj_itimes)))
+CPABORT(errmsg)
+END IF
+If kinds in the .xyz reference trajectory are specified with aliases (e.g. O1 ) the variable 'element_symbol' will be 'O1' while 'element_symbol_ref0' will have the value of 'O', thus failing the check. Currently this completely hinders the use of element aliases with ensemble REFTRAJ.'
+The reftraj functionality with special kinds being applied to different species of every frame of a trajectory file for a QM calculation is key to my workflow, so any help working out how to get this working again would greatly appreciated!
+I thought I had a quick fix by simply removing the check a recompiling, which seemed to be working, however, now I get spurious memeory errors - unsure if this is related to the code change or not.
+Thank you for your time and help!
+All the best,
+Kit
+I've investigated this issue and found the reason for this error.
+when using the REFTRAJ ensemble in MD cp2k requires two files; the reference topology file specified in &SUBSYS &TOPOLOGY COORD_FILE_NAME which is a single snapshot; and the trajectory file in &MOTION &MD &REFTRAJ TRAJ_FILE_NAME which is the whole trajectory.
+cp2k will read the topology file of format {ATOM_kind X_pos Y_pos Z_pos} to try and translate the ATOM_kind to its corresponding element (using the &SUBSYS &KIND section) and save the elements into memory, and then use this list when reading the REFRAJ trajectory file. As cp2k is intended to read trajectory files written from prior cp2k calculations, it expects the trajectory file to only contain {ATOM_element X_pos Y_pos Z_pos} and will directly compare the stored element from the topology file with the element written in the trajectory. So if the trajectory contains KINDS (i.e. the ATOM aliases) this comparison will fail.
+I think the confusion comes from the error message printed when the check fails: Atomic configuration from trajectory file does not match the reference configuration. This suggests the topology file and trajectory file don't correspond with each other, while obscuring what is actually being compared.
+Although this error should only appear if the supplied trajectory file was hacked to include KIND information, it is not intuitive that the information contained in the topology file and trajectory file, while being identical, are treated differently.
+I think the confusion comes from the error message printed when the check fails:
+@Anyborr , How would you re-phrase / extend the message to avoid the confusion?
+@oschuett Maybe something like:
+errmsg = "Atomic configuration from trajectory file does not match the reference configuration: Check atom "// & TRIM(ADJUSTL(cp_to_string(i)))//" of step "//TRIM(ADJUSTL(cp_to_string(trj_itimes))). This might happen if the trajectory file has been modified. See https://manual.cp2k.org/trunk/CP2K_INPUT/MOTION/PRINT/TRAJECTORY.html#CP2K_INPUT.MOTION.PRINT.TRAJECTORY.FORMAT for accepted formats.
+It still feels a bit vague as I don't think its clear that the KIND information is read from the topology file and compared with the elements in the trajectory, but maybe that information should be included in the https://manual.cp2k.org/trunk/CP2K_INPUT/MOTION/MD/REFTRAJ.html#CP2K_INPUT.MOTION.MD.REFTRAJ.TRAJ_FILE_NAME section of the manual.

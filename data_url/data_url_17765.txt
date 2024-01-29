@@ -1,0 +1,37 @@
+function eval_hamiltonian() in qiskit/tools/apps/optimization.py that used to work for me
+in Qiskit versions 0.5.4 through 0.5.7 no longer runs in Qiskit versions 0.6.0 and 0.6.1
+The old Qiskit code assumed the "device" parameter to be a name string.
+Now it is expected to be the backend object.
+However the eval_hamiltonian() code still attempts to find the 'statevector' substring in device,
+so does not seem to have been adapted to the way the rest of the library works.
+This function should probably work if you pass in 'device' as a backend object,
+with the rest of the code adapted to this new default behaviour.
+Erm... fix it, please?
+This has moved to qiskit aqua @chunfuchen and @pistoia could you give the information for this.
+@ens-lg4
+There is an equivalent method in Qiskit Aqua.
+At the Operator class, there is an eval method which does the same thing as eval_hamiltonian.
+https://github.com/Qiskit/aqua/blob/stable/qiskit_aqua/operator.py#L742
+In the eval_hamiltonian method,  you need to provide hamiltonian, input_circuit and other device settings, and then it returns you the mean and circuits.
+Here is how you achieve the same goal in Aqua.
+Here is example codes for Aqua 0.3.0
+Please let me know if you still encounter any issue.
+Thanks very much for your quick reply!
+So you have a totally new solution for v0.6 ...
+I'll have to work out the new patches to reintroduce the concepts of timeout and accounting of total quantum time spent. Unfortunately this information seems to be discarded already at run_circuits() level. Oh well...
+@ens-lg4
+The solution existed in Aqua for a long time.
+I am not sure the patch you mentioned but in the run_circuits function, we had a logic to avoid a timeout when you try to run on real hardware.
+Here is our logic: https://github.com/Qiskit/aqua/blob/stable/qiskit_aqua/utils/run_circuits.py
+For Aqua > 0.3 (the current master branch), Aqua has more accessibility during eval method.
+We split it into three steps
+Sorry, I was thinking aloud about my specific task.
+I'm trying to port to Qiskit 0.6 some Qiskit 0.5-compatible benchmarking code that was able to add up all the time spent on the real hardware. Lower-level calls to Q_program.execute() used to capture and flow this information up so it was available to the callers of eval_hamiltonian(). Looking at run_circuits.py I see that execute() calls are gone altogether, and it is not immediately obvious how to capture this timing information. I guess it gets lost in the final functools.reduce() of run_circuits(), since job.result() used to also contain the timing ?
+Same for timeouts - we used to be able to pass timeout value through eval_hamiltonian() which was then passed into individual Q_program.execute() calls. I'm just trying to figure out what to do about all these changes.
+you can pass timeout in qjob_config, like qjob_config['timeout'] = 60 and the functools.reduce() just combine the Result object rather than waiting the result back.
+The call at https://github.com/Qiskit/aqua/blob/stable/qiskit_aqua/utils/run_circuits.py#L147 is waiting for the result.
+Thank you very much for your help!
+So I can now examine the timing after calling run_circuits() ?
+There is get_counts() in https://github.com/Qiskit/aqua/blob/stable/qiskit_aqua/operator.py#L682 and https://github.com/Qiskit/aqua/blob/stable/qiskit_aqua/operator.py#L713 - I guess I could call get_data().get('time') in a similar way?
+Yes, definitely.
+Closing as now part of qiskit aqua

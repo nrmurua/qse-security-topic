@@ -1,0 +1,40 @@
+Classical molecular mechanics module gives incorrect energy and forces when using Amber prmtop files.
+To investigate the origin the problem, I run several simulations of the GTP molecule with Amber force field in various MD software (cp2k-amber.zip). The same prmtop file was used in Amber and CP2K.
+This analysis shows, that the dihedral energy in CP2K is exactly two times smaller than needed. Interestingly, converting topology and force field parameters to CHARMM format results in correct dihedral energy in CP2K.
+Source code inspection shows that force constants of all torsions are halved when parsing prmtop files:
+
+Removing the factor 0.5 fixed the problem for me.
+The issue was observed with CP2K versions 7.1 and 6.1, and it most probably exists in the development version.
+Great analysis! Thanks for reporting.
+Archaeology shows that the 0.5 factor was added very consciously: 77230a3
+@molet, do you still recall any of the details?
+Well, it's been a while but what I can recall is that the dihedral energy was incorrect without the 0.5 factor for the dmpoh system (added to commit 77230a3). @vamironov would you be able to perform a similar analysis for that system as well (amber vs cp2k)?
+I had a look at which sections of the GTP input are ignored by our parser. What stands out are SCEE_SCALE_FACTOR and SCNB_SCALE_FACTOR. These sections were introduced in Amber 11 and here they contribute factors of 1.2 and 2.0 respectively.
+So, I guess we should implement those new sections and afterwards maintain an explicit list of section that we want to ignore.
+It was a surprise to see that the test input in commit 77230a3 gives same result as Amber!
+But in fact the "correct" answer is a result of another bug: a dihedral can be counted two times.
+When using Amber parameters, CP2K incorrectly assigns two dihedral definitions with reversed atom order (i.e. A-B-C-D and D-C-B-A) as two components of multicomponent dihedral. Look at the ouputs.
+Here are CP2K prmtop dihedral parsing results:
+The dihedral energy is 1.6491 kcal/mol
+When converting Amber topology to PSF and CHARMM parameters:
+the dihedral energy is same:
+Here are Amber results for comparison:
+As you can see, in the case of CP2K+Amber topology, all dihedrals for this input are in fact computed twice (see the number of "Multiple Torsion declarations"). That is why the energy was actually two times higher than needed and scaling all dihedral force constants by 0.5 allowed to pass this test.
+The test input in commit 77230a3 represents an extreme case, where all torsions are counted twice. For many other systems, this double counting happens only occasionally. The fix from that commit does not really help in these cases.
+Re-ordering of atom types in dihedral definition during parameters post-processing (subroutine post_process_torsions_info) probably helps.
+
+I had a look at which sections of the GTP input are ignored by our parser. What stands out are SCEE_SCALE_FACTOR and SCNB_SCALE_FACTOR. These sections were introduced in Amber 11 and here they contribute factors of 1.2 and 2.0 respectively.
+So, I guess we should implement those new sections and afterwards maintain an explicit list of section that we want to ignore.
+This is also very important issue. Non-protein Amber extensions like General Amber Force Field or GLYCAM may have non-default LJ and Coulomb scaling for 1-4 interactions. But for "regular" AmberFF parameters they are same across all dihedrals and one can use VDW_SCALE14 and EI_SCALE14 options in CP2K input to specify them.
+Now, some Amber-related regtests begin to fail:
+I run ace_ala_nme test in Amber and in CP2K with increased verbosity. The patched CP2K version gives correct result.
+Amber:
+Patched:
+Non-patched:
+Well, it seems, that the problem is more complex, than I thought before. Dihedral atom reordering does not help when certain improper types which are present in topology.
+There is a problem, that an improper can have exactly the same sequence of atomic types as another regular torsion. The example is a peptide backbone:
+Here, the torsion Ca(2)-N-C-O and improper Ca(1)-N-C-O have the same type: Ca-N-C-O. Note, that in Amber the central atom of improper is third in a sequence. I observed, that in Amber force field files, atomic kinds of impropers listed in opposite order than in corresponding proper torsions. If so, we can use it to distinguish these two distinct types of dihedrals.
+Currently, CP2K will use both definitions for every dihedral of this kind. They will be used as two components of multicomponent dihedral.
+
+First, I removed the second half of the IF statement in this piece of code. After that, the energy becomes correct for all my test systems. Also, Amber prmtop files does not have undefined dihedrals, so the search for torsions with blank (X) atoms can be skipped as well.
+However, I can't guarantee that the order of atomic types in impropers will be always different than in regular torsions. I believe, that using the raw dihedral data in Amber prmtop file is less error-prone. For that reason I modified the code which sets up dihedral parameters to work with raw data. Please, revise the PR with these changes.

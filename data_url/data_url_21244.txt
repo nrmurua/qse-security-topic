@@ -1,0 +1,15 @@
+For small RPCs, latency is the major contributing factor for the round-trip time for RPC calls. Reducing latency can probably improve system performance for typical use-cases.
+Here are several approaches that I can think of:
+For busy polling, I've already implemented it in #1681 and there is some improvement for our benchmark. However, there are some issues with this approach:
+For example, for the following test case:
+The result with the current master is around 455µs and 324µs for busy polling (without the adaptive blocking in #1681). If we use adaptive blocking, the result is similar to the current master. Busy polling all the time is effective in reducing the latency, but we would have 100% CPU usage (for 1 core) during kernel execution.
+Another possible direction is to rewrite the module in Rust, this way we don't have an interpreter thus no latency caused by the interpreter. This also solves the second problem caused by busy polling as we can probably do the polling in a separate thread without holding the GIL. However, this would take some time and I have no data to show the potential improvement.
+It would be helpful to know if the users want lower latency or lower CPU usage and if there are other possible directions that we can try.
+For me, exposing messaging as a primitive to kernel code directly (that is, instead of only as a synchronous request/response pair) would be more important than a hard-earned latency improvement earned through fiddling with busy-polling/…, as currently, quite a lot of the latency-critical RPCs logically check for the presence/absence of a message, where no message is the common case (e.g. check_pause()).
+(The units should be µs, by the way.)
+For me, exposing messaging as a primitive to kernel code directly (that is, instead of only as a synchronous request/response pair) would be more important than a hard-earned latency improvement earned through fiddling with busy-polling/…, as currently, quite a lot of the latency-critical RPCs logically check for the presence/absence of a message, where no message is the common case (e.g. check_pause()).
+It should be possible, but you still need a thread to wait for the messages, and I don't think you can do it with low latency in python due to GIL? (I guess)
+(The units should be µs, by the way.)
+Fixed.
+It should be possible, but you still need a thread to wait for the messages, and I don't think you can do it with low latency in python due to GIL? (I guess)
+This is true. However, the impetus would be more to provide an option to avoid the latency sensitivity in the first place. At present, all messages from host to kernel are synchronous (in the sense of blocking on the kernel side), thus making them necessarily latency-sensitive. While this is a good match for cases where e.g. parameters for some Bayesian inference scheme need to be recomputed on the host on the fly, there are other cases where there is no actual "data dependence". For instance, for termination/interruption requests from the host to the kernel (check_pause), a "message box" model is much more natural.

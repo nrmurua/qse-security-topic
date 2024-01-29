@@ -1,0 +1,31 @@
+Minimal reproduction case:
+The following files from the parser tests also tickle the bug:
+For example:
+Note that these Quil programs can be parsed and printed just fine, as long as they don't pass through compiler-hook.
+Woof. Seems like a similar issue #257.
+Likewise #272, which I am currently working on. All related to print-instruction bugs, at least.
+I'm planning to tackle this one after #272.
+Quil tried to get a little more rigid about its typing last summer (cf. https://github.com/rigetti/quil/blob/master/spec/typed-memory.md ), and I think parameter values are forbidden from being complex numbers. However, the Quilt RFC ( https://github.com/rigetti/quil/tree/master/rfcs/analog ) wants complex parameter values in some of its new constructs.
+This isn't to say you shouldn't work on this issue (especially since it might become more relevant when Quilt gets under way), but rather to explain why no user has reported the bug in the wild.
+Good to know, thank you.
+I will take a look in any case. If the fix to support complex params seems simple, maybe we go ahead and do it in anticipation of Quilt support (or maybe not yet).
+If it looks like a bigger can of worms requiring medium-to-large changes, perhaps it makes sense to shelve it for now and maybe just update quilc to provide a better error message.
+We'll see!
+So it turns out that this instruction is actually failing to print in the guts of APPLY-TRANSLATION-COMPILERS when attempting to apply the RX-to-ZXZXZ translator. The translator fails and APPLY-TRANSLATION-COMPILERS attempts to print the instruction as part of the error message.
+I was not paying close enough attention to the backtrace in my above example and incorrectly assumed that the program had made it through compiler-hook and was just falling over at the end in PRINT-PARSED-PROGRAM when emitting the final compiled program.
+Given that this will require compiler changes (as opposed to a PRINT-INSTRUCTION bug fix), maybe the sensible thing to do is just to improve the error message for now, and hold off on adding complex-param support until it's actually needed as part of the Quilt RFC mentioned above? @ecpeterson @stylewarning @notmgsk What do folks think?
+Note that this error is tangentially related to a code-review comment from earlier today, namely passing a complex param to build-gate winds up in the otherwise clause of capture-param, and so the bare complex value gets propagated.
+If I modify capture-param to box any number (as opposed to only double-float) in a constant, then compilation fails in a more obvious way in the compressor:
+:) This is a cascade of sloppy typechecking. The parser didn't stop you from passing i as an argument to RX (even though the resulting matrix isn't even unitary), the compiler unboxed it and fed it to build-gate as a parameter, build-gate saw that it wasn't real and put it back into a new instruction as an unboxed number, the native instruction predicate saw that everything of the form "RZ (_) 0" is admissible and so didn't bother unpacking the parameters, the resulting instruction sequence got fed to the compressor, the compressor did a bunch of sorting based only on the arguments, the compressor tried to multiply the matrix representations of these things together, and (finally we hit a piece of code that Robert wrote) the code responsible for building the matrix representation of RZ(i) 0 ultimately threw a fit.
+(j/k Robert also wrote the parser)
+This is why I like excessively checking types everywhere like some kind of paranoiac :-)
+Were complex params previously supported? What has me confused is that these are explicitly tested and permitted in the parser tests (presumably with complex params that at least result in unitary matrices, unlike my silly RX(i) 0 example).
+Perhaps the way to go would be to update the parser to complain early, then move these tests cases from good-test-files ---> bad-test-files?
+They were previously supported, but it was never a good idea: it's definitely possible to pick parameters in
+so that the the resulting gate is unitary, but (1) the pattern of legal values is quite nonobvious and (2) an illegal choice of parameters was blamed on the user and resulted in undefined behavior. What happens in practice is more like
+where the pattern is obvious—%theta is required to be real, or else it's hopeless—and, after enforcing that constraint, there's no chance for bad user input. And so we made the decision that classical memory should only support REAL value types, and (I thought) that parameters were required to be real too. If you truly needed an escape hatch, you could still write
+but you really have to go out of your way to do such a silly thing.
+I'd strongly prefer that we stick with this ^ and remove support for complex parameters in the parser (and the associated tests), but it ought to be (re-)sanctioned by @stylewarning.
+I would be happy if we constrained parameters to just be real as a matter of practicality.
+Closing this as resolved by #608.
+Attempting to pass complex-valued gate parameters now raises a more readable error:

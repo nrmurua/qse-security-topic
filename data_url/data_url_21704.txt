@@ -1,0 +1,20 @@
+Calling timestamp_mu() for several TTL input channels results in RTIO input overflows, even for a small number of input events.
+Not sure if this is a bug or if I am misunderstanding something about how input events are recorded, but calling timestamp_mu() for multiple input channels leads to overflow errors for a sparse number of input events. How many input events are the TTL channels meant to handle before an overflow?
+code:
+TTL Inputs:
+greater than 66 Hz square wave (50% duty cycle, 0 V min, 5 V max) input on ttl0 causes overflows, for  less than 65 Hz the code runs without reporting an error
+nothing input on ttl1
+I expect the code to run without an RTIO input overflow, at least for this frequency of input events.
+For a square wave on TTL0 with a frequency greater than 66 Hz there is an error:
+root:Terminating with exception (RTIOOverflow: RTIO input overflow on channel 0)
+Commenting out either detection_t2 = self.ttl1.timestamp_mu(now_mu()) or count0 = self.ttl0.count(now_mu()) and the code runs without an error.
+This is expected behavior. Your code never gets to counting the other events on ttl0 since it blocks on waiting for an event on ttl1 which never happens, hence the overflow once the buffer is full after 1s*65Hz - 1 = 64 events.
+And opticlock is typically built for Kasli v1.0. That may harm your hardware if you didn't change that.
+Ah OK I was misunderstanding what was blocking and when. To be clear, for a piece of code like:
+self.ttl0.gate_rising(detect_t)
+detect_end = now_mu()
+self.ttl0.count(detect_end)
+the count() method doesn't first block until detect_end and then count all events in the buffer, but rather it actively tries to count events in the buffer and only blocks as long as there are no further events to empty from the buffer and the wall clock < detect_end. Is this a correct way of looking at it?
+Sure. The docs are pretty clear:
+Consume RTIO input events until the hardware timestamp counter has reached the specified timestamp and return the number of observed events.
+And there is no magic in the source code either.

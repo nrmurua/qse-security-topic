@@ -1,0 +1,29 @@
+Hi, I am suffering from the precision issue due to google protobuf.
+In fact, google protobuf float is float32, and double is float64. However, python uses float only for float64, and this makes discrepancy when I saved into protobuf and reload the circuit from the proto. As it happens to others (#2728, for example) I suggest that upgrading the float to double in cirq protos.
+For example,
+https://github.com/quantumlib/Cirq/blob/master/cirq/google/api/v2/program.proto#L146
+OR at least, I hope to have double_value as one of the variables,
+https://github.com/quantumlib/Cirq/blob/master/cirq/google/api/v2/program.proto#L145-L149
+Is this coming from Tensorflow quantum integration?  Changing double to float isn't really an option without breaking the api, but we could add a double value.
+Yes, it happens when I tested with TFQ. Thank you for considering the second option!
+I think we need to
+@maffoo
+@dstrain115 for comment as well.
+Note that we also use floats in the sweep protos for Points and Linspace: https://github.com/quantumlib/Cirq/blob/master/cirq/google/api/v2/run_context.proto#L104.
+We might want to modify those as well to allow specifying doubles for people who want the higher precision.
+I don't feel particularly strongly either way; it seems like the few tests that fail that can be handled with approximate equality (or might be fixed with proto 3.12 which truncates floats differently) and 32-bit floats are plenty of precision for the hardware control. On the other hand, using 64-bit doubles might reduce some surprises at the cost of a little more complexity in handling protos.
+Can we clarify the problem here a little bit?
+@jaeyoo so you are serializing and deserializing a Circuit and that doesn't end being equal to the original Circuit? Can you provide example code?
+Can you provide some clarity around what use case does this influence in TFQ?
+I got a repro as I'm wrapping my head around it:
+Fails, and prints:
+I've run into this before when serializing into FSIM_GATESET and then deserializing on the other side, since it wants to check if exponent is close to, say pi/6, and it is only within 1e-6 instead 1e-8 due to the down-scaling to 32 bit precision.
+Thank you all for giving your attention. @dabacon @dstrain115 @balopat @maffoo . Yes, if it is the well-known practice about the proto serializer, I also want to follow up the course - rounding up :) I've struggled fixing our serializer & deserializer, and now I can see no errors without changing the proto from float to double.
+Now that we decided not to work on modify proto, please let me close this issue!
+Did we actually decide not to work on this?  I think we may want to consider changing from float to double.
+Ahhh @dstrain115 , I misunderstood. Sorry. I decided, but not we. Thank you for the correction :) So I want to say it is not urgent to me anymore.
+I went ahead and fixed items 1 and 2 from @dabacon comment in PR #3140 .  We will need to wait for a version push in order to do 3 and 4.
+@maffoo In order to change Points and Linspace to double, we will need to make a new field.  So, there will be points and points_double for a while, then we will have to deprecate points in favor of points_double.  I am a bit reluctant to do that, as it introduces a new argument with worse naming.  Do you think it is worth doing that?
+Is this still open?  I think double support was added, and is being used?
+Not urgent, but while you are in the protos, can you check this issue, @verult ?  I believe that this has been done and that the resulting (deprecated) fields can be removed, but this could use a bit of verification, since I haven't touched this in a while.
+From @MichaelBroughton: resolved by removal of TFQ proto-coupling.

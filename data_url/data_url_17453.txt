@@ -1,0 +1,63 @@
+The Layout is a mapping used in the transpiler that takes virtual qubits (in a circuit) and maps them to physical (device) qubits.  This is the mapping encoded in the dict based input to layout:
+where the key (index) is the vitual qubit label and the value is the target device qubit.
+However, the list input implements the inverse mapping from device to virtual qubits:
+As the list index (equiv to key in  the dict) labels the device qubits and the value is the virtual (circuit) qubit.
+The Layout maps virtual -> physical qubits.  The inputs to this class should be this mapping, not the inverse.
+Not sure if I fully understand this issue. You think that the list input  should not be supported? Or there is an error in the way that the list input is interpreted?
+The dict and list inputs are not the same mapping. The dict maps virtual to physical, as it should. The list maps physical to virtual. This is not made clear anywhere, and the same input arg is used for both. I would argue that the Layout only makes sense in the context of use in the transpiler that maps from virtual to physical. So I would assume that the inputs into Layout would be this mapping.
+The only way I know to do this in a list would be a list of ints where the index labels the virtual qubit and the value is the physical qubit. However, if this functionality is not desired then it would make sense to drop the list input as it is the inverse of what is expected.
+The list input was a feature request from @ajavadia, maybe he can add a line. Just to be sure we are in the same page, {0: (qr, 0), 1: (qr, 1)} is a valid input too.
+Also, shall I rename the issue as "List input to Layout should be removed".
+If this is not a bug, is the ability to input both forward and reverse mappings in the same input to Layout the intended behavior?  If so, then feel free to close the issue.
+Ok, so both mappings are allowed. This should probably be documented somewhere. The dict seems to be valid both directions but not the list.
+So the issue is about the lack of documentation? Sorry... I'm totally confused. I can extend the doctring if that's the case.
+The issue is that Layout takes a single input that is the mapping from virtual -> physical qubits but also takes the inverse mapping as well.  To me, this appeared to be a bug, since the Layout is used to map circuits to hardware, not the other way around.  Indeed, the passmanager currently does not work because there is no pass that applies the Layout in the passmanager properties to make the virtual->physical conversion. This is the point of #1831.
+So, in my mind, and the internal parts of the code, Layout goes from virtual -> physical, and as such the input to this function should be this mapping, and not its inverse.  There is no information loss in restricting to a single direction in the mapping. This is why #1992 shows only the virtual -> physical mapping; it is all you need, and is the direction to care about.
+However, there is nothing inherently wrong about supporting both directions in the mapping.  To do this in the dict format one just exchanges keys <-> values in the dict.  Again, there is nothing gained in allowing this flexibility, but it is also not much to worry about.  But coming to the list format, there is no way to encode the virtual -> physical mapping in a list format using the (qreg, int) format as you cannot use those objects as the index of a list.  The only direction is the inverse, which is the one currently implemented.  So already the dict and list input formats are not equivalent.  Whats more is that if you allow the inverse in the dict format, then there is no reason to have the list format as it is much more verbose.  For example, mapping virtual qubit (qreg, 0) to physical qubit 19 is:
+{(qreg, 0): 19} or {19: (qreg, 0)} vs [None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, (qreg, 0)].
+So the resolution to this issue depends on what you want to do.  If you want to allow both directions, then the list should be dropped as it is not equivalent to that dict format, and is too verbose.  There is also no example / doc-strings explaining that the dict keys and values can be exchanged, and what this means in terms of the mapping.  Again, I would argue that one should be explicit here and say that the input is restricted to the virtual -> physical mapping.  This is really what you want/need in the Layout to do, and it contains all the information you need.
+{19: (qreg, 0)} and [None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, (qreg, 0)] are not equivalent. The second one is a way to signal the transpiler that can use the first 18 qubits as ancilla. Therefore, I agree with you that #1992 is somehow wrong and it should include that info. I can fix that. The docstring should be extend to explain this and the meaning of multiple inputs. The two-ways dict was an explicit design decision and maybe @ajavadia can comment about it.
+Ok, that is not explained anywhere, nor is it expected.  It also breaks the bijectivity of the mapping; i.e. the mapping is no longer one-to-one (as mentioned here https://github.com/Qiskit/qiskit-terra/blob/ef46e442e4320500c847da617aadd5476bca4b70/qiskit/transpiler/passes/mapping/stochastic_swap.py#L57).  So the Layout is really diverging from the original usage of the layout, i.e. a virtual -> physical mapping, as specified:
+https://github.com/Qiskit/qiskit-terra/blob/ef46e442e4320500c847da617aadd5476bca4b70/qiskit/mapper/mapping.py#L48
+https://github.com/Qiskit/qiskit-terra/blob/ef46e442e4320500c847da617aadd5476bca4b70/qiskit/mapper/mapping.py#L264
+which are docstrings that have been in qiskit since version 0.3.
+Agree. Documentation needs to be updated:
+Renaming this issue to reflect this.
+You are changing doc strings that are fundamentally correct; the mapping is a bijection.  You are not using the Layout as it should be used as evidenced by the fact that your layout gives a mapping that is not invertable when using the list input.  Is this desired behavior from the Layout class?
+If the list input is also supposed to treat other qubits as ancilla then it does not work as expected:
+gives a mapper error since qubits 18 and 19 are not connected, but if I have ancilla, then the swap mapper should have swapped into qubit 13 or 14 before applying the cx since they are all in the layout.  Manually doing this by enlarging the circuit works, even for a random layout of qubits:
+By "a way to signal the transpiler" I meant the transpiler as a whole, not to the swappers. There is a ExtendLayout pass that creates the ancilla register (see, as example, .https://github.com/Qiskit/qiskit-terra/pull/2023/files#diff-908d957d026585117bbf3b15dbe49558R206).
+I think the problem is that we are convoluting the two related-but-slightly-different concepts in in the name "layout". The distinction will be more obvious when the DAG  get stripped of (qr,n) names and just have "wires". So, there is one Layout that is not bijective that is feed to the transpiler. And there is another Layout that it is bijective that is used by the swappers. This second layout would be, in the future, n → n, n ∈ ℕ and it would be the thing that swappers consume.
+Ok, I see what you are doing.  I am still confused as to why you need to use an odd / invalid mapping to do it.  Why not just take a valid layout and the size of the device and pad the dag from that?  There None would be equivalent to any qubits that are not in the valid layout.  You could always have a bijective mapping if done that way.
+I think an example use case of this functionality would clear things up greatly.
+I think doing this list this way is cumbersome:
+[q[0], None, None, None, None, None, q[1], ....]
+This is simpler:
+{q[0]: 0, q[1]: 5}
+(although slightly more verbose for small devices: [q[1], q[0]]
+But let's check if removing the list breaks 0.7.
+Maybe we keep both. But let's clearly document the philosophy behind both.
+The list is not the same mapping as the dict. This is the issue. If keeping both we really need to spell out the usage of the list format and make clear its an inverse.
+Ok I finally caught up with this issue and understood what's going on.
+I agree that Layout should be bijective. I pushed #2157 to fix this.
+About the format of specifying layout: Below are the options, and I have supported all of them. Note that any format is purely for the convenience of using the transpile() function. Internally, Qiskit uses a Layout object everywhere.
+Scenarios:
+1- running a single qubit experiment on qubit 19
+a. v2p dict
+{qr[0]: 19}
+b. p2v dict
+{19: qr[0]}
+c. v2p list
+[None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, qr[0]]
+d. p2v list
+[19]
+2- Bell pair on 2 qubits out of 5
+a. v2p dict
+{qr[0]: 0, qr[1]: 3}
+b. p2v dict
+{0: qr[0], 3: qr[1]}
+c. v2p list
+[qr[0], None, None, qr[1], None]
+d. p2v list
+[0, 3]
+BTW @nonhermitian you can just write qr[0] rather than (qr, 0).

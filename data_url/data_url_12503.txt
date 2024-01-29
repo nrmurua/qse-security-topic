@@ -1,0 +1,89 @@
+I'm trying extend my parametrized quantum circuit to use data re-uploading, as proposed by Pérez-Salinas et  al.
+Currently, my model exists of a single Input layer and a single PQC layer. I would like to split my single PQC layer into multiple layers such that the data uploading layers can be inserted in between the PQC layers. As tfq.layers.PQC requires a measurement, I'm required to change the PQC layers to something else.
+However, the alternatives (State and maybe AddCircuit) do not accept a differentiator kwarg, and as I'm experimenting with different types of layers I would like to refrain from implementing a custom gradient for each of these. What are currently my best options to implement this?
+Thanks in advance!
+Hi Luuk,
+I struggled with the same Problem; have a look at issue
+#267 PQC in the middle of network, contd.
+There a soltution is presented which helps to implement the data reuploading approach... If you are interested to discuss further just tell me.
+All the best
+Gerhard
+Edit: updated code and given error
+Hi Gerhard, thank you for your suggestion!
+The problem I'm currently having is that I'm trying to insert Input layers (to input encoding circuits) in between parametrized quantum layers. Based on the solution to #267, I created a small example of what I'm trying to achieve:
+However, this gives me the following error:
+Even if this solution were to work, it rebuilds the entire circuit for every single call made, which seems to me like unnecessary overhead. Any suggestions to fix and/or improve upon this?
+Hi Luuk,
+I'm a little bit confused about your code - putting everything together in one class is maybe possible but at least for me too complicated :-(
+See below the code which implements data-reuploading in a 1-dim toy example. Extending it to more qubits and higher dimensional data is straightforward. The only trick needed is the splitting layer. I worked out an example which uses data reuploading for MNIST-data and up to 15 Qubits and it really works ;-) By adding clasical layers before and after the quantum network you can further condense and transform the input data and the measurement results which is quite useful imho....
+Good luck ! Gerhard
+` import tensorflow as tf
+import tensorflow_quantum as tfq
+import cirq
+import sympy
+import numpy as np
+import matplotlib.pyplot as plt
+class SplitBackpropQ(tf.keras.layers.Layer):
+`
+##Create One-Dimensional-Data for Classification
+np.random.seed(seed=123)
+n = 900
+data = np.random.rand(n, 1)
+labels = []
+for p in range(0, n):
+if data[p] <= 0.5:
+label = [1, 0]
+else:
+label = [0, 1]
+labels.append(label)
+labels = np.array(labels, dtype=np.int32)
+bit = cirq.GridQubit(0, 0)
+symbols = sympy.symbols('alpha, beta, gamma, eta')
+ops = [cirq.Z(bit)]
+circuit = cirq.Circuit(  ##Data is encoded via first Y-rotation:
+cirq.Y(bit)**symbols[0],
+cirq.Y(bit)**symbols[1],
+cirq.Z(bit)**symbols[2],
+cirq.Y(bit)**symbols[3],
+##Addding the data-encoding again corresponds to data-reuploading:
+cirq.Y(bit)**symbols[0],
+)
+data_input = tf.keras.Input(shape=(1,), dtype=tf.dtypes.float32)
+##Use a classical NN to transform the data
+encod_1 = tf.keras.layers.Dense(10, activation=tf.keras.activations.relu)(data_input)
+encod_2 = tf.keras.layers.Dense(1, activation=tf.keras.activations.sigmoid)(encod_1)
+unused = tf.keras.Input(shape=(), dtype=tf.dtypes.string)
+expectation = SplitBackpropQ(['alpha'], ['beta', 'gamma', 'eta'], [np.pi / 2, np.pi/2, np.pi/2 ],
+ops)([unused, encod_2])
+classifier = tf.keras.layers.Dense(2, activation=tf.keras.activations.softmax)
+classifier_output = classifier(expectation)
+model = tf.keras.Model(inputs=[unused, data_input], outputs=classifier_output)
+tf.keras.utils.plot_model(model, show_shapes=True, dpi=70)
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+loss=tf.keras.losses.mean_squared_error)
+##model.compile(optimizer='Adam', loss='mse')
+history=model.fit([tfq.convert_to_tensor([circuit for _ in range(n)]), data],
+labels, batch_size=10,
+epochs=100)
+print(model.trainable_variables)
+plt.plot(history.epoch,  history.history['loss'])
+`
+Hi Gerhard, after trying to get this to work for a long time I just realized I might as well use instances of the entire circuit (including parametrized layers) as input for the model. My problem was the fact that I wanted to represent only the data-encoding part of the circuit as input to the model, which I guess would be more elegant but I'm already happy to finally have my code running now. Thanks for your help!
+Hi Gerhard, after trying to get this to work for a long time I just realized I might as well use instances of the entire circuit (including parametrized layers) as input for the model. My problem was the fact that I wanted to represent only the data-encoding part of the circuit as input to the model, which I guess would be more elegant but I'm already happy to finally have my code running now. Thanks for your help!
+@luuk-visser Doesn't The tensorflow-quantum PQC layer documentation say that you can not have free parameters in the input to the PQC layer? "In order to extract information from our circuit, we must apply measurement operators. For now we choose to make a Z measurement. In order to observe an output, we must also feed our model quantum data (NOTE: quantum data means quantum circuits with no free parameters)." So you are saying your input to the PQC layer DOES have free sympy parameters / weights? Did this work for you? Thanks
+My goto method for data reuploading is to use some free parameters (for reuploading) and some non-free by using the ControlledPQC layer. You can see examples of how to do this here: https://www.tensorflow.org/quantum/tutorials/quantum_reinforcement_learning, https://github.com/lockwo/quantum_computation/blob/master/TFQ/data_reupload/uat.py, https://github.com/lockwo/quantum_computation/blob/master/TFQ/data_reupload/reup.py.
+Regarding your specific question, yes the input to the PQC should be unbound parameter free.
+I am facing a similar problem, my parameterized circuit is a 3-qubit model
+
+in which I am using a encoder circuit shown the figure below.
+. The trainable parameters are suffixed with T and input parameters are prefixed with I.
+The encoder circuit can encode data dimension of (12,).
+So, I know the input to the model input shape should be of size (12, ). But since my circuit is of 3-qubit mode, I need to make changes in to the call function to make it work, particularly in tf.einsum(probably).
+The code below is a custom_layer class from tensorflow_quantum_reinforcement_learning_notebook, however I changed the model circuit as per my requirement.
+Exception encountered when calling layer "re-uploading_PQC" (type ReUploadingPQC).
+in user code:
+Call arguments received:
+• inputs=['tf.Tensor(shape=(None, 12), dtype=float32)'
+Einsum should be fine here, as long as the dimensions are correct (if you want to understand einsum read: https://rockt.github.io/2018/04/30/einsum). It appears as though the issue is with shapes. Lambda assumes structure that isn't true. If you look in the tutorial, there are 1 param per 1 qubit for the lambda parameters. However, you want 3 lambda parameters per qubit because the ansatz is different. So the lambda is creating the wrong number of parameters (which then errors when you feed it into the model creation)
+Thanks, I didn't count the number of parameters in the lmbd_init variable.
+I have changed the shape of lmda_init to (12, ), and now the the code work. This would probably help me complete my masters, so thanks a lot.

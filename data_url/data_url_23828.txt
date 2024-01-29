@@ -1,0 +1,19 @@
+server_name is an optional argument of MockInstrument, but the code does not work with the defaults. The same holds for the model argument. We should either make server_name required, or make the code work with the defaults.
+Ah, good point about model, we should just make that a required parameter.
+server_name is a little trickier - because of the way RemoteInstruments are instantiated and the weird behavior of __new__. See the note at the start of #70, you ask to construct TestInstrument2 but you get an instance of RemoteInstrument if the server is not None - it's required that every instrument constructor accept server_name as a kwarg. The easiest way to do this is to pass **kwargs on from the final instrument to its super().__init__, which is often useful anyway for taking advantage of superclass options.
+I'll play around with it and see if I can find a clean way to not require that... but for now consider server_name a known issue.
+Ah, and now I remember why I did model this way too: Because the model also has its own process, with queues and such, it's not picklable and so it must be provided to the MockInstrument server on instantiation and shared by all MockInstruments on that server. And THAT means that it needs to be available in the arguments of the final subclass constructor, as a kwarg, otherwise we can't find it during creation of the RemoteInstrument...
+This is all a consequence of the fact that we need to know what server to make and how to make it before we even start to instantiate the object. So server_name (what server to make) and model (how to start the server) can't go through the normal inheritance machinery. I can think of ways to sort of solve this, but it would be complicated and not very robust, so I think I'd prefer to just better document what we have now. Is that OK?
+Why wouldn't it work to change the MockInstrument init from
+to
+?
+If that is not sufficient we should definitely document this, and perhaps add a check, e.g.
+server_name doesn't need to be in the kwargs, but it needs to be allowed in the kwargs at every level of subclassing.
+We can document this, but I am sure users will keep having trouble with this. See for example the code below. How about adding a check to the Instrument class, e.g.
+I do not like this solution, but it will at least generate a proper error message.
+Based on the code of MockMeter it is very hard to understand why the second instantiation of MockMeter would fail.
+(documenting my thinking as mentioned in #85 for when I get a chance to dig into this)
+@peendebak I don't like this situation either... it's more complicated than that in fact, it would be totally fine for instruments to accept more positional arguments, but server_name and any shared_kwargs must be allowed as kwargs and if provided they must be provided as kwargs.
+Originally I thought this was a quirk of __new__, because it gets called with the arguments of the subclass constructor even though it's defined in the base class... and we could avoid __new__ by making a helper function (which also avoids the unexpected behavior that you ask to construct one class and you get a different one) but this still doesn't help with the strange requirements around model (and anything else that needs to be a shared_kwarg) and makes the syntax for defining instruments cumbersome.
+What I think we can and should do is let __new__ inspect the signature of __init__ to see:
+Mock Model has been ⚡️  so closing this.

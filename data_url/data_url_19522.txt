@@ -1,0 +1,36 @@
+As soon as we complete the basic setup for GPUs, we should remember to check again the CPU performance and eventually apply changes to obtain the best performance.
+I believe we can close this issue for the time being, given that #45 has addressed this issue.
+Following the nice results presented in #19 , I believe we should retry make a QFT performance plot comparing Cirq to QIBO in single precision (complex64) on CPU and GPU (and eventually with taskset).
+Here is the QFT plot in single precision
+
+The exact numbers for high number of qubits are:
+The CPU results reported in #19 were for applying one H on each gate. In this case Qibo CPU is very similar to Cirq.
+
+Notes:
+Perfect, thanks. Later we could try to benchmark the performance on CPU for each gate in the QFT but the H results look pretty good, and I agree that the multi-GPU setup should be the fastest simulation approach available today.
+I did some gate benchmarks as we discussed. The table shows ratio of Cirq0.8 / Qibo tf2.2.0 MatmulEinsum. Ratio > 1 means Cirq wins.
+Qibo takes almost the same time for all gates (both one and two-qubit). This makes sense as we treat all gates as matrix multiplication. On the other hand, Cirq seems to be optimized for specific gates exploiting their structure. Particularly the diagonal ones such as Z and CZPow are very fast and so are other gates with "sparse" matrices (such as X, CNOT, SWAP).
+QFT uses H, CZPow and SWAP, so the above table explains the difference we observe in the plots.
+Thanks, that's a very good point, we can investigate the different implementations and check if there are possibilities to achieve a similar speed.
+Btw could you please add the code you are using in the benchmark folder?
+Btw could you please add the code you are using in the benchmark folder?
+The Qibo benchmark code is already in our benchmark folder just in a different branch within the qibo repo (called benchmarks). I am not opening a PR from this because the benchmark code changes very frequently depending on the results and what we want to test. Once we are satisfied with our performance and finalize, it should be okay to merge from the benchmarks branch.
+Thanks, that's a very good point, we can investigate the different implementations and check if there are possibilities to achieve a similar speed.
+Looking at the docstring of apply_unitary method in Cirq, I think that they have several strategies for applying gates to the state vector and the simulator falls back to the best strategy that is implemented for each gate. For example the fast ZPowGate._apply_unitary_ uses indexing and updates only the part of the state that gets the e^{i theta} phase. They do the same for XPowGate but in this case they have to update both halves of the state and the performance turns out to be slower than Qibo. This probably explains why their CZPowGate is ultra-fast, since they only have to update 1/4 of the state.
+From past experiments with Qibo I found that slicing is generally slower than einsum (particularly for GPU where tf.einsum seems to be very optimized). However, these results were for a general slicing approach. I am not sure if optimizing slicing for each gate seperately will increase performance in specific gates. I will try to check that both on CPU and GPU.
+The last point you quote is quite important, if the GPU implementation requires the matrix representation then we could have the CPU/GPU implementation split following the lines of matmul/einsum.
+Two questions: a) When dealing with parallel single-qubit gates , is it done on one go, or with some sequential actions?
+It is done with sequential actions with only one gate being applied at each step. If we want to apply multiple gates acting on different qubits in parallel there are probably two ways:
+b) If you do a single gate, for instance on the first qubit, you end up doing phi_(0+x)'= U_00 phi_(0+x) `U_01 phi(2^(n-1)+x) where x are all possible values up to 2^(n-1), and a similar action on the phi_(2^(n-1)+x)'. I understand this can be done by casting the vector onto two parts and then can be added with the right weight using some high efficiency subroutine. Is this done like that, or is it done term by term?
+The CPU implementation is done (almost) as you describe. More accurately, we reshape the state vector to a 2^(N - 1) x 2 matrix where the columns are the phi_(0+x) and phi_(2^(n-1)+x) vectors you describe. Then we multiply this with the 2x2 gate matrix and reshape the result back to the 2^N state vector. The reason we do this procedure is because we are relying on Tensorflow primitives for all calculations (we did not write any custom kernels so far) and I was not able to find a Tensorflow op that efficiently updates part of a tensor. Reshaping was actually the fastest Tensorflow method of all I have tried.
+Not being able to update part of tensor is the main problem we have in terms of efficiency. For example, the Z gate requires touching only the phi(2^(n-1)+x) half of the state. The CZ gate requires touching only a quarter of the state. Cirq exploits this and is particularly fast for these gates. Qibo modifies the whole state regardless of the gate because of this Tensorflow limitation.
+The last point you quote is quite important, if the GPU implementation requires the matrix representation then we could have the CPU/GPU implementation split following the lines of matmul/einsum.
+Following from the above, I tried various scatter_update methods again today (both with Tensor and Variable state) particularly for the CZ gate and they are all much slower than our current implementation. It is very strange that it is more efficient to rebuild the whole 2^N state using transpose/reshape/matmul instead of updating 2^N / 4 values using tf.tensor_scatter_nd_update or state.scatter_update (if state is `tf.Variable). I am quite convinced that our main problem is having efficient updates for part of the state because for gates with non-zero matrix elements (such as H and RX) our performance is similar to Cirq. Do you think we are able to fix this with existing Tensorflow ops or would we have to write our own scatter_update eventually?
+Thanks for the update. I was studying the scatter methods and I believe is most likely possible to perform the updates for parts of the state, because the native operator is too generic:
+https://github.com/tensorflow/tensorflow/blob/b730a73909790d08fbfbf8977e77ab5b57d2d2e6/tensorflow/core/kernels/scatter_nd_op.cc#L713
+Given the multi-GPU preliminary results do you believe the final version will require a tensor or variable update?
+@stavros11 following our discussion today about the custom operator, I can confirm 2 points:
+So at this point I believe we should tabulate the operations we would like to optimize. If you think reasonable I can create a PR with my (useless) custom operator for the initialization so we can integrate this technology in the code.
+@joseignaciolatorre, would it be easy to share the actual code for this if you have one? No problem if it is in Fortran. Because from the description I don't really understand how the strategy works. If we can look at the code, we may be able to implement something similar in Qibo, using either Tensorflow primitives or a custom operator.
+Thank you.
+Closing given that #90 has been merged.

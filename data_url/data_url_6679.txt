@@ -1,0 +1,33 @@
+ Issue by pizzasok
+Sunday Feb 28, 2016 at 00:27 GMT
+Originally opened as https://github.com/msr-quarc/Liquid/issues/14
+Hi,
+I just started using the simulator, and wrote a nice script which does some tests with a whole bunch of different parameters on the input quantum states. So I thought it would be nice to use all the cores of my processor to speed up things, so I delegated some process using Array.Parallel.map.
+It worked out nicely, until I moved to building my first project.
+I just imported the .sln file with monodevelop and created a new f# source file in the project,
+where I copied the content of the script file. And my cope suddenly stopped working correctly,
+giving runtime error messages regarding threads. The main error was:
+System.AggregateException and there was some InnerException:
+System.IO.IOException Sharing violation on path /home/me/.liquidrc
+It seems like the problem is that each thread calls Liquid and then each instance is trying to check the licence file the same time which gives rise to this error. I guess it was not a problem with scripting because then already the main call was targeting Liquid.exe:
+mono Liquid.exe /s Test.fsx "Test()"
+Do you think it can be indeed the root cause?
+If yes how can I overcome it? Or can you make the licence check thread safe?
+Thanks
+ Comment by pizzasok
+Sunday Feb 28, 2016 at 00:44 GMT
+Update:
+I could get rid of the error by adding a single line of code before the parallel operation starts using Liquid. So I simply added a qubit initialisation which then presumably loads Liquid:
+let ket=Ket(1)
+After adding this line my main task runs without errors:
+let paraResult = Array.Parallel.map (fun x -> (runQubitTest x)) [| 0 .. 11 |]
+ Comment by dbwz8
+Monday Feb 29, 2016 at 00:33 GMT
+You are correct... and adding the ket=Ket(1) just changed thread timings (you could still get the error). The reason this wasn't thread safe to start with is that we never run multiple copies of the simulation engine on the same machine. LIQUi|> is already highly parallelized and will fill all available hardware threads during any long run.. Executing multiple threads of parallel Kets is more likely to slow you down than speed you up. This is why we have clusters with large numbers of machines where we run one instance of the simulator on each node.
+Ok, to be completely honest... the original version on Windows used shared file access modes (so it was already thread safe). When I ported to Linux and OSX, I had to remove the Windows specific file modes and thus the file got locked against other threads.
+I just uploaded a patch to make the license checking thread-safe. Please test that it works (since I can't reproduce your exact situation). If all is ok, you can close this issue. Thanks!
+ Comment by pizzasok
+Monday Feb 29, 2016 at 00:47 GMT
+Thank you for the reply and the patch!
+It does indeed work now event after removing the extra line of code.
+Thanks for the excellent support!

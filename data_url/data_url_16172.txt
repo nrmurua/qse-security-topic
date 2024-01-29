@@ -1,0 +1,11 @@
+__eq__ in python conventionally considers objects equal if they are semantically equivalent, even if their types differ.
+Same for Sympy:
+But ParameterExpression.__eq__ breaks this convention.
+Currently, at https://github.com/Qiskit/qiskit-terra/blob/44462a8b13ea6c2cce0f9c7345c26c15fb0d4ce3/qiskit/circuit/parameterexpression.py#L389 , we compare srepr(self._symbol_expr) == srepr(other._symbol_expr) as strings. (srepr of the examples above would look like Mul(Integer(2), Symbol('th')) for theta * 2 and Mul(Float('2.0', precision=53), Symbol('th')) for theta * 2.0. Instead, we should walk the sympy expression tree (following https://docs.sympy.org/latest/tutorial/manipulation.html#recursing-through-an-expression-tree ) and rely on sympy's built in __eq__.
+(The original motivation for using srepr instead of directly comparing ._symbol_expr isn't clear from the current code, so that may be another option worth investigating.)
+This sounds reasonable to me. The srepr approach seemed a bit strict.
+@kdk. I played around with this a bit and I don't think the 'walk the expression tree' works. The problem is that sympy doesn't guarantee the order of the args for the 2 expressions. For example, this shows the args output from the 2 expressions below. Notice that the 8*py and 3*px have been swapped in the order, so that's what you would be comparing as you walk the tree.
+I tried the z1_expr.equals(z2_expr) and this seemed to work for any of the simple polynomials I tried. For the above example, z1 == z2 is True and if you replace the 3 with a 2 in z2, it's False.
+I'd suggest replacing the srepr with expr.equals(). If the srepr of the two are the same, the expr.equals() will always be True. When the srepr is not the same, it might not work for all possible expressions but it would definitely solve the float/integer issue and from what I've read, I don't think false positives are a problem.
+If this works for you, I can try a PR.
+Thanks for investigating @enavarro51 , that approach sounds good, feel free to open a PR.

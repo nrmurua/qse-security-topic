@@ -1,0 +1,114 @@
+Dear Developers
+I would like to draw your attention to a possible bug of CP2K. I am trying to make periodic RTP by using hybrid functionals also.
+However, when I set the keyword PERIODIC = TRUE in the REAL_TIME_PROPAGATION  block, the perturbed state that is to be propagated is wrong.
+Here below I report the electronic energy for an H2 molecule after a Kick (input at the end of this mail).
+As you can see, the propagated state has energies which differ a lot from the ground state. Furthermore, also the calculated electronic spectrum is very strange.
+On the other side, when using PERIODIC = FALSE the energy of the propagated state slightly differs from the ground state and the calculated electronic spectrum is the right one.
+I have to underline that the bug appears just when one uses hybrid functionals. With GGA everything goes fine. Is this a bug or something already known?.
+PERIODIC TRUE :
+Total energy:                                                -1.16466508784488
+Total energy:                                                -0.76496701712800
+Total energy:                                                -0.76311027473197
+Total energy:                                                -0.76310900639003
+Total energy:                                                -0.76310899786364
+Total energy:                                                -0.76310899785477
+Total energy:                                                -0.76325873454457
+Total energy:                                                -0.76316886201251
+Total energy:                                                -0.76316802986251
+Total energy:                                                -0.76316802392354
+Total energy:                                                -0.76316802386850
+INPUT
+&FORCE_EVAL
+METHOD QUICKSTEP
+&DFT
+&REAL_TIME_PROPAGATION
+APPLY_DELTA_PULSE
+DELTA_PULSE_DIRECTION 1 0 0
+DELTA_PULSE_SCALE 1.0E-5
+PERIODIC .TRUE.
+MAX_ITER 10
+MAT_EXP TAYLOR
+PROPAGATOR ETRS
+EXP_ACCURACY 1.0E-10
+EPS_ITER 1.0E-8
+INITIAL_WFN SCF_WFN
+&END
+BASIS_SET_FILE_NAME …./data/BASIS_SET
+POTENTIAL_FILE_NAME …./data/POTENTIAL
+&MGRID
+CUTOFF 240
+&END MGRID
+&QS
+EPS_DEFAULT 1.0E-10
+MAP_CONSISTENT
+&END QS
+&SCF
+MAX_SCF 100
+EPS_SCF 1.0E-9
+SCF_GUESS ATOMIC
+&OUTER_SCF
+EPS_SCF 1.0E-6
+MAX_SCF 10
+&END
+&END SCF
+&XC
+&XC_FUNCTIONAL B3LYP
+&END XC_FUNCTIONAL
+&HF
+&INTERACTION_POTENTIAL
+POTENTIAL_TYPE TRUNCATED
+CUTOFF_RADIUS  5.00
+T_C_G_DATA  …/data/t_c_g.dat
+&END
+&END
+&END XC
+&END DFT
+&SUBSYS
+&CELL
+ABC 11.00 11.00 11.00
+&END CELL
+&COORD
+H -0.375 0.0 0.0
+H +0.375 0.0 0.0
+&END COORD
+&KIND H
+BASIS_SET DZV-GTH-PBE
+POTENTIAL GTH-PBE-q1
+&END KIND
+&END SUBSYS
+&END FORCE_EVAL
+&GLOBAL
+PROJECT H2-RTP
+RUN_TYPE RT_PROPAGATION
+PRINT_LEVEL MEDIUM
+&END GLOBAL
+&MOTION
+&MD
+ENSEMBLE NVE
+STEPS 2
+TIMESTEP [au_t] 0.25
+TEMPERATURE 300.0
+&END MD
+&END MOTION
+Luca
+Maybe @sandermatt87 or @seyedb could comment?
+This bug also occurs when using the RTP periodic keyword with all-electron basis sets (GAPW).
+The basic problem is that the routine apply_delta_pulse_periodic does not receive the correct Kohn-Sham matrix from the qs_environment when either hybrid functionals or all-electron basis sets (+GAPW) are used. Then, of course, the perturbed MOs are ill defined from the start, since they are calculated using the wrong eigenvalues.
+There is a workaround (for the release versions):
+Print out the Kohn-Sham matrix:
+&DFT
+...
+&PRINT
+...
+&AO_MATRICES
+KOHN_SHAM_MATRIX
+&END AO_MATRICES
+...
+&END PRINT
+...
+&END DFT
+This forces the correct Kohn-Sham matrix into the qs_environment, also for hybrid functionals and all-electron basis sets.
+An update of the qs_environment directly after the SCF seems to fix the issue. A hotfix with minimal interference with the rest of the code can be found here
+In principle, one shoud be safe to assume that the correct Kohn-Sham matrix is in the qs_environment after a converged SCF run, no matter whether its a hybrid, GGA, pseudo-potential or all-electron calculation.
+@mattiatj, sorry for the late reply. I just realized that you actually provided a patch. How opening a pull request for it?
+@mattiatj, thanks for the patch!

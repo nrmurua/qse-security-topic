@@ -1,0 +1,35 @@
+The latest development version crashes in regtest-nmr-6 ch4-gapw-4.inp (and others) almost immediately with no errors or useful output. Trace ON shows the last trace at:
+000000:000048>>        4      1 allocate_rho_atom_internals       start Hostmem
+: 237 MB GPUmem: 0 MB
+Running with gdb gives:
+Thread 1 "cp2k.psmp" received signal SIGSEGV, Segmentation fault.
+paw_basis_types::get_paw_basis_info (basis_1c=<error reading variable: Cannot access memory at address 0x0>, o2nindex=<error reading variable: Cannot access memory at address 0x0>, n2oindex=0x400000001, nsatbas=<error reading variable: Cannot access memory at address 0x4>) at /dss/dsshome1/0E/di25fix3/CP2K/cp2k/src/aobasis/paw_basis_types.F:79
+79	                     IF (n2o) n2oindex(ico) = iso
+I am using:
+Intel(R) 64, Version 2021.4.0 Build 20210910
+It was doing the same for my own runs, so I went back to the regtests and found this. Mysteriously the same seems to run OK with the same code exactly (just copied) and compiled. So maybe this is a compiler issue? But I tried other compiler versions.
+Some work OK, like regtest-nmr-1
+Thanks,
+Ron
+Does the error also appear in one of the official releases? If it is feasible to you, can you try to bisect the error?
+A simple fix fixes this. I don't know if you are allowed to reference a non-existent entity in a fals if statement--maybe the compiler computes ahead? Any way this is the change:
+diff --git a/src/aobasis/paw_basis_types.F b/src/aobasis/paw_basis_types.F
+index 561efdd4d..83d6ac6c4 100644
+--- a/src/aobasis/paw_basis_types.F
++++ b/src/aobasis/paw_basis_types.F
+@@ -61,12 +61,26 @@ CONTAINS
+IF (o2n) THEN
+ALLOCATE (o2nindex(maxso*nset))
+o2nindex = 0
+@@ -76,14 +90,15 @@ CONTAINS
+iso = iso_pgf + nsoset(lmin(iset) - 1)
+DO lx = lmin(iset), lmax(iset)
+DO k = 1, nso(lx)
+@@ -76,14 +90,15 @@ CONTAINS
+iso = iso_pgf + nsoset(lmin(iset) - 1)
+DO lx = lmin(iset), lmax(iset)
+DO k = 1, nso(lx)
+Just repeated the loop for the two cases.
+Ron
+To me, it looks like a compiler bug due to potentially incorrectly reordered commands. In the original code, the given variable must be allocated in the given case (otherwise, we had an error at the allocation step). If I understand it correctly, modern vector-CPUs run several commands in parallel. It is up to the compiler to decide which commands can be run in parallel (I checked Wikipedia only).
+This is a known issue with the optimizer of the Intel Fortran compiler which has been fixed recently. The Intel regression tester are currently built with this arch file. A revised automatic arch file generation for (recent) Intel compilers is in progress and should become available soon.

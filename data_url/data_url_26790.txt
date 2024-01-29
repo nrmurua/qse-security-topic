@@ -1,0 +1,55 @@
+As we're adding more Markdown documentation, we should think of a way to validate it. There is a Markdown lint tool. Unfortunately, it requires ruby and might therefore not be suitable for pre-commit. Nevertheless, running it in the CI should be fine.
+Furthermore, it would be nice to check our docs for broken links. Since external sites might be flaky we could restrict the check to cp2k.org and intra-repro links.
+That's a good idea.
+Actually, markdownlint can be run as a pre-commit hook, see here.
+And for link checking, there seems to be this Github action: https://github.com/marketplace/actions/markdown-link-check
+@shoshijak the linked markdownlint is Ruby based, which is a dependency we is something I would like to avoid for now. The Github action looks good, though :)
+I'm starting to think that we should turn pre-commit / prettify into a web-service. We could use all the tools we like without burdening developers with their installations. The remaining hook script would then just be a simple client without any dependencies.
+I am just imagining: "Error 404: Linter unavailable, you can not edit/commit that file. Please check your internet connection and make sure you allow Analytics cookies and disable your ad-blocker." 🤣
+Error 404: Linter unavailable
+We already depend on a lot of cloud infrastructure: Github, Dockerhub, GCP, ubuntu.com, cp2k.org, and probably a few more. Except for Github, there has been virtually zero downtime.
+So, I think it will be more like: "Successfully ran 10 different tedious-to-install tools and thereby found two obscure mistakes which saves you a week of debugging."
+Nevertheless, there should be of course an option to run the tools locally.
+Error 404: Linter unavailable
+We already depend on a lot of cloud infrastructure: Github, Dockerhub, GCP, ubuntu.com, cp2k.org, and probably a few more. Except for Github, there has been virtually zero downtime.
+Just other issues, right. But it's besides the point anyway: zero of them are involved when doing commits once I have the setup. E.g. I can do linted and checked commits fully decentralized. While doing it remotely will introduce latency and multiple possible points-of-failure.
+So, I think it will be more like: "Successfully ran 10 different tedious-to-install tools and thereby found two obscure mistakes which saves you a week of debugging."
+The pre-commit framework is explicitly there to simplify the installation of the basic tools.
+https://github.com/cp2k/cp2k/wiki/Git-Tips-&-Tricks#git-pre-commit-hooks is hardly tedious (and there is also a way to install it without pip: https://pre-commit.com/#install).
+The pre-commit framework is explicitly there to simplify the installation of the basic tools.
+Does it though?
+As a start, I'd like to add the following tools:
+Each of those is written in a different language and has dependencies on its own. The most reliable and portable way to install software these days are Docker containers. Since many people can't run Docker on their workstation, we should host a copy of the container at Cloud Run.
+Btw, I really appreciate the work you did with pre-commit. It made me realize that we need something more lightweight besides the CI checks. However, to really embrace it I believe we have to make it effortless for the developers.
+I've merged a first version of what I think should become our new precommit system. For now I've only enabled clang-format, because our files do not yet comply with markdownlint and shellcheck.
+Please give it a try and let me know what you think.
+For merely checking files you can run it like ./tools/precommit/precommit.py, to actually format files you have to add the flag -m.
+How does the cost-model of a cloud-based pre-commit system look like (e.g. who is paying for that computing time)? And how do you plan to protect the new pre-commit-system against abuse? I assume that it must be a publicly accessible, rate-limited endpoint? If that is the case, how do prevent a malicious user from making (legitimate) requests?
+The pricing of Cloud Run is explained here: https://cloud.google.com/run/pricing.
+What's important for our bursty traffic is that we only pay when a request is processed, ie. it scales to zero.
+who is paying for that computing time?
+It's paid for by the CP2K Foundation which already pays for the CI. However, I wouldn't be surprised if we actually stay within the free tier.
+I assume that it must be a publicly accessible, rate-limited endpoint?
+Yes.
+If that is the case, how do prevent a malicious user from making (legitimate) requests?
+Just like all other online services it's vulnerable to DOS attacks. Fortunately, those are rare :-)
+The pricing of Cloud Run is explained here: https://cloud.google.com/run/pricing.
+What's important for our bursty traffic is that we only pay when a request is processed, ie. it scales to zero.
+who is paying for that computing time?
+It's paid for by the CP2K Foundation which already pays for the CI. However, I wouldn't be surprised if we actually stay within the free tier.
+So, we go from a zero-cost low-complexity solution (after an initial setup of packages which are available for all OS) to something which theoretically can cost us millions and involves round-trips around the globe? From a decentralized system which allows us to commit offline to something which at least will throw us an error (once setup) should we be offline at once?
+I assume that it must be a publicly accessible, rate-limited endpoint?
+Yes.
+If that is the case, how do prevent a malicious user from making (legitimate) requests?
+Just like all other online services it's vulnerable to DOS attacks. Fortunately, those are rare :-)
+Well, DOS is inconvenient, having to pay for potentially millions of pointless requests can become expensive. And I am not sure Google would be so lenient to not charge us those requests just because we failed to protect the endpoint appropriately.
+(after an initial setup of packages which are available for all OS)
+My point is that this initial setup is a non-trivial barrier which prevents the broad adoption of the precommit checks.
+to something which theoretically can cost us millions
+Of course there is an upper limit. Currently, I'm running with a maximum of 20 instances.
+From a decentralized system which allows us to commit offline
+If you like, you can still work offline by running the precommit server locally.
+The pre-commit framework is explicitly there to simplify the installation of the basic tools.
+Does it though?
+Yes. Since so many people rely on pre-commit and pip, all the relevant tools can and will be installed fully automated and isolated by pre-commit. The only thing the user has to run is pip install pre-commit && pre-commit install. But since that can be too complicated already there will be a script taking care of this.
+We've been using markdownlint for a while. Broken links are not a pressing problem at the moment.

@@ -1,0 +1,18 @@
+This is, at the least, quite confusing, and it can lead to problems with Qiskit executors since the counts of a job result are formatted differently depending on how many classical registers are in the circuit.
+The screenshot below shows calling the executor on a circuit with one classical register. The output counts dict has no spaces in the bitstring keys. When execute with zne is called, conversions introduce two classical registers so the output counts dict has spaces in the bitstring keys.
+
+Am labeling this as a bug since it violates expected behavior that internal conversions wouldn't change the circuit
+Hey @rmlarose! I did a bit of investigation on this issue and I believe I identified the function from_qasm() from file /mitiq_qiskit/conversions.py was introducing this issue when it converts the qasm string to cirq.
+For example, right before the qasm string is converted to a cirq circuit, it looks like this:
+and then right after the conversion to cirq  (using circuit_from_qasm()), we see that the classical registers is now doubled:
+It looks like the conversion to cirq is splitting the classical circuit into unit registers. For example, if there were 3 classical registers, the conversion would break it up into 3 individual registers. The example above shows the split for 2 classical registers.
+I looked into the cirq documentation for the conversion function here: [https://cirq.readthedocs.io/en/latest/docs/interop.html#Importing-cirq.Circuit-from-QASM-format] and found that they have a small note regarding this behavior
+I wasn't able to find anything in the documentation to suggest that this behavior can be over-ridden natively.
+I'm currently mulling through alternative solutions. I'll reach out again once I have a viable solution!
+Thanks Ryan
+Thanks @pchung39 for the update and nice find about measurement keys. I indeed think relating classical registers in Qasm to measurement keys in Cirq is a viable path, though I haven't thought much about alternatives.
+For instance, in your example circuit
+the Cirq circuit could be created like
+Then in the conversion back to Qasm, the parser would recognized the two measurements as having identical keys "c0" and put them in the same classical register. Generally, name of classical register in Qiskit <-> name of measurement key in Cirq.
+I also don't think this can be handled with a simple option and the parser/conversion code would have to be modified.
+Awesome! Great to see this close @rmlarose. Critical details like this help a lot with usability.

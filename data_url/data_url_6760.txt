@@ -1,0 +1,34 @@
+Hi, I tried to parse some very basic OpenQASM circuits and encountered strange results.
+For instance, something like:
+yields phase=0 for both qubits with several other simulators, while quantum-circuits gives the correct magnitude but a wrong phase for the second qubit.
+Here is a link for the above circuit on Quirk. (Same result on IBM Quantum Experience)
+@baruchel thank you for reporting this issue.
+You're right, this circuit returns wrong phase, and that is because crz gate's unitary is wrong (it has matrix of CPHASE gate instead of CRZ).
+Somehow we, and other users didn't notice this bug before - most likely because we use u1, u2 and u3 gate most frequently for single qubit rotations instead rx, ry and rz gates.
+This is fixed now and will be deployed soon.
+Thanks! 👍
+Done.
+I realize I have been working in an "unsupported" fork of Quantum Circuit. But when I changed the gate matrix for rz to the new matrix, I noticed that the operation was changing the phase / global phase even when the qubit is in the |0> state. It didn't use to do this.
+When I switch to u1 and the qubit is in the |0> state it doesn't affect the phase like I would expect. So this could be something to look into further pertaining to the new RZ matrix. I just want to mention what I'm seeing as a heads up that something could be amiss.
+I just found Qiskit's definition for RZ and it does not affect phase when the qubit is in the |0> state.
+Also, based previous understanding was that if a qubit is off or not in superposition, then phase is not supposed to rotate. Only state |1> rotates - in superposition or not. I could be wrong but I just wanted to mention this as well.
+Hum... interesting is that pyQuil (Rigetti) changes phase when qubit is |0> and Qiskit doesn't as you said. Now, good question is which one is correct...
+pyQuil: http://docs.rigetti.com/en/stable/apidocs/autogen/pyquil.gates.RZ.html#pyquil.gates.RZ
+Qiskit: https://qiskit.org/documentation/stubs/qiskit.circuit.library.RZGate.html
+In Quantum Computation, the global phase is irrelevant. So here, Pyquil and Qiskit both are correct. The actual issue is "comparing the output without considering the global phase."  Just to establish a relation,
+Qiskit Rz(angle) = e^(i*angle/2) Pyquil Rz(angle)
+Looking at state vector,
+Qiskit Rz(Pi) |1> = |1>
+Pyquil Rz(Pi) |1> = -i |1>
+Ques: Who is correct?
+Ans:  Both, as |1> is equivalent to -i|1> as you can always ignore the global phase -i
+WORD OF CAUTION = While translating any algorithm from Qiskit Source(Qiskit Textbook or Tutorial) to Rigetti's Framework, be cautious as both the packages use laws of Quantum Mechanics to simplify things for their hardware in different ways.
+OK, what confuses is Qiskit. Their implementation of RZ is anomaly: CRZ is not controlled version of RZ.
+In Qiskit RZ = U1.
+See this table:
+Now, I believe that quantum-circuit.js version 0.9.156 has correct implementation of Rotate Z gates (only rz differs from Qiskit, but is in accordance with other frameworks. It is safer to use u1 instead rz if you are targeting Qiskit as output).
+And this issue is solved. Closing.
+Please run the following code with the latest version of Quantum Circuit and verify whether the results are accurate.
+OK, it looks fine. So I made a tiny example to illustrate the similarity of relative phase in superposition among S, U1, and RZ gates.
+https://github.com/simplygreatwork/obvious/blob/master/output/phase-relative.txt
+https://github.com/simplygreatwork/obvious/blob/master/examples/phase-relative.js

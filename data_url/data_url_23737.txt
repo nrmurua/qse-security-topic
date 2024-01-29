@@ -1,0 +1,26 @@
+Bug from Thorvald at qdev.
+The plot should show the data
+The plot only show the data if a row has less than 499 points
+windows
+qcodes branch
+master
+qcodes commit
+3475e49
+nb (from Thorvald) this was after a MatPlot update 1.5.3 although hadn't tried with this many points before the update). On downgrading to 1.5.1 still broken...
+Is this specific to one instrument.
+I can't reproduce it doing something simple with a mock instrument (Slightly modified from the base tutorial producing a 600 time 650 plot in the end.
+nope, we get it with alazar and VNA measurements on two different computers (I don't have great confidence in the version control on either computer but they used different install methods so that's at least 2 data points :P). Both live plot and plotting old data.  Didn't try it out with the tutorial notebook but I can try running the above code when I have a moment and see how it looks.
+That would be great. I am happy to test out the instrument too just need to hook it up or use the lab computer
+I think you'll have trouble getting hold of either of those instruments to be honest :P I guess it could be something to do with the 'hard parameter' aspect of it but that seems a bit obscure. PyQt plot has previously had a 'nonlinearity of setpoints' issue but its not obvious to me that it's linked. I'll let you know when I've tested the tutorial. It will late afternoon/tomorrow morning
+Investigating this a bit more the issue seems to be that the frequency setpoint array being filed with NaNs
+In the case of 559 the frequency array is filled with NaNs rather than the actual frequency after the first 3 measurements. I bet this is the reason for #397 too
+I.e. do something like:
+and notice that the second plot is empty because all the data is Not a Number (NaN)
+yh that was something I noticed which sometimes happens he VNA driver (and promptly forgot about), it usually doesn't matter because its a setpoint array that we make up so will be the same array for each trace but I also have no clear idea at all why it sometimes doesnt woek considering that the driver should set these arrays for every trace... I have some doubts that it's the same as #397 because that can be 'solved' by increasing the limit for nonlinearity a bit as @MerlinSmiles suggested which I wouldn't expect to allow it to plot if it was because of NaN problems, also if it was that then why would it be ok live plotting it but not loading it in afterwards? I can look around briefly for a data set without NaNs though and see if it can plot that though as a check for that being the reason for this bug
+This can be reproduces relatively simply with a mock instrument
+However it only happens with the background task updating a plot. Removing the background task or replacing it with a dumme task seems to fix the issue.
+So the problem is that the update function calls dataset.sync which ends up rereading the datafile from disk. This overwrites the dataset which already has all the hard arraylike setpoints defined with the on disk version which only has the setpoint arrays for already measured values. I think this can be work around by passing a dummy update function to plot.add.
+Something like
+does not reproduce the issue
+@jenshnielsen, thanks for this. Do you have ideas for a 'non workaround' fix?
+We agreed to remove the sync from the default update function. I will make that change today and we can push a new release with that fix soon.

@@ -1,0 +1,31 @@
+Channels need "nicer" syntax and behaviour:
+Syntax:
+@qdev-dk/qcodes   anybody explain and/or expand the following syntax? Copied from #265.
+@giulioungaretti the second version was proposed by @spauka, as I understood it this way you can set a target value of a channel and simultaneously ramp them there by running do_things (I guess a better name would be appropriate)
+not sure what
+should mean, what parameter should this affect?
+And I think set_async() should be the same as set().
+But
+should set all those channels at once, and not wait for the first to finish before the next is set.
+@MerlinSmiles what if you want to first set the target values, and then use 1 command to ramp them all at once? one could pass a list or do we also want to be able to set each target value individually?
+I cant come up with a use case, maybe someone else could.
+However, then it should not be named set_async to me that implies that the setpoint is send to the instrument and the code wont wait for it to happen
+perhaps set_setpoint makes more sense in that case, e.g.
+one could then also specify a software/hardware ramp rate
+however, the same thing can be achieved with e.g.
+where set executes set_setpoint and go_to_setpoint asynchronously for the channels in channel_list. this is much less verbose and instead of using set_setpoint one can just collect the values in a list before passing it to set.
+How would a parameter implement the async property? Should it periodically check the instrument for a particular parameter and return when it matches a condition? I think the synchronous setting of parameters is not very often used and that instruments could define their own functions for it when neccesary. The only use case I can think of is when the setting of a parameter takes a significant amount of time such as an IVVI dac, but here the hardware doesn't even allow for synchronous setting of dacs.
+That very much depends on the instrument, or instruments.
+One situation where you would want to do that is a Meta instrument (was that the terminology for an instrument that consists of several others?) where you send the set() to all instruments and in the end wait for them all to return.
+a second option is like in the loop, where all setpoints are set from within a thread / process each so they dont block
+a third option is where the instrument itself behaves async, like the oxford magnet driver.
+In practice i think this channeling thing would make a threading.pool and wait for all sets to finish.
+But then there might be instruments that can handle async stuff, where you first send a trigger, and later fetch the data. Thats something we currently cant do with a parameter, I think.
+So to clarify the code snippet that I gave, I was thinking about hardware ramps that don't block by default (such as ramping a magnet). For safety, it makes sense that the action of setting a parameter should block until that parameter is set, and set_async was a syntax I thought of for allowing these actions to proceed in the background.
+For example, in the case of ramping channels on the dac, it is possible to begin to ramp to values in hardware, and in that case we should have a way of setting this going in the background, and then also waiting until all hardware ramps complete. Perhaps the following code snippet is clearer?
+So what one wants is:
+@spauka, correct?
+Yes, that's correct. I will flag that this may also require the following depending on the instrument:
+@spauka  I think that would the most "sane" default.
+Where with sane I mean: easy to reason about.
+If we agree then I will freeze this api :D

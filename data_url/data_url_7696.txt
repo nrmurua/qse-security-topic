@@ -1,0 +1,26 @@
+I would like to use the approach in example 10. Bayesian Optimizing QAOA Circuit Energy (using cotengra contraction orders and the circuit local_expectation functions exploiting light-cone cancellations) but also taking advantage of all the auto-differentiation integration in the TNOptimizer class.
+I had a look at the code in tensor\optimize.py & tensor\circuit.py, and I am not sure how to proceed. My first thoughts would be to do one of:
+Would you advise trying any of those? Or is there a better approach you can see? Alternatively, should I forget about trying to use the circuit local_expectation functions and just calculate the energy expectation of the TN?
+Hey Chris! so there is a quick example of how to work around this currently here:
+#77 (comment)
+Ideally yes the TNOptimizer would take a Circuit as an possible input. I think this should be pretty easy to implement but haven't got round to it. It would need:
+I don't see any obstacles to these, and maybe a CircuitOptimizer using a TNOptimizer internally is the cleanest outward facing API.
+Note that when it comes to autodiff, not all the simplifications methods that Circuit has turned on by default are compatible (since they depend on the actual tensor values rather than just shapes). This might have a big impact on how efficient the contractions are in comparison to 'fully simplified' versions.
+Thanks Johnnie! That's really helpful.
+I am finding the optimisation fails for me though when I use that code for my circuit and Hamiltonian. The progress bar displays larger and larger negative numbers and tnopt.res has fun: nan and message: b'ABNORMAL_TERMINATION_IN_LNSRCH'.
+My edited version of your example is:
+I think you just need to specify the gates as parametrized:
+currently the optimizer takes the raw (and unbounded) entries of the gate tensors (leading to the blowup), whereas when they are parametrized the tensor is defined through the function that generates the unitary gate, so the state should stay normalized.
+That's great, thank you! That fixed that problem. Does the gates being parameterised have any other effects?
+Not really, rather than storing an array, a parametrized tensor just calls fn(params) when you access its .data attribute. I suppose repeatedly retrieving the data might be slightly slower... but it may even be cached, can't remember!
+Thanks, that's great. The reason I thought it might work to leave the tensors unparameterised was because of the else of the if isinstance(t, PTensor): check in the inject_ function in optimise.py:
+Purely out of interest, would it have also worked to bound the optimisation parameters in some way so that t.modify(data=arrays[i]) stays valid?
+Sort of related to this (though this is maybe getting off track from the original issue) I have wondered about how to hack the TNOptimizer class to allow two different parameterised tensors to share an optimisation parameter. Would it work to edit the parse_network_to_backend function to assign the same variable_tag to tensors that share one of the "optimise over" tags passed?
+Regarding the PTensor, I'm not sure I totally understand the question but maybe let me elaborate what happens: setting parametrize=True puts PTensor instances in the TN. When the optimizer is working out how large the total vector space is, it takes either the raw array size or the params size, so e.g. for the same gate unparam'd/param'd arrays[i] will be generally different sizes.
+Purely out of interest, would it have also worked to bound the optimisation parameters in some way so that t.modify(data=arrays[i]) stays valid?
+I think not generally - if you consider e.g. a rotation, the param space is smaller (a single angle) but generates 2x2 complex matrix - there's at least no simple way (i.e. x in [-b ,b]) to bound the entries of the matrix directly.
+Regarding linking tensor optimizations, I think it would be pretty much that simple. One just needs a way to cleanly specify that all tags in e.g. optimize_together=[...] should be... optimized together. That would be a neat addition.
+I think not generally - if you consider e.g. a rotation, the param space is smaller (a single angle) but generates 2x2 complex matrix - there's at least no simple way (i.e. x in [-b ,b]) to bound the entries of the matrix directly.
+Ah, I think I see the difference now, thanks
+Regarding linking tensor optimizations, I think it would be pretty much that simple. One just needs a way to cleanly specify that all tags in e.g. optimize_together=[...] should be... optimized together. That would be a neat addition.
+If I had a go at implementing this, do you have any preference about what the new kwarg should be called? I was thinking potentially shared_tags to keep it consistent with the tags, constant_tags names. Also, would there then be any tests that need to be updated for this addition?

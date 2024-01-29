@@ -1,0 +1,24 @@
+We're running a few benchmarks of pulse sequences to try and resolve underflow errors that we're getting in one of our cooling experiments.  We've found that loops over array's marked as kernel invariant aren't optimized in the kernel code.
+The first benchmark we ran is over as simple a loop as possible.
+This can handle a maximum of about 1 pulse per microsecond.  Any pulse time less than about 1us starts to throw underflow exceptions.
+The other benchmark we ran measures looping over an array of pulse times.
+This can only handle about 1 pulse every 30 microseconds, any shorter pulse time starts to throw underflow exceptions.  Marking pulse_times as kernel invariant made no difference.
+My hunch is that the optimization rules won't unroll a loop that iterates over an array due to corner cases, but it seems like you should be able to mark an array as kernel invariant and explicitly allow the optimization when you know that the array won't change on the core.
+The issue is that our cooling experiment needs to pre calculate an array of pulse times on the host and then loop over that array on the core device.  The times start at about 100us and end at about 1us.  Once the times reach around 30 us we still have about 300 pulses left in the sequence which is too much for the core according to our benchmark plots (below).  They show a best case of maybe 300 27us pulses.
+Our benchmark plots.  The y-axis is the number of pulses we can generate without an underflow vs the pulse time on the x-axis
+
+Optimized: Doesn't seem to be any limit on the number of pulses when the pulse time is at least about 1.2 us
+
+Not Optimized: The best the core can do is about 1 pulse every 30 us before underflow errors start being thrown.
+My hunch is that the optimization rules won't unroll a loop that iterates over an array due to corner cases
+That's not how kernel invariants work. Specifically, the field that points to the array is indeed marked as invariant. The array itself is not, since it can be aliased in other places, e.g. you could reference it from a field and also pass it to some other function on the core device. Only one copy of every instance of an array is ever serialized.
+A solution I see is introducing an immutablelist type that is the equivalent of marking every element of an array as kernel invariant. (This is distinct from tuple since tuple can contain elements of any type and thus cannot be iterated over in ARTIQ Python.)
+Instead of adding another type (and moving further from Python), how about allowing iteration on tuples whose elements are all the same type?
+Instead of adding another type (and moving further from Python), how about allowing iteration on tuples whose elements are all the same type?
+We were planning to always unroll loops that iterate over tuples. These two behaviors conflict:
+(This also makes generic functions more fragile, though it is a minor concern in comparison.)
+I would do it the other way, in order to stay closer to Python semantics. Support optimized iteration on homogeneous tuples without unrolling, introduce a HeterogeneousCollection (or similarly named) type for the more special case of iterating (with unrolling) on disparate objects.
+inhomogeneous kernel lists #519
+I would do it the other way, in order to stay closer to Python semantics. Support optimized iteration on homogeneous tuples without unrolling, introduce a HeterogeneousCollection (or similarly named) type for the more special case of iterating (with unrolling) on disparate objects.
+I don't think this really works out nicely. Specifically, we already do "unrolling" if doing x, y = tup and if we make tuples proper homogeneous-only it would become much less useful. Essentially breaking the pattern of multiple return values.
+OK, point taken.

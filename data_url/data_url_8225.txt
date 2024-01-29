@@ -1,0 +1,48 @@
+Describe the bug
+In single qubit simulation, we are trying to apply the same gate sequence as experimentation.
+Seq1: pi/2 pulse (20ns) -> pi/2 pulse (20ns)
+Seq2: pi/2 pulse (20ns) -> wait(50ns) -> pi/2 pulse (20 ns)
+The result of excited state probability is wrong for the seq2, with only Pe = 0.5, but we expect Pe=1.0.
+I assume there are something imperfect with the original ODE algorithm.
+If I use a self-written fast propagation method descriped by a master or liouville equation, I can get the expected vaule.
+To Reproduce
+The terminal out put is
+Expected behavior
+As discussed above.
+Your Environment
+QuTiP: Quantum Toolbox in Python
+Copyright (c) 2011 and later.
+A. J. Pitchford, P. D. Nation, R. J. Johansson, A. Grimsmo, and C. Granade
+QuTiP Version:      4.3.1
+Numpy Version:      1.15.2
+Scipy Version:      1.1.0
+Cython Version:     0.28.4
+Matplotlib Version: 3.0.3
+Python Version:     3.5.5
+Number of CPUs:     8
+BLAS Info:          INTEL MKL
+OPENMP Installed:   False
+INTEL MKL Ext:      True
+Platform Info:      Windows (AMD64)
+Installation path:  D:\anaconda\envs\py3.5\lib\site-packages\qutip
+Additional context
+This issue is the same bug mention by @xlelephant at #1038 , but after trying the tweaking option mentioned by @nwlambert , we still get the same error.
+
+
+I find this error appears when the two pulses are separated by a distance d > 23.0017... Have no idea why...
+The generated QuobjEvo seems to be correct.
+If I change the [Qobj, func] representation to [Qobj, np.array], the same thing appears but with a different threshold.
+The bug disappears if I give an epsilon small value to the pulse, like 0.000001, instead of 0.
+Does this somehow ring a bell @Ericgig? Is this possible that the algorithm terminates if the coefficients are all zero for a while?
+We had an issue like this in the past. The ODE use variable steps sizes, when nothing happens, these steps can become very long and skip over the pulse. The option max_step can limit this step size, so it should be set to be shorter than the shortest pulse.
+Here I beleive that using options=qu.Options(max_step=5) in the solver calls would fix it.
+If it does not work, I can look in more details next week.
+Thanks for your replies @BoxiLi @Ericgig , very helpful!
+The output seems right after adding the max_step option to mesolve().
+We changed the width of the cosine shaped pulse, here are some simple observations.
+But as we are most caring about how to use the solvers correctly, we still have some doubts:
+We only observed two results, one is 'perfectly correct', and another is 'totally wrong' (Like @Ericgig said, the second pulse has been completely skipped over). Would some fault result in the middle happen? Some wrong result very similar to the correct would be even worse.
+The Ode version of mesolve function is very fast, which is one of the reasons we love it. But we did not find document about other solvers (raw propagator, flatten to Liouville space?) for the master equation. Could you explain why the ODE method is the best over others, in aspect of accuracy and speed?
+When doing pulse type simulations, it is best to set the max_step size to be half the width of the smallest pulse in the simulation.  This makes sure that pulses do not get over stepped.
+Propagators are unitaries.  To compute them you need to evolve all basis vectors.  In addition, it is normal to get a dense matrix for the resulting unitary.  In contrast, canonical Hamiltonians are usually quite sparse, and the computing the evolution is quick sparse matrix - dense vector multiplication.
+Closing for now as the fix is not something QuTiP can detect - we need to have max_step to a suitable value to know how stiff the input is.  If there's further discussion we need to have, let's talk about it more in other issues / the Google groups discussion boards.

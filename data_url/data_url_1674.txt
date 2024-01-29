@@ -1,0 +1,36 @@
+Is your feature request related to a use case or problem? Please describe.
+As it stands, cirq.two_qubit_matrix_to_operations() outputs a decomposition into CZ (or partial CZ) gates. If you want a decomposition into a different gate set, the best (automated) way of doing it is to first decompose into CZ's, and then use cirq.google.ConvertToSqrtIswapGates().optimize_circuit(), however this leads to inefficient circuit decompositions.
+In general, any two qubit unitary should be doable with just 3 sqrt(iSWAP) gates, but with the above workflow you end up with circuits that use 6.
+Describe the solution you'd like
+Bill's proposed solution (#4059) would encompass this one if it recognizes the optimal method for a given gate set. Alternatively, an additional gate_set parameter to input into cirq.two_qubit_matrix_to_operations() which changes the method of decomposition it uses would also suffice,
+[optional] Describe alternatives/workarounds you've considered
+The current workaround is described above, using cirq.two_qubit_matrix_to_operations() and cirq.google.ConvertToSqrtIswapGates().optimize_circuit() in succession.
+What is the urgency from your perspective for this issue? Is it blocking important work?
+P1/P2, not vital but also shouldn't be difficult.
+Thanks!
+the decomposition into CZs is analytic and very fast. Using the gate tabulation could be slow or inaccurate (depending on your grid spacing).
+Has anyone tried to pencil out a decomposition a la CZ?
+The gate_set parameter can be done in cirq.two_qubit_matrix_to_operations, we will have to work out the sqrt(iSWAP) version of the _non_local_part function:
+
+It should give an equivalent (up to global phase) unitary to e^{i * (k_1 * XX + k_2 * YY + k_3 * ZZ)}:
+I went down the rabbit-hole of "how hard this can be". Here are my learnings so far:
+Sqrt(ISWAP) has a (pi/8, pi/8, 0) KAK vector (the coordinate in the a+ Weyl chamber). I couldn't find yet a paper that describes an optimized decomposition of arbitrary 2 qubit unitaries using sqrt(ISWAP) as the base entangling gate.
+The current 6 sqrt(ISWAP) decomposition seems like an upper bound for a generic entangling gate (as long as it's not equivalent to local unitaries or the SWAP gate): https://arxiv.org/pdf/quant-ph/0212109.pdf
+There is work by that explores optimal decompositions with base entangling gates that have the (pi/4, alpha, 0) KAK vector (super-controlled gates) - 3 applications should be sufficient to simulate an aribtrary 2 qubit unitary. https://arxiv.org/pdf/quant-ph/0407108.pdf - but that is still not the (pi/8, pi/8, 0) class!
+Other frameworks:
+Not sure how useful this is, but also here's the "path" the unitary takes in the a+ Weyl chamber with our 6 sqrt(ISWAP) to get from identity (light green) to a random unitary(dark blue):
+
+Each step is a sqrt(ISWAP) or its inverse.
+To me it sounds like someone will need to sit down and deduce a more optimal decomposition, but it doesn't seem like an easy task.
+I'll have to think about this, if I figure out the math I'll make another comment on this issue.
+In a (maybe) related note, I've written up this little method for what I needed, which prepares any arbitrary 2q state using a single sqrt(iSWAP). I don't know if this is useful enough for us to put it into cirq, but I'll leave it here in case someone finds this issue and can use it:
+@Strilanc also pointed out that we have decompose_two_qubit_interaction_into_four_fsim_gates which takes four FSimGate's that are close enough to ISWAP (unfortunately sqrt-iswap is too far away).
+This new preprint (page 14) appears to give a complete algorithm for KAK synthesis with sqrt-iSWAP.
+Wow, that's awesome, thanks @cduck, very timely.
+Also, pretty involved, I guess there are multiple compilation paths based on where the unitary is in the weyl chamber, significantly more complicated than the CZ compilation - but this is definitely a great source, it looks implementable.
+Just mention that there is an approximate decomposition of FSim(0, phi) into sqrt(iSWAP)-like gate in ReCirq that we have used for Fermi-Hubbard. It's analytical and fast but fails if the underlying sqrt(iSWAP)-like gate has a large c-phase angle.
+I'm looking into implementing the decomposition in that paper.  It looks reasonable.  I'll post here or make a PR if I make any progress.
+That's awesome - thank you, looking forward to it!
+For anyone curious, here are the decompositions for some common gates:
+looks great, thanks Casey!
+This will make it a lot easier for users to build things for our sqrt(iSWAP) grids.

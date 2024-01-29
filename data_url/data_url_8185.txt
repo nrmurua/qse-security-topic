@@ -1,0 +1,36 @@
+This is a Qutip code on Bose-Hubbard model. The inbuilt qutip function "sesolve()" executes correctly when nmax = 2 (nmax = max no.of bosons per site) but the Jupyter kernel dies when nmax = 3 is executed. I dont understand whether its a bug or am I missing something?
+
+from qutip import *
+import matplotlib.pyplot as plt
+import numpy as np
+nmax = 3  #Max boson number per site + 1
+n1 = 1    #Boson number at site 1
+n2 = 0    #Boson number at site 2
+j = 1
+mu = 60
+u = 10
+a1 = destroy(nmax)              #Here nmax mentions the dim of matrix
+a2 = destroy(nmax)
+g1 = tensor(a1.dag(),a2) + tensor(a2.dag(),a1)
+q1 = a1.dag()*a1
+q2 = a2.dag()*a2
+g2 = tensor(q1,qeye(nmax)) + tensor(qeye(nmax),q2)
+b1 = a1.dag()*a1*(a1.dag()*a1-1)
+b2 = a2.dag()*a2*(a2.dag()*a2-1)
+g3 = tensor(b1,qeye(nmax)) + tensor(qeye(nmax),b2)
+H = j*g1 + mu*g2 + u*g3
+psi0 = tensor(basis(nmax,n1),basis(nmax,n2))
+tlist = np.linspace(0.0, 10.0, 200)
+result = sesolve(H,psi0,tlist,[sigmap()])       #<-----This is where Im getting the problem as I initialized nmax to 3
+thanks. can you also please run:
+and copy here the message?
+Thanks for reporting this - it's an important bug that's snuck in.  Right now, there's a few errors in your code that you can fix to get on your way again, but we need to fix the error on our side.
+You're using sigmap() which is the Pauli excitation operator and is only defined for a Hilbert space with dimension 2.  You actually are working with a Hilbert space of dimension nmax * nmax (a tensor-product space), so your e_ops argument to sesolve is wrong - it's difficult to know exactly what you meant here.  destroy(2) is equivalent to sigmap(), so it's possible you intended to have e_ops be [qutip.tensor(a1, a2)]?
+Maintainers: The error is actually a segfault, because QuTiP 4.5 (probably 4.4 too) does not do sufficient error checking one_ops arguments - probably they're missing in the conversion to CQobjEvo.  When the expectation is called, it has already sidestepped Qobj's dimensions check and there is no matrix size check, so it simply segfaults on OOB access.  The fix for the 4.x branch is to have a very loud Python-space error due to mismatched Qobj dimensions on entry to the solvers, or insert a size check within CQobjEvo. High priority: there's no reason we should be segfaulting here.
+Partially fixed in the 5.x branch; all matrix multiplications that take place in C-space have a size check and throw a Python exception, however the solvers still sidestep the Qobj dimension check so a tensor-product-space mismatch will not be detected.
+thanks. can you also please run:
+and copy here the message?
+Here is the message
+
+@jakelishman I have completely overlooked this part "dim of Hilbert space  nmax * nmax ", now the sesolve is getting executed , although not a satisfactory graph but still atleast the sesolve() is working. Thanks a Lot for pointing this out.  Will be informing you and @nathanshammah in progress
+Extra safety check have been added to prevent this kind of errors. #1783, #1784, #1778

@@ -1,0 +1,13 @@
+I'm trying to write an application that first builds a library out of CUDA Quantum and then links my production run scripts with the library. I found that nvq++ only produces executables but does not support outputting libraries. Is there any plan to support creating a static or shared library with nvq++? I tried modifying nvq++ myself and it would look something like this:
+With this, I was able to build a static library but not a shared library. Trying to build a shared library always gives me errors that certain symbols are not relocatable, such as the following:
+Is it true that in the current build process of the CUDA Quantum libraries (libcudaq.so etc), certain symbols were not compiled with -fPIC, so we cannot build a shared library out of CUDA Quantum in the current framework?
+Incidentally, I found a small bug in the case where we are not linking. The original code is
+but it should be changed to
+I've managed to reproduce the linker error above when using nvq++ to build a shared library rather than a static library/executable.
+The root cause is that we don't add the -fPIC flag when nvq++ compiles the source file into the object file (.o) before linking it with other libs (e.g., libcudaq.so etc.) to produce a shared lib.
+Currently, -fPIC is not a command line argument that the nvq++ driver script can recognize.
+Side note: we're looking into reimplementing the nvq++ driver in #505.
+Is it true that in the current build process of the CUDA Quantum libraries (libcudaq.so etc), certain symbols were not compiled with -fPIC, so we cannot build a shared library out of CUDA Quantum in the current framework?
+I don't think so. It might not even be possible to build those shared libraries (.so) in the first place if they are not compiled with -fPIC, I'd imagine.
+Thank you for looking into the issue. Indeed after digging into the nvq++ script, I found that the culprit is the .classic.o file, which is compiled from the .ll file emitted by cudaq-quake. The cudaq-quake executable does not take -fPIC as an option so presumably the LLVM IR it emits does not make the symbols PIC. The PIC option would certainly be a good feature to be added to cudaq-quake in a future release.
+I don't think this has been fully addressed. Reopening it for triage - P2; tentatively assigned for 0.5, but may be deferred until the next one.

@@ -1,0 +1,134 @@
+On my test:
+Everything should be implemented, before closing we need to:
+@enjoy-digital I'll try to have a go at some of that tomorrow.
+Is the phase scan implemented in the code by default atm?
+Thanks for all the work you've done on this recently. Things are starting to shape up nicely.
+@hartytp: yes the phase scan is implemented in the code. If you do a test, can you post your results here? (it will allow us to know if we case use same values for all boards).
+Will do.
+What are you doing for the SC1 test? Just looking for DAC realignment events by reading out the register values, or looking at RF outputs on a scope?
+We modify the phase until having at least 2 realignments. (since we are not sure to have the full scan for the first one) Then we put the phase in the middle of 2 realignements and trigger another sync on the DAC.  I don't have the equipment to test SC1 on the RF output. If you have it and can do the test, we'll be happy to have the results :)
+Okay, I'll start with your phase scan and see how I get on. If things go well, I'll have a look on my scope.
+Thanks!
+I don't have the equipment to test SC1 on the RF output.
+You do; even a cheap DSO can do it with some signal processing (and a long enough sample buffer). Set up two DACs to output continuous 51MHz sine tones (with a startup kernel). Here are some hacky scripts I was using (based on code by @jordens):
+(You need to set up the scope before using that first script, to have the two channels + a large memory with iirc 120k samples)
+OK thanks, maybe i have the equipment, but you are asking me to do system level tests while i'm not relevant for this (without your previous answer i would have no idea how to test it). So let's keep every one its job:
+if you never try things you have no idea about, you never learn :P
+I'm happy to have a go at this once my Sayma arrives back, which I hope will be today (@gkasprow do you have a tracking number for it btw?)
+To confirm, the two DACs should currently have deterministic latency with respect to the input 1.2GHz clock, but with respect to the RTIO clock, right? So, if I set channels on different DACs to the same frequency and phase then the phase offset between them should be constant, right? Similarly, if I set the DAC output to a sub-multiple of the 1.2GHz clock frequency, I should see a constant phase delay between the RF output and the DAC clock, right?
+@sbourdeauducq: sure, that's also what i think and how i learn. But that's not something you can always do. I'll be happy to learn on that, but maybe later, for now i'm just trying being practical since i have limited time and would rather focus on things i'm really relevant for.
+@hartytp just compare 2 DAC channels from each DAC chip. The rest is not necessarily det-lat yet.
+ack
+@hartytp just compare 2 DAC channels from each DAC chip. The rest is not necessarily det-lat yet.
+edit: to check I understand you here, you want me to compare the relative phases of a pair of channels on the same DAC (i.e. not comparing the phases between DAC chips). I thought that was always deterministic, without any synchronization work required.
+No, I meant comparing between the two DAC chips. Take one channel from AD9154-0 and one channel from AD9154-1.
+Okay, good. I'll do that once my AMC+RTM turn up (tomorrow?).
+@enjoy-digital The phase shift value definitely needs to be fixed; I'm getting intermittently 56 or 88 for both DACs (independently) of one board.
+Also the logs are excessively verbose, it would be sufficient to print only when the error count is first measured and then changes.
+I reduced the logs.
+Now for the intermittently results, let's try to analyze that:
+Combined together, we can see this as 26ps (416ps/16) resolution configurable delay . (This no really what is happening since we have a gap between between 400 and 416 ps, but we use that for the analysis).
+So when testing on board:
+Not sure what to conclude from that now, at least i see that theses intermittently results are not coming from corner cases in the sysref scan, but are the behaviour of the system.
+DAC synch is not working; the DACs just have random phases wrt each other after each power-up.
+This can be measured with the script below that uses the Red Pitaya currently connected in the lab, and sines.py modified to output 9MHz (currently flashed as startup kernel).
+From what I observed, the phase varies within a 0 to 0.38 radian window of the 9MHz waveform, i.e. 6.7ns. This corresponds to 1 period of the 150MHz clock.
+I think that's expected with the current state of the code @sbourdeauducq since we don't issue a reset command after configuring the dividers.
+From a quick skim over the data sheet, I think that to enable synchronisation you need to edit these lines to enable synchronisation for all channels by setting bit 6 high:
+
+should be
+cf page 39 of the data sheet.
+Then, send a sync request via spi as the last part of the init.
+Edit: NB multislip delays are only required for CMOS outputs to get deterministic latency. For LVPECL (which we use) this is not required.
+Patch doesn't fix it because we also need to configure the internal SYSREF timer. Doing that now.
+The relative phases of the HMC7043 outputs are fixed as of #1049
+SC1 now seems to work intermittently. Maybe the desynch is simply due to the JESD204 elastic buffer bug. Here are the phase differences in a 9MHz waveform that I measured between the two DACs, reloading the bitstream every time. Unit is radian.
+-3.0122085695401912
+0.003484989809197922
+0.0035013579182848783
+0.003437719904394562
+0.0034271564472742777
+-3.012130036638558
+0.0034841246460592993
+0.0035376824528900223
+0.0035230510713831747
+0.003476287717748864
+3.0188539470060625
+0.0034901997337270447
+-3.012092422739266
+3.0190223329751356
+-3.0119953449379806
+There seems to be a resurgence of serwb bugs, which makes this testing a bit annoying.
+After JESD update:
+0.379348417299257
+0.3321831450064115
+0.3793770410950291
+0.37937666640012396
+0.37935438836814794
+0.3793441872220443
+0.3793281246479074
+0.3794722930935313
+0.37942851699262903
+0.0036921377386391853
+0.3793404124933203
+Observation: the difference between the second result and the usual value is 831ps, which is close to the 833ps period of the 1.2GHz clock.
+getting there...
+That’s great!
+Looking at this on my Sayma.
+Running the following startup kernel:
+Looking at the phase between 1 channel on each DAC using a fast scope. NB 1 deg at 10MHz = 277ps, 1 deg at 600MHz (DAC clock) = 1.66ns
+Over 15 loads of the FPGAs, including 3 power cylces, I've seen the same phase difference between the two channels to 1deg (measurement accuracy). So, this seems to work just fine for me.
+Good!
+Cool, so we have working SAWG and SC1. If we can just fix the remaining crashes/serwb issues then we're sorted.
+Running 4.0.dev+1133.g0b086225. Compare phase between a pair of channels spanning both DACs on single Sayma. Set frequency0 to 40 MHz. Measured phase difference using Tek FCA 3003 Timer using 10k samples of 10 ms intervals. Saw stdv < 1 deg with peak deviation < 9 deg. Cycling off power and reloading 5 times I see variation in mean relative phase of
+-96.11, -95.46, -95.66, -96.13, -95.50 deg.
+40MHz, 1 deg = 70ps. So, 9deg = 625ps. Given that the HMC830 clock is 1.2GHz=833ps, this sounds like you have seen the two DACs synchronised to better than one clock cycle.
+Closing this issue.
+I got the fancy scope back so can make a better measurement. Scope and 100 MHz clock to Sayma are phase locked. Still using 4.0.dev+1133.g0b086225 .
+First, compare phase between a pair of channels on single DAC. Here, frequency0 is 210 MHz. No skew, as expected.
+
+Now compare DAC channels spanning the pair of chips. frequency0 is 10 MHz . Cycle power and reload .bit's in between. I'm generally getting two results for mean skew with a separation of f_RTIO_coarse. 1/(150 MHz) = 6.7 ns
+6.72 ns
+6.85 ns
+-0.18 ns
+6.82 ns
+0.13 ns
+Expected outcome is skew < 1/f_DAC between board resets. Please reopen Issue.
+
+
+
+
+
+@jbqubit thanks for checking that more carefully. I don't think I can reproduce this on my board...
+@enjoy-digital am I right in thinking:
+@enjoy-digital since we don't control the phase of jref do we need a multireg here?https://github.com/m-labs/jesd204b/blob/25fd79dbf9d5b9536482f11a4d716747479191ec/jesd204b/link.py#L279
+edit: and a false path constraint or something?
+HK board with pristine master at a9d9710. Board rebooted by artiq_flash start while keeping the RTM bitstream loaded. Here are the phases at 9MHz:
+Note that no crash was observed after those 22 reboots (according to #1068 (comment) it crashes 1/10 of the time with this firmware).
+@enjoy-digital since we don't control the phase of jref do we need a multireg here?
+This jref code is sketchy indeed.
+Isn't it instead: we must control the phase of jref (sysref driving the FPGA) so that it meets s/h wrt the JESD/RTIO clock?
+@jbqubit Can you test again? With the latest code I am reliably getting ~30ps of absolute skew between the two DACs (at that level it can be the cables or the Red Pitaya).
+Done except for #1083
+@sbourdeauducq What's the plan for testing this at the full 2.4GHz DAC clock? It seems worth checking that works reliably before we move onto Sayma v2.0 in case there are any changes we decide to make to the hw.
+@gkasprow Please test on the Sayma hardware you have.
+@jbqubit let's try and prioritize things.
+IMO sinara-hw/sinara#567 should be the top Sayma priority because (a) it's making it hard for @sbourdeauducq to work on Sayma and (b) it seems like it's probably a relatively straightforwards hardware issue that can be solved quickly, unlike the other issues which involve complex parts of the software stack.
+Once that's done we should probably look at #1055 next. There is no point in @gkasprow measuring phases between output channels when we know that the HMC7043 isn't behaving itself. This may need a bit more discussion with ADI (is @sbourdeauducq handling that?).
+After that, we should probably look at #1083 since, again, there is no point looking at output phases when the SYSREF signal isn't behaving itself properly. With luck, this may be a side-effect of the same issue as #1055.
+After that, we need to look at #1080 to figure out why the DACs can't be clocked from that input. Probably needs @gkasprow to check for potential SI issues and then, if we don't find anything there, a discussion with Xilinx/another read through of the relevant Xilinx docs.
+Once those are all working we can start thinking about checking output phase synchronization.
+IMO sinara-hw/sinara#567 should be the top Sayma priority because (a) it's making it hard for @sbourdeauducq to work on Sayma and (b) it seems like it's probably a relatively straightforwards hardware issue that can be solved quickly, unlike the other issues which involve complex parts of the software stack.
+He has not received the buggy board yet, so it makes sense to do other things in the meantime. And I agree that the other bugs should be fixed before looking at synchronization at the DAC outputs.
+Once that's done we should probably look at #1055 next. There is no point in @gkasprow measuring phases between output channels when we know that the HMC7043 isn't behaving itself. This may need a bit more discussion with ADI (is @sbourdeauducq handling that?).
+I'll let @gkasprow handle the RFSYNCIN biasing issues, and David seems to be making good progress with ADI forum archaeology and tests on the HK board.
+After that, we need to look at #1080 to figure out why the DACs can't be clocked from that input. Probably needs @gkasprow to check for potential SI issues and then, if we don't find anything there, a discussion with Xilinx/another read through of the relevant Xilinx docs.
+That one should be high priority as it is blocking most things for you and other people.
+David seems to be making good progress with ADI forum archaeology and tests on the HK board.
+Aah, I didn't realize he was doing more work on that. That's great then, I'll leave it to him.
+Looking good with the latest code.
+As I understand it...
+#1083
+Isn't closed yet. Hopefully it's fixed by the HMC7043 changes, but I would like to test this on my board before we close.
+#1080 is the last one hanging. This is in the hands of M-Labs, right?
+We're out of debugging budget, we cannot reproduce it, and it looks like a hardware issue or some obscure xilinx bug.

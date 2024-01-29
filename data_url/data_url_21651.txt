@@ -1,0 +1,49 @@
+When attempting to connect 7 DRTIO links, UART on Metlino stops or outputs binary garbage (similar behavior was observed on Sayma v1 with SAWG, and was due to the VCCINT issues).
+Example output:
+The links appear established on the satellite side, and the routing table is transferred. They don't work in a startup kernel. Ethernet could not be tested due to #1424.
+I have a build that recreates that problem, so I'll be able to probe power supplies.
+Does the buck converter measure the feedback voltage under the FPGA?
+It seems Sayma (master variant) is not affected.
+The only major difference is there was only 1 satellite connected (but still 7 DRTIO master links). @marmeladapk Can you confirm if Metlino with 7 links and 1 satellite connected crashes as well?
+@sbourdeauducq Yes, it does.
+Okay, so that really starts to look like a VCCINT-type problem...
+Is the R393 installed?
+Yes.
+So it is not th VCCINT level issue because it is stabilized at the FPGA.
+I'd check its stability as a step response.
+I didn't see anything different in power supplies when probing VCCINT MGTAVCC and MGTVCCAUX between 3 channels and 7 channels. I'll post screenshots from oscilloscope on friday.
+@sbourdeauducq I compiled Metlino with 12 drtio channels, Si5324 and 150MHz DRTIO. It doesn't crash. The onlly oddity is that link 11 is always recognized as up, regardless of any AMC card being connected.
+Yellow VCCINT, blue MGTVCCAUX, pink MGTAVCC: 7 links
+
+Noise in measurments comes mostly from crate fans (probes are inside the crate):
+With crate turned off:
+
+Only MGTVCCAUX seems noisy on its own (though it could come from the measurment).
+12 links with Si5324, RTIO 125 MHz
+
+This build doesn't crash and noise levels are the same (crate turned on).
+So it seems that there is no difference in power supplies between crashing and non-crashing bitstreams.
+So I tried both 125 MHz and 150 MHz RTIO with more than 6 channels. It seems to me that it could be a problem in a quick WRPLL hack that was done to get Metlino working when @sbourdeauducq was in Warsaw.
+It seems to me that it could be a problem in a quick WRPLL hack that was done to get Metlino working when @sbourdeauducq was in Warsaw.
+Hmm. I can't see how this code could produce this sort of memory corruption - it's almost entirely safe Rust code, and the unsafe bits only access those WRPLL gateware CSRs. I've also experienced no memory corruption whatsoever while developing WRPLL on Sayma.
+@sbourdeauducq Can you reproduce this problem in HK?
+@marmeladapk Are you still relying on the WRPLL hack from several weeks ago? Are you waiting on @hartytp for the full-on WRPLL solution?
+I don't have a Metlino in HK. @marmeladapk do you know what the state of the front panels is?
+The wrpll hack was a workaround for a Si5324 problem on Metlino that is now resolved. I just wanted to get the transceivers clocked and the Si5324 wasn't working then. I don't think whatever the Si549 or this hack was doing could explain this issue.
+@jbqubit, @sbourdeauducq doesn't have Metlino yet.
+@marmeladapk Are you still relying on the WRPLL hack from several weeks ago? Are you waiting on @hartytp for the full-on WRPLL solution?
+We're testing Metlino without ARTIQ, so I just used this hack to recreate this problem that we had during @sbourdeauducq's visit and check power supplies.
+Are you sure that it's the wrpll hack-patch that triggers the problem? There's really nothing offensive in there. Could it be the clock switch line (which selects between Si549 and Si5324 on the hardware)?
+Or it's a stack overflow maybe, then all sorts of weird things can happen.
+Try this:
+I'm actually surprised that the runtime stack was only 16k.
+@marmeladapk Do you know when you can ship a Metlino to HK, preferably with front panels and everything?
+Try this:
+It did not help.
+Do you know when you can ship a Metlino to HK, preferably with front panels and everything?
+Probably in two weeks. We want to finish stress test and other tests first to rule out problem with hardware.
+Not seeing the problem here but there is a "phantom" link:
+Could it be some µTCA backplane shenanigans where e.g. one of the links is looped back? This is on the small NATIVE-R5 crate which does not have that many links.
+No cards other than Metlino and NAT-MCH are present.
+With one fewer link compiled in, it crashes after RoutingTable. I confirm that increasing stack space does not help.
+Okay, that's a simple problem, we are exhausting the CSR address space. Got a dirty fix that works, "phantom" link is still there though.

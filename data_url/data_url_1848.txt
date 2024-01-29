@@ -1,0 +1,55 @@
+Cirq supports JSON serialization of all its objects. This is highly portable and extensible but can be somewhat verbose. As part of the XEB refactor I'm working on (quantumlib/ReCirq#85); we need to generate a whole suite of large (wide and deep) and save them to persistent storage. Using the vanilla JSON serialization is both prohibitively slow and disk-space-taking. To see why this may be a problem, the simple circuit of:
+turns into [expand]
+For example: ten circuits on nine qubits of depth 100 takes approximately 28MiB on disk. Using xz, it compresses down to 240kiB (gzip yields 417kiB).
+Bespoke circuit text representation -- something like qasm where we define a full grammar for circuits that is less redundant
+Like (1), but just use qasm
+Wrapper or flag for json serialization that lets the Circuit give itself as compressed JSON. The specifics would have to be worked out, but you can imagine having "cirq_type": "CompressedCircuit" and a data field which is a hexencoded string of the gzipped bytes of the normal cirq JSON
+Have a compression option in to_json and read_json that will read/write the entire file gzipped
+Same as (4) but implement in ReCirq; i.e. punt on this issue in Cirq and let dependent libraries figure out their own solution.
+[edited:]
+6a. Re-use existing cirq.google protobuf serialization. I don't think this option is very viable because most gates aren't currently supported and the process for extending to new gates in a backwards compatible way is questionable.
+6b. Use a binary serialization format like protobuf. Depending on how it's composed with JSON serialization, could be similar to (1), but not text; and could be similar to (3) but the data is the binary representation.
+(1) could be more broadly useful (like if listing a circuit in a manuscript) but would be a lot of work and maintenance burden. There will be questions about what swath of gates we'd support. (2) piggy backs off of qasm, but I don't know how faithful of a representation of a cirq Circuit we can get with it.
+(3) could work, but integrating this into the serialization API might be very unergonomic for the user. Now there's two types of json-serialized circuits floating around in the wild.
+I think (4) or (5) are easy and solve the issue without sacrificing much. The sacrifice is now there's two filetypes that could be read by Cirq. The files are no longer human readable (but some tools (vim) will auto-decompress gzipped text files)
+[edited:]
+I suspect (6a) is a non-starter, since the two formats have different goals.
+For 6b, we'd have to weigh how to compose (or not!) with JSON serialization of other cirq objects. For example, I exploit the fact that I can serialize anything in one cirq json file by storing a list of circuits, some qubits, result data, numpy arrays, et al. We'd either have to provide protobuf objects for everything in cirq [and users would have to define a schema in protobuf instead of throwing things into a python dictionary] OR certain objects would get a protobuf form and you could slot it into a JSON document by hexencoding the bytes like option (3).
+(1) You could include a header with the used set of gates specified with their json encodings.  The circuit encoding could then be something really simple like a 0 2,b 1,c 4 3 5;a 1 2,a 3 5;....
+Compression: Some libraries allow you to specify an initial or commonly known vocabulary to improve file size.
+It is interesting that you discounted protobuf - that would have been my first thought for efficiency.
+Why do you say protobuf's shouldn't be used for long term storage?
+I was under the impression that it was for messages in-flight (like when doing an RPC call) and lacked some of the backwards compatibility / stability required for long-term use.
+In any event, I was discounting repurposing the existing quantum-engine protobuf serialization because it only works for certain gates. I'll edit the list of options above
+@cduck yes, that would be an option for a grammar for a (1)-type implementation
+re: compression: even with "off the shelf" tools, it works good enough for me.
+I edited in 6 into 6a and 6b. My commentary on 6b ["use protobuf"] is reproduced below:
+For 6b, we'd have to weigh how to compose (or not!) with JSON serialization of other cirq objects. For example, I exploit the fact that I can serialize anything in one cirq json file by storing a list of circuits, some qubits, result data, numpy arrays, et al. We'd either have to provide protobuf objects for everything in cirq [and users would have to define a schema in protobuf instead of throwing things into a python dictionary] OR certain objects would get a protobuf form and you could slot it into a JSON document by hexencoding the bytes like option (3).
+The new edits make sense - I agree with 6b not being a good drop-in solution.
+While we should compare options and keep pushing the boundaries as much as possible, it would be useful to capture the demarcation lines which below things are unacceptable, acceptable and ideal specifically for the XEB applications, e.g.:
+Typical XEB instances: 100 x  10 qubit circuits of depth 100
+?
+For the above you could use something like https://msgpack.org/ to be in the acceptable range probably? It's a better version of BSON (binary JSON) which is the storage format for mongodb. It is a binary drop-in replacement for JSON. However it might not achieve as much of a compression as xz + JSON - being above 100x.
+A quick tryout (it seems we already have msgpack as a dependency) shows that msgpack is comparable to json but at least 2x smaller.. it is not 100x though...
+I'd vote for option 4. It might even be possible to autodetect whether passed a gzip or plain text file by looking for gzip magic number, so this could be done in a fairly transparent way. Might be worth looking into a binary-first alternative like bson, but those seem like they'll take substantially more work.
+I'd also say that while proto encoding seems like it should be a good choice, the way we use protos currently is very inefficient because we include a bunch of strings in the protos (gate names, argument names, etc) rather than putting these names in the proto schema. I would guess that our sizes of proto-encoded circuits are comparable to json-encoded circuits currently, in addition to the problem of not all gates being supported, as @mpharrigan noted.
+In case it wasn't clear by the slanted way I wrote the original post, I also like option 4 :)
+@balopat -- I agree that it's important to actually create a benchmark to measure what we want. We should budget for 50 circuits of depth 200 on 50 qubits for XEB probably
+I like that too now that I realized that to_json is for any object, not just Cirq objects. :)
+I think we have a winner. Marking it as triage/accepted. What's the priority on this one?
+This is high priority for my work. I'll take this issue.
+One question I have is how to deal with filenames and design the API.
+How should the user specify compression when writing. One option would be to have to_json(file_or_fn, *, comrpess=None) where None means "no compression" and "gzip" means gzip. This can only work when passed a filename (not when returning a string or writing to an already opened file). If we do this, should the function append ".gz" to the filename if it isn't already there? Should we have been appending ".json" to filenames if they don't already exist this whole time? This is how np.save works https://numpy.org/devdocs/reference/generated/numpy.save.html
+The other option would be to use the filename to determine compression. If the filename ends in ".gz" use gzip compression.
+How should the user specify compression when reading? You could argue that during saving you must specify the compress option but during reading, it should be more permissive and try to open filenames with ".gz" extensions with gzip
+I think we should have symmetry between the two directions and have both convention based and explicit methods.
+Signatures:
+Explicit (compress is not None)
+If compress="no" or compress="gzip" are defined, that behavior is forced ("no" = plain text). No fallbacks.
+Convention based (compress is None)
+If filename ends with "gz" tries with gzip, if that fails or the filename does not end with "gz", it tries to deserialize without compression.
+Examples:
+WDYT?
++1 to trying gzipping before anything else.
+@mpharrigan, what remains to be done here? It looks like gzip support was added, and repetitive circuits can be further condensed using CircuitOperations.
+yes, this should be considered done with the linked solutions

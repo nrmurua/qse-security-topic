@@ -1,0 +1,44 @@
+Multi quibit readout errors are ignored.
+from qiskit import QuantumRegister, ClassicalRegister
+from qiskit import QuantumCircuit, execute
+from qiskit import Aer
+from qiskit.providers.aer import noise
+from qiskit.providers.aer.noise.errors.readout_error import *
+qr = QuantumRegister(2, 'qr')
+cr = ClassicalRegister(2, 'cr')
+circ = QuantumCircuit(qr, cr)
+circ.measure(qr, cr)
+simulator = Aer.get_backend('qasm_simulator')
+noise_model = noise.NoiseModel()
+noise_model.add_readout_error(ReadoutError([[0.5,0.5],[0.5,0.5]]),[0])
+noise_model.add_readout_error(ReadoutError([[0.5,0.5],[0.5,0.5]]),[1])
+result = execute(circ, simulator,noise_model=noise_model,shots=1000).result()
+result.get_counts(circ)
+{'11': 252, '00': 245, '01': 252, '10': 251} #as expected
+c = ReadoutError([[0.75,0.25,0.,0.],[0.25,0.5,0.25,0.],[0.,0.25,0.5,0.25],[0.,0.,0.25,0.75]])
+noise_model = noise.NoiseModel()
+noise_model.add_readout_error(c,[0,1])
+result = execute(circ, simulator,noise_model=noise_model,shots=1000).result()
+result.get_counts(circ)
+{'00': 1000}
+The second block of code above should do the same thing as the first block.  However, it seems like the multi qubit readout errors are completely ignored.
+I think the problem is in the function https://github.com/Qiskit/qiskit-aer/blob/master/src/noise/noise_model.hpp#492, but I'm not exactly sure.  Hopefully someone who wrote this code will be able to quickly spot what is going on.  My sincere apologizes if I am misusing the code.  N.B. I had two independent colleagues check the above example and we all can reproduce it and believe the usage is correct.  Thank you!
+The problem is Terra doesn't support multi-qubit measure instructions by default: measure on a register is always unrolled into single-qubit measure instructions.
+To get it to work you have to define your own multi-qubit measure instruction. You can see an examples of this in the tests here.
+Eg for two-qubit readout error you would need to make an instruction
+Then this should work with a noise model with a two-qubit readout error on qubits [0, 1].
+Hi @chriseclectic,
+Fantastic, thank you!  I get the error
+File "/usr/local/anaconda3/lib/python3.6/site-packages/qiskit/circuit/quantumcircuit.py", line 348, in _check_qargs
+raise QiskitError("qarg not (QuantumRegister, int) tuple")
+qiskit.exceptions.QiskitError: 'qarg not (QuantumRegister, int) tuple'
+Which version of the code do I need to use?  (should I compile from source?)
+Thank you again-
+Sincerely,
+Ben
+You might need to update qiskit-terra (or use master)
+@bnachman did the update fix the issue?
+Hello,
+Yes, this works, thank you!  I had some troubles compiling aer from source though - in the end, I compiled terra from source and then pip installed aer.  The instruction update is in terra anyway so this worked well.  Thank you again for your help.
+Sincerely,
+Ben

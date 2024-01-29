@@ -1,0 +1,18 @@
+There are memory leaks in Intel MPI 2019.x and 2021.3 which cause OOM errors in long MD simulations with CP2K. It was fixed in Intel MPI 2021.4, see this ticket on Intel forums:
+https://community.intel.com/t5/Intel-oneAPI-HPC-Toolkit/Memory-leak-in-D-amp-C-eigensolver-parallel/m-p/1337226#M32303
+You may want to include this information on Compiler support page.
+@gsamsonidze thanks a lot for this!
+The thread also mentions you seeing freezes with 2021.4. The last known "good" version is 2018.4 then. Since last time I tried it CP2K does not build with the LLVM-based Intel Fortran Compiler I assume this is the classic tools.
+Wondering whether the reported hang involved ELPA, could you check?
+Yes the last stable version is 2018.4. The oneAPI builds are the classic tools (ifort). The reported hang involved ELPA, I will rerun with SCALAPACK to check if it solves the issue.
+[1] Here is the full error message: Assertion failed in file ../../src/mpid/ch4/src/intel/ch4_shm_coll.c at line 2266: comm->shm_numa_layout[my_numa_node].base_addr
+A Google search gives the following result: https://community.intel.com/t5/Intel-oneAPI-HPC-Toolkit/Assertion-failed-in-ch4-shm-coll-c-at-line-2147/m-p/1186157
+The system size is ~600 atoms (organometallic molecule solvated in liquid water at the metal interface), PBE+D3 xc-functional, GTH pseudopotentials, DZVP-/TZVP-MOLOPT-SR basis sets. The version of CP2K is 9.1.
+Slightly off-topic here, but we're also seeing memory leak problems with long-running MD simulations, even when not using Intel MPI, but we're having some trouble in pinpointing the root cause (whether it's in CP2K itself, or the MPI library, or another library, or caused by the compiler, etc.).
+Are there any recommended approaches to try and figure out where the leak originates from?
+You can try to activate the CP2K-internal tracing output using the keyword TRACE_MASTER (or even TRACE). The downside of this method is that the size of the output file might become huge.
+It might be memory defragmentation as well... I can suggest to use different allocator libraries, such as tcmalloc or jemalloc.
+Well the problem that this is compiler dependent. We have the problem with certain GCC versions (especially newer ones, like 10.3.0 or 11.2.0), and not with older ones (9.3.0)
+In our case it took a lot of experimentation with different versions of Intel compilers, MPI libraries, math libraries, and CP2K settings. The leak turned out to be caused by a combination of Standard diagonalization and a specific range of versions of Intel MPI (between 2019.5 and 2021.3). It also helped to plot memory usage vs time (you can see right away that the used memory linearly increases, and don't have to wait until the OOM error). This can be done using PSS in /proc/PID/smaps.
+Ok, we found the problem. OpenMPI has a memleak (version 4.0.4?, 4.0.5, 4.0.6,  4.1.0, 4.1.1 and not in 4.0.3), the problem is fixed in 4.0.7 and 4.1.2,  (the fix is open-mpi/ompi#8828
+This seems to have been resolved.

@@ -1,0 +1,33 @@
+As discovered by @Zoufalc, if an expectation value is written as ~StateFn(operator) @ state, the operator is complex conjugated although it shouldn't be. I.e. in that case the Opflow evaluates
+instead of the expected
+Don't take the adjoint of the operator.
+Maybe we should adjust OperatorStateFn.adjoint to not take the adjoint of the primitive? Not sure if that breaks stuff elsewhere.
+I thought this behavior is as expected. ~StateFn(operator) @ state means Hilbert-Schmidt inner product <operator | "state">_HS = tr[operator^dagger |state><state|].
+I don't think so, as far as I remember this is supposed to evaluate the expectation value of the operator as it is.
+Since several expectation converters only support this representation of ~StateFn(op) @ state it would be strange if that wouldn't be an ordinary expectation. I think e.g. VQE uses this representation, or the tutorials.
+Maybe we should have an explicit state function for measurements to avoid this confusion?
+If the operator is Hermitian then this is always fine since then operator^dagger = operator.  However, this is not true in general and then we need to be careful and ensure that
+<state | operator | state>  = tr[operator |state><state|].
+Evaluation of the expectation value of the operator is given by Hilbert-Schmidt inner product. That is natural from the perspective of mathematics and this is used in PTM representation.
+I know this representation is frequently used.
+As @Zoufalc said, if the operator is Hermitian, there are no problem. For Non-Hermitian operator,
+ <state | operator | state> =  tr[operator |state><state|] = <operator^\dagger | "state">_HS where "state" =  |state><state|.
+What is important here is whether the representation ~StateFn(operator) @ state means <operator^\dagger | "state">_HS or tr[operator |state><state|].
+I strongly support the representation means the HS inner product because ~ represents adjoint.
+If you want to calculate <state | operator | state>, just write print((~StateFn(~op) @ Zero).eval())
+Maybe we should have an explicit state function for measurements to avoid this confusion?
+This may be nice idea!
+The opflow tutorial said
+The composition operator is used to perform an inner product, which by default is held in an unevaluated form.
+So this representation must be inner product.
+For the case of the left operand being a OperatorStateFn we have a special case, see https://qiskit.org/documentation/tutorials/operators/01_operator_flow.html#OperatorStateFn.
+I think we need to be careful here since the Hilbert-Schmidt inner product is -as you say- defined as <A|B>=Tr(A^*B) but an expectation value w.r.t. a state |s> and observable O is given by Tr(O|s><s|) = <s|O|s>.
+tl;dr: We should keep the current behavior but add a class OperatorMeasurement to explicitly do expectation values.
+Ok so there's an abuse of notation we need to clear up. Here's what I think:
+@Cryoris Thank you for your nice suggestion. I completely agree with your idea.
+If we want to fix this, I think we should take the opportunity to make the design a bit simpler and more uniform. It may be possible to do this without too much disruption. I'd like to
+Separate the concepts of measurement and adjoint, which are currently confounded. We could do this by leaving the current design mostly intact, but adding a new way to represent what we have been calling "expectation" or "measurement".
+Have the compose operator @, which for the most part constructs ComposedOp, represent one idea; probably tensor contraction. It seems this already agrees with how it is used in opflow, except for things like StateFn(op, is_measurement=True) @ Zero, in which @ means something different. If we want @ to mean tensor contraction, then we could represent the latter as  ~state @ op @ state. Or if that is difficult to recognize or handle, then something like DiagMatrixElement(op, state), which does not abuse the meaning of @.
+Use technical quantum mechanics terms only in their usual textbook sense; roughly Nielsen and Chuang. In particular, "measurement" in QM never means "a complex linear combination of expectation values of observables", which is, it seems, how we have been using it.
+In particular, I disagree with  using OperatorMeasurement(op) @ Zero on two counts: 1) @ is used anomalously and confusingly here. and 2) OperatorMeasurement(op) seems to suggest a QM measurement. But, really it means, treat the following symbol @ in a special way, ie construct a diagonal matrix element <0| op |0>, where op is an arbitrary matrix.
+Closing this, as from above it turns out this is not a bug in the code but rather a bug in my user expectation 😉

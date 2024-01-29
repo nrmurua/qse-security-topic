@@ -1,0 +1,30 @@
+AmplificationProblem is_good_state expect MSB bit string while PhaseOracle's 'evaluate_bitstring' function evaluate LSB string. For example, if we use the following logical expression:
+'x1 & x2 & (not x3)'
+evaluate_bitstring('110') is True, while evaluate_bitstring('011') is False.  Grover uses MSB left bit string. For example, '011' means |011>.  Grover algorithm finds the solution for PhaseOracle as '011'. Hence evaluate_bitstring call fails.
+Run this program.
+---- Result -----
+evaluate_bitstring should use Qiskit bit string representation (MSB left).
+Hello @1ucian0 @boschmitt,
+It seems x_0 is mapped to q_0 in PhaseOracle. Is my understanding correct? If so, Grover needs to reverse the bit ordering for is_good_state().
+
+evaluate_bitstring should use Qiskit bit string representation (MSB left).
+I don't think this will be a good way of solving this. Actually, given the current behaviour of PhaseOracle, the existence of this function is weird. You see, PhaseOracle treats x1 & x2 & (not x3) as Boolean function with three inputs of size 1, which is different from what you might be expecting, i.e., a Boolean function with one input of size 3. Thus, to be consistent, evaluate_bitstring('110') should be evaluate('1', '1', '0').
+I think that changing way PhaseOracle treats the expression might be the cleanest quick fix. However, it might be a poor long term solution if we move to more complex ways of defining oracles.
+It seems x_0 is mapped to q_0 in PhaseOracle. Is my understanding correct?
+Yes. Just keep in mind that the mapping variable -> qubit is positional. In this case, x1 is mapped to q_0 because it appears first.
+If so, Grover needs to reverse the bit ordering for is_good_state()
+For this specific case yes, but in really a better solution is to make is_good_state() take into account the Boolean function signature. For example, in this case, the signature would be three inputs x1, x2, x3 of one bit, thus when it gets the result bit string it knows that q_0 maps to the LSB of x1, q_1 to the LSB of x2, and q_3 to the LSB of x3.
+Now imagine that x1 is an input of size 2. Only reversing the bit ordering would be wrong!  By taking the signature into account x1[2], x2[1], x3[1] (inside brackets: size) Grover knows that q_0 still maps to LSB x1, but now q_1 maps to MSB x1! (This is where you have the "Qiskit" bit ordering!)
+I like keeping the argument of good_state() a bit string and keep it simple.
+Now imagine that x1 is an input of size 2. Only reversing the bit ordering would be wrong! By taking the signature into account x1[2], x2[1], x3[1] (inside brackets: size) Grover knows that q_0 still maps to LSB x1, but now q_1 maps to MSB x1! (This is where you have the "Qiskit" bit ordering!)
+Do you mean it will mapped like this, x1[0] -> q[1], x1[1] -> q[0], x2[0] -> q[2]? It's confusing can't we handle it more straightforward way like x1[0]->q[0], x1[1] -> q[1], and so on.
+(inside brackets is an index in my example)
+Now imagine that x1 is an input of size 2. Only reversing the bit ordering would be wrong! By taking the signature into account x1[2], x2[1], x3[1] (inside brackets: size) Grover knows that q_0 still maps to LSB x1, but now q_1 maps to MSB x1! (This is where you have the "Qiskit" bit ordering!)
+Do you mean it will mapped like this, x1[0] -> q[1], x1[1] -> q[0], x2[0] -> q[2]? It's confusing can't we handle it more straightforward way like x1[0]->q[0], x1[1] -> q[1], and so on.
+(inside brackets is an index in my example)
+I believe we meant the same thing. Let's say we have the function f(x1, x2, x3) where:
+Since the simulator doesn't care about the mapping between variables' bits and qubits, it returns the result as a bit string:
+If Grover wants to check for correctness, it needs to take this bit string and create the appropriate input to evaluate function. That is, let's say Grover gets the result '1010', then it should call evaluate:
+I like keeping the argument of good_state() a bit string and keep it simple.
+We can keep it simple, it's just a matter to delegating the task of correctly creating the input to evaluate the function to someone else. Nevertheless, it needs to be done somewhere.
+We need to keep in mind that Grover's is_good_state is used to determine if a circuit measurement outcome is a good state or not. Since the measurements are given as strings, is_good_state must work on strings 🙂

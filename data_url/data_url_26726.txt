@@ -1,0 +1,23 @@
+Since the upgrade to gcc-10 our convention test is failing and unfortunatelly neither #1009 nor #1017 resolved the issue.
+Hence, I dug in and found that make ARCH=local_warn VERSION="psmp" has trouble compiling dbcsr_mpiwrap.F. Apparently,  the -pedantic flag is triggering a broader analysis during which gcc notices some argument mismatches:
+Switching to -Wpedantic or adding -fallow-argument-mismatch doesn't help either.
+Well, as you know, that module is actually a (almost) copy of the CP2K one. So, this is a problem in CP2K too:
+
+Can you confirm that?
+For the DBCSR point of view, we can remove those two functions, they are not used (only there because of legacy), but it would be good to find a solution...
+No, I didn't check CP2K's version. I somehow assumed it was already fixed as part of #962. However, that seems to not be the case. So, you're right - we have to fix both copies.
+For the DBCSR point of view, we can remove those two functions
+Unfortunately, it's not just those two functions. Here is the complete list:
+
+
+
+It compiles with -Wno-pedantic or just without the -pedantic flag.
+@oschuett Do you think these are all true errors? At least some of the errors seem to me false positives, since routines like mpi_allreduce can be called with different types for the first argument.
+It compiles with -Wno-pedantic or just without the -pedantic flag.
+Yes, dropping -pedantic is probably the easiest solution. The question is what kind of issue will then remain undetected? The documentation mentions e.g. Fortran extensions. Nevertheless, the remaining flags include -Wall -Wextra -Wsurprising, which probably caught most past issues.
+routines like mpi_allreduce can be called with different types for the first argument.
+I'm actually not sure what's at fault here: Gfortran, MPI, or mpiwrap.
+We claim by using the flag -std2008 full Fortran2008 compliance and enforce a -pedantic check for this, but at the same time, we still USE mpi and not USE mpi_f08 with new the MPI interfaces. Either we upgrade our MPI interfaces to mpi_f08, which would be a major code change (volunteers?), or we drop the flag -pedantic.
+I vote to remove pedantic. Question is: can we do it only for the mpiwrap file?
+I have a plan to update DBCSR to mpi_f08, however it is a long project (need to refactor the entire file).
+Alright, then let's drop -pedantic until we've figured out the migration to mpi_f08 (#1030).

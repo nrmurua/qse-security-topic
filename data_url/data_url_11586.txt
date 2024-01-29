@@ -1,0 +1,74 @@
+The global phase of the WF seems to be influencing the value of <psi|Operator|psi>. I don't see how this could be the case as the phase is global (the fact that I don't calculate the expectation value shouldn't be important). This happens when using tilde StateFn(QuantumCircuit)@ComposedOp@StateFn(QuantumCircuit) to calculate the expectation value.
+from qiskit import QuantumRegister, QuantumCircuit
+from qiskit.circuit.library import RZZGate, rz, h, PhaseGate
+import numpy as np
+from qiskit.aqua.operators.primitive_ops import PauliOp
+from qiskit.aqua.operators import X, Y, Z, I
+from qiskit.aqua.operators.state_fns import StateFn
+be=Aer.get_backend("statevector_simulator") #define backend
+QR1 = QuantumRegister(2) #define first register
+QM1 = QuantumCircuit(QR1) #initialize the first circuit
+QM1.h(0) #apply Haddamard on first qubit
+QM1.h(1) #apply Haddamard on second qubit
+QM1.rz(np.pi,0) #appply rz on first qubit
+QM1.rz(np.pi,1) #appply rz on second qubit
+print("the first state is (in vector form)", StateFn(QM1).to_matrix())
+#calculate the expectation value of 0.5IX
+print("the FIRST expectation value is ",(~StateFn(QM1) @ PauliOp(Pauli(z=[False, False], x=[False, True]), coeff=0.5) @ StateFn(QM1)).eval())
+QR2 = QuantumRegister(2) #define the second register
+QM2 = QuantumCircuit(QR2) #initialize the second circuit
+QM2.h(0) #apply Haddamard on first qubit
+QM2.h(1) #apply Haddamard on second qubit
+cconp_gate1 = PhaseGate(np.pi).control(1,ctrl_state="1") #define a PhaseGate for an angle pi with a control state "1"
+QM2.append(cconp_gate1, QR2) #append it to the second register
+QM2.x(1) #apply the x gate on the second qubit
+cconp_gate2 = PhaseGate(np.pi).control(1,ctrl_state="0") #define a PhaseGate for an angle pi with a control state "0"
+QM2.append(cconp_gate2, QR2) #append it to the second register
+QM2.x(1) #apply x gate
+#clearly the two states are the same up to a global phase
+print("the second state is (in vector form)", StateFn(QM2).to_matrix())
+print("NOTE: THIS IS THE SAME STATE LIKE THE FIRST ONE, UP TO A GLOBAL PHASE")
+print("THUS, ALL EXPECTATION VALUES SHOULD BE THE SAME")
+print("The SECOND expectation value is", (~StateFn(QM2) @ PauliOp(Pauli(z=[False, False], x=[False, True]), coeff=0.5) @ StateFn(QM2)).eval())
+print("clearly, a global phase in the WF gave a different sign of the <\psi|op|\psi> - this shouldn't be happening")
+#just for fun draw the circuits
+display(QM1.draw())
+display(QM2.draw())
+Both brakets should have the same value
+Clueless and opened to suggestions. Either a glitch somewhere or I am missing something really obvious :)
+Thanks for the report. A tip: Use triple back quotes to quote python code, like this:
+Your first example looks correct. I'm not sure yet why the second example does not agree. But, if you convert the circuits in the second example to matrix operators, then the matrix element does agree with the first example:
+Hi,
+thanks,
+reproduced the same glitch by estimating the braket with the VQE.construct_expectation() (part of a longer code).
+best guess: something to do with the PhaseGate.control command
+Hi, this is bug of the CPhaseGate.inverse().
+Yup, I see what you mean. Not 100% is this the underlying issue but here is the minimal code which reproduces the CPhaseGate.inverse() bug
+"""from qiskit.providers.aer import StatevectorSimulator
+backend2 = Aer.get_backend('statevector_simulator')
+qr1 = QuantumRegister(2)
+QM1 = QuantumCircuit(qr1)
+QM1.h(0)
+QM1.h(1)
+cconp_gate1 = PhaseGate(np.pi).control(1,ctrl_state="0").inverse()
+QM1.append(cconp_gate1, qr1)
+res1=qiskit.execute(QM1,backend=backend2).result()
+StateV1=res1.get_statevector()
+print("this is the first statevector", StateV1)
+qr2 = QuantumRegister(2)
+QM2 = QuantumCircuit(qr2)
+QM2.h(0)
+QM2.h(1)
+cconp_gate2 = PhaseGate(np.pi).control(1,ctrl_state="0")
+QM2.append(cconp_gate2, qr2)
+res2=qiskit.execute(QM2,backend=backend2).result()
+counts2 =res2.get_counts(QM2)
+StateV2=res2.get_statevector()
+print("this is the first statevector", StateV2)
+print("these two statevectos should be the same but they are not")"""
+OK, I will fix this in Qiskit Terra.
+I've checked that this issue is fixed in master and stable.
+The first program outputs
+and the second program outputs
+So, I think this issue is closable.
+The above references a fix that resolves the problem - so closing this.

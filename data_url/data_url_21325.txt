@@ -1,0 +1,28 @@
+The sustained DMA event rate is surprisingly low on Kasli. Using the below experiment, I find that shortest pulse-delay time without underflow for a TTL output is:
+For comparison, with the current KC705 gateware this is 128mu, and sb0 believes this should be closer to 48mu (3 clock cycles per event, https://irclog.whitequark.org/m-labs/2018-03-05)
+(N.B. the RTIO clock for the DRTIO gateware is 150 MHz, vs 125 MHz for Opticlock)
+Experiment:
+Remote TTL is faster than local TTL?
+yes - remote is faster than local. I was surprised by this too, but verified that when there is no underflow I get the correct sequence (number of pulses on a counter) out of both the master and slave.
+That's due to the analyzer interfering (it is writing back to the memory the full DMA sequence, using IO bandwidth, causing bus arbitration delays, DRAM page cycles, etc.). With the analyzer disabled I get 207mu instead of ~1150mu.
+No need to modify gateware, disabling it in the firmware is sufficient:
+The KC705 is less affected because the wider DRAM words make linear transfers (which is what the DMA core and the analyzer are doing) more efficient. We could reach similar efficiency on Kasli by implementing optional long bursts in the DRAM controller, and supporting them in the DMA and analyzer cores.
+@sbourdeauducq  I don't see how this should make local and remote TTL transactions take different time - could you reproduce this aspect?
+Right - if I am reading the SDRAM core correctly, it is currently not buffering reads and writes, or optimising access patterns. So on Kasli during a DMA sequence, in worst case of DMA and analyser data in same bank:
+So this broadly tallies with the opticlock 530ns/2 = 265ns per event = 33 cycles, but does not explain the ~1.1 us per event.
+Whereas reading/write a whole row would take 2+6+125+2=135 cycles for 2KB = 111x 18 byte RTIO events, or just over 1 cycle per event.
+Hence without the RTIO analyser ~5 cycles per RTIO event taking into account the CRI write = 40ns
+Or just a cycle or two extra for the RTIO analyser writeback, assuming it is cached similarly.
+So, depending on the effort required, it seems well worth implementing long bursts.
+Here are the results I got:
+Here is what I propose:
+@pca006132 how is the DMA performance on Zynq? Does the ARM RAM controller give better performance?
+@pca006132 how is the DMA performance on Zynq? Does the ARM RAM controller give better performance?
+There are some debug code and cache flushing in the current artiq-zynq master. With those removed (and moving the cache flush to another location), we can get to 65mu.
+Note that this is because the handle is reused every time. Cache flushing is a pretty expensive operation... So the time that would take to get the handle is not negligible.
+Note: This is not using ACP as it is not finished yet, I expect a bit better performance with ACP.
+Edit: ACP would not be used for DMA due to low bandwidth.
+cool! That's a big step forwards. Is that with the analyzer enabled? I remember there being quite a long tail to the underflow distribution where we'd very occasionally find that sequences which would normally run with quite a bit of slack would underflow. If that's also reduced it would be wonderful...
+cool! That's a big step forwards. Is that with the analyzer enabled? I remember there being quite a long tail to the underflow distribution where we'd very occasionally find that sequences which would normally run with quite a bit of slack would underflow. If that's also reduced it would be wonderful...
+yes, analyzer is enabled, I could get some analyzer output:
+So it should be working correctly I think.

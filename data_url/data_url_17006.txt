@@ -1,0 +1,29 @@
+
+The circuit mapped to coupling map returns different counts vs. original circuit.
+This only occurs for some random seeds.
+Oddly, running it through transpile with seed_transpiler=0 (or any seed I tried) gives the correct result.
+In the instance above, stochastic swap removes the measurement on qubit q3. This is also visible in the shown histogram: after running stochastic swap with the coupling map, every count is 0 where q3 is supposed to be 1. After adding a measurement on qubit q3, the counts are nearly identical.
+Running the circuit through transpile does not show this error because the pass BarrierBeforeFinalMeasurements() is always added before any swap pass which seems to stop stochastic swap from removing measurement gates.
+I see three possible fixes:
+I tend to option 1 or 3 since the method seems to rely on removing measurements as per comment in line 303 and changing this could cause bugs down the road.
+What should be done?
+We should not always rely on the BarrierBeforeFinalMeasurement pass. That is just there to ensure measurements don't creep into the middle of the circuit, because then the circuit cannot run on current hardware. Future hardware can support middle measurements. So the transpiler should produce an equivalent circuit with or without the BarrierBeforeFinalMeasuremet pass.
+Also, this seems to not be the whole story. The example below fails even with execute() -- i.e. when the default level 1 pass manager is invoked, which has inside it the implicit barrier insertion.
+
+The original fix was to have the swap mapper remove the measurements and then add them back at the end (#691), i.e. option 1 above.
+Fixing the measurements does not seem to be sufficient: in the second instance provided by @ajavadia , an U3 gate on q3 is missing in the transpiled circuit after stochastic swap. The cx gates seem to be okay in both instances, i.e. if the measurement/u3 gate is reintroduced to the erroneously transpiled circuit, the counts are almost identical.
+I can have a closer look when I have more time. :-)
+it seems that the bug is triggered whenever stochastic swap encounters a layer with multi- and single-qubit gates that cannot be placed with one swap. In this case, the pass iterates over each gate in the layer individually and tries to place it. However, single-qubit gates and measurements are skipped and thereby omitted in the final circuit.
+The first instance might still give wrong counts since the barrier is missing.
+Minimal example for the given coupling map:
+qasm="""OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[5];
+creg c[5];
+cx q[0],q[4];
+cx q[1],q[2];
+u3(0.777850970026001pi,0.585592073798391pi,1.12646645031497*pi) q[3];
+"""
+
+->
+

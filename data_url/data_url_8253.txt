@@ -1,0 +1,80 @@
+Transform 2-level to eigenbasis and back ... ok
+Transform 10-level real-values to eigenbasis and back ... ok
+Transform 10-level to eigenbasis and back ... ok
+Transform 10-level imag to eigenbasis and back ... ok
+Consistency between transformations of kets and density matrices ... ok
+Check diagonalization via eigenbasis transformation ... ok
+Check Qobj eigs and direct eig solver transformations match ... ok
+Check Qobj eigs and direct eig solver reverse transformations match ... ok
+brmesolve: simple qubit ... ok
+brmesolve: c_ops alone ... ok
+brmesolve: c_ops with a_ops ... ok
+brmesolve: harmonic oscillator, zero temperature ... ok
+brmesolve: harmonic oscillator, finite temperature ... ok
+brmesolve: harmonic oscillator, finite temperature, states ... ok
+brmesolve: Jaynes-Cummings model, zero temperature ... ok
+brmesolve: Check for #572 bug. ... ok
+brmesolve: input list of Qobj ... ok
+td_brmesolve: passes all brmesolve tests ... ERROR
+td_brmesolve: time-dependent a_ops ... ERROR
+td_brmesolve: time-dependent a_ops tuple of strings ... ERROR
+td_brmesolve: time-dependent a_ops tuple interp ... ERROR
+td_brmesolve: time-dependent a_ops & c_ops interp ... ERROR
+td_brmesolve: non-Hermitian e_ops check ... ERROR
+td_brmesolve: states check ... ERROR
+td_brmesolve: split ops #1 ... ERROR
+td_brmesolve: split ops #2 ... ERROR
+td_brmesolve: split ops, Cubic_Spline td-terms ... ERROR
+td_brmesolve: split ops, multiple ... ERROR
+td_brmesolve: Hamiltonian args ... ERROR
+BR Tools : zheevr ...
+I am not really seeing the seg fault clearly in this trace.
+Please could you add some more description in here about what exactly you doing. That is steps to replicate. Please also include details about your environment by running qutip.about()
+Could you also send us your lapack setup:
+I'm seeing the same segfault when trying to run the tests on MacOS. I'm using the following script run_tests.sh in the qutip root folder for running the tests:
+This results in the attached test.log.
+This is for the 4.5.1 release candidate, but I'm getting the same segfault on the current master (0113278)
+Setting up the testing environment with conda avoids the segfault, but hangs indefinitely while running the tests.
+I'm using the following run_tests_conda.sh:
+This produces the attached test.log: testing hangs at test_mcsolve.py::test_MCTDFunc
+For the record, the combination of conda and Python 3.7 (instead of 3.8) works:
+If mcsolve uses multiprocessing internally, it's possible the hanging test is related to the changes in Python 3.8 to use "spawn" instead of "fork" for multiprocessing on macOS (see also qutip/qutip-notebooks#100).
+For the pip installation, the segfault occurs with both Python 3.7 and Python 3.8
+Yes multiprocessing is used by mcsolve. If there are issues pickling function, then it will cause errors. I hope that this could be fixed with the function set_start_method from multiprocessing.
+In the segfault case, the problematic function call lapack from cython by using scipy interface. So it could be a couple of things. On mac, there is the accelerate blas/lapack implementation which does not have the same interface, so if it links to this, then a segfault would not be surprising. But I can't say for sure.
+So, in summary, this issue affects only MacOS running Python 3.8.
+As it is not possible to handle seg faults (because Python crashes), then I think we should, for now, identify which tests we know will seg fault and fail them with a message to say something like "known fault with Python 3.8 on MacOS". This way the rest of the tests will complete.
+We can they work on a proper fix, for which we should raise another issue. I am working on creating a MacOS test platform for myself. In the meantime, if anyone can isolate which tests will cause a seg fault, that would be great.
+It should also affect Windows, even with Python 3.7: Windows has always (I think) used "spawn" for multiprocessing. Thus, if there's a workaround in place that makes mcsolve work on Windows, it should also be applicable to macOS/Python 3.8. Alas, I don't have easy access to a Windows system, so I haven't tested this.
+But, this is definitely a separate problem than the segfaults on macOS, so we should probably track the mcsolve problem in a separate issue.
+Note that openblas has issues with hermitian eigenproblems that lead to segfaults on osx
+Created a new issue #1202 for this
+I did some tests and
+1 - Cause by fortran zheer (lapack eigenvalue solver for complex hermitian matrices) (c's version Ok)
+2 - It happen when installing the scipy stack with pip but not when installing it with conda.
+3 - It depend on the problem size, 64 seems particularly bad, usually it fails on the second call.
+4 - I only got it in zheevr which is only used in brmesolve. But Nathan got it in other tests which use scipy's eigh.
+4 - It happen in scipy in the fortan version of lapack:
+Possible solutions (for zheevr):
+It could be in the installation instruction.
+Or solution 3 should be easy and quick do implement as a temporary patch. A good first cython PR.
+We just need to decide if we accept it like this, go back to make a better fix later or wait for scipy / blas to fix it.
+I'm not sure solution 3 will work as easily as this - if the user's scipy.linalg.eigh is broken, then calling it doesn't help, surely?
+Also, I can reproduce the segfaults with both np.ascontiguousarray and np.asfortranarray on my machine, but it is a size of 64 that seems to reliably do me in.  Script to reproduce:
+and this segfaults on n=64 reliably with the pip version of scipy (linked against OpenBLAS 0.3.7), and always succeeds with the conda version (linked against MKL 2019.4).  Both scipy versions are 1.4.1 here.
+I did the most bare-bones install to test this:
+where blas.py is the repro script above.  Doing this, pip pulls me OpenBLAS 0.3.7.  Looking at the source of OpenBLAS, the whole heavy-lifting implementation is in Fortran - there's the classic LAPACKe C wrapper around the core Fortran LAPACK, but everything eventually goes down to the Fortran.
+If it helps, it's an out-of-bounds access error that causes the segfault for me, and the address it's trying to access doesn't look like dummy nonsense (0x101b95010).
+I'm pretty sure it's a nasty Mac/OpenBLAS bug.  If the problem is particularly in zheevr we could swap the call to eig (instead of eigh) for Mac only, which should hopefully sidestep the problem, because it'll call zgeev instead.  All recent pip installs of scipy link against OpenBLAS, so there's not much that can sidestep it there, other than mandating conda usage, because you can't relink scipy to decent libraries without compiling from source.
+In my tries yesterday, I did not have problem with scipy.linalg.eigh for C array. Since scipy does not use the same lapack interface for C and Fontran continuous array, I though it was fine. I guess I did not run enough tests.
+Using eig and zgeev seems a good idea. I don't have any error with it yet.
+It would then be good to change all the eigh in the code, not just the zheevr call in cython.
+And probably raise an issue in scipy.
+@jakelishman since most computation of eigenvalue in Qutip go through the Qobj could you fix that call this summer.
+It's mostly hiding in sparse.py (and one in wigner.py), but yeah, it'll all get whacked when we separate out a proper data layer.
+For me at least scipy doesn't do anything different for Fortran or C-ordered arrays?  Looking at the code for eigh, it doesn't seem to distinguish, and I think it doesn't really matter - the eigenvalues of the transpose are equal to those of the square matrix, and misinterpreting F-ordering as C-ordering (or vice-versa) is just taking the transpose.  I might be missing some nuance there, though.
+It seems to check if it has a LAPACKe C version of some functions, but in both the OpenBLAS and MKL versions of scipy I don't get the underlying scipy.linalg._clapack, so I always end up with Fortran versions.
+Oh, I see you mean there are direct calls in the Cython code as well.  Yeah, I was only looking in the Python parts when I checked just then.
+I also ran into segfaults on MacOS, using qutip.simdiag and Qobj.eigenstates, it seems like the same issue. This was using scipy installed via conda, from the conda-forge channel. Installing scipy from the defaults channel instead resolved the issue.
+In theory this particular segfault (broken Mac OpenBLAS zheevr affecting eigenstate calculations) was fixed by #1288, though any new segfaults should of course still be reported as new issues.  I'm vaguely aware of segfaults in other QuTiP functions that appear a little randomly (running ptrace on particular superoperators very occasionally seems to produce segfaults), so please do report them if you find more.
+Since I think this issue may be linked in a bug bounty, see #1160 and #1120 for examples of segfaults that I believe are still extant.

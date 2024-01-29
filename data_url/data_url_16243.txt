@@ -1,0 +1,20 @@
+Having gates conditioned on measurements performed earlier are moved before the measurements in the circuit drawing
+eg
+
+This is interesting. I believe the problem is in _get_layered_instructions which builds the list of layers for the drawers to use. There are apparently several problems here. Using simplified circuits, I get these different results. So I'm working on it.
+
+
+
+@nonhermitian, I found the bug that was causing the inconsistency in the placement of the Z with condition in my circuits 1 and 3 above. I am now working on your original issue.
+Given this circuit,
+I assume that since the bit that the Z is conditioned on is not affected by the measures, that the Z can shift to the left under the H gates.
+But if we replace the Z line with qc.z(2).c_if(cr, 2), then the Z gate will have to be to the right of the qc.measure(1,1). If that's the way it should work then I can implement that in _get_layered_instruction.
+Yes that is correct. You cannot be conditioned on a measurement value and displayed before that measurement occurs
+Thanks.
+Maybe an issue in the DAG topological order?
+The circuit_to_dag call in _get_layered_instructions puts the nodes in the right order. The problem comes in the slide_from_left call. There are no checks for node.condition which means a node with condition behaves the same as one without.
+My idea is to create a measure_map with an entry for each clbit. Then for each measure, the appropriate clbit entry would record the layer number of that measure. Then any subsequent nodes with condition on that clbit would only be allowed in positions following that measure's layer.
+It's doable, but I'm open to a simpler solution if one exists.
+I would also just make sure that a conditional is not moved if the user makes a mistake and puts it before a measurement; the drawing is faithful to the circuit instructions even if wrong.
+I would also just make sure that a conditional is not moved if the user makes a mistake and puts it before a measurement; the drawing is faithful to the circuit instructions even if wrong.
+Yes, that's how #5397 is implemented. It follows the DAG, so unless a measure is seen first on a particular register, it will not change where to put a subsequent conditional on that register.

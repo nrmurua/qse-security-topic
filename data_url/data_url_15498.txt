@@ -1,0 +1,64 @@
+When I run HHL algo for Toeplitz 3-diagonal matrix, I get wrong solution vector norm and AbsoluteAverage observable value
+Matrix parameters:
+num_state_qubits = 2 (i.e. 4x4 matrix)
+main_diag = 1.5
+off_diag = 2.5
+HHL values:
+(careful - use custom precision epsilon=1e-3 for HHL)
+norm: 0.35181198384275064
+absolute average: 0.007694805072543073
+True values, obtained classically:
+norm: 9.094259336718267
+absolute average: 1.0354368483403513
+import numpy as np
+from qiskit.algorithms.linear_solvers.hhl import HHL
+from qiskit.algorithms.linear_solvers import NumPyLinearSolver
+from qiskit.algorithms.linear_solvers.matrices import TridiagonalToeplitz
+from qiskit.algorithms.linear_solvers.observables.absolute_average import AbsoluteAverage
+from qiskit import QuantumCircuit
+qubits_count = 2
+main_diag = 1.5
+off_diag = 2.5
+right_hand_side = [1.0, -2.1, 3.2, -4.3]
+rhs = right_hand_side / np.linalg.norm(right_hand_side)
+matrix = TridiagonalToeplitz(qubits_count, main_diag, off_diag)
+observable = AbsoluteAverage()
+num_qubits = matrix.num_state_qubits
+vector_circuit = QuantumCircuit(num_qubits)
+vector_circuit.isometry(rhs, list(range(num_qubits)), None)
+hhl = HHL(epsilon=1e-3)
+quantum_solution = hhl.solve(matrix, vector_circuit, observable)
+quantum_norm = quantum_solution .euclidean_norm
+quantum_mean = quantum_solution .observable
+classical_solution = NumPyLinearSolver().solve(matrix, rhs, observable)
+classical_norm = classical_solution.euclidean_norm
+classical_mean = classical_solution.observable
+print("Classical norm:", classical_norm)
+print("Quantum norm:", quantum_norm)
+print("")
+print("Classical mean:", classical_mean)
+print("Quantum mean:", quantum_mean)
+quantum_norm should be close to classical_norm
+quantum_mean should be close to classical_mean
+Input matrix has following eigenvalues:
+[-2.545084971874736,
+-0.045084971874737104,
+3.0450849718747377,
+5.54508497187474]
+I have a guess that in TridiagonalToeplitz we should pick minimum of absolute values of  ALL eigenvalues as a lambda_min,
+but in current realization this is not true.
+After changing TridiagonalToeplitz.eigs_bounds function from this:
+to this:
+we get quantum_norm = 9.00934178534137 and quantum_mean = 1.0257813095840396, which is much closer to the classical values.
+Now I'm thinking about theoretical prove of my guess. Hope to add it here as soon as I will obtain it.
+Btw, If it's true, we can find minimal absolute eigenvalue without solving system classically, rather just use binary search or simple formula.
+@anedumla Any comment here?
+I guess I came up with an explanation.
+lambda_min is used for delta constant definition, which in turn is used as a scaling factor in ExactReciprocal function.
+In current example lambda_min is much bigger than it should be in correct implementation, that's why scaling factor in ExactReciprocal is bigger too. It means that for all eigenvalues which absolute values are smaller than lambda_min we get rotation angle > 1, and, therefore, ignore them in ExactReciprocal init function. It means that we don't rotate a part of the state.
+P.S. Actually, I have a question about nl definition and connection with an algorithm error. What's the better way to ask - in separate issue?
+What's the better way to ask - in separate issue?
+If this issue is sorted for you then feel to close this and raise it it a new issue if its not directly related.
+So, to solve this issue I added a PR #7968
+UPD: PR has been merged, issue has been fixed.
+Ah ok, I guess I missed that the PR was not set to auto close this. The reference to the issue needs to include one of the recognized keywords - so just for future reference in case its of help https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue#linking-a-pull-request-to-an-issue-using-a-keyword

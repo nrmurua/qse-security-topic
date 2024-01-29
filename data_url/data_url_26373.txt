@@ -1,0 +1,17 @@
+To comply with the Fortran 2008 standard we should upgrade mpiwrap to the new mpi_f80 API.
+Then we can remove the checks for MPI version 2.0, too. The module mpi_f08 is part of the MPI 3.0 standard. But that shouldn't be a problem because it has been published in 2012 and probably every MPI library in use supports the 3.0 standard.
+While grasping through the different documentations of MPI and the actual libraries (mostly OpenMPI), I have found that the mpif90 compiler is deprecated since OpenMPI version 1.7 (!) in favor of mpifort. There are also a few workarounds we can revise or remove in favor of clearer code.
+While configuring OpenMPI, we have to keep the mpi1-compatibility because the currently employed versions of the libraries PEXSI and PTScotch depend on these symbols. The latest releases could solve this issue.
+If you are interested in my current plans in this direction, check this. In general, I would like to introduce OOP because most MPI calls are bound to a single communicators/windows/files/requests/... (exceptions: mpi_init, mpi_finalize, mpi_waitall, ...), but could also be adopted to cartesian communicators, blacs contexts etc.
+The syntax would then be something like
+CALL communicator%send(sendbuffer, destination[, tag])
+or
+request = communicator%isend(sendbuffer, destination[, tag])
++1 for upgrading PEXSI and PTScotch.
+I would like to introduce OOP
+Yes, we should really adopt more OOP. It will allow us to replace many of those dreadful if-else-spaghetti-regions with polymorphism. See also #356 for inspiration.
+I just found this old TODO saying that we can re-enable -pedantic once we have switch to mpi_f08.
+If it is just about compilation, it might work. But the executable does not run with all combinations of compilers and libraries (like MPICH with gcc 11, our common setup on the dashboard).
+A short status update on OOP with MPI:
+Gfortran does not implement finalization properly (I use Gfortran 12 for testing). An important issue for us is the finalization of pointers (and potentially also pointers to derived types with an MPI component). You can easily check it by attaching an empty finalization routine to the cp_fm_type and you will have complaints from Gfortran. Thus, there is much more refactoring of our derived types necessary until we will be able to use finalization at all with Gfortran. MPI derived types are parts of our cp_para_env_types which is used in our cp_fm_type, cp_fm_struct_type and some other types. So I am currently not sure whether I should implement finalization at all or at least turn it off if we compile with GCC. Currently, I am bothered by copying an ownership (with some simple flag because reference counting would either require the use of freeing the objects whenever we use them or proper finalization.
+Another point would be to move on to Fortran 2008+TS29113/Fortran 2018 (Check the implementation status of Gfortran). This will allow us to simplify some parts of our code (like storing input data) significantly or to use MPI to its full extend by exchanging non-contiguous arrays or derived types.

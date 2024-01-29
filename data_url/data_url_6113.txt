@@ -1,0 +1,20 @@
+The dt parameters doesn't seem to be getting used by the solver correctly. In the example notebook it's changed it should affect the Rabi frequency in a deterministic way and it doesn't seem to be. This could be due to the pulse interpolation (i.e. the look up is not getting divided by dt).
+For example, we should be able to set dt=1e-9 and all the frequencies to GHz and this also doesn't seem to work
+This is because the solver was designed to use natural units. This is a standard thing to do in numerics.
+Right, but since open pulse gives pulses as a list of samples there is a missing time unit (the time between samples) and that time is dt.
+It is used here: 
+to set the width of a pulse in time, and it the computation of the max_time needed in the simulations.
+Doesn't it need to be in chan_val (eg these lines 
+I believe start_time and stop_time are used to determine the index that corresponds to the value of the channel in the discrete list of pulse values.
+Ok,I see what you're saying, but I was getting some non-intuitive answers by changing dt, so it might be good to double check.
+I think I've found the source of the error in experiment_to_structs: there are a few places where 'sample time' is being erroneously combined with 'real time' (i.e. inst['t0'] vs  inst['t0']*dt). E.g.
+
+The issue seems to be fixed if you just replace all appearances of inst['t0'] with inst['t0']*dt in experiment_to_structs. Once you do this the Rabi oscillation does seem - at least by eye - to respond appropriately to changing dt.
+I can make this change, but just wanted to verify: Are all 'time' parameters in structs meant to be in 'real time', or are any supposed to be kept in sample time? Are you aware of any further places that this could come up (e.g. in chan_val, if the simulator has access to any time information other than what is set in structs)?
+@dcmckayibm, @nonhermitian
+T0 is no longer measured in actual time?
+As far as I am aware inst['t0'] is coming directly from the start time of a pulse instruction, which is always an int.
+I do not recall that being in the spec, but could be wrong.
+any "times" in the pulse schedules are in terms of dt
+Ok then there is the problem.
+Closed by #473

@@ -1,0 +1,20 @@
+From rigetti/forest-benchmarking#237 (comment)
+The QVM does not currently support programs with Quil-T instructions.
+Assuming these instructions can be discarded, two approaches can be taken:
+The set of unsupported instructions should be known by pyquil.
+As suggested by @MarquessV, this could be a statically defined set:
+Or, some field on AbstractInstruction like .is_protoquil() -> bool or similar, or have the instructions extend another QuilTInstruction class and do similar filtering.
+Ultimately, this could be packaged into a Program.prepare_for_qvm() or similar, requiring the user to explicitly make this call with the understanding that some instructions would be removed.
+Along with a utility like from #1, automatically call this preparation somewhere like QVMCompiler.
+Option 2- I think you meant "QVM-bound executions"?
+My 2c: I would not use the semantics of prepare_for_qvm() but rather be clear that all Quil-T instructions are being stripped. There are other use cases where the same utility is required. I don't believe there is any plan to extend the QVM to simulate Quil-T instructions, and they certainly have no effect on the underlying state-vector simulation, so they can always be safely removed. This does include DELAY and FENCE appearing in the main instruction flow. At the (minor?) risk of needing to version pyquil's behavior when it is connected to some mystical future QVM where this is no longer the right thing to do, you would be doing every user a favor by doing it on their behalf just prior to submission for execution.
+I recommend 1+2.
+The model I have in my head is this: The QVM only understands things with DefGates*. If it doesn't have a defined unitary, it's meaningless to the QVM. As Mark says, it's not impossible that this changes one day, but it there aren't any plans or motivation to do so.
+I see the point that this does insert some opaque transformation to the program in the execution path, but what is happening in practice is that users are inserting incomplete versions of this into random places in their code so that it can run on both the QPU and the QVM. I think it would ultimately be cleaner to just to do it automatically.
+*Plus a handful of Pragmas and classical instructions
+Ignorant question: since these instructions don't have any effect on the state-vectors, can we just add them to QVM as no-ops? Is there a reason why QVM is more difficult to update than PyQuil is?
+Another ignorant question, this time one that I should probably already know the answer to: do QVM-bound executions go through translation? They don't, right?
+Another ignorant question, this time one that I should probably already know the answer to: do QVM-bound executions go through translation? They don't, right?
+Correct, it does not. The original program gets wrapped as an "executable" but it is not modified in any way.
+Ignorant question: since these instructions don't have any effect on the state-vectors, can we just add them to QVM as no-ops? Is there a reason why QVM is more difficult to update than PyQuil is?
+QVM is written in Lisp and I assume has its own Quil parser. I suspect that parser was not updated for the Quil-T additions to the grammar, so its nugatory work to parse something that is then a no-op in simulated execution.

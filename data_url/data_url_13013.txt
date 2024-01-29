@@ -1,0 +1,37 @@
+Greedy partitioner has the following error when run with the 60-qubit multiplier circuit.
+Traceback (most recent call last):
+File "generate_qgo_partitioned_qasm_files.py", line 82, in 
+ForEachBlockPass(GreedyPartitioner(BLOCK_SIZE)).run(circuit, {})
+File "/home/tpatel/bqskit/bqskit/compiler/passes/control/foreach.py", line 164, in run
+loop_pass.run(subcircuit, subdata)
+File "/home/tpatel/bqskit/bqskit/compiler/passes/partitioning/greedy.py", line 170, in run
+regions = self.topo_sort(regions)
+File "/home/tpatel/bqskit/bqskit/compiler/passes/partitioning/greedy.py", line 220, in topo_sort
+raise RuntimeError('Unable to topologically sort regions.')
+RuntimeError: Unable to topologically sort regions.
+The circuit is divided into 4 vertical blocks before partitioning to reduce the memory overhead. The crash happens after 16-18 hours of running the partitioner. The following code is used to divide the circuit before partitioning.
+k = 4
+num_cycles = circuit.get_num_cycles()/k
+print(num_cycles)
+regions = []
+for i in range(k):
+regions.append(CircuitRegion({
+q: (int(i * num_cycles), int((i+1) * num_cycles)-1)
+for q in range(circuit.get_size())
+}))
+folded_circuit = Circuit(circuit.get_size(), circuit.get_radixes())
+for region in regions:
+small_region = circuit.downsize_region(region)
+cgc = circuit.get_slice(small_region.points)
+if len(region.location) > len(small_region.location):
+for i in range(len(region.location)):
+if region.location[i] not in small_region.location:
+cgc.insert_qudit(i)
+folded_circuit.append_gate(
+CircuitGate(cgc, True),
+sorted(list(region.keys())),
+list(cgc.get_params()),
+)
+circuit.become(folded_circuit)
+ForEachBlockPass(GreedyPartitioner(BLOCK_SIZE)).run(circuit, {})
+The GreedyPartitioner has been superseded by the QuickPartitioner, so I'm closing this.

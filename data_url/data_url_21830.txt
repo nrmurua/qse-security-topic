@@ -1,0 +1,138 @@
+Since doing the slave FPGA loading rework and upgrading to the latest master, I've started seeing PRBS errors roughly 100% of the time on boot. I never saw that before. Not sure if it's due to the rework or to changes in the code. IIRC @gkasprow saw this as well...
+https://pastebin.com/2X0Y17B6
+Maybe this has something to to with TXEN pin of DAC?
+I observe this on two boards.
+Maybe. But it happens on both DACs and we only altered the TXEN on DAC2...
+that's true. But this was the only modification I did. There is 3.3V -> 1.8V conversion using 200R resistor that injects current to 1.8V port of DAC and FPGA.  Theoretically the FPGA has protection diodes, but DAC may not like voltage peaks of rougly 2.5V (1.8V + 0.7V of diode). I have no idea how this could affect second DAC channel in such bizarre way.
+Another question to @sbourdeauducq is if there is any signal present on FPGA_CFG_DIN during normal operation. Is the logic level low after configuration?
+My guess was that it's due to one of the recent ARTIQ commits rather than the HW changes. But, I might be wrong -- I haven't given it too much thought yet.
+the funny thing is that I started seeing PRBS errors on one board a few days ago, another was workin well. And next day second board also got PRBS "sickness ".
+Have you tried --without-sawg? I suspect that the corruption runs deeper than just the SDRAM.
+Okay. I'll try that and your blinker next to see if we can find some issue with a simpler logic block that we can focus on instead of debugging complex jesd/memory issues.
+One data point here: running with the SAWG held in reset, I don't see the "crash kernel" crash. But, I do see a bunch of errors during init (JESD PRBS, can't determine SYSREF margin at FPGA)
+Note to self: try this with a no-sawg build. It would be interesting to see if there is a difference between no SAWG and SAWG in reset. If there is, then this seems much more like a vivado issue than a hardware issue.
+I rebuilt the current master without SAWG and still see this: https://hastebin.com/fafokucoqa.sql
+I have never seen this until recently (around the time that slave loading was added), but it's been in 100% of my recent builds.
+@sbourdeauducq do you see this issue on your board?
+No I don't.
+One change that is likely to have exposed this bug is this:
+de7d64d
+Try reverting this commit, it is not required for anything other than the DRTIO master with local DACs.
+I'm currently building with: f9910ab
+de7d64d can be easily reverted on top of master. It's a very simple change (disable the other 7043 clock output - not required in theory but let's be paranoid - and change dac_refclk back to 0). The sysref phase doesn't have an impact on PRBS.
+f9910ab works: https://hastebin.com/erulazasek.go
+Running current master with de7d64d reverted does indeed work.
+@gkasprow @enjoy-digital any idea why that happens? The GTH quad imbalance is the same in both cases, and the number of crossed quads is within spec.
+Do you have the same behaviour if you only keep de7d64d but disable the GTP_CLK1 output of HMC7043?
+Could it be related to the fact that we now have two reference clocks active and still using QPLLXREFCLKSEL=0b001? (Table 2-8 of UG576)
+Could it be related to the fact that we now have two reference clocks active and still using QPLLXREFCLKSEL=0b001?
+The ARTIQ code is not using the QPLL. Should it?
+Ah sorry we are using CPLL. Then maybe check CPLLREFCLKSEL & https://github.com/m-labs/jesd204b/blob/master/jesd204b/phy/gth.py#L260. Should we connect GTREFCLK1 and set  CPLLREFCLKSEL to 2?
+Should we connect GTREFCLK1 and set CPLLREFCLKSEL to 2?
+How would that help?
+" a single external reference clock with multiple transceivers connected to multiple Quads. The user design connects the IBUDFS_GTE3 output (O) to the GTREFCLK0 ports of the GTHE3/4_COMMON and GTHE3/4_CHANNEL primitives for the GTH transceiver.
+In this case, the Xilinx implementation tools make the necessary adjustments to the  north/south routing as well as pin swapping necessary to route the reference clocks from one Quad to another when required"
+Do you have the same behaviour if you only keep de7d64d but disable the GTP_CLK1 output of HMC7043?
+Could it be related to the fact that we now have two reference clocks active and still using QPLLXREFCLKSEL=0b001? (Table 2-8 of UG576)
+@sbourdeauducq do you still want me to do this? I'm a bit short on time atm...
+No, that's unlikely to help. The other clock is either unrouted or routed to the other quad for DRTIO. And GTREFCLK0 is the correct setting as per the transceiver user guide I quoted above.
+@gkasprow remind me, did you try turning the HMC7043 GTP_CLK{1,2} outputs back to LVPECL? Did that help the PRBS errors?
+@hartytp I did help with clock amplitude but not with PRBS errors.
+@marmeladapk that's what I thought, thanks for confirming. It was a long shot, but I wondered if this was some SI issue related to the low clock amplitudes using LVDS outputs in combination with 200R LVPECL bias resistors. If you've tested that then I won't bother looking at it again.
+I still see this error after fixing the Vccint supply (I measure 0.951V at the 0R power resistors): https://hastebin.com/hevawerodo.sql
+I believe that @marmeladapk also found that the Vccint rework did not help the PRBS errors...
+Yes, today I got these errors once.
+@gkasprow Can you check SI and jitter on GTP_CLK1 and GTP_CLK2 on a board that exhibits this problem? And generally investigate this?
+Okay, good!
+So, the question is how the RTM affects the PRBS...Clock SI? Some PI issue? An issue with the DACs themselves?
+Does that RTM work when using GTP_CLK1? We need to make sure this is the same issue.
+If you prepare a bitstream I will test immediately.
+PRBS occurs on both DACs
+[    11.228764s]  INFO(board_artiq::ad9154): AD9154-0 found
+[    11.243918s]  INFO(board_artiq::ad9154): AD9154-0 initializing...
+[    11.256823s]  INFO(board_artiq::ad9154):   ...done
+[    11.330706s]  INFO(board_artiq::ad9154): AD9154-0 running PRBS test...
+[    12.336232s]  WARN(board_artiq::ad9154):   PRBS errors on lane0: 00010b
+[    12.341673s]  WARN(board_artiq::ad9154):   PRBS errors on lane1: 0000fc
+[    12.348273s]  WARN(board_artiq::ad9154):   PRBS errors on lane2: 000115
+[    12.354871s]  WARN(board_artiq::ad9154):   PRBS errors on lane3: 0000ee
+[    12.361470s]  WARN(board_artiq::ad9154):   PRBS errors on lane4: 000162
+[    12.368070s]  WARN(board_artiq::ad9154):   PRBS errors on lane5: 000142
+[    12.374669s]  WARN(board_artiq::ad9154):   PRBS errors on lane6: 000122
+[    12.381268s]  WARN(board_artiq::ad9154):   PRBS errors on lane7: 0000e3
+[    12.387749s] ERROR(board_artiq::ad9154): failed to initialize AD9154-0: PRBS failed
+[    12.395736s]  INFO(board_artiq::ad9154): AD9154-1 found
+[    12.410890s]  INFO(board_artiq::ad9154): AD9154-1 initializing...
+[    12.423793s]  INFO(board_artiq::ad9154):   ...done
+[    12.530025s]  WARN(board_artiq::ad9154): AD9154-1 config attempt #1 failed (bad SYNC)
+[    12.546856s]  INFO(board_artiq::ad9154): AD9154-1 initializing...
+[    12.559759s]  INFO(board_artiq::ad9154):   ...done
+[    12.633631s]  INFO(board_artiq::ad9154): AD9154-1 running PRBS test...
+[    13.639150s]  WARN(board_artiq::ad9154):   PRBS errors on lane0: 000143
+[    13.644589s]  WARN(board_artiq::ad9154):   PRBS errors on lane1: 0001a6
+[    13.651188s]  WARN(board_artiq::ad9154):   PRBS errors on lane2: 000199
+[    13.657787s]  WARN(board_artiq::ad9154):   PRBS errors on lane3: 00012c
+[    13.664387s]  WARN(board_artiq::ad9154):   PRBS errors on lane4: 0000f2
+[    13.670986s]  WARN(board_artiq::ad9154):   PRBS errors on lane5: 000182
+[    13.677585s]  WARN(board_artiq::ad9154):   PRBS errors on lane6: 00015c
+[    13.684184s]  WARN(board_artiq::ad9154):   PRBS errors on lane7: 000158
+[    13.690663s] ERROR(board_artiq::ad9154): failed to initialize AD9154-1: PRBS failed
+@hartytp I can do this, could you just point me in the general direction? I didn't follow this discussion closely.
+OK, I got it!
+The input SMA has short-circuit between hot pin and GND.
+With generator the HMC managed to lock and the output signal looked good.
+But when I connected to the AMC clock output, the signal disappeared!
+Now both from generator and from AMC output HMC locks and PRBS errors don't exist anymore.
+[    12.380113s]  INFO(board_artiq::ad9154): AD9154-0 running STPL test...
+[    12.386902s]  INFO(board_artiq::ad9154):   c0 errors: 0
+[    12.392107s]  INFO(board_artiq::ad9154):   c1 errors: 0
+[    12.397316s]  INFO(board_artiq::ad9154):   c2 errors: 0
+[    12.402526s]  INFO(board_artiq::ad9154):   c3 errors: 0
+[    12.407450s]  INFO(board_artiq::ad9154):   ...passed
+[    12.412398s]  INFO(board_artiq::ad9154): AD9154-0 SYSREF scan...
+[    12.777513s]  INFO(board_artiq::ad9154):   sync error-: 481 -> 0
+[    13.172098s]  INFO(board_artiq::ad9154):   sync error+: 481 -> 482
+[    13.176977s]  INFO(board_artiq::ad9154):   margins: -33 +36
+[    13.192987s]  INFO(board_artiq::ad9154): AD9154-0 initializing...
+[    13.205855s]  INFO(board_artiq::ad9154):   ...done
+[    13.280061s]  INFO(board_artiq::ad9154): AD9154-1 found
+[    13.294265s]  INFO(board_artiq::ad9154): AD9154-1 initializing...
+[    13.307170s]  INFO(board_artiq::ad9154):   ...done
+[    13.381043s]  INFO(board_artiq::ad9154): AD9154-1 running PRBS test...
+[    14.387412s]  INFO(board_artiq::ad9154):   ...passed
+[    14.391071s]  INFO(board_artiq::ad9154): AD9154-1 running STPL test...
+[    14.397856s]  INFO(board_artiq::ad9154):   c0 errors: 0
+[    14.403065s]  INFO(board_artiq::ad9154):   c1 errors: 0
+[    14.408275s]  INFO(board_artiq::ad9154):   c2 errors: 0
+[    14.413485s]  INFO(board_artiq::ad9154):   c3 errors: 0
+[    14.418407s]  INFO(board_artiq::ad9154):   ...passed
+How does this explain the behavior where CLK1 works but CLK2 doesn't? And why did you measure good clocks on both CLK1 and CLK2?
+@marmeladapk
+If that looks good, look at the JESD lanes. And see if it all looks okay (trigger the scope from the JESD clock). You can try looking at the JESD lanes both with the PRBS pattern and with a square wave (using this patch #1080 (comment))
+I didn't said that it works with CLK1. it was pure coincidence, maybe they broadcasted  something else on FM when we did tests a few months ago :)
+@sbourdeauducq are you happy with that description of what needs to be done. #1080 (comment)
+@hartytp Without-sawg will have this problem?
+On my board, SAWG doesn't make any difference to this, so I've been testing --without-sawg to speed up my builds.
+Remember to check the UART for PRBS errors before testing, as there is no point testing on a working AMC/RTM pair.
+And since the SMA is grounded via 10pF, this has enough impedance to pickup nearby RF. I did tests:
+then I removed the short circuit
+then I disabled the generator
+then I enabled the generator
+The signal from generator leaks via non-ideal cable shield and via 10pF capacitor to the LTC chip but with poor quality, but enough for HMC830 to lock
+I cannot say I am "happy" about any of this, but yes, this procedure looks correct and hopefully will turn up something.
+@gkasprow that's posted on the wrong issue, I think.
+This is already hard to follow without cross-posting!
+I've noticed that, too many threads opened...
+@gkasprow to make sure we don't waste time, please can you send me the binaries you were using for your tests? I'd like to check that I can reproduce the PRBS issues on my board with your binaries. If I can then I'll post it back to you tomorrow morning.
+@marmeladapk please post here binaries I used for tests. It is on your computer on your account.
+Thanks for sending me the binaries @marmeladapk.
+Using them, I see:
+No idea why I'm seeing this new error on DAC0. But, anyway, this does show up the PRBS errors on at least one DAC, so it seems to be a fine binary for testing.
+@gkasprow can you remind me where on the AMC I can probe CLK2? I'll double check that before I return the board.
+@hartytp here sinara-hw/sinara#572 (comment)
+@gkasprow the AMC + RTM have been delivered and signed for in WUT.
+@gkasprow What was the problem? Why was it not found when measuring the clocks?
+The board I got from @hartytp had one of coupling capacitors missing (damaged mechanically). The board I got from @sbourdeauducq had SMA input shorted to its shell. Both caused PRBS issue.
+The clocks looked good, but had periods of high jitter which was not picked by the scope. I should have look at them with spectrum analyser....
+Do the hardware bugs discovered by @gkasprow explain all the reported PRBS errors related to this issue?
+Yes.

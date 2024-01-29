@@ -1,0 +1,9 @@
+The transpiler fails on serialization when it tries to parallelize transpilation of a list of circuits. Internally, dill fails to serialize an instance of the PassManager.
+Originally the problem came from Qiskit Machine Learning, where the unit tests fail and CI is blocked.
+@manoelmarques FYI
+Run the script:
+The code fails:
+No response
+I think I can see the problem here - it's ErrorMap, an internal Rust class for the VF2 layout passes causing issues.  Internally in Rust it uses a HashMap<[usize; 2], f64> to store the data, and to pickle itself it it has __getstate__ and __setstate__ methods that expose this object to Python via PyO3 binding.  The problem is that the natural PyO3 deserialisation type of Rust's [usize; 2] is Python's list[int], which can't be used as a dict key, causing a Rust panic.
+We can fix this by overriding PyO3 to ensure it converts the map to dict[tuple[int, int], float] instead, and then converts that back to the correct type in Rust.
+Should be fixed by #9200.

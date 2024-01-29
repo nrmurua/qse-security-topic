@@ -1,0 +1,31 @@
+Hello,
+I'm trying to retrieve the expected value of a tensored Pauli operator on a statevec, for example <ψ|ZZ|ψ>. I found out that there's a function in the dev branch calcExpecPauliProd (thx a lot!!), but it's actually computed using the inner product, according to the header file. It would be interesting to estimate the value from (a finite number of) measurements, similarly to a real quantum computer.
+Finite measurement can be performed easily on a single qubit, for example, if p0 and p1 are variables that are to store the respective probabilities of |0> and |1>:
+For a single qubit the expValue <ψ|Z|ψ> is simply p0-p1, as explained here. However when multiple qubits are to be measured, it is not so simple, "One additional note, while it may be tempting to assume that measuring Z⊗Z is the same as measuring Z⊗1 and then 1⊗Z, this assumption would be false." and so, if I understand correctly, we need a routine to measure more than one qubit at the same time, to get the expValue. Is this feasible?
+Ok I think I got something here... It seems that I can actually use single qubit measures to retrieve the expValue. I'll try to introduc you to my code, maybe it could also be useful for issue #171
+So, since I didn't know that you guys were working on this I had made my own Hamiltonian struct as a linked list, each item of the list holds a tensored pauli operator in this format:
+the list is populated recursively using recursive functions such as:
+The Hamiltonian is evaluated with the function:
+where evaluateMultiPauli is defined as:
+and evaluatePauli can be implemented using finite measurement introduced in my previous post.
+The results that I get using this pipeline are the same as calcExpecPauliSum but it seems that they are a lot faster to compute! Here's a benchmark using the H2 molecule, on 4 qubits, where expected values are evaluated on all the possible basis states (Slater determinants) and printed one after the other. In this case finite sampling is not used, I just used measureWithStats to make the comparison more plausible.
+Let me know what you think of it!
+Oops I placed the timing functions in the wrong place, calcExpecPauliSum is actually quite a bit faster. Do you have any idea on how to improve evaluateHamiltonian?
+I tested it again on LiH, 12 qubits on a quadcore i7-7500U 16GB RAM machine, with all 4096 amplitudes:
+Also I forgot to include destroyQureg(qureg_clone, env); at the end of evaluateHamiltonian.
+If you have a better (faster) solution to estimate the finite sampling let me know!
+Hi Rugantio,
+Thanks for your interest in QuEST! I am a little confused by your request though.
+calcExpecPauliProd returns the expected value at "full" numerical precision; there is hence no need to approximate it with Monte Carlo sampling. If you want to simulate shot noise in a measurement of the expected value, then you can simply do so by generating a random variable with expected value that returned by calcExpecPauliProd. I do so in the supplementary material  (B. Lithium Hydride >> 2. Numerical simulation) of this paper.
+There seems little point in repeatedly calling measure when you already know the distribution; it's an inefficient way to "get the expected value inaccurately" ;)
+Hey Tyson, thank you for this great tool!
+My idea was to bluntly imitate what a quantum computer does, but what you're saying is actually much more efficient. So basically I only need to shift the calcExpecPauliProd by my total error:
+newExpecPauliProd = ((1-gate_err)^depth_of_circuit)*oldExpecPauliProd
+and if I had different gate_err for 1 and 2 qubit gates I guess I can compose the total error as
+((1-gate_err_1Q)^depth_of_1Q)*((1-gate_err_2Q)^depth_of_2Q)
+Is this sound?
+Hmm that's an (admittedly, quite crude) approximation of how errors in the gates accrue error in the expected value. We're reasoning that our circuit is sufficiently big and the errors "uniformly random" that they shift us directly to the fully mixed state. Your calculation is sound if you believe those assumptions are still maintained. Note this gate error is a very different error due to that by finite-sampling of the expected value from perfect gates, as you first ask about.
+If you want to reliably understand how gate errors affect your expected value, you should switch over to a density-matrix simulation. There's doc for the dev branch hosted here - obviously use dev at your own risk!
+After you apply a gate, you can also induce an error channel on your qubits (see the list of supported errors here).
+The result of calcExpecPauliProd will then be shifted due to those errors. If you additionally want shot noise (due to finite sampling of this expected value, like an experimentalist faces), plug the result into a RNG as above.
+Thank you so much for your help, I'll try to use the density matrix approach and see what to make of it. I can close the issue :)

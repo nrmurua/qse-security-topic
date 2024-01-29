@@ -1,0 +1,37 @@
+I was running the following code on a cuQuantum Appliance 23.03 Docker instance, on an a2-highgpu-1g, with a RAM of 85 GB:
+The code ran just fine with cirq.Simulator(), taking 2 s in total. It ran fine with qsimcirq.QSimSimulator() for qsimcirq 0.12, taking ~19 s in total (probably could be optimized to ~2 s), and ran fine for qsimcirq 0.13, taking ~1 min 8 s. But for qsimcirq 0.14 and 0.16, I got
+The line where the error happens, is for construction of the final state vector after the simulation has finished.
+The most I can bisect is between releases, and so it is due to change(s) between 0.13 and 0.14. Any idea what could be the cause?
+It could also be due to older versions of Cirq for the qsimcirq 0.13 that I tested. I did it on an older version of cuQuantum Appliance, which has an older Cirq.
+I tried qsimcirq 0.16.3 + Cirq 0.14, still OOM-ed. As such, the code that causes the increased memory cost is very likely in the qsim repo.
+Thanks for raising this issue! The root cause has several parts:
+The appropriate solution to this likely involves passing the buffer qsim uses in its C++ layer up to the python level so we can recycle it for cirq.StateVectorSimulationState. We could also simply free the C++ buffer to make space for Cirq to create a new one, but that would incur additional time cost.
+I see, it's a relief knowing the cause.
+The appropriate solution to this likely involves passing the buffer qsim uses in its C++ layer up to the python level so we can recycle it for cirq.StateVectorSimulationState.
+Why is the return type in 
+(digression: I suppose a full solution to the issue requires changing pybind_main.cpp to expose the buffer, and thus requires a recompilation. Unfortunately, I can't recompile qsim from scratch because I'm using cuQuantum Appliance, which has custom modifications over qsim, especially the multi-GPU backend. Seems to require #601 to be solved)
+Why is the return type in {...} py::array_t<float> instead of complex?
+@sergeisakov would know best, but I believe this is because qsim stores the state as a float array for vector operations. Real and imaginary components of each complex value are stored as separate floats and recombined once the result surfaces in python.
+@sergeisakov would know best, but I believe this is because qsim stores the state as a float array for vector operations. Real and imaginary components of each complex value are stored as separate floats and recombined once the result surfaces in python.
+Yes, this is correct.
+(digression: I suppose a full solution to the issue requires changing pybind_main.cpp to expose the buffer, and thus requires a recompilation. Unfortunately, I can't recompile qsim from scratch because I'm using cuQuantum Appliance, which has custom modifications over qsim, especially the multi-GPU backend. Seems to require #601 to be solved)
+Why do you think this issue is related to #601?
+NVM, that was a digression comment specific to my use case. Though I was mistaken that the issue in that comment is related to #601, because the cuQuantum Appliance would still contain (proprietary? [1]) modifications over qsim, even if there is a dynamic link to CUDA and cuQuantum.
+[1] I can't seem to find the string max_fused_diagonal_gate_size in the qsim codebase.
+because the cuQuantum Appliance would still contain (proprietary? [1]) modifications over qsim
+Yes, it seems the cuQuantum Appliance contains proprietary modifications over qsim.
+A note on performance. Just running
+doesn't really perform any simulation. Running, say,
+performs simulation and it takes 130 seconds on an a2-highgpu-1g (not just 2 seconds). Running that with qsimcirq.QSimSimulator() takes 43 seconds (I guess this time may vary). However, the actual simulation time on an A100 GPU is just 0.8 seconds (0.4 seconds with gate fusion). It takes about 25 seconds to transfer the data from the device to host memory and it takes about 15 seconds to create the cirq.StateVectorTrialResult object. It's not really recommended to use simulate for shallow circuits on GPUs.
+I see.
+It's not really recommended to use simulate for shallow circuits on GPUs.
+I believe the OOM issue on a2-highgpu-1g happens even on deep circuits, because of the post-simulation creation of cirq.StateVectorTrialResult.
+I believe the OOM issue on a2-highgpu-1g happens even on deep circuits
+Yes, the OOM issue happens even on deep circuits. I think this issue should be fixed on the Cirq level.
+Cirq has another line state_vector = state_vector.copy() that allocates memory in addition to buffer = np.empty_like(state_vector). So Cirq allocates two buffers and it does not recycle the buffer that it gets from the C++ layer.
+I tried commenting out the state_vector = state_vector.copy() line, and no more OOM, yay! However, is it safe to do so? My assumption is that _BufferedStatevector new allocation of a copy of the state vector, make senses only if there are going to be further operations on the state vector, and that it needs to be immutable where the initial_state is not modified. If there are no further operations, then they are not needed.
+I suppose, in addition to reusing the buffer from the C++ layer, there needs to be a flag in cirq.StateVectorSimulationState that allows modification of initial_state in place?
+However, is it safe to do so?
+I think it should be safe to do so.
+I suppose, in addition to reusing the buffer from the C++ layer, there needs to be a flag in cirq.StateVectorSimulationState that allows modification of initial_state in place?
+Yes, something like that.

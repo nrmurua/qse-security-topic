@@ -1,0 +1,15 @@
+I'm trying to use qiskit for noisy simulation. Since I want to specify the location of the noise, I choose to add an identity gate to the place I want to add noise, and then set the identity gates to be noisy. Below is an example,
+I want to do this because I want all single-qubit gates (more specifically, single-qubit Clifford gate) to have the same error rate. If I specify the noisy gate set to be something like ["h", "s", "x", "y", "z"], then the gate that is decomposed into longer sequence will be more noisy.
+If I use the following script to get the expectation value:
+the result will be 1, the ideal value. And the reason is that psi = CircuitStateFn(circ)  will delete the identity gate even if I set the optimization_level to 0 when defining q_instance. This can be verified with print(psi). Since the identity gate disappears, there is no noisy instruction and the expectation becomes 1.
+To be more flexible, I think there should be an optimization_level option in the CircuitStateFn to let users to set up. Or just do not optimize the circuit since this option is specified by the QuantumInstance.
+I do realize that a more direct way is to use circ.save_expectation_value(X, circ.qubits). But when X is replaced with some more complicated operator (like PauliSumOp) and when the number of qubits scale up, this step takes much time. After checking the source code, I found the reason might be that in operator.py, it will first convert the operator to a matrix with the to_matrix() method, even if I want to use the stabilizer simulator. So it seems that the CircuitSampler approach is more reasonable. Or maybe there are other ways to get the expectation values in qiskit?
+Indeed the CircuitStateFn has logic to remove Identity gates. https://github.com/Qiskit/qiskit-terra/blob/7c8815390b1a79e76e040fbdd2b130d8b6e7d41f/qiskit/opflow/state_fns/circuit_state_fn.py#L367-L380 I know this reduce method is called when doing a string conversion. I imagine that in your flow above that this reduce method ends up getting called via another path.
+Or maybe there are other ways to get the expectation values in qiskit?
+This is something that is being looked at presently. #6451 was created a while back and there is work in progress now on this. FYI @t-imamichi @ikkoham
+The problem is that we cannot simulate noise because the noise is defined in the identity gate and the identity gate disappears in the computation process of expval. it is difficult to solve this problem because of the design philosophy of Opflow. Opflow is a high-level framework.
+In the near future, you can add QuantumError instructions directly to the QuantumCircuit.
+Qiskit/qiskit-aer#1350
+work-around: you can define a different instruction to insert noise.
+Adding QuantumError directly to the QuantumCircuit would be cool!
+Opflow is now deprecated soon to be removed. New features/enhancements are no longer a consideration.

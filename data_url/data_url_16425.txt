@@ -1,0 +1,17 @@
+Measurement noise mitigation is supported when the circuits are mapped to the same qubits. A problem has been recently reported by two users on the public Qiskit Slack #aqua channel in the last couple of days. Here is one
+Hi, has anyone run into a similar error before? I have only changed the number of orbitals that I want to freeze in my VQE calculation and that immediately resulted in this error. What’s also puzzling is that it only happens on some devices, but not others.
+qiskit.aqua.aqua_error.AquaError: 'The used qubit index are different. ([7, 1, 0, 6, 3, 2]) vs ([0, 2, 7, 5, 1, 6]).\nCurrently, we only support all circuits using the same set of qubits regardless qubit order.'
+In discussion with @kdk he offered the following
+I remember this coming up a little while ago, and the explanation I think is that the routing passes (that introduce swap gates to compensate for finite 2q gate connectivity) will not always map final measurements to the same set of qubits.
+There are possible workarounds, involving either not running the routing pass (by providing an already routed circuit) or by running the routing pass (with a fixed initial_layout) under a handful of seeds until you find a set that give only one final layout.
+Clearly we want to be able to use measurement noise mitigation so this needs some solution that a user of VQE can easily setup so it just works. This may also require functionality change in other areas to facilitate this but I raised it here since this is the level the issue is seen at.
+Why is it not possible just to run the missing cal data and do meas mitigation on the new set?
+I was capturing the issue in summarizing the Slack messages as it seemed a problem that needed addressing. I investigated it a little, as you can see above, before raising this originally on Aqua. I do not believe it has been looked at any further - I transferred the issue over, as I think its still valid, and since it would have to be addressed here now.
+Perhaps what might not be clear is that we have code in QuantumInstance to do this measurement mitigation, in a common way for the algorithms. Its the logic in that which would need to be looked at.
+qiskit-community/qiskit-ignis#551 (comment) reports a bug in Ignis, do you think it could be related:
+If mit_pattern is [[1, 3], [0], [2, 4]] and the noisy qubit is qubit 0, then the TensoredFilter.apply() would mitigate the error on qubit 1 using the calibration matrix of qubit 0, which seems to be unexpected behavior.
+@yaelbh I think its more to do with the logic we have in QuantumInstance, that does measurement mitigation on behalf on the algorithms when the user enables the mitigation, that it did not expect to have to deal with different qubit mappings over the set of circuits it's running - the circuits for VQE, where it was observed/reported above, are pretty much all just the anstaz with the basis change gates appended to do measurement. But I guess that is enough delta that the mappings can end up different.
+I believe this to be obsoleted by the move of qiskit.algorithms to use primitives.  Steve, could you check, and close it if so?
+Steve, could you check, and close it if so?
+Indeed the algorithms have all been redone/migrated to use primitives which themselves now can provide mitigation, such as the with Qiskit IBM Runtime primitives and their resilience_level setting.
+QuantumInstance, and the algorithms using/use of it is all now deprecated. This issue can be closed as not planned.

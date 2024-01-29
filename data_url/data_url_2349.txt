@@ -1,0 +1,31 @@
+Reconstructing a circuit op-wise and replacing all parametrized ops with new ops containing parameter updates is 10-50x faster than using cirq.ParamResolver with sympy  symbols...
+Example code to reproduce:
+produced (cirq v0.5.0, Windows 10 + core i7 gen 7 processor)
+Some plots of how this scales with large numbers of parameters (generated from a different script using the same update_params method):
+
+Interesting.  We should narrow this down to whether it is something in the Simulator or the ParamResolver or the protocol.  A first glance at code suggest that hashing in ParamResolver, that doesn't seem like a great idea.
+Some thoughts:
+@Ashalynd could you say a little more about how recursion is used in the resolver?
+The following line where sympy.subs 
+sympy.subs is known to be very slow, and is called very often (and includes, as @Ashalynd  said, a lot of recursions).
+After having a look in subs I came up wit the following code to replace the line mentioned above
+On my computer it is now 3 times faster, but still approx. 30 times slower than the method without sympy.
+Would a solution be to use lambdification?
+Here is the page on sub being slow and lambification
+We could do this:
+@karlunho
+sympy is generally slow, and everything that touches sympy becomes slow.
+Would it be possible to have simple parameterized gates (e.g. the Rz rotations uses sympy only to multiply a number by pi) without sympy? If the symbol in the constructor stands just for a number, sympy is overkill, if the symbol is an expression per se, maybe the sympy overhead is good price.
+I took a stab at short-circuiting sympy for common cases for PR #2394 .  It does not help the above code as written, but, if flattened or if using XPowGate (which doesn't add the "x/pi" formula), this speeds up the code significantly.
+The changed code is below, for reference:
+I'm still facing a problem. In my case, new theta values are generated in a different scope and delivered to the ParamSolver. The next value of thetas would be unknown to me. I will only know it after I ParamSolver and generate the unitary of the circuit for the current thetas. So for me, it has to be one theta set at a time. Any suggestions?
+@aminjahanpour Can you provide a simplified example of the problem?  Otherwise, I am not sure I can reproduce your issue.
+One suggestion would be to reduce the use of formulas as much as possible, since sympy formula resolution is extremely slow.  If you are using the Rz/Ry/Rx gates, you may want to consider using ZPowGate,YPowGate,XPowGate instead and divide by pi yourself rather than rely on sympy to resolve it.
+I'll write an example. Before that, I am using custom two-qubit gates on my circuit. I am not aware of a way to convert them to PowGates.
+here is an example but I am facing another issue: the resolver does not work with my custom unitary gate.
+Can you say how it fails?  I think you need to implement the _is_parameterized_ protocol.
+When Cirq it trying to build the unitary of the Sympy circuit, apparently it is getting confused by the formulation:
+@aminjahanpour You have to be careful which functions you call if you are trying to do formula resolution with symbols.  I think it will work if you use sympy.sin instead of numpy.sin.  Same with cos().
+I modified the gate class to comply with Sympy:
+but now I can not produce the circuit unitary:
+I guess I have to first deal with this issue before getting at the issue of speed. Not sure here is the right place to focus on this issue?

@@ -1,0 +1,37 @@
+The unit test test_runtime_dm does this on Ubuntu 22.04
+mdaniels@daniels:~/src/cuda-quantum/build/unittests$ ./test_runtime_dm
+[==========] Running 67 tests from 21 test suites.
+[----------] Global test environment set-up.
+[----------] 2 tests from dm_AdjointTester
+[ RUN      ] dm_AdjointTester.checkSimple
+{ 0:1000 }
+{ 00000:1000 }
+{ 0:1000 }
+{ 00:1000 }
+{ 101:1000 }
+[       OK ] dm_AdjointTester.checkSimple (71 ms)
+[ RUN      ] dm_AdjointTester.checkNestedAdjoint
+{ 000:233 010:188 111:99 001:4 011:69 100:237 101:25 110:145 }
+[       OK ] dm_AdjointTester.checkNestedAdjoint (6 ms)
+[----------] 2 tests from dm_AdjointTester (78 ms total)
+[----------] 17 tests from dm_BuilderTester
+[ RUN      ] dm_BuilderTester.checkSimple
+realloc(): invalid pointer
+Aborted (core dumped)
+went into build directory and unittests and ran ./test_runtime_dm
+passing test
+Not a regression -- first time I have built cuda-quantum.
+No response
+I built LLVM and cuda-quantum in Debug mode, and this is what I see:
+Hi Marcus - I was able to reproduce your failure. I think it has something to do with this being the first test running after the noise tests. For example, I can also reproduce the problem running just 2 tests, like this:
+I think we need to add cudaq::unset_noise(); either as cleanup after the noise tests or do that in the initialization of all tests.
+For example, as a quick test, I added this patch, and the problem went away for me. Can you confirm that this fixes the problem in your environment, too? If so, we'll get a patch going soon.
+Also, we typically run our tests using ctest. For example, you can run the dm tests using this command: ctest -R "^dm_". Your way should also work, too, so I'm trying to say we shouldn't fix it ... I just wanted to give you other options in case you weren't aware of them.
+I still get the realloc(): invalid pointer crash, and correctness of the unit tests is the same at 79%.
+Our project is designed to be running with the same LLVM as is in the repo (tpls/llvm), which is currently this. It is not a named release version, but it's slightly before LLVM 16. Are you using a Docker image to test this?
+Perhaps @schweitzpgi can weigh in to confirm or deny, but I thought it had to be aligned with the LLVM submodule in our repo.
+In any case, it's very strange that we both saw similar errors in similar spots, but the fix for my environment didn't change anything for yours. You probably did this, but just to confirm .... did you go into the build directory and run ninja again after updating the unittests/integration/get_state_tester.cpp file?
+Perhaps @schweitzpgi can weigh in to confirm or deny, but I thought it had to be aligned with the LLVM submodule in our repo.
+The project is stuck in a holding pattern at LLVM 16.x still. I believe some people have used downloads of prebuilt. official LLVM 16 with some success. The container image is built against the pre-16 LLVM that can be found in tpls/llvm.
+I will open an issue (if there isn't one) to at least bump the container/CI environment up to the officially released LLVM 16.
+Closing this because I believe it is all covered by PR #635 and the new issue #633 now.

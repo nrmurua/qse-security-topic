@@ -1,0 +1,12 @@
+As reported on external Qiskit slack workspace, in aqua channel, Aqua's Grover is failing on a 4 qubit problem, but appears to work on a 3 qubit one.
+In investigating I tried, 3 4 and 5 qubit problems.  When using BasicAer they all work, ie amplify the expected value(s),  but fail under Aer. Well the 3 qubit one under Aer does amplify the right value but the amplification over the others values is much less.
+In discussion with @chriseclectic he suggested I try with fundamental basis gate set. When doing this then the outcome is as expected and comparable to BasicAer
+Here is sample code to reproduce the problem. I left other lines in there, e.g setting basis gates as well, so they can be (un)commented as needed to see the difference.
+Expected value(s) amplified correctly in the outcome when using the default set of Aer basis gates.
+After investigating this I don't think its an Aer / simulator issue so much as an issue with the transpiler/assembler and dealing with the gates recently added to Terra from Aqua.
+In this case it is the multi-controlled XX gate in the circuit. For 3-qubits your example grover.construct_circuit().draw() looks like:
+However when it is run on the Aer qasm simulator it is being assembled into the qobj with instructions
+The 'mcx' simulator instruction is a mutli-controlled X gate, so in this case it is simulating CCCCX. But that is different to the gate used in the original circuit. The fix is the transpiler should not treat this gate as an mcx basis gate, it should unroll it to gates supported by the simulator.
+This isn't an issue for BasicAer because it only supposed id, u1, u2, u3, cx, unitary as basis gates, and shouldn't be an issue for Aer if you explicitly specify basis gates that does not include mcx.
+I'll transfer this issue to the Terra github.
+I think the easiest (and therefore maybe the best) fix is to give the special decompositions of MCX  different names. E.g. rename MCXVChain from mcx to mcx_chain and MCXRecursion from mcx to mcx_recursion.

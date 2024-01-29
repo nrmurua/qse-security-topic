@@ -1,0 +1,41 @@
+My original motivation for opening #299 was to define a gate for the XX+YY interaction. With that resolved in #320, I wanted to define this gate now as
+But reflection_matrix_pow does not work for this:
+The issue is that reflection_matrix_pow does not work for I ⊕ U; it only works for U. It assumes that the input has exactly two eigenvalues, but in my case there is the third constant 1 eigenvalue.
+Note that in this case half_turns=2 does not give the original matrix back. Two half turns (one full turn) flips the sign of U; you need to make 4 half turns (2 full turns) to get back the original matrix.
+Hmmmm.
+Maybe what we need is a KnownEigenvaluesGate or a KnownEigencomponentsGate or a RationalEigenturnsGate that computes the least-common-multiple of the eigenvalues specified by the user.
+Another possibility is to have reflection_matrix_pow optionally take in the list of indices that correspond to U. For instance, for XX+YY it would be (1, 2).
+ComplicatedTensorProductGate? MisalignedSubMatrixGate? Hm.
+Well, I don't think the submatrix is that misaligned. You'd only need to specify the row indices, since the column indices should be the same.
+SubmatrixGate? It takes another gate and embeds it into a subsection of a larger matrix.
+Basically, I'm still trying to decide if this is the right level of generic enough to include.
+That sounds very promising to me.
+I'm also undecided about whether it's generic enough. I think the definition of XXYYGate I gave above is very clear, but it might become less clear if I defined it using a SubmatrixGate class.
+DirectSumGate?
+I'm not really sure what you mean by "DirectSum" honestly. If you took the 4x4 identity gate and added Y^t into the 2x2 middle square, you don't get a unitary matrix.
+I'm confused; you can't be talking about the matrix
+because that's unitary. In general, I ⊕ U is unitary if U is unitary.
+In case the confusion is about notation, @kevinsung means https://en.wikipedia.org/wiki/Matrix_addition#Direct_sum rather than addition (I'll delete if I've interjected at a bad point ;))
+Oooh, I see.
+XX+YY and YX-XY are constructed by taking the 4x4 identity and sticking X^t or Y^t in the 2x2 middle block.
+Yes, but by "sticking" you mean "overwriting" as opposed to "adding in". I was just confused by what a direct sum was. I didn't realize it meant concatenating along the diagonal.
+I realized that even if we do this, I will still have a problem with XXYY, which is that reflection_matrix_pow will not give the correct matrix, which really needs to be
+I don't think I'll be able to use reflection_matrix_pow for this purpose.
+Here's my current idea, which I think is very practical: EigenGate. Basically, a gate that knows the eigendecomposition of its matrix so that it can be raised to a power very easily.
+EigenGate would require children to implement the following method:
+Then matrix is implemented as follows:
+In the case of these gates, the implementation would be something like:
+I probably got that decomposition wrong, but you get the idea.
+I think this would make a good first task for @cduck , who is starting next week.
+I like this idea, but I still feel that XXYY should be treated the same as the current instances of PartialReflectionMatrix. My original idea was to edit PartialReflectionMatrix as follows:
+Then XXYYGate would have
+The problem (which I should have brought up earlier, sorry!) is that reflection_matrix_pow gives the wrong powers. For instance, reflection_matrix_pow(A) where A is
+gives
+but the definition of XXYY requires that it give
+instead. These are different square roots of A, and in general, we would need to pass additional information to reflection_matrix_pow if we require one square root as opposed to the other. In other words, the way that PartialReflectionGate is currently implemented carries the assumption that it does not matter which power is returned when a gate is exponentiated, but it seems that in practice, it will matter. In fact, it even matters for X, Y, and Z, doesn't it? Currently reflection_matrix_pow is defined so that exponentiating the Pauli matrices gives consistent results, but this seems to me to be just a lucky coincidence, and that if reflection_matrix_pow gave different roots then things would not work out. So I think we should get rid of reflection_matrix_pow.
+I agree that it would be possible to define a "reflection submatrix gate" where only a subcomponent of the matrix is a reflection, with the rest being the identity. But I think EigenGate will subsume this case in a more general fashion, without sacrificing any efficiency.
+I'm fine with having XXYY implemented via EigenGate.
+I still have reservations about keeping the current implementation of PartialReflectionGate. The reason is that reflection_matrix_pow makes no claim about which powers it returns, and this actually matters. As an example, consider Z**half_turns. This needs (#245) to be equal to exp(-i pi Z half_turns / 2) up to global phase. However, reflection_matrix_pow does not distinguish between this possibility and exp(i pi Z half_turns / 2). It returns the first one because of the way it was written and one wouldn't be able to tell without reading the source code or running it. One way around this is to make it a subclass of EigenGate. If we leave it as is, then I think we should un-expose it.
+Yes, we'd likely drop ReflectionGate in favor of EigenGate.
+@Strilanc I'll do this. I plan to just get rid of PartialReflectionGate and have everything subclass EigenGate directly. Does that sound good?
+Uh... on second thought this is more involved than I want to get myself into right now... Actually, my primary motivation in all this is to have XXYY and YXXY easily and automatically support Symbols. I'm not sure yet  what the best way to do this through EigenGate is, and whether that is the right way anyway. For now I'll just implement Symbol support manually.

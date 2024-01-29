@@ -1,0 +1,132 @@
+@alexcjohnson
+Hi Alex, I noticed you mentioned that one of the next steps will be to improve data saving so I thought I'd share my ideas on it before everything is made and fully integrated. One of the things I want to do after the data saving is move over our analysis and/or built a framework for easily analysing data. Automation of analysis of experiments is one of the things I have in mind when talking about data structures but is a subject that is large enough to warrant it's own discussion.
+With respect to data structures I think there are a few aspects that are relevant
+I like the current structure a lot, I think the way a dataset can be passed to a plot and contains all the metadata. However when doing analysis I find that I require some more functionality.
+To be specific, I require
+The way we address this currently is by having a hierarchical data structure that makes a distinction between a dataset (array's of values + labels) and the datafile (contains different groups of which the dataset is one). I would propose to use a similar hierarchical format for Qcodes.
+We have had a lot of discussions on our side with respect to the data format. Currently JSON is the default and we (in Delft) are more used to HDF5, let me just summarise the pros and cons as I see them with the goal of making our use of both better. I guess as long as there is a good data handler the underlying backend does not really matter (similar to how we are with plotting now) but I guess the default will significantly impact how we think about it.
+@cdickel , I know you are pro HDF5 can you go over this and see if there is anything I missed/you want to add?
+I would be very willing to switch to JSON but to me it does not offer the same as HDF5 at this point. I would love to have some discussion on this.
+We currently use a format that saves any datafile as follows: user_datadirectory/YYMMDD/HHMMSS_label/HHMMSS_label.hdf5. The user_directory is a global variable that is set upon initialisation of the environment (similar to creating an instrument upon init). This directory typically does not change for several months. The label is a non-unique identifier for an experiment such as e.g. T1_qubit_3, we typically do the same run multiple times and do not want to worry about coming up with unique names, the timestamp ensures uniqueness. The file is nested in a folder with the same name to allow saving figures that come out of the analysis next to it.
+On the analysis side we have functions that look for data files in one of three ways. If a label is specified it looks for the last file that has that label, e.g. T1 would find our T1_qubit_3 file. If a timestamp is specified it uses this as a unique identifier for a file. If nothing is specified it will default to the last generated file. On top of that we have a whole bunch of higher level functions.
+This scheme is heavily qtlab inspired and works pretty well for us. Some of the drawbacks we have encountered are:
+I'd be interested in what your ( @alexcjohnson )  plans are for this kind of interface and file/folder handling. I understand that you currently have to specify all this when using the Loop but I have to admit I have not used that in a while.
+@cdickel, Can you let me know what you think of all this? I tried to incorporate ideas from our discussions over the last year in it but I am sure I have missed some.
+@damazter , what do you think? You guys do things slightly different so I am curious.
+I think we will need the end user to be able to choose his/her preferred data format.
+Also the folder structure will be different from setup to setup and person to person.
+We currently have
+data/yyyy-mm-dd/yyyy-mm-dd_#.dat
+data/yyyy-mm-dd/yyyy-mm-dd_#.meta.txt
+data/yyyy-mm-dd/yyyy-mm-dd_#.meta.dat.py
+etc etc etc
+I like this structure a lot, but I can imagine that other people would strongly disagree with me.
+The dataformat that we currently use is tab separated value documents to save the data which works with our plotting software. But as said, I think it is crucial to implement multiple data front-ends to enable everyone to use the optimal software.
+For example, I can imagine using sometimes one thing to plot the data in python and something else entirely to analyse the data in Mathematica.
+It would be really useful if the datamanager could then also function as a converter between those format front-ends
+I am pro standardization and against freedom of choice (at least within 1 lab).
+How someone decides to name their datafiles is something decided very early on in someone’s time in a lab. Generally new users don’t make good choices, or it takes them an unnecessary amount of brain capacity to come up with something. The current situation in the Topo team is that only the cQED experiments that I supervise have the standard data labelling format as Damaz described. Other people put a whole collection of other metadata into their filename, which makes things a total mess (see attachment).
+I don’t care what the standard is, as long as it is sequential and easily identifiable.
+[cid:61DD0947-5844-4FBB-BA12-7A26C3338F4D@tudelft.net]
+On Mar 23, 2016, at 11:06 AM, damazter <notifications@github.commailto:notifications@github.com> wrote:
+I think we will need the end user to be able to choose his/her preferred data format.
+Also the folder structure will be different from setup to setup and person to person.
+We currently have
+data/yyyy-mm-dd/yyyy-mm-dd_#.dat
+data/yyyy-mm-dd/yyyy-mm-dd_#.meta.txt
+data/yyyy-mm-dd/yyyy-mm-dd_#.meta.dat.py
+etc etc etc
+I like this structure a lot, but I can imagine that other people would strongly disagree with me.
+The dataformat that we currently use is tab separated value documents to save the data which works with our plotting software. But as said, I think it is crucial to implement multiple data front-ends to enable everyone to use the optimal software.
+For example, I can imagine using sometimes one thing to plot the data in python and something else entirely to analyse the data in Mathematica.
+It would be really useful if the datamanager could then also function as a converter between those format front-ends
+—
+You are receiving this because you are subscribed to this thread.
+Reply to this email directly or view it on GitHubhttps://github.com/qdev-dk-archive/issues/62#issuecomment-200278026
+It is time that I at least join the discussion, so here is my stance. I don't care about the data format but the data should be in a binary format and not ASCII or the like. I think HDF5 has everything we want and a revised front end would fix the dictionary issue. Also, one could start putting data that belongs together into the same HDF5 file and make use of the database nature of it and possibly even store metadata in a compressed form if it is hardly ever accessed, as is the case for us, usually.
+Let me describe what we have now - I think it will support everything people have talked about above, but there are some pieces left to make. The general philosophy is to make the default behavior be a clear structure and organization that many of us will be happy with out of the box, but that each piece can independently be changed by users.
+Storage of a DataSet is described by three objects - an IO manager, a Location Provider, and a Formatter. Their default values are stored in class attributes DataSet.default_io, DataSet.location_provider, and DataSet.default_formatter. All of these can be changed for ALL DataSets you create or load by setting these class attributes in an init script (ie DataSet.default_io = DiskIO('c:/path/to/data')) or as kwargs to Loop.run or load_data (ie Loop.run(io=DiskIO(...), location=<provider or final location string>, formatter=HDF5Format(...)))
+@alexcjohnson , Thanks for the update. It looks like the current plan indeed provides most that we want already.
+The thing I would be most interested in is a (semi) final version of the formatter that includes a good way of dealing with the meta-data as this would allow me to make our current code compatible with QCodes and start moving over our analysis as well.
+I have a minor remark on the default datatime format string. the default of '%Y-%m-%d/%H-%M-%S' I prefer YYMMDD-hhmmss because it is a shorter string and if there is a lot of files this reduced length makes browsing through files easier. However they are otherwise completely identical so either is fine with me.
+@AdriaanRol
+The thing I would be most interested in is a (semi) final version of the formatter that includes a good way of dealing with the meta-data as this would allow me to make our current code compatible with QCodes and start moving over our analysis as well.
+My initial thoughts on this are:
+I have a minor remark on the default datatime format string. the default of '%Y-%m-%d/%H-%M-%S' I prefer YYMMDD-hhmmss because it is a shorter string and if there is a lot of files this reduced length makes browsing through files easier. However they are otherwise completely identical so either is fine with me.
+Without the extra nesting of a folder per day? That would make a lot of files indeed 😱 but I don't really care whether there are dashes or not. I do like 4-digit years even if the first two are always 20 just because it has too many digits to mistake for a time
+I don't understand why @damazter has the date repeated in the folder and file name, it seems like if the folder is the date and the filename is the time... but again, that kind of decision is very easy to make in an init script, as long as the default by itself will keep things organized for those who don't care or bother to change it.
+@alexcjohnson
+My initial thoughts on this are:
+Sounds good 👍
+Me neither, I prefer to have 1 file per experimental run, however as we are nesting more and more measurements this distinction starts to blur and we have single experiments which create bigger and bigger datafiles.
+Without the extra nesting of a folder per day? That would make a lot of files indeed 😱
+😱 forgot about that :)
+I do like 4-digit years even if the first two are always 20 just because it has too many digits to mistake for a time
+Good point, never though about it like that, I still prefer shorter but I'm fine with this aswell.
+I don't understand why @damazter has the date repeated in the folder and file name,
+We also share this convention. It has the advantage of keeping filenames unique, the nesting of folders is for your convenience in browsing but it is nice that if people move the file it is always very easy to trace back where you got it from.
+I'll look forward to a working example such that I can create a formatter to convert our format to this new standard and back.
+@alexcjohnson
+First off, that all sounds really good. Since there are opinions on it, I
+would express a preference for storing datasets in separate files, rather
+than one large experiment file, just so that it is easy to share and work
+on datasets, and to minimize the risk of corrupt data sets affecting more
+than one set of data.
+For similar reasons, repeating the data in the file name seems like a good
+idea, When sharing data, having the full date of a dataset in the filename
+will make traces easier to identify.
+My initial thoughts on this are:
+That all sounds good. One thing I will flag as something to think about is
+that I can envisage a future where metadata is stored in a database while
+data remains in a file. How this hooks into the IOManager may not be
+straightforward with the current structure. It may be neater to define a
+Metadata manager as well that can define a separate (indexed) storage
+location for metadata.
+—
+You are receiving this because you are subscribed to this thread.
+Reply to this email directly or view it on GitHub
+qdev-dk-archive#62 (comment)
+@spauka
+that I can envisage a future where metadata is stored in a database while
+data remains in a file.
+I don't think it is good to separate the meta-data from the data itself. These two are intimately related and belong to the same experiment. If the dataset just has a separate .meta attribute, as @alexcjohnson suggested, this will   all be a small unit that can be passed around easily. I don't think you have to worry about the issues of datacorruption spreading over multiple experiments in that case.
+@spauka thanks for the comments!
+preference for storing datasets in separate files, rather
+than one large experiment file
+Yep, I think we're all in agreement about that. If a single measurement loop generates multiple arrays of data, they may go into one file - with HDF5 that would be natural, my GNUPlotFormat will make several files if the arrays generated by one loop have differing dimensionality. But never would a single file contain results from multiple loops.
+When sharing data, having the full date of a dataset in the filename will make traces easier to identify.
+Interesting, that's a good point. The flip side is retrieving data in code gets a little more cumbersome with the duplication:
+but we can make helpers for that (perhaps a GUI data loader? perhaps a mapping of the file system into a python object supporting autocomplete?), encouraging sharing seems like a more important goal. Seems like there's a consensus on this point, so I'll change the default to '%Y-%m-%d/%Y-%m-%d_%H-%M-%S' but also make a way to append numbers to the end for those who would prefer '%Y-%m-%d/%Y-%m-%d_#' (rather than letters as I do currently, though this should hardly ever happen if the filename extends all the way to seconds). @damazter / @AdriaanRol when you append a number, do you give it a fixed number of digits, so the files stay in order in a directory listing?
+metadata is stored in a database while data remains in a file
+I think @AdriaanRol is right - we want the metadata to always stay with the data. We will probably also have a database or some other sequential storage of metadata and system status, but I don't think we need to worry about having multiple copies of this info. It's not going to be that big and especially sharing data would get awkward if only the database contained the metadata.
+@alexcjohnson I thought I'd comment since I came up with the file naming convention that @damazter uses. The date is repeated in the filename so that each filename is unique and doesn't get duplicated on a setup. I have scripts that automatically create plots of the data as it is taken and then 'stick' themselves in my OneNote notebook to log what happens each day. Each plot is then labelled with only the datafile name. It looks ugly putting the whole filepath as some times the filepath is too long to fit nicely as a title to the figure. Keeping a fixed number of digits makes sorting nice, but it's hard to predict how many files someone may generate in a day (I range from 1 to hundreds in a day, but I could imagine someone calibrating a complicated experiment could run to thousands), so it would be good to have this as an option so someone doesn't run out of digits. I like the numbering files compared to timestamping because I sometimes also generate multiple files at once, and I remember short numbers better than a timestamp (helps when looking back over old data).
+The folder structure by date is there just to keep things tidy so there are not thousands of files in a folder. I find it much easier to remember what happened on a certain date and cross reference it with my handwritten notes/OneNote logs. It doesn't add much to the overhead to importing as I just use a string replace %s for the importing line.
+@alexcjohnson , I was looking around the formatter in order to implement an hdf5 based formatter.
+I noticed the following things
+Writing a formatter for hdf5 is rather simple (in fact I wrote one for our own setup) however I find that I am lost in the bigger structure of the data management (are these concepts documented somewhere #124?)
+To put a few questions I would need to answer before I can attempt making a formatter
+There are no tests for the formatter and data saving. The tests in tests/data only check a data array.
+yeah, that's one of the pieces I haven't gotten to testing yet. I'm trying to fix #117 now so may be able to write some tests in the process...
+The functions themselves are clearly documented, however there are a lot of commands that depend on assumptions of how the flow of the loop is.
+Interesting - I'm not too surprised, but like what?
+If I define a new formatter class where do I specify that I want to use that formatter? I assume I specify it in loop.run(formatter='QC_HDF5') but the docstring shows _args, *_kwargs
+Yes, that's one way (which is described in ActiveLoop.run but not Loop.run) - but the way I would expect people to want to use more often is the class attribute DataSet.default_formatter. This is not well documented yet... only mentioned in objects.md
+Is there a minimum working example that calls just the data saving commands of the existing GNUPLot formatter? If I can replicate creating a dataset with that and then load it I have something to test against.
+Not really... I can look at doing this in the next couple of days, perhaps as part of writing tests for GNUPlotFormat.
+In what part of the Loop is datasaving handled? It looks like there is a datamanager between the Loop and this datamanager is rather opaque to me.
+the Loop calls (data and setpoints) out to data_set.store. If you're looking at the latest master - since I fixed loop running in different modes in #118 - you should be able to ignore the DataManager / DataServer altogether and just look at what happens in DataSet.store when you're not in PUSH_TO_SERVER mode. This method stores data in the arrays (and via the __setitem__ method, marks which parts of each array have been modified), then at some reduced frequency (by default, every 5 sec if you're not using a DataServer and every 1 sec if you are) calls DataSet.write which calls formatter.write(data_set).
+Metadata? #93 #107 Metadata is an essential part of the datafile, however the current formatter doesn't include anything on metadata.
+Yes, metadata should become an essential part of every Formatter!
+@alexcjohnson @AdriaanRol How far are we in adding metadata to the framework? I would like to add a field .metadata to the DataSet structure. Allowed components of this dict would be at least strings, numbers and Numpy arrays (or perhaps others dicts). The current Formatter should be updated to store and load this data.
+How far are we in adding metadata to the framework?
+I haven't touched this, @AdriaanRol dunno if you've made any headway on hdf5?
+👍  data_set.metadata.
+I would expect this to be a json-compatible dict, so arbitrarily nested dicts and lists containing numbers and strings, and all dict keys are strings. One of its items will be metadata['snapshot'], that just grabs station.snapshot() in its full nested-dict glory. We can support numpy arrays but when these are stored and read back in I imagine we will turn them into regular lists. If it's important for some reason I imagine we can make a custom encoder & decoder that preserves numpy arrays, but offhand I'd prefer to keep it simple.
+@alexcjohnson how would you get the station.snapshot() into the data_set at runtime?
+Right now (in the metadata branch) I pass the snapshot to the run() method which then saves it with the data, this is really ugly, and the reason to have a experiment container thingy #128 which would make some of this data saving and structuring easier.
+@alexcjohnson @AdriaanRol I've been playing around with HDF5 and metadata using pandas and tables, see here: https://gist.github.com/guenp/96139d78b3d33ba35679b2b76383a45e
+hdf5example.py stores some data and then updates it, and h5metadata.py adds metadata to that file. I haven't figured out how to access attrs using tables.
+edit: just figured it out :)
+@AdriaanRol @majacassidy @peendebak @guenp @damazter @cdickel
+Can we close this issue as subsumed under the new DataSet?
+@alan-geller let's do that.

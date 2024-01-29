@@ -1,0 +1,143 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from copy import deepcopy
+from numpy import pi
+from qiskit import QuantumRegister, ClassicalRegister
+from qiskit import QuantumCircuit
+from qiskit import Aer, execute
+from qiskit import QuantumCircuit, execute, ClassicalRegister, QuantumRegister, transpile
+from qiskit.providers.aer import AerSimulator
+import sys
+Get the data from the .csv file
+df = pd.read_csv('/home/ubuntu/qiskit_pruebas/Q-means/kmeans_data.csv',usecols=['Feature 1', 'Feature 2', 'Class'])
+df.head()
+Change categorical data to number 0-2
+df["Class"] = pd.Categorical(df["Class"])
+df["Class"] = df["Class"].cat.codes
+Change dataframe to numpy matrix
+data = df.values[:, 0:2]
+category = df.values[:, 2]
+Number of clusters
+k = 3
+Number of training data
+n = data.shape[0]
+Number of features in the data
+c = data.shape[1]
+Generate random centers, here we use sigma and mean to ensure it represent the whole data
+mean = np.mean(data, axis = 0)
+std = np.std(data, axis = 0)
+centers = np.random.randn(k,c)*std + mean
+Static data to test
+centers = np.array([[-0.25, 0.2], [0, -0.1], [0.25, 0.35]])
+print(centers)
+Plot the data and the centers generated as random
+colors=['green', 'blue', 'black']
+for i in range(n):
+plt.scatter(data[i, 0], data[i,1], s=7, color = colors[int(category[i])])
+plt.scatter(centers[:,0], centers[:,1], marker='*', c='g', s=150)
+def point_centroid_distances(point, centroids):
+Calculating theta and phi values
+phi_list = [((x + 1) * pi / 2) for x in [point[0], centroids[0][0], centroids[1][0], centroids[2][0]]]
+theta_list = [((x + 1) * pi / 2) for x in [point[1], centroids[0][1], centroids[1][1], centroids[2][1]]]
+Create a 2 qubit QuantumRegister - two for the vectors, and
+one for the ancillary qubit
+qreg = QuantumRegister(3, 'qreg')
+Create a one bit ClassicalRegister to hold the result
+of the measurements
+creg = ClassicalRegister(1, 'creg')
+qc = QuantumCircuit(qreg, creg, name='qc')
+backend = AerSimulator(method="statevector")
+Create list to hold the results
+results_list = []
+Estimating distances from the new point to the centroids
+for i in range(1, 4):
+Apply a Hadamard to the ancillary
+qc.h(qreg[2])
+Encode new point and centroid
+qc.u(theta_list[0], phi_list[0], 0, qreg[0])
+qc.u(theta_list[i], phi_list[i], 0, qreg[1])
+Perform controlled swap
+qc.cswap(qreg[2], qreg[0], qreg[1])
+Apply second Hadamard to ancillary
+qc.h(qreg[2])
+Measure ancillary
+qc.measure(qreg[2], creg[0])
+Reset qubits
+qc.reset(qreg)
+Register and execute job
+job = execute(qc, backend=backend, shots=5000, blocking_enable=True, blocking_qubits=2)
+result = job.result().get_counts(qc)
+try:
+results_list.append(result['1'])
+except:
+results_list.append(0)
+return results_list
+centers_old = np.zeros(centers.shape) # to store old centers
+centers_new = deepcopy(centers) # Store new centers
+data.shape
+clusters = np.zeros(n)
+distances = np.zeros((n,k))
+error = np.linalg.norm(centers_new - centers_old)
+upper_error = error + 1
+When, after an update, the estimate of that center stays the same, exit loop
+while (error + 0.02) < upper_error:
+Measure the distance to every center
+distances = np.array(list(map(lambda x: point_centroid_distances(x, centers), data)))
+Assign all training data to closest center
+clusters = np.argmin(distances, axis = 1)
+centers_old = deepcopy(centers_new)
+Calculate mean for every cluster and update the center
+for i in range(k):
+centers_new[i] = np.mean(data[clusters == i], axis=0)
+upper_error = deepcopy(error)
+error = np.linalg.norm(centers_new - centers_old)
+if error < 0.02:
+break
+centers_new
+Plot the data and the centers generated as random
+for i in range(n):
+plt.scatter(data[i, 0], data[i,1], s=7, color = colors[int(category[i])])
+plt.scatter(centers_new[:,0], centers_new[:,1], marker='*', c='g', s=150)
+I launch the programme with Open MPI - 4.0.3 using the following command:
+mpirun -np 2 -host 172.31.41.211:2 python /home/ubuntu/qiskit_tests/Q-means/Qiskit_Qmeans.py
+When I launch the command to run the program in distributed the following failure occurs:
+[ip-172-31-41-211:01343] *** Process received signal ***
+[ip-172-31-41-211:01343] Signal: Aborted (6)
+[ip-172-31-41-211:01343] Signal code:  (-6)
+[ip-172-31-41-211:01343] [ 0] /lib/x86_64-linux-gnu/libc.so.6(+0x43090)[0x7fb982e85090]
+[ip-172-31-41-211:01343] [ 1] /lib/x86_64-linux-gnu/libc.so.6(gsignal+0xcb)[0x7fb982e8500b]
+[ip-172-31-41-211:01343] [ 2] /lib/x86_64-linux-gnu/libc.so.6(abort+0x12b)[0x7fb982e64859]
+[ip-172-31-41-211:01343] [ 3] /lib/x86_64-linux-gnu/libc.so.6(+0x8d26e)[0x7fb982ecf26e]
+[ip-172-31-41-211:01343] [ 4] /lib/x86_64-linux-gnu/libc.so.6(+0x952fc)[0x7fb982ed72fc]
+[ip-172-31-41-211:01343] [ 5] /lib/x86_64-linux-gnu/libc.so.6(+0x96bac)[0x7fb982ed8bac]
+[ip-172-31-41-211:01343] [ 6] /home/ubuntu/.local/lib/python3.8/site-packages/qiskit/providers/aer/backends/controller_wrappers.cpython-38-x86_64-linux-gnu.so(+0x25c897)[0x7fb976fa9897]
+[ip-172-31-41-211:01343] [ 7] /home/ubuntu/.local/lib/python3.8/site-packages/qiskit/providers/aer/backends/controller_wrappers.cpython-38-x86_64-linux-gnu.so(+0x2606a0)[0x7fb976fad6a0]
+[ip-172-31-41-211:01343] [ 8] /home/ubuntu/.local/lib/python3.8/site-packages/qiskit/providers/aer/backends/controller_wrappers.cpython-38-x86_64-linux-gnu.so(+0x2a88f3)[0x7fb976ff58f3]
+[ip-172-31-41-211:01343] [ 9] /home/ubuntu/.local/lib/python3.8/site-packages/qiskit/providers/aer/backends/controller_wrappers.cpython-38-x86_64-linux-gnu.so(+0x2aa1c8)[0x7fb976ff71c8]
+[ip-172-31-41-211:01343] [10] /home/ubuntu/.local/lib/python3.8/site-packages/qiskit/providers/aer/backends/controller_wrappers.cpython-38-x86_64-linux-gnu.so(+0xb9589)[0x7fb976e06589]
+[ip-172-31-41-211:01343] [11] /home/ubuntu/.local/lib/python3.8/site-packages/qiskit/providers/aer/backends/controller_wrappers.cpython-38-x86_64-linux-gnu.so(+0x2ac9da)[0x7fb976ff99da]
+[ip-172-31-41-211:01343] [12] /home/ubuntu/.local/lib/python3.8/site-packages/qiskit/providers/aer/backends/controller_wrappers.cpython-38-x86_64-linux-gnu.so(+0x2ad7ac)[0x7fb976ffa7ac]
+[ip-172-31-41-211:01343] [13] /home/ubuntu/.local/lib/python3.8/site-packages/qiskit/providers/aer/backends/controller_wrappers.cpython-38-x86_64-linux-gnu.so(+0x2ae379)[0x7fb976ffb379]
+[ip-172-31-41-211:01343] [14] /home/ubuntu/.local/lib/python3.8/site-packages/qiskit/providers/aer/backends/controller_wrappers.cpython-38-x86_64-linux-gnu.so(+0xba871)[0x7fb976e07871]
+[ip-172-31-41-211:01343] [15] /home/ubuntu/.local/lib/python3.8/site-packages/qiskit/providers/aer/backends/controller_wrappers.cpython-38-x86_64-linux-gnu.so(+0x2b532e)[0x7fb97700232e]
+[ip-172-31-41-211:01343] [16] /home/ubuntu/.local/lib/python3.8/site-packages/qiskit/providers/aer/backends/controller_wrappers.cpython-38-x86_64-linux-gnu.so(+0x2b6ac5)[0x7fb977003ac5]
+[ip-172-31-41-211:01343] [17] /home/ubuntu/.local/lib/python3.8/site-packages/qiskit/providers/aer/backends/controller_wrappers.cpython-38-x86_64-linux-gnu.so(+0x2b6d92)[0x7fb977003d92]
+[ip-172-31-41-211:01343] [18] /home/ubuntu/.local/lib/python3.8/site-packages/qiskit/providers/aer/backends/controller_wrappers.cpython-38-x86_64-linux-gnu.so(+0x152591)[0x7fb976e9f591]
+[ip-172-31-41-211:01343] [19] /home/ubuntu/.local/lib/python3.8/site-packages/qiskit/providers/aer/backends/controller_wrappers.cpython-38-x86_64-linux-gnu.so(+0x152cc4)[0x7fb976e9fcc4]
+[ip-172-31-41-211:01343] [20] python(PyCFunction_Call+0x59)[0x5f3989]
+[ip-172-31-41-211:01343] [21] python(_PyObject_MakeTpCall+0x29e)[0x5f3e1e]
+[ip-172-31-41-211:01343] [22] python[0x50b158]
+[ip-172-31-41-211:01343] [23] python(PyObject_Call+0x1f7)[0x5f3547]
+[ip-172-31-41-211:01343] [24] python[0x59d13c]
+[ip-172-31-41-211:01343] [25] python(_PyObject_MakeTpCall+0x29e)[0x5f3e1e]
+[ip-172-31-41-211:01343] [26] python(_PyEval_EvalFrameDefault+0x58e6)[0x570266]
+[ip-172-31-41-211:01343] [27] python(_PyFunction_Vectorcall+0x1b6)[0x5f6836]
+[ip-172-31-41-211:01343] [28] python(_PyEval_EvalFrameDefault+0x72e)[0x56b0ae]
+[ip-172-31-41-211:01343] [29] python(_PyFunction_Vectorcall+0x1b6)[0x5f6836]
+[ip-172-31-41-211:01343] *** End of error message ***
+The programme is expected to launch normally and to distribute correctly.
+The problem lies in the quantum gate qc.cswap(qreg[2], qreg[0], qreg[1]) because it cannot be launched with blocking_qubits=2. A similar error occurred previously with the mct() quantum gate and was solved by the following solution #1529
+I think @doichanj can solve the problem. Thank you very much for all your work
+I could not reproduce the problem with 2 MPI processes by using following code, I think it execute similar circuit.
+I have found the bug, thank you very much, you can close this comment thread. @doichanj

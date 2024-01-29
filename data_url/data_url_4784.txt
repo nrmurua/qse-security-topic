@@ -1,0 +1,44 @@
+One remaining change is to clarify the interactions and use of the "devices" and "backends".
+(See below comment from @smite in #103 for context and several suggestions on how to implement UI for this)
+@josh146
+I guess my big question is how do we reconcile the 'GBS' device spec with the Gaussian backend.
+Yeah, this is part of the larger question of what's the relationship between DeviceSpecs and backends.
+As a guiding principle l would say we expect the user to be reasonably aware of what they are doing.
+I think devices (described by DeviceSpecs subclasses, although device may not be the best name for this) should be considered generic circuit templates, i.e. they each correspond to a well-defined subclass of all possible quantum circuits.
+They also come with a compilation method which either
+Each device could keep a list of backends (maybe in order of priority) which are capable of executing all circuits that fit the template. (Alternatively, backends could keep track of devices they are compatible with, but this would be harder to maintain.) For example, the GBS device would be compatible with gaussian, Fock and TF backends, whereas the Gaussian device would only be compatible with the gaussian backend. I would not add any extra backends.
+Calling options:
+The common theme is that the user always has to decide which backend to use, that decision is never delegated to SF.
+Another idea:
+Maybe the compilation should always happen in stages, i.e. if you do RemoteEngine(backend='xxx', target='gbs').run(prog), first prog is compiled targeting the GBS device/template, but the compile method only does absolutely necessary changes (making sure the order is correct, combining Fock measurements), not any gate decompositions for example. Then the resulting program is compiled again now targeting the 'xxx' device/template, which decomposes gates and further optimizes it, and only then executed on the 'xxx' backend. This would make it unnecessary to have devices keep lists of compatible backends.
+You could also request additional compilation stages if that turns out to be useful: RemoteEngine(backend='xxx', target=['gbs', 'template1', 'template2']).run(prog), in which cases the compilation order would be 'gbs', 'template1', 'template2', 'xxx'.
+Originally posted by @smite in #103 (comment)
+@smite @josh146
+Main tasks:
+Agree on how the user will specify a compilation target versus a backend using the available Program and Engine classes (likely based on one or more of the suggestions above)
+I quite like the following option:
+My feeling is that the target circuit class is backend independent, i.e., a particular compiled circuit could be run on multiple backends. As a result, it doesn't feel right to pass the target to the engine.
+This way, we can separate the 'target' compilation from the backend compilation. A program can be compiled to match a circuit class (i.e., GBS, a hardware chip), which can then be run on multiple backends.
+Decide on naming scheme. "backend" is pretty much set in stone, but what should we call a family of circuits which fit a particular fixed pattern (topology, size, gates, arrangement of ops)? Currently we are using "device", but this seems too ambiguous.
+We should drop device, and just have backend (for the name of the simulator/hardware device) and  target/circuit class/? for the class of circuit the program is compiled to.
+Maybe the compilation should always happen in stages, i.e. if you do RemoteEngine(backend='xxx', target='gbs').run(prog), first prog is compiled targeting the GBS device/template, but the compile method only does absolutely necessary changes (making sure the order is correct, combining Fock measurements), not any gate decompositions for example. Then the resulting program is compiled again now targeting the 'xxx' device/template, which decomposes gates and further optimizes it, and only then executed on the 'xxx' backend. This would make it unnecessary to have devices keep lists of compatible backends.
+This is my preferred option. Compiling to a target/circuit class does only the required changes to match how that circuit class is defined, and then the backend compilation step does any gate decompositions etc.
+One question I still have: where do hardware devices sit? Are they a backend, or a target? I could argue both cases, it's not entirely clear to me.
+Agreed, should be explicit compilation step for target circuits, and implicit (with override) for backends
+With respect to hardware devices: perhaps they are both a target, and a backend. For example, a chipX compilation target can be used to compile a program to match a specific chip topology, which can then be run on any backend which will support it.
+A specific chipX backend will subclass/inherit the chipX target, and add in any extra hardware restrictions (maybe specific parameter ranges?)
+I'm using the term device here only to refer to a circuit template/class, responsible for validation and compilation of Programs, currently implemented using the DeviceSpecs class.
+I think a hardware qpu should be a backend like 'fock' or 'gaussian'. A backend is something that executes SF programs, locally or remotely. Each backend should have a corresponding device (one that shares its "short name") that does client-side program validation, compilation and optimization for that backend. Additionally you'd have optional extra devices like 'gbs' (that do not have corresponding backends), which act as additional transformation/filter layers in the compilation process and are used through the Program.compile(target='gbs') method.
+Engine(backend='xxx').run(prog) implicitly compiles prog once more targeting the 'xxx' device, unless this behavior is explicitly overridden, and then executes it.
+Regarding the subclassing of devices: Due to the way the devices are implemented right now, subclassing does not imply a specific relationship between the parent and child devices, it's just a convenient way of creating a device which shares some properties with the parent class. The child device can be either more or less restrictive than the parent in terms of the circuits it accepts, or accept a different class of circuits altogether.
+Additionally the devices can transform the circuit in the compilation stage (e.g. do decompositions), something that I don't think can be well described using the concept of inheritance.
+In showing this to a few people internally, there was a bit of confusion about the difference between a backend, target, etc. I don't think anything is too complicated in that people can't understand, but it's not intuitive. We can make this learning curve easier by choosing a clear name.
+Are people generally in favour of CircuitClass as a replacement of DeviceSpecs?
+What about something with the word Architecture, similar to how compilation is targeted in classical computing?
+I like both CircuitClass and Architecture. If I had to choose between the two, I would go with CircuitClass, because I see myself making lots of typos with Architecture lol.
+I guess I slightly prefer CircuitClass because it's the more abstract and descriptive option. The class is responsible for converting the given quantum circuit into an equivalent one that belongs in the circuit class it represents. Architecture has more of a technical sound to it.
+Do you think it would make sense to move the local, remote and interactive properties out of the DeviceSpecs class and maybe into the BaseBackend class? The don't describe circuit properties but rather ways it can be executed.
+This can clearly wait after the release.
+Do you think it would make sense to move the local, remote and interactive properties out of the DeviceSpecs class and maybe into the BaseBackend class? The don't describe circuit properties but rather ways it can be executed.
+I agree.
+Finished in #121

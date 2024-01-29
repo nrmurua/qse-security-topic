@@ -1,0 +1,20 @@
+
+Basic version done.
+How far do we need to support imports? At the moment, there is the capability to run exec on a controller (with the option to pass it automatically source retrieved by inspect.getsource from a local object), and call functions that have been defined in the exec namespace. There is one such namespace per session, and using import statements to e.g. load numpy works fine.
+What are the use cases for dataset db access?
+If you e.g. fit an image on the camera controller, you need values from the dataset db to perform the fit and you need to be able to publish the results of the fit in the dataset db. Like examples/fit_image.py.
+Ok, but instead of requiring another API and more network connections: can't this just be passed as arguments/return values of the function (on the controller) that does the fit and  the experiment does the dataset db accesses?
+What is relevant (and implemented) on the other hand is calling the driver methods from the remote_exec functions, as this saves serialization/network overhead.
+Dataset access (notification, changes) needs to be scalable in any case. If it doesn't scale to more netowrk connections that is a shortcoming of the design. And the dataset API exists already, right?
+How far do you want to restrict the remote data crunching? Only function(*args, **kwargs) allowed with a single serializable function, empty globals, serializable arguments and no writeback?
+Does "load numpy works fine" mean importing numpy the usual way at module scope or only an import inside the function in the local scope?
+The goal here is to be able to parametrize what's happening on the remote controller. In general there would be more than one function, other modules, classes, and it would be ugly or impossible if the worker had to predict what other things the RPC might need, bundle them up and push them.
+If this is all we can do, then it looks very much like e.g. the IPython.parallel API with the same restrictions. And to do this sufficiently flexible, people would write all their code, manually distribute it onto the controllers and then prepare little recipe functions that get serialized and call their backend code. Might be an acceptable and pragmatic solution. But it comes at quite a cost in a couple of areas: provenience is not handled/recorded/managed, code is not bundled/distributed/synchronized with experiments/artiq, and -- unless we implement remote generators -- the RPCs can only return once and no intermediate results are available.
+Each connection to the controller get a new Python namespace in which the experiment can execute whatever it wants - define classes, import libraries, define functions, etc. The code it executes needs to be sent as strings. Then the experiment can execute functions (or asyncio coroutines) from that namespace and get their return value, provided the information exchanged with the function is serializable. The first argument of the function is set by the controller and can be used to access the driver directly (alternatively, we could put the driver as a global in all rexec namespaces).
+The experiment can create a RPC client in the controller and use it to access the dataset database. But there is currently no good API to determine the master's IP address and port in this case. And we may want to share the RPC client between all rexec namespaces.
+I propose adding a --connect-dataset-db {master_ip} {master_port} command line option to controllers, which makes them create a global/shared RPC client. {master_ip} and {master_port} would be filled in by the controller manager.
+Ack.
+Couldn't ctlmgr mediate between the controllers (muxed over their logging pipe) and the master in this case?
+The controllers are using the RPC interface to the dataset-DB so using pipe_ipc here adds complication for a negligible/no advantage.
+All features implemented, should just need docs now.
+Done.

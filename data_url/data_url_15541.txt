@@ -1,0 +1,16 @@
+The qasm exporter on a circuit with an ECRGate outputs an invalid QASM code which cannot be parsed back.
+Run this circuit:
+Output
+Read the QASM back:
+Output
+I would have expected the final qasm to define a "general" rzx gate and reuse it:
+The problem is in the qasm() function of the QuantumCircuit, in particular it fails to convert ecr which has two identical rzx instructions. I noticed that by having two RZXGate directly in the circuit, gives a correct result (even if it seems a bit odd, given that the parametrization is not used):
+Maybe, as a quick workaround, we should add this part below within the function _add_sub_instruction_to_existing_composite_circuits so that the two rzx gates get two identifiers.
+https://github.com/Qiskit/qiskit-terra/blob/ee0d76052411230848ab2830c5741c14c2450439/qiskit/circuit/quantumcircuit.py#L1689-L1693
+Insert it above this line:
+https://github.com/Qiskit/qiskit-terra/blob/ee0d76052411230848ab2830c5741c14c2450439/qiskit/circuit/quantumcircuit.py#L4738
+Although, the most elegant solution would be to actually get a parametrizable rzx
+Looking forward to hearing your feedback on this odd situation, thanks in advance
+Thanks for the report!  Right now there are systemic failures in the QASM 2 and QASM 3 exporters with slightly exotic parameterised gates, which stem from design choices in how the Instruction class stores its definition. If a gate that the exporter doesn't have special handling for takes a parameter, but the first time it is encountered the parameter is already bound, there's no way for the exporter to retrive the general definition from the instruction instance.
+The QASM 3 exporter should at least be "smart" enough to munge the gate names to avoid a collision (see #7335 and its workaround in #7336), but the QASM 2 exporter has had this problem for a long time, so we didn't prioritise folding in a change during the 0.19 rush when the QASM 3 exporter was written.
+The new approach to parameters that we're moving towards (see #7624) will let us solve this problem.  I'll update #7335 to mention the QASM 2 exporter as well, but then I'll close this as duplicate of that, just to make it a little easier for us to track.

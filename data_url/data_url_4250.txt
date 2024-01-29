@@ -1,0 +1,23 @@
+Consider this code:
+The user will expect the Z operation to not be controlled, but it will instead be controlled by q[0].
+A more plausible-in-practice repro is something like this:
+The resulting behavior will be a giant mess, because each asynchronous method will be leaking controls into the others.
+I cannot follow your plausible-in-practice case.
+From a big picture perspective ProjectQ is a programming language for quantum programs. Because it is implemented as an eDSL you can optionally use the host language for code generation and processing of feedback. But obviously there are restrictions on the code generation capabilities.
+I don't understand why one would like to asynchronously generate ProjectQ code which the MainEngine (Compiler) has to process correctly. The python interpreter or a C++ compiler also serially parses the code line-by-line. Also they would break if you make them asynchronously parse a certain program code...
+If you you want to asynchronously execute code depending on e.g. measurement results (in future when we would have such fast feedback loops), then you would extend the ProjectQ language to also compile code for the classical logic (which could have async operations). But still the compiler would serially receive the code.
+The async code is all running on the same thread. It's just a flexible way of indicating "this part of the compilation has to wait for a measurement result", where separate tracks don't have to be coupled to each other.
+Anyways, regardless of whether you find that example realistic, there is a bad interaction between generators/coroutines/async methods and the with blocks. Control blocks are clearly intended to be lexically scoped, but mixing them with other language features breaks the behavior.
+Hmm, I see your point, but why would you need/want this interaction in these cases? The context manager syntax solves a certain class of problems very nicely, and for more "low-level" implementations, one can always do the resource management manually, right?
+It's not locking the frameworks syntax in a certain direction that prevents manual resources management, just as I can manually open and close a file vs. with open. Maybe you have something more in mind that I don't currently see here, but context managers are "basically" just convenient sugar.
+The fact that there is resource management cannot be removed no matter what language feature one uses.
+I would be surprised if the user wouldn't expect that there are controls enabled additional or/and qubits created (and much more...) if one passes the engine and qubits to a function, right?
+As for the first example, I guess that particular one could easily be "fixed" like this:
+Maybe one should change the issue title, since the "bad interaction" between context manager and gens/async is a python issue ("bug") and not ProjectQ specific...
+Maybe one should change the issue title, since the "bad interaction" between context manager and gens/async is a python issue ("bug") and not ProjectQ specific...
+That is a very strange perspective to take. Python's behavior matches spec in this situation, so there's no python bug. It's just that ProjectQ is using with as if it were a lexical scoping mechanism, and so the correct-according-to-python-spec behavior ends up being surprising and counter-intuitive.
+That being said, if python had __lexicalexit__ / __lexicalenter__ methods that fired as execution jumped in and out of with blocks inside coroutines, that would make it easy to fix this surprising behavior.
+Of course, thats why "bug" was in quotes and brackets :P
+I meant that the valid issues you point out apply to any context manager (that does resource management), not just the one here.
+Context Managers are merely syntactic sugar, we use them where they are convenient (for example when the lexical scope coincides with the runtime scope), and we dont if they are unconvenient, since nobody forces us to use them.
+I would suggest to close this issue if there are no further comments

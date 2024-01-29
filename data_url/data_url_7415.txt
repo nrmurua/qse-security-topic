@@ -1,0 +1,28 @@
+Hi,
+I am working on the algorithms of natural gradient descent and ansatz-based imaginary time evolution, in which I want to calculate the hessian with respect to parameters in a forward-reverse hybrid mode(for more details, see link). To achieve this, a method to calculate expectation and gradient calculation for <A|H|B>  form are necessary. In mindquantum, it could be easily achieved using grad_ops = sim.get_expectation_with_grad(ham, circ_right, circ_left). I'm wondering if there are any ways to achieve this in Yao.jl?
+Currently, I only know the piece of code like this(in Yao's document)
+It is easy to design one with the apply_back and mat_back functions in YaoBlocks.AD module.
+The problem is, the output of expect(ham, circ_left, circ_right) is a complex number, hence the gradient is not well defined.
+Hi @GiggleLiu
+The problem is, the output of expect(ham, circ_left, circ_right) is a complex number, hence the gradient is not well defined.
+Very good point! I just double-checked the system I am working on, it turns out actually I just need the gradient of Real(<A|B>), i.e, real part of the expectation, for more details, please refer to eq 10 of this post.
+Also, I only need the gradient path of the right circuit, so I want to set the parameters in the left circuit to have no gradient during the backpropagation.
+Is this achievable in Yao.jl? and how could I do this?
+In your case, the best solution is combining it with an AD engine like Zygote. If you can paste a code sample, I can show you how to do it.
+Hi @GiggleLiu
+Sorry for the late response. I tried to bring a minimal code sample to reproduce the <A|H|B> idea, but found out that the first step is of problem: I couldn't find an interface for expect function to accept two circuits. The only thing I found in the document, and in the source code is something like this:
+Below is my trial of the minimal example
+If I could calculate the expectation this way, then I would like to take the imaginary part of the expectation(or real part, it depends on the code) and do the backpropagation, just like the pseudo-code below
+Note that it is natural to use the parameter-shift rule or Hadamard test to get the Hessian-like matrix, but for N parameters, it requires N^2 measurement. What I'm doing is a trial to do it numerically in an efficient way(taking advantages of backpropogation method).
+Just try defining a loss and differentiate it with Zygote. The loss should use non-inplace functions like apply and dispatch.
+e.g.
+Let me know if it solves your issue. You probably want to check the gradients with the parameter shift rule.
+Hi @GiggleLiu
+Thanks for your explanation! and sorry for the delayed response.
+Just for double-checking, I noticed that the loss function you defined is based on the ArrayReg struct, that is, propagating the left and right ArrayReg objects through the left and right circuit, then doing the expectation calculation(contraction). The Zygote.jl then will automatically track this process during compile time, and handle the gradient calculation.
+One thing I'm not sure about is that, doing so, the circuit is not evaluated in an delayed order(or so called lazy evaluation), where some symbolic cancellation may help simplify the computation. Another thing is that, it seems Zygote.jl will not take advantage of the reversibility of quantum circuit during gradient calculation, as indicated in your neat paper
+Am I right about this? And how do you think?
+Another thing is that, it seems Zygote.jl will not take advantage of the reversibility of quantum circuit during gradient calculation, as indicated in your neat paper
+Zygote uses ChainRules which will go through our rules that uses reversibility.
+the circuit is not evaluated in an delayed order(or so-called lazy evaluation), where some symbolic cancellation may help simplify the computation.
+tho there are symbolic expressions, but circuit compilation is not handled by current releases of Yao.

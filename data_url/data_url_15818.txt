@@ -1,0 +1,20 @@
+The problem is in the run_qobj() function in qiskit/utils/run_circuits.py.
+When a submitted job to a non-simulator backend is in a JobStatus.ERROR or JobStatus.CANCELLED status, the job is submitted again. This happens infinitely many times if the job is continually canceled or in an error state.
+This is especially dangerous when a the job was submitted successfully, but reading the status was wrong (due to a bug in the job class or at the backend side), possibly causing infinite job submissions each costing the user money.
+Execute a job that always returns the status JobStatus.CANCELLED.
+The job submission should stop after a finite amount of retries.
+Do not use while True loops in the code. Instead use a finite, preferably small, amount of retries.
+This is related to #6821 but not the same bug. #6821 is an infinite loop of trying to create a job and failing, while this is an infinite loop of submitting the job. This is even more dangerous due to the possibility of infinite job submissions, each costing the user.
+I think the best practice would be to eliminate all while True loops and replace with a finite (preferably small) number of retries, and fail gracefully otherwise.
+@shahakL may I look at this issue ?
+Also, it would be quite helpful if you could tell me how I can reproduce this bug with code. Thanks!
+@TheGupta2012 Sure!
+Please see the attached piece of code for reference. It should call the MyBackend.run() function an infinite amount of times, therefore creating infinite jobs.
+In addition, like seen in #6821, there are many additional scenarios for infinite loops when submitting jobs through a QuantumInstance (e.g. if a job constantly returns a CANCELLED status, it enters an infinite loop). So I believe that all of the "while True" loops inside the run_circuits.py file should be fixed.
+main.py.zip
+Thanks @shahakL ! I'll update you when I make some progress.
+@shahakL one question I had was that if we max out on the number of trials (let's say 10 instead of infinite) for one of the jobs in a particular job set, do we raise an Exception and make the user submit the whole job set again or just skip that job and try to continue ahead, in that job set ?
+@TheGupta2012 IMO it should continue with the current job set, and simply log the failed job. The failed job should be marked in some way, maybe by adding a new job status like FailedToRun.
+I was thinking that too but Mathew Treinish and Steve Wood said that it would be okay to halt and notify that the job set execution has failed. The basis was that execution through QuantumInstance is intended for execution of quantum algorithms and failing of even one job in the job set would mean a failed execution of the algorithm altogether.
+Also, if the reviewers want I could still add some functionality in other commits but the current PR resolves the issue by raising a QiskitError if any check for execution or status retrieval fails.
+Hey @shakal, is there any other advice for the PR I opened? I'm not sure if I should ask the reviewers specifically.

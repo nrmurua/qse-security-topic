@@ -1,0 +1,19 @@
+Compiling the following program takes a racoon's age (maybe infiniloop):
+I noticed this while looking into another CL-QUIL-BENCHMARKING issue (#346). I'm not certain whether the search is infinite looping or just taking a really long time. Definitely doesn't finish within ~5 mins, whereas compiling with the default :GREEDY-QUBIT swap search strategy takes ~1.5 seconds.
+The same issue occurs when compiling other high-gate-depth files under benchmarking/quil-rewiring, like 0008q-0000418-qaoa-8-5.quil and 0020q-0000654-johannes.quil.
+Git bisect points to the swap fidelity commit (30882c0). Prior to 30882c0, compiling with :A* swap search takes about the same time as :GREEDY-QUBIT does after:
+*COMPILER-NOISE-STREAM* output appears to be stuck in loop applying EULER-YZY-COMPILER H 2 -> RY-TO-XZX RY(-3*pi/4) 2 -> RY-TO-XZX RY(-pi/4) 2 -> EULER-YZY-COMPILER H 2 -> ...
+Weird. Where is the H even coming from?
+This compiling the benchmarking/quil-rewiring/0005q-0000160.quil file, which has 11 H 2 applications. Not sure yet if it's stuck on the same one or if those are different instances, but there are many more than 11 attempts to apply the EULER-YZY-COMPILER to an H 2.
+Going to let it run for a bit over lunch while logging to a file. Logging to stdout slows things to a crawl, so maybe it will get itself unstuck and/or get stuck somewhere else... will report back later.
+Let it run for 10 minutes, and the tail end of the logs look identical to the snippet I posted above.
+Appears to only be an issue for the fidelity addresser. Temporal addresser still runs in about the same time as before the fidelity changes.
+Managed to scrounge it down to a smaller repro case. The following 13-line prefix of benchmarking/quil-rewiring/0005q-0000160.quil fails to compile in under 5 minutes. If I remove any one line from that program, it compiles in under 5 seconds, usually in under 0.5 seconds.
+Slightly simpler example consisting of only X, RX, and CZ. This feels like a sufficiently simple case to just start poking it with a debugger.
+An extra tidbit. If I compile the above program of X/RX/CZ with a chip spec of (build-nQ-linear-chip 20), then it does not terminate within ~12 hours.  If I reduce the size of the chip from 20 to 19 qubits, it takes about 14 seconds to compile. For 18 qubits, about 1.4 seconds.
+
+Shelving this for now to work on something else. Parting note to self. Here is a snippet from the logs when compiling the example here with a 20q linear chip:
+Why is embed-swap embedding swaps that don't appear to change the working l2p (presumably swaps on qubits that aren't wired?).
+Perhaps this is the same logical / physical discrepancy that Mark is presently working on.
+I was hoping that might be the case. Was planning to take a closer look and take his PR for test drive once the test failures there are resolved.
+Was hoping the fix for #534 might coincidentally resolve this issue as well, but it seems not.

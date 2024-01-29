@@ -1,0 +1,39 @@
+Sometimes happens on one of the boards:
+I think I have seen the window reduce from about +-5 to about +-4 to systematically +-3 around the time of each of the two frequency changes. I didn't narrow it down.
+How many affected boards do you have? I've only seen it on one so far.
+I see this on 4 out of 4 boards I tested (2x hw-rev 1.1, 2x hw-rev 1.0). On all boards this error occurred on every reboot. Moving back to a build just before the CPU frequency changes (i.e. just before ea71a04) this problem is not present.
+(FWIW all my Kasli are running rather warm)
+All boards I have access to (~6) currently have window size 6. All are cooled.
+@jordens interesting - do you know what temperature? Mine are around 85 deg. C.
+On all the Kasli I tried, if I flash pre ea71a04 gateware I have a window of 8, whereas with the new gateware I have 5.
+Around 70 °C
+Please find my results and patches for this here: https://github.com/enjoy-digital/kasli_sdram
+I did a first test with a simple LiteX design and a Misoc design. The LiteX design was working fine while Misoc design was not. (same behaviour than with Artiq)
+Since LiteX/LiteDRAM introduce lots of change around the DRAM phy that could also benefits MiSoC, i ported the code to MiSoC and verified it was working correctly.
+Before (113MHz):
+After (113MHz):
+And test at 125Mhz to be sure you won't have troubles later:
+This still need some adaptation of the rust code for Artiq which i'd prefer someone else to do (but should not be complicated and would allow review of the calibration).  It will maybe not be perfect to you, but i won't be able to allocate more time now on this. I think it gives you something that works and that you can improve.
+@enjoy-digital thanks, do you have an idea of what exactly is causing this behavior?
+@sbourdeauducq: no, but i'll spend an hour this morning trying to go in the other direction (patched version that is working to the one not working) and try to find it if you want a minimal patch for now.
+For later, the big patch could still be interesting since it improves/fixes number of others points.
+I'm mostly interested in understanding what caused such strange behavior. It is pretty puzzling that the read leveling window becomes smaller when the frequency decreases, and I want to avoid similar issues in the future.
+@sbourdeauducq: i'm on it.
+The minimal misoc patch is here: https://github.com/enjoy-digital/kasli_sdram/blob/master/0001-cores-sdram_phy-a7ddrphy-change-rdphase-rdcmdphase-r.patch
+And give the followings results:
+It changes the rdcmdphase/rdphase to better ones and also removes the initialization of the IDELAY_VALUE to 6 which i think is not need (it's better to let the software manage rdly itself) and can create corner cases in the software that would have to be managed.
+For example:
+with IDELAY_VALUE=6, we would have the following results:
+with IDELAY_VALUE==0, we have:
+which is easier to manage from the software and if you look at your previous results:
+The last 6 zeroes are related this IDELAY_VALUE, which was giving the following "real" scan:
+We were just not in the optimal read window (not enough taps).
+All the results of the tests i did are here: https://github.com/enjoy-digital/kasli_sdram/blob/master/README
+and all tests are commited so that you can also have a look if you want.
+Note: on Kasli, you could also set bitslip by software to 1 to be sure to be in the best read window (leading and trailing zeroes):
+Ah okay, I did suspect the delay maxing out at some point, but I thought that the reset was setting it to 0, not the gateware IDELAY_VALUE...
+Thanks!
+m0, b1: |00000000000111111111111100000000| delays: 17+-06
+@enjoy-digital How do you get this result? I added this but no effect.
+okay, another I/O block reset issue...
+No more SDRAM issue on any board here! Thanks again for the debugging @enjoy-digital

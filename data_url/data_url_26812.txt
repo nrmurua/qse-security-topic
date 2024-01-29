@@ -1,0 +1,16 @@
+I am getting the following crashes reproducibly after several thousand time steps:
+===== Routine Calling Stack =====
+It seems that there is a communicator leak--more communicators are created than destroyed. This is using the latest code for github . I am using 2019 intel compilers and mkl ,
+but it seems to be a problem in cp2k dbscr. I am running psmp hybrid with 384 cores and OMP_NUM_THREADS=4 . I am stuck until I can get pas this.
+Thanks!
+Ron
+I don't know if this is relevant, but I've recently introduced a check into DBCSR for the number of created communicators (note that a similar test is also in CP2K). Basically, the number sub-communicators at the end of the DBCSR execution must be zero:
+https://github.com/cp2k/dbcsr/blob/9041c952677d5cec4f888fc62738e09de812c0b3/src/core/dbcsr_lib.F#L321
+I was not able to find any communicator leak in the CP2K tests...
+Could you share your CP2K input? I can give a try... How long takes to reach the limit?
+BTW, you don't mention which MPI implementation you are using.
+Otherwise, you can add some debugging and print the number of created communicators. Add print for the number of created communicators debug_comm_count before the line
+https://github.com/cp2k/dbcsr/blob/9041c952677d5cec4f888fc62738e09de812c0b3/src/mpi/dbcsr_mpiwrap.F#L1304
+In this way, you can see how many sub-communicators are created before the crash.
+For a more invasive debugging, you can add a print just after every change of the variable debug_comm_count (no so many), so yo can see how this value grows.
+I found that the limit for Intel MPI is 16381 (see https://software.intel.com/en-us/forums/intel-clusters-and-hpc-technology/topic/279324)

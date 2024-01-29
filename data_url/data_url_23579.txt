@@ -1,0 +1,11 @@
+Initiating a RUDAT_13G_90 driver instance failed on the part where IDN is requested, and the instrument collects values for the parts of the IDN. The exception was: ('Error 1784 when trying to write to HID device: The supplied user buffer is not valid for the requested operation.', "asking ':ATT?' to <RUDAT_13G_90_USB: VA>", 'getting VA_attenuation').
+The following code changes in the driver resolved the problem:
+This means that basically the message size was incorrect.
+It is important to mention that the PC where this behavior was observed has Windows 7. The original driver code works OK on a PC with Windows 10 (e.g. without making the 2 adjustments mentioned above). The version of pywinusb was the same, 0.4.2.
+Another test is going to be performed soon to find out what this bug really depends on: operating system, or smth else.
+Originally discovered and fixed by @damazter.
+Further reading of the programming manual for the device and some Linux/USB examples in the programming troubleshooting guide, revealed that there is a bug in the driver.
+Packet size is 64. The first byte is always the "usb interrupt code" of a command that is performed. For the SCPI commands, this code is 1. But one should know that this byte takes space inside the packet, hence there are only 63 bytes left for the content. The same goes for the received data - the first byte is still that "usb interrupt code" and the rest of 63 bytes are the response.
+The driver handles correctly the receiving part, and has a correct number for the packet size. But it forgets to subtract the 1 bytes when it calculates the size of the padding (unused last bytes within the packet), see the code here. This results in a data that is 1 bytes too long.
+Now, I don't know why, but on Windows 10 this is not a problem for the USB connection, while it is a problem on Windows 7. In other words, Windows 10 is more forgiving then Windows 7.
+So, to sum up, the fix is on this line where -1 needs to be added.

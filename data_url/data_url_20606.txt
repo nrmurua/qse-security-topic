@@ -1,0 +1,67 @@
+I'm starting the TLS demmo on Ubuntu 18 with a shared library set up and these default algorithms announced: -DOQS_DEFAULT_GROUPS="CRYSTALS-kyber:FRODO:SABER" .
+I try to generate the self signed certificate from my openssl-1.1.1 main directory with:
+apps/openssl req -x509 -new -newkey kyber512 -keyout kyber512_CA.key -out kyber512_CA.crt -nodes -subj "/CN=oqstest CA" -days 365 -config apps/openssl.cnf
+I get this error:
+Can't load /root/.rnd into RNG 140383120265664:error:2406F079:random number generator:RAND_load_file:Cannot open file:crypto/rand/randfile.c:88:Filename=/root/.rnd Unknown algorithm kyber512
+There is no such file /root/.rnd.
+If I try the ECDSA certificate example I get the same error but instead of unknown algorithm it generates EC private key.
+I've followed quick start several times but cannot see where I've gone wrong.
+Kyber is a KEM algorithm. When you (want to) create certificates you ought to work with a signature algorithm.
+It seems you were trying to use the kyber512 to sign but that was not recognized as an algorithm. Try using falcon512/falcon1024 or dilithium2/dilithium3/dilithium5.
+Many thanks for your quick reply! I have tried all the oqs_sig_default* authentication algorithms which, include those suggested by opencrypto but receive the same error.
+After creating the ecdsa example root cert with the above error. If I try to generate the server cert I receive the error: Algorithm ecdsa not found or for ec:<(apps/openssl ecparam -name secp3841r1) `Algorithm ec:/dev/fd/63 not found.
+I wonder if an old binary or link to openssl-1.1.1g could be causing me problems, as I updated to openssl-1.1.1 before beginning quick-start steps.
+This now begins to look like a setup/configuration problem. Would you please try the same commands in our pre-created docker image and let us know whether the same happens there?
+Example execution:
+If everything works there, there's probably a shared library mixup in your local setup. You may want to set LD_LIBRARY_PATH explicitly as well as check libs used by ldding the executables and libraries you're using.
+The docker image starts just fine and runs as your example. I get connection refused when I try to query the server with curl --curves kyber512 https://localhost:4433, this may be my nginx config.
+I have updated LD_LIBRARY_PATH and confirmed it has been updated with echo '$LD_LIBRARY PATH'. When I try to generate the self CA cert I get the following error:
+'error while loading shared libraries: liboqs.so.0: cannot open shared object file: No such file or directory.' I see this has been resolved in another thread. If I ldd apps/openssl which, I call to create the self cert 'liboqs.so.0 => not found'.
+I find two locations of this file (in liboqs/build/lib and oqs/lib) and can access them both.
+I built liboqs with if that helps:
+cmake -GNinja -DCMAKE_INSTALL_PREFIX=/openssl/oqs -DOQS_USE_OPENSSL=ON -DBUILD_SHARED_LIBS=ON -DQOS_ENABLE_KEM_SABER=ON -DQOS_ENABLE_KEM_KRYSTALS-Kyber=ON -DQOS_ENABLE_KEM_NTRU=ON -DQOS_ENABLE_KEM_FRODO=ON -DOQS_DEFAULT_GROUPS=\"CRYSTALS-kyber:FRODO:SABER:NTRU\"  -DOPENSSL_ROOT_DIR=/openssl ..
+and the fork with:
+./Configure shared linux-x86_64  -lm
+and the fork with:
+./Configure shared linux-x86_64 -lm
+This then indeed seems to be a shared lib location problem pretty much independent of OQS: Either all libs need to be in a system location (happens with make install) or be locally configured or specified. If you don't want to run make install to move the shared openssl&liboqs libs in place (dangerous as it may mess with your system OpenSSL) you need to either pass LDFLAGS or RPATHS to the Configure command; final option is to use LD_LIBRARY_PATH (set to the path where liboqs.so is located on your machine) when starting openssl.
+I tried the option to locally configure libraries by doing the following:
+I returned to an earlier snapshot that had openssl1.1.1 but I could not find the Configure file I need to build the fork. So I installed openssl-1.1.1j locally at /opt/openssl/openssl-1.1.1j and /opt/openssl/ssl after following https://askubuntu.com/questions/1126893/how-to-install-openssl-1-1-1-and-libssl-package  . This worked successfully and openssl version confirms 1.1.1j is installed. I took a snapshot here and follow quick-start instructions using /opt/openssl/openssl-1.1.1j in place of <OPENSSL_DIR>:
+from /opt/openssl/openssl-1.1.1j/liboqs/build:
+cmake -GNinja -DCMAKE_INSTALL_PREFIX=/opt/openssl/openssl-1.1.1j/oqs -DOQS_USE_OPENSSL=ON -DBUILD_SHARED_LIBS=ON -DQOS_ENABLE_KEM_SABER=ON -DQOS_ENABLE_KEM_KRYSTALS-Kyber=ON -DQOS_ENABLE_KEM_NTRU=ON -DQOS_ENABLE_KEM_FRODO=ON -DOPENSSL_ROOT_DIR=/opt/openssl/openssl-1.1.1j ..
+from /opt/openssl/openssl-1.1.1j:
+./Configure shared linux-x86_64 -lm
+Without error. However, trying to generate the self-signed CA cert results in Unknown algorithm dilithium2.
+echo $LD_LIBRARY_PATH is /opt/openssl/lib currently. If I change it to the location of liboqs.so: 'LD_LIBRARY_PATH=/opt/openssl/openssl-1.1.1j/oqs/lib' and confim the change with 'echo $LD_LIBRARY_PATH' I get the same error when trying to generate the self-signed CA cert.
+What am I doing wrong?
+./Configure shared linux-x86_64 -lm
+Again, you did not set LDFLAGS or RPATH as per my (and the OpenSSL build) suggestions above. Why? Alternatively, did you run make install?
+What am I doing wrong?
+One thing I don't understand is your use of  -DQOS_ENABLE_KEM_KRYSTALS-Kyber: Why do set this? Where did you find this constant defined? Generally, why do you explicitly enable algorithms? And why don't you explicitly enable dilithium? Or in other words, is  OQS_ENABLE_SIG_DILITHIUM set (probably in /opt/openssl/openssl-1.1.1j/oqs/include/oqs/)oqsconfig.h at all? If not, the error message is explained.
+If still unresolved, please provide a full listing of how you are "trying to generate the self-signed CA cert", incl. value of LD_LIBRARY_PATH and the contents of that directory as well as the contents of oqsconfig.h (embedded in your openssl build directory; even better than that would be the output of ./apps/openssl speed x).
+I defined the algorithms as I read in build this would make the algorithms within available - like NTRU makes ntru_hps2048509 ect available. I did not specify dilithium as it is part of the default setting. With your feedback I have tried:
+This finishes with 'make[1]: Leaving directory'/opt/openssl/openssl-1.1.1j'.
+Then I try to generate the CA certificate:
+OUTPUT: 'Unknown algorithm dilithium2'
+/opt/openssl/openssl-1.1.1j/oqs/include/oqs/ contains 'sig_dilithium.h' and 'oqsconfig.h' which has '#define OQS_SIG_DEFAULT OQS_SIG_alg_dilithium_2'.
+If I try:
+/opt/openssl/openssl-1.1.1j     ./config -W1,-rpath=/opt/openssl/lib
+OUTPUT: 'gcc error: unrecognised command line  'W1'' and the same error for rpath
+echo $LD_LIBRARY_PATH
+./apps/openssl speed x
+I can send the output of oqsconfig.h later if also needed.
+If this happens:
+you are not running an OQS-enabled openssl.
+This is what should happen:
+One more test: Please check the symbols in your local openssl build (e.g. nm apps/openssl | grep dilithium2):
+If you don't get some 170 lines back, dilithium is not configured in (or your build is simply not building OQS-OpenSSL but a stock openssl: Can you please show the git clone command with which you cloned oqs-openssl? Or just run git status in the oqs-openssl build dir (which seems to be /opt/openssl/openssl-1.1.1j in your case)? If this doesn't show OQS-OpenSSL_1_1_1-stable you're not building OQS-OpenSSL. Is there no way you could start from scratch following exactly the steps outlined in https://github.com/open-quantum-safe/openssl#building with <OPENSSL_DIR> set to something other than a plain OpenSSL install directory (your /opt/openssl/openssl-1.1.1j)? I'm really afraid your setup mixes up plain OpenSSL (needed for building liboqs) and OQS-OpenSSL (which is what you want to run).
+Yes, you are right I have got mixed up with openssl folders.
+I revert to a much earlier snapshot and and follow the openssl instructions. I attach a text file with my steps.
+oqs-openssl notes.txt
+after 'make -j' I encounter lots of makefile errors for test/*  ending with:
+make[1]:Leaving directory '/usr/openssl'
+Makefile:174: recipe for target 'all' failed
+Do those make errors provide information as to what's wrong? They are not contained in the logfile. Also, building code in system folders (/usr) is pretty dangerous as it requires root privileges and might mess with the system openssl installation. I'd recommend you only run apt commands as root and all the rest as a user (say in a folder ~/git/oqs containing the folders liboqs and openssl after cloning those projects). Final comment: Using make -j may be risky as it may trigger memory allocation problems -- with all kinds of follow-on issues.
+The errors were all Makefile : ## : failed. There was no other detail.
+I have started from a clean snapshot, increased the memory allocation (as my usage graphs were up to 80% when using the 'make' command) and can now generate the self CA Cert.
+Thank you for your patience with me! I have learned a lot!

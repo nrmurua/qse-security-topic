@@ -1,0 +1,33 @@
+Occasionally, and typically after an RTIO Underflow, an Urukul channel enters a 'locked up' state.
+Typically the channel stops outputting RF, and further calls to set() do not change this.
+Sometimes the channel can be brought back to life by re-initialising it (cpld.init(), channel.init()) - typically the first re-initialisation fails with an AUX_DAC mismatch, but the second one works. Sometimes many (>5) re-initialisations are needed, and sometimes the only way to recover is to power cycle the Kasli.
+Sampling the DDS registers after a 'lock up' I found CFR1-3 = {0xffffffff, 0x4000280, 0x0} (sample size 1), whereas a working channel has CFR1-3 = {0x2, 0x1400020, 0xD3FC140}. Other channels on the same Urukul operate normally, and the CPLD status word does not change when a channel locks up.
+In this experiment we have a Kasli master and DRTIO satellite, with one Urukul on the master, and 2 on the satellite. We have seen channels on both the master and satellite lock up. The distribution of channel lock ups appears linked to the distribution of use in experiments (i.e. infrequently used channels never lock up).
+This is AD9910-specific. I have seen it as well. And we know that its bigger brother the AD9914 is equally easy to bring into a locked up state. I'd hypothesize that a multi-transfer SPI transcation is interrupted mid-way (due to an underflow or due to bad initialization or due to some other reason) and the AD9910 machinery is driven into a non-recoverable state by subsequent SPI transfers. IME IO_RESETs don't help, master resets help about half the time, but there are several cases where only a power cycle will clear that condition.
+#940
+In this experiment we have a Kasli master and DRTIO satellite, with one Urukul on the master, and 2 on the satellite. We have seen channels on both the master and satellite lock up.
+So you have tested DRTIO at 125MHz and it works?
+@sbourdeauducq yes - we have two Kasli master-satellite DRTIO setups running at 125 MHz. They have both been running for several months without any problems.
+Maybe we should add simple power management over I2C? Just IO extender + PMOS. On by default.
+@gkasprow better to make sure that the code doesn't put the AD9910 into this state to begin with (I've used AD9910s continuously updating for months without any issues, so I know that they can be programmed reliably).
+@hartytp What is the difference in the programming sequence?
+@sbourdeauducq the legacy systems @hartytp is referring to just use an FSM that cannot be interrupted to generate the SPI transactions. I think the point is that it is the interruption of the SPI transaction in the middle of a multiword transfer that causes the DDS to misbehave, rather than an inherent bug in the DDS itself if one completes the transactions properly.
+exactly
+There is an inherent bug in the DDS chip if it doesn't recover from interrupted SPI transactions after a master reset. Resets ought to be able to clear any chip state that can be programmed from a digital interface.
+And, while it is not strictly a bug, it is poor design that interrupted transfers put the chip into a broken state. Try breaking the Si5324 by comparison. But, at least the master reset on the AD9910 puts the chip into a working state, contrary to the AD9914 where everything is borked after a reset. Sigh...
+The only advantage I see to the software workaround is supporting the existing Urukul fleet.
+The only advantage I see to the software workaround is supporting the existing Urukul fleet.
+Really? If we rely on adding a HW power-cycler, after any error condition that could interrupt a SPI transaction, one has to check all Urukuls in the system for crashes, then power cycle the locked up ones and wait for the PLLs to relock. That seems pretty nasty IMHO.
+What about changing the SPI core width to 72 bits, so that write64 and read64 are entirely executed in gateware, and making sure that rtio_reset does not interrupt any ongoing SPI transfer?
+@jordens Do you think this would cause any particular problems?
+With 72 bits the same thing would show up again once the SPI address prefix router on Urukul lands and uses up a few more bit.
+And it would probably make the coredevice API quite a bit slower and more complicated.
+And it would probably make the coredevice API quite a bit slower and more complicated.
+What part?
+The implementation of the read/write 32/64 functions with a 72-bit SPI core don't seem necessarily slower (there will be more bit twiddling, but we save RTIO transactions) or particularly more complicated.
+FPGA timing closure (with the wider bus) may be more of a problem.
+Is there also a problem if you send the "SPI address prefix" with one transaction and then the 72-bit AD9910 command with another?
+The worst thing that can happen is that a prefix is sent without a corresponding command, but that can be handled in the CPLD (which I assume is what does the routing?).
+Depends on whether you do the alignment in gateware or software it would make that part more complicated and the other part a bit simpler.
+FWIW, I do think this issue is worth fixing. We don't hit it a lot (mainly during debugging when underflows/forcefully terminating experiments is more common) but it's really obnoxious when we do. e.g. my students wondering why the power out of an IQ mixer randomly dropped by 3dB, turned out that one of the Urukul channels driving it had locked up due to an underflow in code they were testing.
+I know this is is an old issue. Though in relation to #1378 , we are able to get the AD9910 in a consistent state again by asserting the MASTER_RESET signal (normally called in the startup kernel). So far, that works every time, and not only half the time as mentioned earlier. This at least prevents us from having to do a cold reboot. The code used is shown below. I am aware of #940 , but so far we do not have trouble asserting MASTER_RESET. So in some sense this is the opposite of what f17c0ab and 9ad1fd8 did. wondering if asserting both MASTER_RESET and IO_RESET signals at the same time is the issue, as was done before.

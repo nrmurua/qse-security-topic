@@ -1,0 +1,74 @@
+Dear developers,
+Environement: Centos 7 with Nvidia-v100
+Codebase: CP2K-v7.1.0
+Reproduce rate: 100%
+How to reproduce: Compile the soure code without MKL math lib and run the following commands in the path "cp2k/tests/SIRIUS/regtest-1".
+How to recover: If I build CP2K with MKL math mode, the test will be passed.
+How to generate arch file: ./install_cp2k_toolchain.sh --mpi-mode=mpich --libint-lmax=5 --gpu-ver=V100
+The detail arch file is attached.
+He-full-potential runtime error.txt
+Thanks,
+Vitesse.
+cc @mtaillefumier
+I suspect that the multi threading in openblas is the root cause of your problem. The error is clearly stated, it is a factorization problem, that why I think the problem is linked to openblas not sirius or cp2k.
+Hi all,
+Let me claify some points after I do more tests with He-full-potential.inp. The reproduced rate is not 100% and It cannot be recoverd by using MKL and the error messages are different.
+Environement: Centos 7 with Nvidia-v100
+Codebase: CP2K-v7.1.0
+Reproduce rate: randomly about 50%
+How to reproduce: Compile the v7.1.0 soure code and run the following commands in the path "cp2k/tests/SIRIUS/regtest-1".
+How to recover: N/A
+How to generate arch file: ./install_cp2k_toolchain.sh --mpi-mode=mpich --math-mode=mkl  --libint-lmax=5 --gpu-ver=V100 --with-mkl=/opt/intel/mkl
+Partial log: It looks like different runtime error
+Thanks,
+Vitesse.
+From previous experience on different architectures, openblas has issues when you use openmp and multi threading unless you compile it with the right set of parameters. This is related to some internal states in the library that are not protected by default if two threads access it at the same time.
+basically, if you do for instance a gemm inside a for loop parallelized with openmp then the behavior can be a bit erratic. I would suggest as a first test to put OMP_NUM_THREADS=1 and run the code again. At least it should indicate if the multithreading is the root of the problem.
+This problem does not occur with mkl because it is thread safe (which is not the case for openblas with the default compilation parameter set). And the fact that you do not get the error message consistently is also an indication that it probably linked to this problem. Note that I do not exclude a potential problem with sirius.
+Please note that the toolchain-generated psmp arch file should link to the OMP-enabled variant of OpenBLAS (likewise should SIRIUS get built against the OMP-variant of OpenBLAS). As per the standard should the OpenMP runtime be able to handle nested OMP-parallel loops. Furthermore, if this comment by one of the OpenBLAS devs still hold, should a gemm call inside an OMP-parallel section of the code result in a single-threaded gemm, as expected.
+@mtaillefumier
+I still hit the issue by using the command and link to MKL library.
+CUDA_VISIBLE_DEVICES=3 OMP_MAX_THREADS=1 mpirun -np 1 ../../../exe/local_cuda/cp2k.psmp He-full-potential.inp
+Arch file is created by the following command:
+./install_cp2k_toolchain.sh --mpi-mode=mpich --libint-lmax=5 --gpu-ver=V100 --math-mode=mkl --with-elpa=no --with-mkl=/opt/intel/mkl --with-mpich=/home/vitesse/cp2k/mpich/ 
+Here are the log and arch file.
+He-full-potential.txt
+local_cuda.psmp.txt
+Thanks,
+Vitesse.
+In a ideal world yes, in practice, it is not necessarily the case. MKL does it (but it is thread safe) openblas may or may not.
+this one is also relevant
+OpenMathLib/OpenBLAS#2164
+They are threading issues with openblas that's why I suggested this as the root of the problem.
+could you replace OMP_MAX_THREADS with OMP_NUM_THREADS. Moreover, you run with 64 threads which will most likely results in a catastrophic end. your run is not even using GPUs so we can put this aside for the moment.
+A quick reading of the output indicates that there is an error in the overlap matrix. This means, the calculations are wrong. would it be possible to run with OMP_NUM_THREADS=1 and 4. This test is really fast (actually, you do not need a GPU for that test).
+@mtaillefumier
+I still hit the issue by using the command and link to MKL library.
+CUDA_VISIBLE_DEVICES=3 OMP_MAX_THREADS=1 mpirun -np 1 ../../../exe/local_cuda/cp2k.psmp He-full-potential.inp
+Arch file is created by the following command:
+./install_cp2k_toolchain.sh --mpi-mode=mpich --libint-lmax=5 --gpu-ver=V100 --math-mode=mkl --with-elpa=no --with-mkl=/opt/intel/mkl --with-mpich=/home/vitesse/cp2k/mpich/ 
+Here are the log and arch file.
+He-full-potential.txt
+local_cuda.psmp.txt
+Thanks,
+Vitesse.
+Ok I reply to myself. I can reproduce the error you see. It works with OMP_NUM_THREADS=1 + mkl but fails if I activates multithreading at runtime.
+@mtaillefumier
+Yes, I cannot avoid the issue if I set multi-threading. How does CP2K dashboard test pass this testcases every time?
+By the way, thanks for your pointing out incorrect environment "OMP_NUM_THREADS" that I used.
+@mtaillefumier
+Do you know the root of this issue? Is SIRIUS or not?
+It is in SIRIUS but in combination with cp2k. I am working on it now because it is actually blocking. The good thing is that I can reproduce it all the time on all machines I have cp2k+sirius compiled on.
+Ok, I found out what causes the issue. Basically, the problem comes when we update a context in the full potential case. It will not happen if we run a pseudo-potential case (although I could not exclude it either). When we call the function responsible for calculating the total energy, etc, we update the context before calculating anything. However, this is not needed the first time we compute the ground state.
+It is a problem deep in SIRIUS, updating the context in the case of full potential calculations should not fail but it fails at random for some strange reason.
+I got the following floating-point exception while working on #736. Is this caused by the same problem?
+I can not exclude it. I was searching in the wrong place. Anton found the mistake. wrong omp pragma call. He committed the changes but it means we have to update SIRIUS in the cp2k build (and make cp2k community aware of this).
+Fixed via #738. Thanks @toxa81 and @mtaillefumier!
+@mtaillefumier
+Hi I am trying the latest code base with commit "0c352fb614e2ad9bd9c77166093b1cf4df31fd19" to verify this issue.
+However, I will hit error when I execute the command. "./install_cp2k_toolchain.sh --math-mode=mkl --with-reflapack=no --with-scalapack=no --with-elpa=no --libint-lmax=5 --with-mkl=/opt/intel/mkl"
+==================== Installing SIRIUS ====================
+sirius_6.4.4.tar.gz is found
+Installing from scratch into /home/master/Desktop/HPC/cp2k/cp2k/tools/toolchain/install/sirius-6.4.4
+ERROR: (./scripts/install_sirius.sh, line 130) Non-zero exit code detected.
+The issue occurs if I use new SIRIUS-6.4.4+SpFFT-0.9.10 version and it won't occurs if I use SIRIUS-6.4.4+SpFFT-0.9.8.

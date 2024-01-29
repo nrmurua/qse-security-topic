@@ -1,0 +1,14 @@
+The default StochasticSwap pass does not map a circuit from the logical (virtual) representation to the physical representation for running on hardware.  The previous swap_mapper pass used to do this.  As such, there needs to be an ApplyLayout pass that flattens the quantum registers and applies the layout to map to hardware for running on a physical backend.
+The other swap mapper passes (BasicSwap and LookaheadSwap) also do not map circuit from the virtual representation to the physical one. [Added later: I misunderstood BasicSwap and LookaheadSwap. Those two returns semantically the same circuit as physical circuit. So my concern was only on StochasticSwap.]
+We definitely need a function to do this.
+I think we have at least two options for the solution:
+Both solutions have pros and cons.
+(1) can easily tell when the circuit is changed from virtual to physical to the other passes (by require(ApplyLayout)), but it has difficulty in ensuring to apply the ApplyLayout pass. Leaving it to users of pass manager and the pass manager checks if the last DAG is physical and otherwise raise Exception?
+(2) can simply impose the responsibility to developers of swap passes, but it has difficulty in telling when the circuit is changed from virtual to physical to the other passes. Notifying the change by introducing new interface class say PhysicalMappingPass and swap passes implement it and some passes require(PhysicalMappingPass) ?
+I have no idea which is better, but I think we need to discuss to whom and how we impose the application of layout.
+So, I would say that the mapping from virtual to physical qubits should be explicit, i.e. there is a pass that does this.  This is more in line with the spirit of the transpiler where each pass does a simple task.  There is no reason why a swap mapper should actually do the map from virtual -> physical.  Indeed, one could, for example, just be exploring the characteristics of a swap mapper applied to different topologies without actually intending to run the resulting circuits on a device of that layout.
+@nonhermitian can you please write an example here that failed? So it can be used to test the solution
+It is hard to get a simple example to work because there are several bugs in the way.  However, here is a QV example:
+comp_qc will not run on the backend e.g. ibmq_16_melbourne because the qubits are still virtual and have not been mapped to their physical qubits.  Relabeling qubits using the passmanager layout property does the correct mapping pm.property_set._properties['layout']._v2p:
+I just talked with with @itoko and I convince him that we dont need an ApplyLayout pass. I think also that was the conclusion with @nonhermitian today (however, the StochasticSwap needs readjustment). Shall we close this issue or rename it to reflect the readjustment of StochasticSwap?
+All the work discussed here should be complete or is covered in other issues.

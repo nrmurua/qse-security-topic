@@ -1,0 +1,41 @@
+I'm having again the same problem presented here .
+Basically, this is the exception
+The program uses a total of 31 qubits on a server with 125GiB of RAM, with an Hadamard gate on 15 of them and just a controlled swap based on the previous Hadamard result on the other. I am using the statevector_simulator backend.
+I also tried to reinstall qiskit-aer from the latest version through pip install git+https://github.com/Qiskit/qiskit-aer/, but I get a different problem related to a coupling map being none, so I returned to the stable version.
+The program should run without problems.
+Btw, here it is a minimal program which reproduces the same behavior
+Ok, I'm experimenting a little bit. With the same minimal program posted before and 30 qubits instead of 31, I get this error
+AerBackend: simulation failed
+concurrent.futures.process._RemoteTraceback:
+"""
+Traceback (most recent call last):
+File "/usr/lib64/python3.6/concurrent/futures/process.py", line 175, in _process_worker
+r = call_item.fn(*call_item.args, **call_item.kwargs)
+File "/mnt/residential_zone/home/sperriello/virtual_envs/qiskit_env/lib64/python3.6/site-packages/qiskit/providers/aer/backends/aerb$ckend.py", line 102, in _run_job
+self._validate_controller_output(output)
+File "/mnt/residential_zone/home/sperriello/virtual_envs/qiskit_env/lib64/python3.6/site-packages/qiskit/providers/aer/backends/aerb$ckend.py", line 149, in _validate_controller_output
+raise AerError(res.get("status", None))
+qiskit.providers.aer.aererror.AerError: 'ERROR: std::bad_alloc'
+"""
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+File "test_31.py", line 11, in 
+result = job.result()
+File "/mnt/residential_zone/home/sperriello/virtual_envs/qiskit_env/lib64/python3.6/site-packages/qiskit/providers/aer/aerjob.py", line 38, in _wrapper
+return func(self, *args, **kwargs)
+File "/mnt/residential_zone/home/sperriello/virtual_envs/qiskit_env/lib64/python3.6/site-packages/qiskit/providers/aer/aerjob.py", line 95, in result
+return self._future.result(timeout=timeout)
+File "/usr/lib64/python3.6/concurrent/futures/_base.py", line 432, in result
+return self.__get_result()
+File "/usr/lib64/python3.6/concurrent/futures/_base.py", line 384, in __get_result
+raise self._exception
+qiskit.providers.aer.aererror.AerError: 'ERROR: std::bad_alloc'
+With 29 qubits, the same error of the original post is reported.
+The coupling map error is because of changes in Terra, if you use master qiskit-aer you also need to use the latest master of qiskit-terra.
+My guess is the std::bad_alloc error is due to not having enough memory to initialize the statevector. But its strange it happens only for 30 qubits and not 31. Any ideas @hhorii ?
+@chriseclectic I've had the same problem, and it was indeed caused by a memory error. However, I previously run experiments on the same server with 32 qubits without problems, but I was using the qasm simulator. Rereading our previous discussion, however, maybe it could be the case that 125GiB of RAM are enough for a 32-qubit qasm simulation and not for a statevector one?
+Also, as far as I remember, a check on the available memory was introduced in Aer. Was it removed?
+That might be it! The statevector simulator has some large inefficiencies when producing the output data: the vector is copied in memory when it's converted to the output data (and the JSON output version likely requires more memory than the raw array version of the vector used in the simulator).
+There is a simple memory check on the python side, but I believe it might be too generous since it isn't taking into account any memory copy operations.
+Ok, so maybe we have an explanation. Is there any other way or trick that could allow me explore the output avoiding the in-memory copy (and hence the crash)?
+I'm closing this issue as we've replaced processpool with threadpool and added some additional resource counting checks which should be in 0.2. We can reopen a new issue if similar problems arise with trying to run a circuit that uses more than the available memory.

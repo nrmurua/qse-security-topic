@@ -1,0 +1,59 @@
+Kernel:
+When run on Sayma this produces the following error:
+The problem can be worked around by inserting a delay (e.g. 80ns) between the two resets.
+Does it make sense for xxx.reset() to automatically include whatever delays are necessary? AFAICT resets are done at the start of experiment cycles where the simplicity of just-works (without fiddling with delays) is nice.
+What I don't understand is why there is no sequence error with a single reset(). The end of reset() calls set_mu 9 times without advancing the time line, which is more than the number of SED lanes, so there should be a sequence error already.
+With TTLs, sequence errors behave as expected and can be tested with:
+I would be useful to see what is in the analyzer, but I don't have a Sayma with functional Ethernet anymore.
+@jordens Do you have a repro on Kasli?
+Not right now.
+OK. Confirmed that delays work.
+@jbqubit Since you have a board with working Ethernet and I don't, can you:
+And do it again with just sawg0 being initialized (comment the sawg1 reset).
+Please make mods to your hardware to get Ethernet to work. Please open an Issue on sinara-hw if you don't know what changes need to be made.
+I know what changes need to be made, but they take hours. Whereas it should take you a few minutes to get the dump.
+And I don't even have a SFP-SATA adapter anymore as I sent it to Duke (another is on its way, but it'll take days to arrive).
+These things work in uTCA crate, right? @gkasprow
+How do I clear the analyzer buffer? It's not mentioned here.
+https://m-labs.hk/artiq/manual-master/utilities.html?highlight=analyzer#core-device-rtio-analyzer-tool
+Please make mods to your hardware to get Ethernet to work. Please open an Issue on sinara-hw if you don't know what changes need to be made.
+Joe, is it really worth M-Labs doing this? Greg's verified that ethernet works reliably with these changes on several boards. For the time being, I'd argue that doing this rework would not be a good use of @sbourdeauducq's time.
+These things work in uTCA crate, right?
+No they don't.
+For the time being, I'd argue that doing this rework would not be a good use of @sbourdeauducq's time.
+Exactly, also I hope we can get a repro on Kasli after this, where it is much easier to track down problems.
+@hartytp M-Labs needs a working hardware setup so they have the ability to debug Sayma. Many of the very nice debug tools rely on Ethernet. It's annoying the M-Labs sent their only fully functioning board to Duke without having a fully-functioning backup in HK. It's like the warning on aircraft to "put the oxygen mask on yourself before assisting your fellow passenger."
+And the analyzer buffer is cleared every time you use artiq_coreanalyzer to retrieve it from the board. So the procedure is: artiq_coreanalyzer, throw away the results, run experiment, artiq_coreanalyzer again and post results. Or if the board is freshly booted and without a startup kernel, the buffer is already empty.
+dump.raw.zip
+And the analyzer buffer is cleared every time you use artiq_coreanalyzer to retrieve it from the board. So the procedure is: artiq_coreanalyzer, throw away the results, run experiment, artiq_coreanalyzer again and post results. Or if the board is freshly booted and without a startup kernel, the buffer is already empty.
+This would be really helpful to have in ARTIQ documentation. :)
+Thanks. Can you do another one with sawg1.reset commented out?
+dump.raw.zip
+Also, you're welcome to run my Sayma remotely while we're all asleep in the USA. :)
+So, there are two things that are wrong with those dumps:
+I'll replay 2) on Kasli and see what happens.
+contains tons of RTIO events that should not be there.
+There are 18 seconds between the submission of the first and last events in that dump. Looks like that can be explained by the buffer not being cleared, due to mistake or ARTIQ bug.
+You saw history of what I typed. Now you have remote access so can run yourself. :)
+With the same RTIO sequence that corresponds to one SAWG reset (channels and timestamps shifted), Kasli behaves itself and correctly reports the sequence error.
+Confirmed that Sayma does not report the sequence error, both with the same code and without the *8 timestamp.
+This produces the expected sequence error on Sayma:
+Changing RTIO channel numbers by using rtio_output(st, 8+i, 0, 0) makes the sequence error disappear on Sayma.
+Here is the code that detects sequence errors. Where is the dependency on RTIO channels?!?! quash is only asserted for channel 86 (as can be verified in the generated Verilog).
+https://github.com/m-labs/artiq/blob/master/artiq/gateware/rtio/sed/lane_distributor.py#L130-L135
+Kasli and KC705 have none of this insanity and correctly report the sequence error (respectively on channels 8 and 16) in both cases.
+Some more data:
+The DRTIO master target does not interact at all with the RTM (yet). Are there more HMC7043-style shenanigans going on? Or Vivado/Ultrascale breakage when the JESD204 core or serwb is present?
+I do feel like there is something we're missing as there are a few odd bugs (crashes, dac glitches, etc) which don't make sense and don't seem very reproducible. Question is, if there is some common cause, how do we find it? More microscope probes?
+Bug is still present with the JESD core removed. Oddly, this makes Vivado fail timing in several places.
+Does removing the LOCs help? Can we remove those with appropriate timing constraints?
+I don't think this has anything to do with the LOCs.
+@sbourdeauducq do you need any other data to help debug this?
+The Sayma DRTIO master, after adding SAWG/JESD, now also exhibits this bug.
+Is the correlation with #1065 only a coincidence?
+Reverting commit 8342896 (done on 84b3d9e) makes the bug disappear on the master (and stops the crash-kernel from crashing). So, it really looks like this and #1065 are linked.
+Holding the SAWG in reset (#1065 (comment)) does not prevent this bug.
+Removing quash channels as below also does not prevent the bug.
+There is no bug - I forgot that SAWG uses latency compensation extensively.
+The actual timestamps during one reset can be obtained with:
+which produces this output - it fits in the available lanes:

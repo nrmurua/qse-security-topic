@@ -1,0 +1,28 @@
+It would be nice if all errors and/or conditions signaled by CL-QUIL and QUILC descended from some common root condition type, so that code that wants to handle any CL-QUIL error (but let errors from external code propagate) could install a handler for only CL-QUIL:QUIL-ERROR (or whatever it gets called).
+This would require making sure all currently-existing conditions descend from the root type (or types), and that all (error "foo") forms get converted as well.
+Finally, all handlers that currently handle error or simple-error (and maybe also serious-conditions) should be examined to determine if they should instead handle only CL-QUIL errors.
+For one such example, see the discussion in the following thread:
+#549
+I ❤️ this idea.
+I'm only a fan of this for distinguished quilc errors. What about a file open error that happens in quilc? Where do we put the boundaries on what is a quilc error and what isn't?
+Boundary is the quilc source tree.
+I'll work on this. Basically create a condition such as:
+Then any other conditions defined should inherit from quil-error in addition to their current super class using multiple inheritance:
+LMK if there's a different approach I should take.
+In my opinion, the root condition shouldn't have any slots unless we really feel every sub-condition ought to have those slots.
+The other comment is that not every condition in CL-QUIL is an error condition, so quil-error perhaps ought to be quil-condition. If we want quil-error, then it should sub-class from error, but then you won't want to use it with e.g. no-binding-match.
+To answer "what is right?", I think one needs to ponder "why have a root condition at all?" Usually it's so you can detect any Quil-specific error (as noted above, it cannot detect every error because there are many standard errors that can happen within CL-QUIL that aren't Quil errors, like a divide-by-zero). Why would you want to catch a Quil-specific error and no other error? To me, that's a big conundrum.
+Another possible "solution" is to have a generic "cl-quil-error", for all those errors that don't quite deserve their own condition. That way we can just remove error calls. We could piggy back on this and subclass new conditions with this kind of error.
+I probably didn't put enough thought into this and was just doing my Code Review Duties by filing a follow-on issue for something that came up in the review thread.
+Maybe a better title for this issue would have been: "figure out why this one loop in CL-QUIL-BENCHMARKING:MEASURE-REWIRING-PERFORMANCE is only handling SIMPLE-ERRORs and what (if anything) to do about it."
+In the context of the original thread, I guess the assumption I was making was that if a cl-quil application-specific error occurs, it probably means the compiler just failed and gave up in some expected way, so it's safe to swallow the error and just mark the benchmark as "failed", whereas if you get a divide-by-zero or "heap exhausted" error, maybe something is seriously wrong and you want the benchmark to fail in an obvious way so someone has a chance of noticing it. Granted this is a dubious assumption, and I'm really just second-guessing. There are other cl-quil errors that you probably don't want to ignore.
+@appleby Is the distinction you are suggesting b/t
+If so, is there any current delineation to follow here, or is this something that would require surveying currently signaled conditions on a case by case basis?
+... If that's overly-ambitious or of dubious value, then does this really come down to a specific bug in the way CL-QUIL-BENCHMARKING:MEASURE-REWIRING-PERFORMANCE does not handle non-SIMPLE-ERROR conditions? In such case, anything I can do to run tests to reproduce?
+PS looking at quilc/benchmarking/rewiring-analysis.lisp - don't see  MEASURE-REWIRING-PERFORMANCE - maybe that function was separated into separate functions?
+I may have jumped the gun / over-generalized in suggesting a single base class for all quil errors. I'm not really sure what the tangile work item for this issue would be at this point. Feel free to close this out.
+... If that's overly-ambitious or of dubious value, then does this really come down to a specific bug in the way CL-QUIL-BENCHMARKING:MEASURE-REWIRING-PERFORMANCE does not handle non-SIMPLE-ERROR conditions? In such case, anything I can do to run tests to reproduce?
+I'm not even sure it is a bug, but it's odd that it handles all SIMPLE-ERRORs, rather than any ERROR or some more specific error. If there is any work to do here, it's probably something along the lines of: check all the places cl-quil signals/handles SIMPLE-ERRORs and see if any should be converted to more appropriate application-specific error types. Whether that underspecified task is worth anybody's time, idk.
+PS looking at quilc/benchmarking/rewiring-analysis.lisp - don't see MEASURE-REWIRING-PERFORMANCE - maybe that function was separated into separate functions?
+It's defined in quilc/benchmarking/suite.lisp
+I'm not sure I'll be able to come up with any particularly insightful given my depth of knowledge of quilc. That said, I'll give things a look over and see if anything sticks out.

@@ -1,0 +1,34 @@
+On pulser 0.16.1, I experienced ill-defined DMM maps.
+(Specs: MacBookPro 2021 M1, python 3.10.2, pulser 0.16.1)
+I have tracked down the issue to the ways the weight map is built:
+
+While matches is expected to be a single element list, this is not  checked.
+Because there is an equality condition on floating point numbers, it may be the empty list.
+When it is the empty list, the weight assigned to the qubit in the weight map is 0.0.
+Relaxing the decimal precision specified with COORD_PRECISION to say, 3, recovers the correct DMM maps.
+Changing the order of the qubits in the register definition recovers a properly defined DMM (!!).
+Here is a minimal example to reproduce the issue.
+Since the issue comes from comparisons of floats, it may not be reproducible on other devices and architectures.
+Output:
+Hi @lvignoli , thanks for the detailed bug report! Upon further inspection, I believe your code is doing something unwanted.
+When you define your register from your layout, your are doing:
+There are two issues with this form:
+At least on my setup, I find that setting center=False is enough to make the issues disappear. Regardless, creating a register from a layout should always be done through:
+If your issues persist after this correction, let me know!
+Thank @HGSilveri for your quick feedback.
+It's true that I used the register layout in an unorthodox way, merely as a proxy for a coordinates of a triangular lattice.
+Does this mean that defining a DMM map on a register that does not originates from a layout is undefined behavior?
+Does this mean that defining a DMM map on a register that does not originates from a layout is undefined behavior?
+It's not undefined per se, it's fine for emulators since they never require an underlying layout so you can just define the detuning map directly from the register. However, what you were doing here is defining a layout and a detuning map from it, and then separately a register. This increases your chances of your qubit coordinates not aligning with the traps, giving you a weight map of mostly zero weights (as you had here).
+When you have a layout, it should be the unique source truth for your coordinates, so it is best practice to define both the detuning map and the register from the same layout.
+Also, it is recommended to always use RegisterLayout.define_register() whenever defining a register from a layout because only in this way is the register aware of the layout it came from (which is relevant information for QPU execution).
+However, what you were doing here is defining a layout and a detuning map from it, and then separately a register.
+I am precisely not doing that, am I?
+The register is defined without any knowledge of the layout, but so is the detuning map: we pass a mapping of qubit IDs to floats.
+My understanding of the API is that one specifies the qubit IDs, not the traps IDs. And that pulser would take care of mapping correctly the qubit-wise user intent into a correct trap-wise detuning pattern, should there be any notion of traps in the sequence.
+The register centering part confuses me as well, since it happens before I am specifying any detuning map, and the detuning map is specified by qubit IDs. So as a user this should not be a concern to me, shouldn't it?
+@lvignoli You're totally right, I  was fooled by the fact setting center=False solved the issue and jumped to a conclusion without carefully looking at the code, my bad.
+The register centering part confuses me as well, since it happens before I am specifying any detuning map, and the detuning map is specified by qubit IDs. So as a user this should not be a concern to me, shouldn't it?
+Indeed, it shouldn't be a concern to you. I think the reason it affected the test code outcomes is because it introduces changes to the coordinates that make them be incorrectly considered different from their rounded counterparts in get_qubit_weight_map().
+I have the changes to fix this pretty much ready, I'll open a PR soon and ping you for review. Sorry again for the confusion on my part!
+Thanks a lot Henrique for the swift reaction! Having a look right now 😀

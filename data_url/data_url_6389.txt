@@ -1,0 +1,57 @@
+Could you add the ability to save the results of benchmark.cpp via an --output directive.
+Currently all benchmark.cpp results go into the void bin; yet I've been thinking about being able to extract these results to compare and/or add outcomes, precision, randomness from different (non-)opencl implementations/machines from the same benchmark.cpp, codebase.
+Absolutely. I'll implement it tonight, or this weekend. It shouldn't be difficult.
+Hi,
+i just looked at the code and tested it and got this output as result:
+
+Perhaps my request for enhancement wasn't as obvious as I thought it was. The idea is to output the results of the calculations, not the benchmark results (as they are already in the output) into a file.
+The idea is that the voids in front of the calculations are removed, the result send as output to the file.
+Maybe you want to reconsider the enhancement request. This request comes from the desire to put qbit calculation results into a NoSQL DB and do statistics and calculations on them. This is something I've been building towards for the last couple of months.
+On another note; I already see an -o --out parameter declared on qrack:
+
+so that will cause confusion with the new declaration:
+
+Are you saying you want the amplitudes as output? It would be a reasonable request, but there are a couple of considerations that come to mind. First of all, the output file would be absolutely gigantic, GBs or TBs. It'd take some creative compression, for QEngine types. Secondly, QUnit uses a Schmidt decomposed representation, which might exactly solve the compression problem, in its case, but it'd be new ground to standardize a file format for that output, and it might not be the easiest thing to parse it in a way that goes back and forth to Schrödinger amplitudes.
+Do I understand the request?
+I was thinking about the output of each iteration. In the benchmarks_main.cpp this is set to 100, by default. The output of that data is of great interest to me as I want to merge, compare and calculate with and on those outcomes with a NoSQL DB and a view/filter tool. This also to save compute time, once calculations have been made. With ES and Kibana to be specific, able to handle those ( possibly huge ) datasets.  Output would then be csv, carrying the value measured at the gate(s) and/or the artifact of the calculation.
+"Output of each iteration" could mean a number of things. For example, what I would expect to most commonly come at the end of a circuit, for a real quantum computer, would be a bit measurement across the register(s). This would produce a simple bit string, which could be represented as a primitive integral type of 64 bits or less. This is probably the most realistic form of output.
+Alternatively, since Qrack is a simulator, it can spit raw probability amplitudes out for you. This is commonly demanded, from simulators. I have a number of huge caveats about amplitudes as outputs, though:
+Sorry to throw all that at you when you're asking a simple question, but, here's why I do... You might still have legitimate reason to store specifically the amplitudes, anyway, in some form.
+Would < 64 bits of integral type per trial, from measurement at the end, fit your purpose? Or do you want the raw simulator book-keeping by the end, which you basically can't get out of a real quantum computer at all? (Many people legitimately want the raw state.)
+First of all, thank you very, very much for your elaborate answer. This helps tremendous. The goal I am working towards is to draw fractals with a quantum computer (emulator ) because "Hilbert space is such a huge and wonderful place." ( Quote from L. Susskind, if I recount correctly )
+Qrack is as portable and scalable a conventional QC emulator as they come, and I would like to take a look at the output of the amplitude vector produced by Qrack. Could there be a time that one would like to take a look at the (decomposed) vector itself ? Yes, but first and foremost I think the output is IMHO important.
+When the time comes that we would like to look at these vector states new ground would definitively be broken, as I don't know of any tool that can display vector states ( schrodinger or schmidt ) but for now I don't think I need states/amplitudes per se, at first I would like to make use of the output of the states, run the numbers on them. Ergo: "represented as a primitive integral type of 64 bits or less"
+My C skills are somewhat rusty, so a merge request from me is still a way off, that's why I'm asking you.
+However, I'm learning from every commit/comment and change as you and others continue the work on this marvellous project. :)
+I'm glad you have a use for the project! It should be significantly less challenging, than simulator amplitude readouts, to pop a register measurement gate at the end of each benchmark iteration and spit out one 64 bit primitive, per, into a file. It might take me a few days, with other obligations I have, but I think I can safely say I'll have it for you over the weekend, if not before. Thanks for connecting the project to on-the-ground use case demands!
+Take your time, this is not an on-the-clock chop-chop thing. :)
+I'm following your work on the quantum supremacy test front, very, very interesting, to say the least. The difference in performance between layers is stunning. However, I do believe that at and beyond 26 qbits the Qfusion>OpenCL layer loops infinite. The others layers run fine.
+
+I definitely came across a bug in QFusion, in the ongoing course of that WIP PR. I fixed the one I found, but the entire layer needs a refactor. I have more to say on the topic, but, to keep issues focused on their topics, I'm opening a new issue, for discussion.
+Just to address the QFusion bug, try what's on the top of the open PR, now. That work is just about done, I'm just scrutinizing it before getting Benn's attention for review.
+A problem with the current design of the benchmark is that it's very geometry dependent. 26 qubits will produce a 2x13 circuit, which ends up being much easier than the 3x9 circuit 27 produces. This is one of the few things I'm thinking about trying to change in that PR.
+Since it looks like you're editing the hard-coded iteration count anyway, try 1 total iteration. If I put an output in the overall iteration loop, I get something like this:
+...etc., just extremely slowly.
+Couldn't respond yesterday because IRL caught up with me :)
+Indeed, the supremacy test was done in a square of qbits with communication to the neighbours. I looked over the fact that one needs to resize the square when downgrading to a lower amount of qubits. Kinda cool though: software resizing hardware. The perogative of an emulator :)
+I've downscaled the minimum number of iterations to 4, below that value the following error pops up
+
+Because I'm currently developing/testing on a mac with Docker integration running OpenCL on the CPU-only POCL implementation this might have something to with this.
+
+Edit: I'll go look for a GPU, because this test kinda kills a CPU.
+So the test is good, it just kills hardware for a living. :)
+
+Edit2: Just for giggles, the CPU numbers on qubit 25 just came in:
+
+There was a bug I found in QFusion, which I corrected, but I suspected this was the point the head of the PR was at.
+See my comment on the PR, if you haven't. Though it's awkward, I think I'm leaving the 2D factoring as it is, for now, because I'm worried that complicating things by trying to square up the circuit further with short rows/columns could lead to bugs that ruin the validity of the entire test. First priority is just ensuring that the test as-is runs the intended circuit, and at least perfect squares and other geometric subsets form trends that can be interpreted.
+If you really want to giggle, pull the development branch that combines that PR with the 128 bit addressing I just added last night. It's CPU-only, without OpenCL, but I've thought for a long time that circuits amenable to Schmidt decomposition could actually use >64 qubits of addressing. I left it running on my primary development machine last night, and I should probably be more excited about how far it got, but it's getting to the point of beating a dead horse, when I need to make absolutely certain I'm simulating the right "horse to beat," if you understand what I mean.
+I saw the 128bit branch come op this morning, will look at it in a couple of days with a remote monster machine. One might wonder what ever happened to my local big rig, well, the motherboard (with 4 sockets) got fried, so I'll have to order another one. Will take some time before its up and running again ( summer 2020 :) )
+Those times are getting silly on mere 8 threaded machines. Wish I hadn't accidentaly destroyed the big box :)
+I mourn the loss of your motherboard, friend. Even for what I rent on the cloud, that's more machine than I've ever had. Though, for the 128 bit tests, run overnight yesterday, I ran on 16 hyper-threads. I was not the least bit disappointed with what I saw, in that very early test.
+However, running that with QUnits with QEngineCPUs for "shards" really highlighted for me the difference in overhead for what's outside of the timed part of the benchmark loop, between QEngineCPUs and QEngineOCLs. If there's not something I'm missing, initializing and freeing those OpenCL buffers must be much more costly than I ever would have anticipated, at least on my GPU. Deallocation should probably be brought inside the timed part of the loop, at least optionally, though we should write our programs to reuse rather than deallocate. I'm saying, though, you probably won't be disappointed with how fast the numbers scroll, at least.
+@twobombs, we got off topic, but I did draft a measurement output option, for you. I assumed a straightforward, dense binary representation was best. The output file could probably use a header, but maybe you could let me know if and how you'd want that header.
+@WrathfulSpatula after finding out that a benchmark iterations needs to be 4  or more I would like to suggest a .simple csv-style output like :  nameofbechmark, <64bitvalue>
+A default benchmarks, would then produce 100 results.
+IMHO no need to go all yaml or xml on this one. csv is human readable and imports well too.
+This was implemented in #249 and merged into master.
